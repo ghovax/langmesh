@@ -43,7 +43,7 @@ What a session's tool children may do, enforced by the operating system.
 | `sandbox.filesystem.readable` | list | `~/.agents` `~/.config` `~/.local` `~/.ssh` `~/.gitconfig` `~/.gitignore_global` `~/.cargo` `~/.rustup` `~/.npmrc` `~/.nvm` `~/.pyenv` `~/.docker` `~/.netrc` | Paths under your home a tool child may read. The system is readable and is not listed. |
 | `sandbox.filesystem.writable` | list | `$WORKSPACE` `$TMPDIR` `/tmp` `$XDG_CACHE_HOME` `~/.cache` | Paths a tool child may write. Deliberately narrower than readable, because a wrong write is the failure people actually meet. |
 | `sandbox.filesystem.grantable` | list | — | Paths an agent may be granted at runtime without asking. Empty means every request is put to you. |
-| `sandbox.filesystem.deny` | list | `~/Documents` `~/Desktop` `~/Downloads` `~/Pictures` `~/Movies` `~/Music` `~/Library/Mail` `~/Library/Messages` `~/Library/Safari` | Paths refused outright. Wins over readable and writable, and no request opens them. |
+| `sandbox.filesystem.deny` | list | — | Opt-in absolute bans. Wins over readable and writable, and no request opens them. |
 | `sandbox.network` | boolean | `true` | Whether a tool child may reach the network at all. |
 | `sandbox.limits` | map | `{'RLIMIT_CORE': 0, 'RLIMIT_FSIZE': 8589934592, 'RLIMIT_NPROC': 2048}` | Per-child resource limits, by their setrlimit names. |
 | `sandbox.umask` | string | — | The file-creation mask a tool child runs under. Empty leaves the machine's own. |

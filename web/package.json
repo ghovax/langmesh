@@ -42,7 +42,8 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "serialize-error": "^13.0.1"
+    "serialize-error": "^13.0.1",
+    "unist-util-visit": "^5.1.0"
   },
   "devDependencies": {
     "@types/node": "^20",

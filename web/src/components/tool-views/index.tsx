@@ -282,15 +282,25 @@ const FIELD_LABEL_KEYS: Record<string, string> = {
   answers: "answers",
 };
 
+const FETCH_FORMAT_LABEL_KEYS = {
+  markdown: "formatMarkdown",
+  text: "formatText",
+  html: "formatHtml",
+} as const;
+
 function FetchUrlCallView({ args }: { args: Record<string, unknown> }) {
   const translation = useTranslations("ToolViews");
+  const outputFormat = asString(args.format);
+  const outputFormatLabelKey =
+    FETCH_FORMAT_LABEL_KEYS[outputFormat as keyof typeof FETCH_FORMAT_LABEL_KEYS];
+  const outputFormatLabel = outputFormatLabelKey ? translation(outputFormatLabelKey) : outputFormat;
   return (
     <FieldList>
       <InlineField label={translation("url")}>
         <Mono>{asString(args.url)}</Mono>
       </InlineField>
       {args.format ? (
-        <InlineField label={translation("format")}>{asString(args.format)}</InlineField>
+        <InlineField label={translation("format")}>{outputFormatLabel}</InlineField>
       ) : null}
       {args.timeout != null && (
         <InlineField label={translation("timeout")}>

@@ -228,19 +228,7 @@ class FilesystemConfiguration(Section):
     )
     # `/tmp` beside `$TMPDIR` because on macOS they are not the same place, and nothing personal lives there.
     grantable: list[str] = Field(default=[])
-    deny: list[str] = Field(
-        default=[
-            "~/Documents",
-            "~/Desktop",
-            "~/Downloads",
-            "~/Pictures",
-            "~/Movies",
-            "~/Music",
-            "~/Library/Mail",
-            "~/Library/Messages",
-            "~/Library/Safari",
-        ]
-    )
+    deny: list[str] = Field(default_factory=list)
 
 
 class SandboxConfiguration(Section):

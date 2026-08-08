@@ -67,12 +67,11 @@ function current(all: RecordEntry[]): Revised[] {
   );
 }
 
-/** Whether a poll brought anything new: the record is append-only, so identity and count settle it. */
-function sameEntries(held: Revised[], found: Revised[]): boolean {
-  return (
-    held.length === found.length &&
-    held.every((one, index) => one.entry.id === found[index]?.entry.id)
-  );
+/** Merge append-only entries without replacing objects the panel has already rendered. */
+function mergeEntries(held: RecordEntry[], found: RecordEntry[]): RecordEntry[] {
+  const knownIdentifiers = new Set(held.map((entry) => entry.id));
+  const additions = found.filter((entry) => !knownIdentifiers.has(entry.id));
+  return additions.length > 0 ? held.concat(additions) : held;
 }
 
 // What a revision did to what it replaced, in its own colour and mark, since an entry whose ancestor was wrong reads differently from one merely sharpened.
@@ -310,43 +309,50 @@ export function MemoryPanel({
   onClose?: () => void;
 }) {
   const translation = useTranslations("MemoryPanel");
-  const [findings, setFindings] = useState<Revised[]>([]);
-  const [instructions, setInstructions] = useState<Revised[]>([]);
-  // Set only once a read has come back, so an empty panel says "nothing yet" rather than "nothing".
+  const [findingEntries, setFindingEntries] = useState<RecordEntry[]>([]);
+  const [instructionEntries, setInstructionEntries] = useState<RecordEntry[]>([]);
   const [read, setRead] = useState(false);
-  // Bumped when the daemon says this session's record grew, which is the only thing that can change it.
-  const [recordRevision, setRecordRevision] = useState(0);
+  const findings = useMemo(() => current(findingEntries), [findingEntries]);
+  const instructions = useMemo(() => current(instructionEntries), [instructionEntries]);
 
-  // The record is written in one place and announced from it, so the panel follows the work without polling it.
   useEffect(() => {
     if (!sessionId) return;
     return subscribeEvents((event) => {
-      const grew = event as { type: string; session?: string };
-      if (grew.type === "record_changed" && grew.session === sessionId)
-        setRecordRevision((count) => count + 1);
+      const addition = event as {
+        type: string;
+        session?: string;
+        ledger?: "observations" | "directives";
+        entry?: RecordEntry;
+      };
+      if (
+        addition.type !== "record_entry_added" ||
+        addition.session !== sessionId ||
+        !addition.ledger ||
+        !addition.entry
+      )
+        return;
+      const appendEntry =
+        addition.ledger === "directives" ? setInstructionEntries : setFindingEntries;
+      const entry = addition.entry;
+      appendEntry((held) => mergeEntries(held, [entry]));
     });
   }, [sessionId]);
 
-  // Declared inside the effect, as the other panels do, so nothing is called synchronously from its body.
   useEffect(() => {
     let cancelled = false;
     async function readRecord() {
-      // A conversation with no session yet has an empty record rather than an unfinished read.
       if (!sessionId) {
         setRead(true);
         return;
       }
       try {
-        // The whole chain, not the live view: superseded versions are what the history under an entry is made of.
         const [established, asked] = await Promise.all([
           fetchSessionRecord(sessionId, "observations", undefined, false),
           fetchSessionRecord(sessionId, "directives", undefined, false),
         ]);
         if (cancelled) return;
-        const [live, given] = [current(established), current(asked)];
-        // Same entries, new objects: replacing them would re-render and re-parse every one of them.
-        setFindings((held) => (sameEntries(held, live) ? held : live));
-        setInstructions((held) => (sameEntries(held, given) ? held : given));
+        setFindingEntries((held) => mergeEntries(held, established));
+        setInstructionEntries((held) => mergeEntries(held, asked));
         setRead(true);
       } catch (caught) {
         if (!cancelled)
@@ -357,8 +363,7 @@ export function MemoryPanel({
     return () => {
       cancelled = true;
     };
-    // Read on open and whenever it grew, not on a timer: the record only changes when a turn folds.
-  }, [sessionId, recordRevision]);
+  }, [sessionId]);
 
   const countRevisions = useCallback(
     (count: number) => translation("revisions", { count }),

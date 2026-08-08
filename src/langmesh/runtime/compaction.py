@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from functools import partial
 from itertools import accumulate, takewhile
 
 from langmesh.base.identifiers import new_id
@@ -45,7 +46,15 @@ def _without_provider_reasoning(messages: list) -> list:
 class _CompactsContext:
     """Keeping a conversation inside its window: what each exchange establishes is recorded, then its turns are dropped."""
 
-    async def _emit_batch(self, schema, request: list, operation_name: str):
+    async def _emit_batch(
+        self,
+        schema,
+        request: list,
+        operation_name: str,
+        *,
+        streamed_field: str = "",
+        on_item=None,
+    ):
         """One structured call against this runtime's model, which is the shared pass every fold is built on."""
         return await emit_structured(
             self._model,
@@ -53,11 +62,19 @@ class _CompactsContext:
             request,
             operation_name,
             active_tuning().amount(Tunable.compaction_attempts),
+            streamed_field=streamed_field,
+            on_item=on_item,
         )
 
-    async def _emit_observations(self, request: list) -> list:
+    async def _emit_observations(self, request: list, on_observation=None) -> list:
         """Run one observer call and read its entries from the tool call it makes."""
-        batch = await self._emit_batch(ObservationBatch, request, "observer")
+        batch = await self._emit_batch(
+            ObservationBatch,
+            request,
+            "observer",
+            streamed_field="observations" if on_observation is not None else "",
+            on_item=on_observation,
+        )
         return list(batch.observations) if batch else []
 
     async def _consolidate_observations(self, observations: list[dict]) -> list[dict]:
@@ -364,13 +381,20 @@ class _CompactsContext:
         asked = ledgers["directives"]
         if any(entry.get("exchange") == tag for entry in [*recorded, *asked]):
             return  # already observed: a turn can end more than once
-        observations, directives = await asyncio.gather(
-            self._fold_into_observations(exchange, recorded, asked, interrupted=interrupted),
-            self._fold_into_directives(exchange, asked, interrupted=interrupted),
-        )
-        await self._commit_memory(
-            [{**entry, "exchange": tag} for entry in observations],
-            [{**entry, "exchange": tag} for entry in directives],
+        await asyncio.gather(
+            self._fold_into_observations(
+                exchange,
+                recorded,
+                asked,
+                tag,
+                interrupted=interrupted,
+            ),
+            self._fold_into_directives(
+                exchange,
+                asked,
+                tag,
+                interrupted=interrupted,
+            ),
         )
 
     async def _memory_snapshot(self) -> dict[str, list[dict]]:
@@ -428,14 +452,25 @@ class _CompactsContext:
         except Exception:  # noqa: BLE001 — the fold has already happened; losing the durable copy must not undo it
             logger.warning("could not append observational memory", exc_info=True)
 
+    async def _record_observation(self, observation, *, exchange_identifier: str) -> None:
+        """Identify and persist one completed observation while the rest of its batch is still streaming."""
+        identified = self._identified([observation])[0]
+        await self._commit_memory([{**identified, "exchange": exchange_identifier}], [])
+
+    async def _record_directive(self, directive, *, exchange_identifier: str) -> None:
+        """Identify and persist one completed directive while the rest of its batch is still streaming."""
+        identified = self._identified([directive])[0]
+        await self._commit_memory([], [{**identified, "exchange": exchange_identifier}])
+
     async def _fold_into_observations(
         self,
         older: list,
         existing: list[dict],
         asked: list[dict],
+        exchange_identifier: str,
         *,
         interrupted: bool = False,
-    ) -> list[dict]:
+    ) -> None:
         """New entries from these messages, with both records shown so it writes neither what it nor the other holds."""
         instructions = self._prompt_loader.load(
             "observer",
@@ -445,7 +480,7 @@ class _CompactsContext:
                 "existing_directives": lines(self._claims(self._live(asked))),
             },
         )
-        entries = await self._emit_observations(
+        await self._emit_observations(
             [
                 SystemMessage(content=instructions),
                 *(
@@ -459,13 +494,21 @@ class _CompactsContext:
                 ),
                 *older,
                 HumanMessage(content=self._prompt_loader.load("observe_now", {})),
-            ]
+            ],
+            on_observation=partial(
+                self._record_observation,
+                exchange_identifier=exchange_identifier,
+            ),
         )
-        return self._identified(entries)
 
     async def _fold_into_directives(
-        self, older: list, existing: list[dict], *, interrupted: bool = False
-    ) -> list[dict]:
+        self,
+        older: list,
+        existing: list[dict],
+        exchange_identifier: str,
+        *,
+        interrupted: bool = False,
+    ) -> None:
         """What the person asked for in these turns, in their meaning rather than their words."""
         spoken = [
             message
@@ -473,10 +516,10 @@ class _CompactsContext:
             if isinstance(message, HumanMessage) and not message.additional_kwargs.get("reminder")
         ]
         if not spoken:
-            return []
+            return
         shown = lines(self._claims(self._live(existing)))
         instructions = self._prompt_loader.load("directives", {"existing_directives": shown})
-        entries = await self._emit_batch(
+        await self._emit_batch(
             DirectiveBatch,
             [
                 SystemMessage(content=instructions),
@@ -493,8 +536,12 @@ class _CompactsContext:
                 HumanMessage(content=self._prompt_loader.load("directives_now", {})),
             ],
             "directive",
+            streamed_field="directives",
+            on_item=partial(
+                self._record_directive,
+                exchange_identifier=exchange_identifier,
+            ),
         )
-        return self._identified(getattr(entries, "directives", []) if entries else [])
 
     async def compact(self, reason: str = "manual") -> AsyncIterator[TurnEvent]:
         """Reclaim the window by dropping what is past the tail, which the exchange records have already captured."""

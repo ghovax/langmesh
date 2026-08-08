@@ -6,6 +6,7 @@ import logging
 import re
 import statistics
 
+from collections.abc import Coroutine
 from datetime import datetime, timezone
 from langmesh.base import telemetry as _telemetry
 from langmesh.base import confinement as _confinement
@@ -789,6 +790,42 @@ class _DispatchesTools:
             },
         )
 
+    async def _run_slow_tool(
+        self,
+        tool_name: str,
+        tool_call_identifier: str,
+        operation: Coroutine[Any, Any, str],
+        *,
+        started_code: str,
+        sync_window: float,
+        background: bool,
+    ) -> AsyncIterator[TurnEvent]:
+        """Run a slow tool inline briefly, then return its background handle if it is still running."""
+        job_identifier = self._background.spawn(
+            tool_name,
+            operation,
+            tool_call_identifier=tool_call_identifier,
+            detached=background,
+        )
+        completion = None
+        if not background:
+            completion = await self._background.settle_inline(
+                job_identifier,
+                active_tuning().scale_timeout(sync_window),
+            )
+        if completion is not None:
+            yield ToolResult(
+                id=tool_call_identifier,
+                name=tool_name,
+                result=_maybe_json(completion.result),
+            )
+            return
+        yield ToolResult(
+            id=tool_call_identifier,
+            name=tool_name,
+            result={"code": started_code, "status": "running", "job_id": job_identifier},
+        )
+
     async def _tool_fetch_url(
         self,
         tool_name: str,
@@ -807,7 +844,7 @@ class _DispatchesTools:
         configured = tool_context.current().fetch_timeout_seconds
         hard_deadline = int(tool_arguments.get("hard_deadline", configured) or configured)
         background = bool(tool_arguments.get("background", False))
-        async for event in self._run_backgroundable_tool(
+        async for event in self._run_slow_tool(
             tool_name,
             tool_call_identifier,
             fetching.fetch_url(url, output_format, hard_deadline),
@@ -866,7 +903,7 @@ class _DispatchesTools:
                 return
         try:
             backgrounded_job_id = ""
-            async for event in self._run_backgroundable_tool(
+            async for event in self._run_slow_tool(
                 tool_name,
                 tool_call_identifier,
                 fetching.download_file(executor, url, resolved, hard_deadline),

@@ -21,6 +21,7 @@ from langmesh.runtime.internals import (
     _ToolPlan,
     _maybe_json,
     conversation_tokens,
+    settled_arguments,
 )
 from langmesh.runtime.prompt.environment import probe_local_environment, probe_user_context
 from langmesh.protocol.events import TurnContext
@@ -64,16 +65,6 @@ from langmesh.base.serialization import compact, lines
 
 
 logger = logging.getLogger(__name__)
-
-
-def _settled_arguments(parsed: dict, raw: str) -> dict:
-    """The arguments whose values are final. A partial object's last key is the one still being written."""
-    try:
-        json.loads(raw)
-    except ValueError:
-        # Not closed yet, so its final key is mid-write: a value drawn now would be redrawn as it grows.
-        return dict(list(parsed.items())[:-1])
-    return parsed
 
 
 class _RunsTurns:
@@ -724,7 +715,7 @@ class _RunsTurns:
                     settled = parse_partial_json(streaming_call_args[identifier]) or {}
                     if isinstance(settled, dict):
                         # Only what has finished arriving, so no argument is ever drawn while it is still growing.
-                        settled = _settled_arguments(settled, streaming_call_args[identifier])
+                        settled = settled_arguments(settled, streaming_call_args[identifier])
                     if (
                         isinstance(settled, dict)
                         and settled

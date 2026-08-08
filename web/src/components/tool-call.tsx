@@ -28,6 +28,12 @@ function ToolLocationBadge({ arguments: args }: { arguments?: Record<string, unk
   return <Pill colorPalette={info.palette}>{info.label}</Pill>;
 }
 
+function hasToolAccessBadges(name: string, toolArguments?: Record<string, unknown>): boolean {
+  if (!toolArguments) return false;
+  const mutation = mutationClaim(name, toolArguments);
+  return mutation === "writes" || mutation === "undeclared" || requestedAccess(toolArguments).any;
+}
+
 // A tool call's live status as a pill; a completed call carries none because its settled line speaks for itself.
 export function ToolStatusBadge({ status }: { status: ToolEventStatus }) {
   const translation = useTranslations("ToolCard");
@@ -195,6 +201,13 @@ export function ToolCall({
   // A running call whose interim result says the work moved to the background.
   const background = status === "running" && hasBackgroundJobId(result);
   const { icon: Icon, iconColor } = getToolCallDisplay(name, toolArguments);
+  const hasBadges =
+    !!toolLocationBadge(toolArguments?.location) ||
+    hasToolAccessBadges(name, toolArguments) ||
+    status === "running" ||
+    status === "failed" ||
+    status === "input_required" ||
+    background;
 
   return (
     <DisclosureRow
@@ -212,19 +225,21 @@ export function ToolCall({
         </DisclosureLabel>
       }
       badges={
-        <>
-          <ToolLocationBadge arguments={toolArguments} />
-          <ToolAccessBadges name={name} arguments={toolArguments} />
-          {status === "running" ||
-          status === "completed" ||
-          status === "failed" ||
-          status === "input_required" ? (
-            <ToolStatusBadge status={status} />
-          ) : null}
-          {background ? (
-            <Pill colorPalette={STATUS_PALETTE.background}>{translation("background")}</Pill>
-          ) : null}
-        </>
+        hasBadges ? (
+          <>
+            <ToolLocationBadge arguments={toolArguments} />
+            <ToolAccessBadges name={name} arguments={toolArguments} />
+            {status === "running" ||
+            status === "completed" ||
+            status === "failed" ||
+            status === "input_required" ? (
+              <ToolStatusBadge status={status} />
+            ) : null}
+            {background ? (
+              <Pill colorPalette={STATUS_PALETTE.background}>{translation("background")}</Pill>
+            ) : null}
+          </>
+        ) : undefined
       }
       actions={actions}
     >

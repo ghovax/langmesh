@@ -236,19 +236,26 @@ async def _session_title(params: dict) -> dict:
 
 
 async def _session_append_memory(params: dict) -> dict:
-    """Commit one observer's entries atomically across both append-only ledgers."""
+    """Commit memory entries and publish each inserted row immediately."""
     if state.turn_store is None:
         return {"appended": 0}
     session_id = str(params.get("session_id") or "")
-    appended = await state.turn_store.append_memory(
+    appended_entries = await state.turn_store.append_memory(
         session_id,
         list(params.get("observations") or []),
         list(params.get("directives") or []),
     )
-    # The one place the record ever grows, so whoever is reading it is told here rather than left to poll.
-    if appended:
-        state.broadcaster.publish({"type": "record_changed", "session": session_id})
-    return {"appended": appended}
+    for ledger, entries in appended_entries.items():
+        for entry in entries:
+            state.broadcaster.publish(
+                {
+                    "type": "record_entry_added",
+                    "session": session_id,
+                    "ledger": ledger,
+                    "entry": entry,
+                }
+            )
+    return {"appended": sum(len(entries) for entries in appended_entries.values())}
 
 
 async def _session_memory(params: dict) -> dict[str, list]:

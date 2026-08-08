@@ -89,18 +89,8 @@ sandbox:
       - "$TMPDIR"
       - "$XDG_CACHE_HOME"
       - "~/.cache"
-    # Denied even where a rule above would have allowed them: personal directories a coding
-    # session has no business in, and the mail and message stores behind them.
-    deny:
-      - "~/Documents"
-      - "~/Desktop"
-      - "~/Downloads"
-      - "~/Pictures"
-      - "~/Movies"
-      - "~/Music"
-      - "~/Library/Mail"
-      - "~/Library/Messages"
-      - "~/Library/Safari"
+    # Absolute bans that no per-call access request may open. Empty by default.
+    deny: []
   network: true
   # setrlimit, by the constant's own name: no core dumps, 8 GiB per file, 2048 processes.
   limits:

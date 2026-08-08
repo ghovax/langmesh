@@ -1,12 +1,12 @@
 "use client";
 
-import { Box, Button, Flex, Span, Spinner, Text } from "@chakra-ui/react";
+import { Box, Button, Flex, List, Span, Spinner, Text } from "@chakra-ui/react";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { LuCircleCheck, LuCircleSlash, LuDot, LuSquare, LuTarget, LuX } from "react-icons/lu";
 import { Tooltip } from "./ui/tooltip";
 import { ConfirmDialog } from "./ui/confirm-dialog";
-import { ProseList } from "./ui/display";
+import { InlineMarkdown, MarkdownContent } from "./markdown-content";
 import type { SessionGoal } from "@/lib/api";
 
 // What the session is working toward, above the composer because it is a state rather than an event.
@@ -51,13 +51,21 @@ export function GoalBar({ goal, onClear }: { goal: SessionGoal; onClear: () => v
         <LuTarget size={12} />
         <Text fontWeight="semibold">{statusLabel}</Text>
       </Flex>
-      <Text mb={goal.requirements?.length || goal.blocker || goal.evidence ? 2 : 0}>{text}</Text>
+      <Box mb={goal.requirements?.length || goal.blocker || goal.evidence ? 2 : 0}>
+        <MarkdownContent content={text} fontSize="xs" />
+      </Box>
       {!!goal.requirements?.length && (
         <Box>
           <Text textStyle="fieldLabel" color="fg.subtle" mb={0.5}>
             {translation("requirements")}
           </Text>
-          <ProseList items={goal.requirements} />
+          <List.Root pl={4} fontSize="xs" listStyleType="disc">
+            {goal.requirements.map((requirement, requirementIndex) => (
+              <List.Item key={requirementIndex} mb={0.5} _last={{ mb: 0 }}>
+                <MarkdownContent content={requirement} fontSize="xs" />
+              </List.Item>
+            ))}
+          </List.Root>
         </Box>
       )}
       {/* What the review last decided: why it is stuck, what convinced it, or what it asked for next. */}
@@ -66,7 +74,7 @@ export function GoalBar({ goal, onClear }: { goal: SessionGoal; onClear: () => v
           <Text textStyle="fieldLabel" color="fg.subtle" mb={0.5}>
             {translation("blocker")}
           </Text>
-          <Text>{goal.blocker}</Text>
+          <MarkdownContent content={goal.blocker} fontSize="xs" />
         </Box>
       )}
       {!!goal.evidence && (
@@ -74,7 +82,7 @@ export function GoalBar({ goal, onClear }: { goal: SessionGoal; onClear: () => v
           <Text textStyle="fieldLabel" color="fg.subtle" mb={0.5}>
             {translation("evidence")}
           </Text>
-          <Text>{goal.evidence}</Text>
+          <MarkdownContent content={goal.evidence} fontSize="xs" />
         </Box>
       )}
       {status === "active" && !!goal.direction && (
@@ -82,7 +90,7 @@ export function GoalBar({ goal, onClear }: { goal: SessionGoal; onClear: () => v
           <Text textStyle="fieldLabel" color="fg.subtle" mb={0.5}>
             {translation("direction")}
           </Text>
-          <Text>{goal.direction}</Text>
+          <MarkdownContent content={goal.direction} fontSize="xs" />
         </Box>
       )}
     </Box>
@@ -146,9 +154,9 @@ export function GoalBar({ goal, onClear }: { goal: SessionGoal; onClear: () => v
             >
               <LuDot size={20} style={{ opacity: 0.7 }} />
             </Box>
-            <Text textStyle="xs" color="fg" truncate minW={0}>
-              {text}
-            </Text>
+            <Box textStyle="xs" color="fg" truncate minW={0}>
+              <InlineMarkdown content={text} />
+            </Box>
           </Flex>
         </Tooltip>
         {/* Named as well as drawn: the one control here ends the thing the bar is about, so it says which. */}

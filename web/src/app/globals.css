@@ -279,6 +279,10 @@ samp {
   padding-inline-end: var(--fit-arrow-column) !important;
 }
 
+[data-scope="select"][data-part="root"][data-fit-collapsed] {
+  --fit-arrow-column: 18px;
+}
+
 /* Everything below belongs to a pointer, and is gated on hover so a finger never triggers it. */
 @media (hover: hover) {
   /* Every title fades its right edge under the hover actions, with 44px of clearance so the dots never sit against a letter — keep in step with MARQUEE_TAIL_CLEARANCE. */

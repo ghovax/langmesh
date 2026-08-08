@@ -27,11 +27,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import { visit } from "unist-util-visit";
 import twemoji from "@twemoji/api";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { xcode, atomOneDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import type { Components } from "react-markdown";
 import type { Element } from "hast";
+import type { Root } from "mdast";
 import { useReducedMotion } from "motion/react";
 // flowtoken's public component cannot host our own pipeline, so its token animator is used directly.
 import SplitText from "flowtoken/dist/components/SplitText";
@@ -54,6 +56,30 @@ const sectionGap = "0.875rem";
 const variationSelectorPattern = /\uFE0F/g;
 const zeroWidthJoiner = String.fromCharCode(0x200d);
 const emojiMarkerPattern = /\uE000(\d+)\uE001/g;
+const decimalDigitPattern = /\p{Decimal_Number}/u;
+const amountAtStartPattern = /^\s*\d[\d,.]*(?:\s|$)/;
+const explicitMathSyntaxPattern = /[\\^_={}<>+*/]/;
+
+function preserveCurrencyDollars() {
+  return (tree: Root, file: { value: unknown }) => {
+    const markdownSource = String(file.value);
+    visit(tree, "inlineMath", (node, nodeIndex, parent) => {
+      if (nodeIndex === undefined || !parent || !node.position) return;
+      const startOffset = node.position.start.offset;
+      const endOffset = node.position.end.offset;
+      if (startOffset === undefined || endOffset === undefined) return;
+      const originalText = markdownSource.slice(startOffset, endOffset);
+      if (originalText.startsWith("$$")) return;
+      const dollarTouchesExternalAmount =
+        decimalDigitPattern.test(markdownSource.at(startOffset - 1) ?? "") ||
+        decimalDigitPattern.test(markdownSource.at(endOffset) ?? "");
+      const beginsWithAmountWithoutMathSyntax =
+        amountAtStartPattern.test(node.value) && !explicitMathSyntaxPattern.test(node.value);
+      if (!dollarTouchesExternalAmount && !beginsWithAmountWithoutMathSyntax) return;
+      parent.children[nodeIndex] = { type: "text", value: originalText };
+    });
+  };
+}
 
 const twemojiStyle: CSSProperties = {
   display: "inline-block",
@@ -510,9 +536,12 @@ export const MarkdownContent = memo(function MarkdownContent({
         },
       }}
     >
-      {/* Single dollars are inline math and double are display, with the heuristic tight enough that currency does not misfire. */}
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: true }]]}
+        remarkPlugins={[
+          remarkGfm,
+          [remarkMath, { singleDollarTextMath: true }],
+          preserveCurrencyDollars,
+        ]}
         rehypePlugins={[[rehypeKatex, { strict: false }]]}
         components={markdownComponents}
       >
@@ -596,7 +625,11 @@ const inlineMarkdownComponents: Components = {
 export const InlineMarkdown = memo(function InlineMarkdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: true }]]}
+      remarkPlugins={[
+        remarkGfm,
+        [remarkMath, { singleDollarTextMath: true }],
+        preserveCurrencyDollars,
+      ]}
       rehypePlugins={[[rehypeKatex, { strict: false }]]}
       components={inlineMarkdownComponents}
     >

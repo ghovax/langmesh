@@ -952,17 +952,17 @@ class AppendOnlyTaskStore(TaskStore):
 
     async def append_memory(
         self, session_id: str, observations: list[dict], directives: list[dict]
-    ) -> int:
-        """Commit one observer's output across both append-only ledgers in one transaction."""
+    ) -> dict[str, list[dict]]:
+        """Commit entries atomically and return only the rows this transaction inserted."""
         entries = [("observations", entry) for entry in observations] + [
             ("directives", entry) for entry in directives
         ]
         if not entries:
-            return 0
+            return {"observations": [], "directives": []}
         await self._ensure_initialized()
         written = datetime.now(timezone.utc).isoformat()
-        rows = [
-            {
+        rows_by_identity = {
+            (ledger, str(entry.get("id") or "")): {
                 "session_id": session_id,
                 "ledger": ledger,
                 "entry_id": str(entry.get("id") or ""),
@@ -972,22 +972,35 @@ class AppendOnlyTaskStore(TaskStore):
             }
             for ledger, entry in entries
             if entry.get("id")
-        ]
+        }
+        rows = list(rows_by_identity.values())
         if not rows:
-            return 0
+            return {"observations": [], "directives": []}
         write_lock = await acquire_sqlite_write_lock()
         try:
             async with self._engine.begin() as connection:
-                # An id seen before is the identical finding, so the first writing of it stands.
-                await connection.execute(
-                    sqlite_insert(self._ledger).on_conflict_do_nothing(
+                insert_result = await connection.execute(
+                    sqlite_insert(self._ledger)
+                    .on_conflict_do_nothing(
                         index_elements=["session_id", "ledger", "entry_id"]
-                    ),
+                    )
+                    .returning(self._ledger.c.ledger, self._ledger.c.entry_id),
                     rows,
                 )
+                inserted_identities = [
+                    (str(ledger), str(entry_identifier))
+                    for ledger, entry_identifier in insert_result.all()
+                ]
         finally:
             release_sqlite_write_lock(write_lock)
-        return len(rows)
+        appended: dict[str, list[dict]] = {"observations": [], "directives": []}
+        for identity in inserted_identities:
+            row = rows_by_identity[identity]
+            entry = json.loads(row["entry"])
+            entry["id"] = identity[1]
+            entry["written_at"] = written
+            appended[identity[0]].append(entry)
+        return appended
 
     async def memory_entries(
         self, session_id: str, *, live_only: bool = True

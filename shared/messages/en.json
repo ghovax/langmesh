@@ -759,7 +759,7 @@
         "readable": "Paths under your home a tool child may read. The system is readable and is not listed.",
         "writable": "Paths a tool child may write. Deliberately narrower than readable, because a wrong write is the failure people actually meet.",
         "grantable": "Paths an agent may be granted at runtime without asking. Empty means every request is put to you.",
-        "deny": "Paths refused outright. Wins over readable and writable, and no request opens them."
+        "deny": "Opt-in absolute bans that no access request may open. Empty by default."
       },
       "network": "Whether a tool child may reach the network at all.",
       "limits": "Per-child resource limits, by their setrlimit names.",
@@ -1097,6 +1097,9 @@
     "fieldUri": "URI",
     "filePath": "File path",
     "format": "Format",
+    "formatHtml": "HTML",
+    "formatMarkdown": "Markdown",
+    "formatText": "Plain text",
     "fullOutput": "Full output",
     "goal": "Goal",
     "goalActive": "Now working toward this",

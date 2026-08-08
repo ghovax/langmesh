@@ -11,9 +11,10 @@ from langmesh.protocol.events import tool_status_from_result, ToolStatus
 from langmesh.base.providers import resolve_api_key
 from langmesh.base.tuning import active_tuning, clip_to_tokens, count_tokens, Tunable
 from langchain_core.messages import AIMessageChunk
+from langchain_core.output_parsers.openai_tools import JsonOutputToolsParser
 from pathlib import Path
-from pydantic import BaseModel, Field, ValidationError, model_validator
-from typing import Any, AsyncIterator, Literal, Optional
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_validator
+from typing import Any, AsyncIterator, Awaitable, Callable, Literal, Optional, get_args
 import json
 import logging
 from langmesh.base.serialization import compact, content_address
@@ -69,11 +70,140 @@ def _only_with_a_parent(entry):
     return entry
 
 
-async def emit_structured(model, schema, request: list, operation_name: str, attempts: int):
+def settled_arguments(parsed: dict, raw: str) -> dict:
+    """Return only tool arguments whose values have finished streaming."""
+    try:
+        json.loads(raw)
+    except ValueError:
+        return dict(list(parsed.items())[:-1])
+    return parsed
+
+
+def _settled_structured_items(
+    parsed_items: list,
+    item_adapter: TypeAdapter,
+) -> list[BaseModel]:
+    """Validate the completed prefix while withholding the partial parser's growing tail."""
+    settled_items: list[BaseModel] = []
+    for parsed_item in parsed_items[:-1]:
+        try:
+            settled_items.append(item_adapter.validate_python(parsed_item))
+        except ValidationError:
+            break
+    return settled_items
+
+
+async def _emit_streamed_structured(
+    structured_model,
+    schema,
+    request: list,
+    operation_name: str,
+    attempts: int,
+    field_name: str,
+    on_item: Callable[[BaseModel], Awaitable[None]],
+):
+    """Stream one list-valued structured call and deliver every completed item exactly once."""
+    field_annotation = schema.model_fields[field_name].annotation
+    item_types = get_args(field_annotation)
+    if len(item_types) != 1:
+        raise TypeError(f"{schema.__name__}.{field_name} must be a list with one item type.")
+    item_adapter = TypeAdapter(item_types[0])
+    expected_tool_name = schema.model_config.get("title") or schema.__name__
+    published_items: dict[str, BaseModel] = {}
+
+    async def publish(items: list[BaseModel]) -> None:
+        for item in items:
+            identity = getattr(item, "identity", None)
+            item_identifier = (
+                str(identity())
+                if callable(identity)
+                else compact(item.model_dump(mode="json"))
+            )
+            if item_identifier in published_items:
+                continue
+            await on_item(item)
+            published_items[item_identifier] = item
+
+    for attempt in range(1, attempts + 1):
+        parsed_arguments: dict | None = None
+        parser = JsonOutputToolsParser(first_tool_only=True)
+        try:
+            async for parsed_call in parser.atransform(structured_model.astream(request)):
+                if not isinstance(parsed_call, dict):
+                    continue
+                if parsed_call.get("type") != expected_tool_name:
+                    continue
+                arguments = parsed_call.get("args")
+                if not isinstance(arguments, dict):
+                    continue
+                parsed_arguments = arguments
+                parsed_items = parsed_arguments.get(field_name)
+                if isinstance(parsed_items, list):
+                    await publish(_settled_structured_items(parsed_items, item_adapter))
+        except Exception:  # noqa: BLE001 — completed items survive a provider stream that loses its tail
+            _logger.warning(
+                "the %s pass stream failed (attempt %d of %d)",
+                operation_name,
+                attempt,
+                attempts,
+                exc_info=True,
+            )
+            if published_items:
+                return schema.model_validate({field_name: list(published_items.values())})
+            continue
+
+        if parsed_arguments is None:
+            _logger.warning(
+                "the %s pass answered without recording anything (attempt %d of %d)",
+                operation_name,
+                attempt,
+                attempts,
+            )
+            if published_items:
+                return schema.model_validate({field_name: list(published_items.values())})
+            continue
+        try:
+            batch = schema.model_validate(parsed_arguments)
+        except ValidationError:
+            _logger.warning(
+                "the %s pass did not fit its schema (attempt %d of %d)",
+                operation_name,
+                attempt,
+                attempts,
+                exc_info=True,
+            )
+            if published_items:
+                return schema.model_validate({field_name: list(published_items.values())})
+            continue
+        await publish(list(getattr(batch, field_name)))
+        return batch
+    return None
+
+
+async def emit_structured(
+    model,
+    schema,
+    request: list,
+    operation_name: str,
+    attempts: int,
+    *,
+    streamed_field: str = "",
+    on_item: Callable[[BaseModel], Awaitable[None]] | None = None,
+):
     """One structured call: offered rather than forced, insisted on by the prompt, retried, and validated."""
     # The tool is offered and the prompt insists on it: forcing it, a thinking model behind a gateway refuses.
     structured_model = model.bind_tools([schema], tool_choice="auto")
     with auxiliary_model_call():
+        if streamed_field and on_item is not None:
+            return await _emit_streamed_structured(
+                structured_model,
+                schema,
+                request,
+                operation_name,
+                attempts,
+                streamed_field,
+                on_item,
+            )
         for attempt in range(1, attempts + 1):
             try:
                 response = await structured_model.ainvoke(request)
