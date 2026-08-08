@@ -224,9 +224,8 @@ and how to run it, are in [`mobile/`](../mobile/README.md).
 | Command | What it does |
 |---|---|
 | `langmesh app` | Start the daemon if needed, then launch the app |
-| `langmesh app --no-daemon` | Just the window |
 
-The app is a **client**. It contains no daemon, and it starts none. It finds one by reading the port and token that `langmeshd` publishes. When there is none it is powerless, exactly as it is when a remote host does not answer. So the convenience runs this way round: the command line, which owns the daemon, brings it up and then launches the window.
+The app is a **client** and contains no daemon. The release app and this command both start the separately installed local daemon when needed, then read the port and token it publishes. The daemon stays independent and continues running when the window quits.
 
 The app is addressed by bundle identifier rather than by name, so renaming or moving it does not break this. If it is not installed, the command says so rather than half-working. macOS only.
 

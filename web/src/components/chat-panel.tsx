@@ -161,7 +161,8 @@ interface ChatPanelProps {
   // Whether the daemon itself is unreachable, the one state with a remedy and so the only one that earns the error screen.
   connectionLost?: boolean;
   // Asks the page to fetch everything a lost daemon took away.
-  onReconnect?: () => void;
+  onReconnect?: () => void | Promise<void>;
+  reconnecting?: boolean;
   onStreamingChange?: (isStreaming: boolean) => void;
   historyOpen?: boolean;
   onToggleHistory?: () => void;
@@ -296,6 +297,7 @@ export function ChatPanel({
   isConnected = true,
   connectionLost = false,
   onReconnect,
+  reconnecting = false,
   onStreamingChange,
   historyOpen = false,
   onToggleHistory,
@@ -1086,8 +1088,14 @@ export function ChatPanel({
                           {translation("disconnectedDescription")}
                         </EmptyState.Description>
                       </VStack>
-                      <Button variant="solid" colorPalette="blue" onClick={onReconnect}>
-                        {translation("reconnect")}
+                      <Button
+                        variant="solid"
+                        colorPalette="blue"
+                        onClick={onReconnect}
+                        loading={reconnecting}
+                        disabled={reconnecting}
+                      >
+                        {translation(reconnecting ? "reconnecting" : "reconnect")}
                       </Button>
                     </EmptyState.Content>
                   </EmptyState.Root>

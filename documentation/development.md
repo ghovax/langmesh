@@ -79,11 +79,11 @@ A new setting is a field on the configuration model, and then three things that 
 
 | Command | What it does |
 |---|---|
-| `langmesh serve` | The app connects to a daemon; it does not start one |
+| `langmesh serve` | Starts the checkout daemon the development app should use |
 | `cd web` |  |
 | `bun run tauri:dev` | Launches the Tauri window against the dev UI |
 
-Start the daemon first, in either order but before you expect the window to work. The app is a client. When nothing is listening, it shows the connection picker and says what to run. It does not launch a harness of its own.
+Start the checkout daemon before the development window so testing never silently switches to the installed production build. Automatic local startup belongs only to a release app.
 
 ## Logs and copy
 

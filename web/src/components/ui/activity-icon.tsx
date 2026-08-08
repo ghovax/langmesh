@@ -1,5 +1,5 @@
 import { Span, Spinner, type SpinnerProps } from "@chakra-ui/react";
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 
 const ACTIVITY_ICON_BOX_SIZE = "3.5";
 const ACTIVITY_SPINNER_SIZE = "3";
@@ -23,6 +23,14 @@ export function ActivityIcon({ children }: { children: ReactNode }) {
 }
 
 export function ActivitySpinner(properties: SpinnerProps) {
+  const spinnerRef = useRef<HTMLSpanElement>(null);
+
+  useLayoutEffect(() => {
+    const animation = spinnerRef.current?.getAnimations()[0];
+    const timelineTime = document.timeline.currentTime;
+    if (animation && typeof timelineTime === "number") animation.currentTime = timelineTime;
+  }, []);
+
   return (
     <Span
       boxSize={ACTIVITY_ICON_BOX_SIZE}
@@ -31,7 +39,12 @@ export function ActivitySpinner(properties: SpinnerProps) {
       justifyContent="center"
       flexShrink={0}
     >
-      <Spinner boxSize={ACTIVITY_SPINNER_SIZE} borderWidth="1.5px" {...properties} />
+      <Spinner
+        ref={spinnerRef}
+        boxSize={ACTIVITY_SPINNER_SIZE}
+        borderWidth="1.5px"
+        {...properties}
+      />
     </Span>
   );
 }

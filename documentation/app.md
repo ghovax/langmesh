@@ -8,7 +8,7 @@ Start it with the daemon in one step:
 langmesh app
 ```
 
-That brings the daemon up if it is not running, then opens the window. `langmesh app --no-daemon` opens only the window, for when a daemon is already up or lives on another machine.
+That brings the daemon up if it is not running, then opens the window. Opening **LangMesh** directly does the same: the release app starts the separately installed local daemon when it cannot find one.
 
 ## What the window shows
 
@@ -53,7 +53,7 @@ The app is a client, so the daemon it talks to does not have to be on this machi
 
 ## When there is no daemon
 
-The app does not start a harness of its own. With nothing listening it says so and tells you what to run, exactly as it would if a remote host were not answering.
+The release app asks the separately installed `LangMesh Computer Use.app` to start the local daemon and waits for its published endpoint. If that bundle is missing or cannot start, the app remains disconnected and reports the failure; a remote daemon is never started or replaced by this local recovery.
 
 ## Where to go next
 

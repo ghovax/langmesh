@@ -164,30 +164,17 @@ function Body({
         fontWeight="medium"
         color={muted ? "fg.muted" : undefined}
         truncate={expanded ? undefined : true}
-        title={expanded ? undefined : claim}
       >
         <InlineMarkdown content={claim} />
       </Text>
       {entry.detail ? (
-        <Text
-          textStyle="2xs"
-          color="fg.muted"
-          mt={1}
-          truncate={expanded ? undefined : true}
-          title={expanded ? undefined : entry.detail}
-        >
+        <Text textStyle="2xs" color="fg.muted" mt={1} truncate={expanded ? undefined : true}>
           <InlineMarkdown content={entry.detail} />
         </Text>
       ) : null}
       {cited ? (
         // Prose as often as a path, so it is set as prose and the model's own backticks mark what is literal.
-        <Text
-          textStyle="2xs"
-          color="fg.subtle"
-          mt={1}
-          truncate={expanded ? undefined : true}
-          title={expanded ? undefined : cited}
-        >
+        <Text textStyle="2xs" color="fg.subtle" mt={1} truncate={expanded ? undefined : true}>
           <InlineMarkdown content={cited} />
         </Text>
       ) : null}

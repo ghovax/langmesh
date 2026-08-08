@@ -60,6 +60,14 @@ export function forgetDaemonEndpoint(): void {
   daemonEndpointPromise = null;
 }
 
+/** Resolve the daemon again and prove it is answering, starting the installed local one in Tauri when absent. */
+export async function reconnectDaemon(): Promise<void> {
+  forgetDaemonEndpoint();
+  invalidateDiscoveryCache();
+  const response = await apiFetch("/health", { cache: "no-store" });
+  if (!response.ok) throw new Error(`Daemon health check failed (${response.status})`);
+}
+
 export interface ApiRequestOptions {
   apiBase?: string;
   // The token to present when the request is aimed at a daemon other than the active one.

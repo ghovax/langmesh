@@ -58,7 +58,7 @@ You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv`
 | Symptom | Cause | Fix |
 |---|---|---|
 | `langmesh: nothing on this system claims com.ghovax.langmesh` | You built `LangMesh.app` but left it in the Tauri target directory. macOS resolves `-b` through LaunchServices, which does not know about it there | Step 12 — `ditto` it to `/Applications` |
-| The app opens but only ever shows the connection picker | No daemon is running. The app never starts one | `langmesh serve`, or use `langmesh app` |
+| The app opens but only ever shows the connection picker | The separately installed daemon bundle is missing or could not start | Install `LangMesh Computer Use.app`, then reopen LangMesh or run `langmesh daemon status` for the failure |
 | Computer control keeps asking for Accessibility after every rebuild | The daemon serving you is the checkout's (`uv run langmesh`), whose code identity is the Python interpreter, not the signed image | `langmesh daemon status` reports `image.frozen`. If it is `false`, stop that daemon and start the installed one |
 | Two `langmesh` on your `PATH` behave differently | The checkout's and the installed one share `~/.config/langmesh/` and the runtime directory, so whichever daemon started first owns it | `which -a langmesh`, and check `image.executable` in `langmesh daemon status` |
 | `ln -sf … /usr/local/bin/langmesh` is denied | `/usr/local/bin` is root-owned | `sudo ln -sf …`, or symlink into `~/.local/bin` and put that on `PATH` |
@@ -67,4 +67,3 @@ You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv`
 Signing (steps 6, 7, 11) is optional for a build that only runs. It is necessary for a **stable Accessibility grant**. Without it, every rebuild is a new code identity, and macOS asks again.
 
 Both artifacts carry the same `CFBundleName` and identifier. One certificate over both therefore keeps them as a single **LangMesh** row. See the [Development guide](development.md#building-and-signing).
-

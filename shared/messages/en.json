@@ -172,6 +172,7 @@
     "readOnly": "Read-only",
     "reasonAccessRequest": "{count, plural, one {This call asks to reach a path outside what the session may touch.} other {This call asks to reach paths outside what the session may touch.}}",
     "reconnect": "Reconnect",
+    "reconnecting": "Reconnecting",
     "reload": "Reload",
     "retry": "Retry",
     "sessionOptions": "Session options",

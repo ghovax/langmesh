@@ -31,6 +31,7 @@ import {
   getWorkspace,
   listWorkspaces,
   rememberLastSession,
+  reconnectDaemon,
   saveAgentConfiguration,
   saveSettings,
   setSandboxEnforce,
@@ -157,6 +158,8 @@ function Workspace() {
   const [agentCards, setAgentCards] = useState<AgentCard[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string>("");
   const [isConnected, setIsConnected] = useState(true);
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const reconnectingRef = useRef(false);
 
   const [sessions, setSessions] = useState<SessionEntry[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
@@ -342,12 +345,21 @@ function Workspace() {
     [],
   );
 
-  const reconnectRef = useRef<(() => void) | null>(null);
-  const reconnect = useCallback(() => {
-    loadAgents();
-    loadAgentCards();
-    loadModelCatalog();
-    loadSessions();
+  const reconnectRef = useRef<(() => void | Promise<void>) | null>(null);
+  const reconnect = useCallback(async () => {
+    if (reconnectingRef.current) return;
+    reconnectingRef.current = true;
+    setIsReconnecting(true);
+    try {
+      await reconnectDaemon();
+      await Promise.all([loadAgents(), loadAgentCards(), loadModelCatalog(), loadSessions()]);
+      setIsConnected(true);
+    } catch {
+      setIsConnected(false);
+    } finally {
+      reconnectingRef.current = false;
+      setIsReconnecting(false);
+    }
   }, [loadAgents, loadAgentCards, loadModelCatalog, loadSessions]);
   reconnectRef.current = reconnect;
 
@@ -884,6 +896,7 @@ function Workspace() {
           isConnected={isConnected}
           connectionLost={!isConnected}
           onReconnect={reconnect}
+          reconnecting={isReconnecting}
           onStreamingChange={handleStreamingChange}
           historyOpen={visibleHistoryOpen}
           onToggleHistory={() =>

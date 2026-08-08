@@ -1,22 +1,4 @@
-// The Rust core of the LangMesh desktop app.
-//
-// This is a client. It does not start, supervise, or contain the daemon — it finds one and
-// talks to it, and is powerless when there is none, exactly as it is when a remote host does
-// not answer. What it used to do instead (freeze the harness into its own bundle, spawn it,
-// track its pid, reap the orphan a force-quit left behind) made the window the harness's
-// parent process, which is the opposite of a session being a thing you can address.
-//
-// Responsibilities beyond hosting the webview:
-//   1. Register the front-end-local SQLite store (connection profiles + UI prefs),
-//      separate from the daemon's own history.db.
-//   2. Report where a local daemon is listening, and whether one is, by reading the port
-//      and token it publishes into the runtime directory.
-//   3. Behave like a proper macOS menu-bar app: a tray menu (New Chat, Recent
-//      Conversations, Open LangMesh, Quit), and a close button that hides the window
-//      and keeps the app alive in the dock until the user quits.
-//
-// The window chrome — hidden titlebar with native macOS traffic lights overlaid on
-// the content — is declared in tauri.conf.json.
+// The native client starts the separate installed daemon when needed and owns endpoint discovery, tunnels, previews, tray, and window behavior.
 
 mod sound;
 
@@ -275,23 +257,82 @@ fn kill_ssh_tunnels(state: &SshTunnels) {
 }
 
 /// Whether a daemon on this machine is answering, and where.
-///
-/// The app's whole local story: it looks, and it reports. It does not start one. A daemon is
-/// a program the user installs and runs, the same on this machine as on any other, and the
-/// only thing that used to make the local case special was that the window could conjure one
-/// into existence out of a copy it carried in its own bundle.
 #[tauri::command]
 fn local_daemon() -> serde_json::Value {
     serde_json::json!({ "listening": daemon_is_listening(), "url": local_base_url() })
 }
 
-/// Where the daemon is, and the token that authorises talking to it.
-///
-/// The webview cannot open a unix socket, so it uses the daemon's loopback port; the token
-/// is what makes that port safe to expose to the browser context at all. Reading both from
-/// the runtime directory keeps the secret out of the page's own storage.
-#[tauri::command]
-fn daemon_endpoint() -> Result<serde_json::Value, String> {
+#[cfg(not(debug_assertions))]
+fn installed_daemon_executable() -> Result<PathBuf, String> {
+    let desktop_executable = std::env::current_exe()
+        .map_err(|error| format!("could not locate the LangMesh desktop executable: {error}"))?;
+    let mut candidates = Vec::new();
+    if let Some(installation_directory) = desktop_executable
+        .ancestors()
+        .find(|ancestor| ancestor.extension().is_some_and(|extension| extension == "app"))
+        .and_then(|bundle| bundle.parent())
+    {
+        candidates.push(
+            installation_directory
+                .join("LangMesh Computer Use.app")
+                .join("Contents")
+                .join("MacOS")
+                .join("langmesh"),
+        );
+    }
+    candidates.push(PathBuf::from(
+        "/Applications/LangMesh Computer Use.app/Contents/MacOS/langmesh",
+    ));
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| {
+            "the LangMesh daemon is not installed; install LangMesh Computer Use.app beside LangMesh.app"
+                .to_string()
+        })
+}
+
+#[cfg(not(debug_assertions))]
+fn ensure_local_daemon() -> Result<(), String> {
+    if daemon_is_listening() {
+        return Ok(());
+    }
+    let executable = installed_daemon_executable()?;
+    let output = Command::new(&executable)
+        .args(["daemon", "--start"])
+        .output()
+        .map_err(|error| format!("could not start {}: {error}", executable.display()))?;
+    if !output.status.success() {
+        let standard_error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let standard_output = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if standard_error.is_empty() {
+            standard_output
+        } else {
+            standard_error
+        };
+        return Err(if detail.is_empty() {
+            format!("{} could not start the local daemon", executable.display())
+        } else {
+            detail
+        });
+    }
+    if !daemon_is_listening() {
+        return Err(
+            "the local daemon finished starting but is not accepting connections".to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+fn ensure_local_daemon() -> Result<(), String> {
+    daemon_is_listening()
+        .then_some(())
+        .ok_or_else(|| "start the checkout daemon before launching the development app".to_string())
+}
+
+fn read_daemon_endpoint() -> Result<serde_json::Value, String> {
+    ensure_local_daemon()?;
     let (port_path, token_path) = daemon_endpoint_files();
     let port = std::fs::read_to_string(&port_path)
         .map_err(|error| format!("langmeshd has not published a port yet: {error}"))?
@@ -303,6 +344,14 @@ fn daemon_endpoint() -> Result<serde_json::Value, String> {
         .trim()
         .to_string();
     Ok(serde_json::json!({ "url": format!("http://{LOCAL_HOST}:{port}"), "token": token }))
+}
+
+/// Start the installed local daemon when needed and return its authenticated loopback endpoint.
+#[tauri::command]
+async fn daemon_endpoint() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(read_daemon_endpoint)
+        .await
+        .map_err(|error| format!("could not resolve the local daemon endpoint: {error}"))?
 }
 
 // Quit and relaunch the app.
@@ -562,10 +611,7 @@ pub fn run() {
         .run(|app_handle, event| match event {
             // Clicking the dock icon while hidden brings the window back.
             tauri::RunEvent::Reopen { .. } => show_main_window(app_handle),
-            // A real quit closes the tunnels this app opened. The daemon is not ours to
-            // reap — quitting the window leaves whatever sessions are running exactly where
-            // they were, which is the point. Window closes never reach here (they're
-            // prevented above), so this only fires on quit.
+            // A real quit closes the tunnels this app opened; the independent daemon outlives the window.
             tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
                 if let Some(state) = app_handle.try_state::<SshTunnels>() {
                     kill_ssh_tunnels(&state);

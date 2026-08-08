@@ -111,9 +111,9 @@ It also holds no state of its own. Which workspace you were last in, the colour 
 
 Because a webview cannot open a unix socket, the app uses the daemon's loopback listener and the daemon relays data-plane commands to the owning session.
 
-The app does not contain a daemon and does not start one. It finds one by reading the port and token that `langmeshd` publishes into the runtime directory. When there is none it is powerless, exactly as it is when a remote host does not answer.
+The app does not contain a daemon. For the default local connection, a release build asks the separately installed daemon bundle to start when nothing is listening, then reads the port and token that `langmeshd` publishes into the runtime directory. The daemon remains independent and outlives the window.
 
-"Local" labels the daemon on this machine; it is not a different mechanism. To connect to it is the same act as connecting over a tunnel, without the tunnel. The daemon is a separate installable (`packaging/build-daemon.sh`), signed with the same identity as the app so the two share one macOS Accessibility grant. `langmesh app` brings the daemon up and launches the window in one command. The dependency therefore runs from the command line to the app, not the other way round.
+"Local" labels the daemon on this machine; it is not a different protocol. The daemon is a separate installable (`packaging/build-daemon.sh`), signed with the same identity as the app so the two share one macOS Accessibility grant. Both `langmesh app` and opening the release app directly ensure that local daemon is available without making it a child of the window.
 
 ## Connections: local, remote, SSH
 
@@ -127,7 +127,7 @@ A daemon's address and its token belong together. Each `langmeshd` mints its own
 
 That yields three ways to run:
 
-- **Local (default).** The app reads the port and token that `langmeshd` published into the runtime directory. It does not start it; `langmesh app` does, before it opens the window.
+- **Local (default).** The release app starts the separately installed daemon when needed, then reads the port and token that `langmeshd` published into the runtime directory.
 - **Remote URL.** Run `langmeshd` on another host, expose its loopback port behind your own transport security, and add the URL plus the token. The app becomes a native front-end to a remote backend — the agent's shell, files, and network all live on that host.
 - **Over SSH.** Add an SSH host. LangMesh forwards a local port to the daemon's port on the remote machine. The harness can therefore live on a machine you reach only over SSH, with nothing exposed.
 

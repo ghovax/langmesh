@@ -1463,7 +1463,8 @@ export function useChat(
           // A Stop or a dropped connection ends a turn with no terminal event, leaving cards spinning.
           finishRunningThinking(stateRef.current);
           finishActiveTools(stateRef.current);
-          flush();
+          // Commit the terminal transcript and streaming flag together, so no stale intermediate layout can paint.
+          flushNow();
           // The queue is not touched here: a turn ending must not be both a trigger and a deletion.
           abortedByUserRef.current = false;
           isStreamingRef.current = false;
