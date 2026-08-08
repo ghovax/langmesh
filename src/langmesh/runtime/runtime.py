@@ -634,6 +634,7 @@ class AgentRuntime(
         self._session_dirty = False
         # The serialized observation pipeline, whose tail keeps every earlier write alive.
         self._observation_tail: asyncio.Task | None = None
+        self._observations_in_flight: set[str] = set()
         self._execution_history: list[dict] = []
         # The permission policy as one value, clamped at creation against the parent and the card's ceiling.
         self._a2a_turn_id: str = ""

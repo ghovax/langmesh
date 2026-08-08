@@ -110,25 +110,92 @@ class _CompactsContext:
             for entry in entries
         ]
 
-    def _build_observation_message(self, observations: list[dict], directives: list[dict]):
-        """The record the agent reads: both ledgers, rendered as the turns they describe leave the conversation."""
+    @staticmethod
+    def _entry_ids(entries: list[dict]) -> list[str]:
+        """The durable identities represented by one memory message."""
+        return [str(entry["id"]) for entry in entries if entry.get("id")]
+
+    def _build_memory_message(
+        self,
+        template: str,
+        observations: list[dict],
+        directives: list[dict],
+        *,
+        represented: dict[str, list[dict]] | None = None,
+    ):
+        """One persistent memory addition, carrying the identities needed to append each entry exactly once."""
+        represented = represented or {"observations": observations, "directives": directives}
         return self._reminder_message(
             self._prompt_loader.load(
-                "observation_log",
+                template,
                 {
                     "observations": lines(self._readable(self._live(observations))),
-                    "directives": lines(
-                        self._readable(
-                            [
-                                one
-                                for one in self._live(directives)
-                                if one.get("still_binding", True)
-                            ]
-                        )
-                    ),
+                    "directives": lines(self._readable(self._live(directives))),
                 },
             ),
-            marks={"observation_log": True, "observations": observations, "directives": directives},
+            marks={
+                "memory_record": {
+                    "observations": self._entry_ids(represented["observations"]),
+                    "directives": self._entry_ids(represented["directives"]),
+                }
+            },
+        )
+
+    def _recorded_memory_ids(self) -> dict[str, set[str]]:
+        """The ledger entries already appended to the persistent conversation."""
+        recorded = {"observations": set(), "directives": set()}
+        for message in self._conversation:
+            mark = message.additional_kwargs.get("memory_record")
+            if not isinstance(mark, dict):
+                continue
+            for ledger in recorded:
+                recorded[ledger].update(str(identifier) for identifier in mark.get(ledger, []))
+        return recorded
+
+    async def _append_unseen_memory(self, excluded_exchanges: set[str] | None = None) -> None:
+        """Append unseen entries except records that were in flight when this model opening began."""
+        snapshot = await self._memory_snapshot()
+        recorded = self._recorded_memory_ids()
+        excluded_exchanges = excluded_exchanges or set()
+        observations = [
+            entry
+            for entry in snapshot["observations"]
+            if str(entry.get("id") or "") not in recorded["observations"]
+            and str(entry.get("exchange") or "") not in excluded_exchanges
+        ]
+        directives = [
+            entry
+            for entry in snapshot["directives"]
+            if str(entry.get("id") or "") not in recorded["directives"]
+            and str(entry.get("exchange") or "") not in excluded_exchanges
+        ]
+        if observations or directives:
+            self._conversation.append(
+                self._build_memory_message("observation_update", observations, directives)
+            )
+
+    async def _replace_memory_records_with_snapshot(self) -> None:
+        """At the explicit rewrite boundary, replace old notices with one complete live memory snapshot."""
+        self._conversation[:] = [
+            message
+            for message in self._conversation
+            if not message.additional_kwargs.get("memory_record")
+        ]
+        snapshot = await self._memory_snapshot()
+        observations = snapshot["observations"]
+        directives = snapshot["directives"]
+        if not observations and not directives:
+            return
+        visible_directives = [
+            entry for entry in self._live(directives) if entry.get("still_binding", True)
+        ]
+        self._conversation.append(
+            self._build_memory_message(
+                "observation_log",
+                observations,
+                visible_directives,
+                represented=snapshot,
+            )
         )
 
     def _usable_context(self) -> int:
@@ -219,19 +286,33 @@ class _CompactsContext:
         exchange = self._current_exchange()
         if len(exchange) < 2 or self._turn_store is None:
             return
-        task = asyncio.create_task(self._observe_exchange_after(self._observation_tail, exchange))
+        exchange_identifier = self._exchange_of(exchange[0])
+        self._observations_in_flight.add(exchange_identifier)
+        task = asyncio.create_task(
+            self._observe_exchange_after(
+                self._observation_tail,
+                exchange,
+                exchange_identifier,
+            )
+        )
         self._observation_tail = task
         task.add_done_callback(self._finish_observation)
 
-    async def _observe_exchange_after(self, earlier: asyncio.Task | None, exchange: list) -> None:
+    async def _observe_exchange_after(
+        self,
+        earlier: asyncio.Task | None,
+        exchange: list,
+        exchange_identifier: str,
+    ) -> None:
         """Record one exchange after earlier observers, so every fold reads their completed entries."""
         identifier = new_id("recording")
-        await self._publish_memory_recording(identifier, True)
         try:
+            await self._publish_memory_recording(identifier, True)
             if earlier is not None:
                 await asyncio.gather(earlier, return_exceptions=True)
-            await self.observe_exchange(exchange)
+            await self.observe_exchange(exchange, exchange_identifier)
         finally:
+            self._observations_in_flight.discard(exchange_identifier)
             await self._publish_memory_recording(identifier, False)
 
     def _finish_observation(self, task: asyncio.Task) -> None:
@@ -260,12 +341,14 @@ class _CompactsContext:
         except Exception:  # noqa: BLE001 — feedback must not decide whether the record is written
             logger.warning("could not publish memory recording state", exc_info=True)
 
-    async def observe_exchange(self, exchange: list | None = None) -> None:
+    async def observe_exchange(
+        self, exchange: list | None = None, exchange_identifier: str = ""
+    ) -> None:
         """Record what the exchange established for the next complete memory snapshot."""
         exchange = self._current_exchange() if exchange is None else exchange
         if len(exchange) < 2 or self._turn_store is None:
             return
-        tag = self._exchange_of(exchange[0])
+        tag = exchange_identifier or self._exchange_of(exchange[0])
         ledgers = await self._memory_snapshot()
         recorded = ledgers["observations"]
         if any(entry.get("exchange") == tag for entry in recorded):
@@ -329,21 +412,6 @@ class _CompactsContext:
             return live
         await self._commit_memory(replacements, [])
         return (await self._memory_snapshot())["observations"]
-
-    async def memory_prompt(self):
-        """Build the complete live record to carry into a model request."""
-        if self._turn_store is None:
-            return None
-        ledgers = await self._memory_snapshot()
-        observations = ledgers["observations"]
-        directives = [
-            entry
-            for entry in ledgers["directives"]
-            if entry.get("still_binding", True)
-        ]
-        if not observations and not directives:
-            return None
-        return self._build_observation_message(observations, directives)
 
     async def _commit_memory(self, observations: list[dict], directives: list[dict]) -> None:
         """Write what a pass produced. The store is append-only, so this never revises and never deletes."""
@@ -415,6 +483,8 @@ class _CompactsContext:
             self._conversation[:] = _without_provider_reasoning(
                 await self._compaction.compact(state)
             )
+            await self._replace_memory_records_with_snapshot()
+            self._latest_context_tokens = conversation_tokens(self._conversation)
             yield CompactionDone(
                 reason=reason,
                 ok=True,
@@ -449,6 +519,8 @@ class _CompactsContext:
         recorded = await self._consolidate_observations_if_needed(
             (await self._memory_snapshot())["observations"]
         )
+        await self._replace_memory_records_with_snapshot()
+        self._latest_context_tokens = conversation_tokens(self._conversation)
         yield CompactionDone(
             reason=reason,
             ok=True,

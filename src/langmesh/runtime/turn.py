@@ -439,6 +439,10 @@ class _RunsTurns:
         resume_answers: Optional[dict[str, Any]] = None,
     ) -> AsyncIterator[TurnEvent]:
         self._abort_event.clear()
+        deferred_memory_exchanges = (
+            set(self._observations_in_flight) if resume_plans is None else set()
+        )
+        first_model_opening = True
         # A turn runs until the model is done or the user interrupts: an unfinished goal outlives this loop.
         turn_tool_calls_log: list[dict] = []
         turn_tool_results_log: list[dict] = []
@@ -512,12 +516,17 @@ class _RunsTurns:
             for steering_event in await self._drain_steering_messages():
                 yield steering_event
 
+            await self._append_unseen_memory(
+                deferred_memory_exchanges if first_model_opening else None
+            )
+
             # Drop old turns once the configured window threshold is reached.
-            if self._should_compact():
+            if not (first_model_opening and deferred_memory_exchanges) and self._should_compact():
                 async for compaction_event in self.compact(reason="auto"):
                     yield compaction_event
 
-            messages = self._build_turn_messages(await self.memory_prompt())
+            messages = self._build_turn_messages()
+            first_model_opening = False
 
             # The model call: yields the stream and hands back the assembled response, or a terminal condition.
             call = _ModelCallOutcome()
@@ -583,12 +592,9 @@ class _RunsTurns:
             for steering_event in await self._drain_steering_messages():
                 yield steering_event
 
-    def _build_turn_messages(self, memory_prompt: Optional[HumanMessage]) -> list:
+    def _build_turn_messages(self) -> list:
         """This iteration's messages: the static prompt, the conversation, and the turn context appended once."""
         messages = [SystemMessage(content=self._build_static_system_prompt())] + self._conversation
-        # Both of these are carried by the request and never by the conversation, so they go last and only
-        # last: anywhere else, their absence on the next request would rewrite the prefix from that point.
-        messages = messages + ([memory_prompt] if memory_prompt is not None else [])
         if self._pending_checklist is None:
             return messages
         # Last, and only ever last: it never joins the conversation, so anywhere else its absence next time rewrites the prefix.
