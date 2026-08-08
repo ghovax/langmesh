@@ -59,15 +59,6 @@ Whether a session may install the tools it needs into a profile of its own.
 | `toolbox.enabled` | boolean | `true` | Let each session install the tools it needs into a package profile of its own, deleted with the session. |
 
 
-## Permission reviewer
-
-The model call that decides a tool call nobody is there to be asked about.
-
-| Setting | Type | Default | What it is for |
-|---|---|---|---|
-| `permission_reviewer.reasoning_effort` | `minimal` / `low` / `medium` / `high` | `low` | How hard the judge thinks about one request. It weighs one widening against a page of rules, which is not what an agent's own effort is for. |
-
-
 ## Conversation compaction
 
 How conversation history is folded as it grows.

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Optional, Sequence
+from typing import Generator, Optional, Sequence
 
 from langmesh.base.tuning import count_tokens
 
@@ -12,6 +14,21 @@ from langmesh.base.tuning import count_tokens
 INSTRUCTIONS = "instructions"
 TOOLS = "tools"
 ITEM = "item"
+
+_TRACKS_CONVERSATION_CACHE = ContextVar("tracks_conversation_cache", default=True)
+
+
+@contextmanager
+def auxiliary_model_call() -> Generator[None, None, None]:
+    token = _TRACKS_CONVERSATION_CACHE.set(False)
+    try:
+        yield
+    finally:
+        _TRACKS_CONVERSATION_CACHE.reset(token)
+
+
+def tracks_conversation_cache() -> bool:
+    return _TRACKS_CONVERSATION_CACHE.get()
 
 
 @dataclass(frozen=True)
@@ -103,4 +120,15 @@ def diagnose(current: RequestTrace, previous: Optional[RequestTrace]) -> dict[st
     }
 
 
-__all__ = ["INSTRUCTIONS", "ITEM", "TOOLS", "Piece", "RequestTrace", "Segment", "diagnose", "trace"]
+__all__ = [
+    "INSTRUCTIONS",
+    "ITEM",
+    "TOOLS",
+    "Piece",
+    "RequestTrace",
+    "Segment",
+    "auxiliary_model_call",
+    "diagnose",
+    "trace",
+    "tracks_conversation_cache",
+]

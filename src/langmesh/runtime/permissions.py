@@ -25,6 +25,7 @@ import logging
 import uuid
 from langmesh.base.serialization import compact
 from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.runtime.cache_trace import auxiliary_model_call
 
 logger = logging.getLogger(__name__)
 
@@ -75,29 +76,6 @@ def _screen_mutations(script: str) -> tuple[str, ...]:
 class _DecidesPermissions:
     """Whether a call runs, is asked about, or is refused."""
 
-    # ---- the reviewer -------------------------------------------------------------------
-
-    def _reviewer_model(self):
-        """The model that reviews a request: the session's own, at a lower effort, built once."""
-        if self._reviewer_llm is not None:
-            return self._reviewer_llm
-        # A caller that passed a model object has no identifier to rebuild from, so the judge is that object.
-        identifier = self.effective_model_identifier
-        if not identifier:
-            self._reviewer_llm = self._llm
-            return self._reviewer_llm
-        from langmesh.runtime.runtime import build_chat_model
-
-        effort = self._global_configuration.permission_reviewer.reasoning_effort
-        self._reviewer_llm = build_chat_model(
-            identifier,
-            self._global_configuration,
-            self._agent_configuration.model_copy(update={"reasoning_effort": effort}),
-            self._working_directory,
-            session_id=self._session_id,
-        )
-        return self._reviewer_llm
-
     async def _review(self, gate: _PreflightGate) -> PermissionDecision:
         """The reviewer's verdict on one gate. Takes a gate, so it cannot reach a call that raised none."""
         context = compact(
@@ -133,54 +111,53 @@ class _DecidesPermissions:
             },
         )
         # Instructions and subject as separate messages: some providers reject a request with no input.
-        model = self._reviewer_model().bind_tools([PermissionDecision], tool_choice="auto")
+        model = self._model.bind_tools([PermissionDecision], tool_choice="auto")
         request = [SystemMessage(content=prompt), HumanMessage(content=context)]
         attempts = active_tuning().amount(Tunable.permission_reviewer_attempts)
-        for attempt in range(1, attempts + 1):
-            try:
-                response = await model.ainvoke(request)
-            except Exception:  # noqa: BLE001 — one dropped call is not a verdict
-                logger.warning(
-                    "the permission reviewer could not be reached (attempt %d of %d)",
-                    attempt,
-                    attempts,
-                    exc_info=True,
-                )
-                continue
-            if not response.tool_calls:
-                logger.warning(
-                    "the permission reviewer answered without a decision (attempt %d of %d)",
-                    attempt,
-                    attempts,
-                )
-                continue
-            try:
-                decision = PermissionDecision.model_validate(response.tool_calls[0]["args"])
-            except Exception:  # noqa: BLE001 — a malformed verdict is not a verdict either
-                logger.warning(
-                    "the permission reviewer returned a malformed decision (attempt %d of %d)",
-                    attempt,
-                    attempts,
-                    exc_info=True,
-                )
-                continue
-            # A verdict with no reason cannot be acted on. A failed attempt, not a refusal — the next may supply it.
-            if not decision.explanation.strip():
-                logger.warning(
-                    "the permission reviewer gave no reason for its decision (attempt %d of %d)",
-                    attempt,
-                    attempts,
-                )
-                continue
-            return decision
+        with auxiliary_model_call():
+            for attempt in range(1, attempts + 1):
+                try:
+                    response = await model.ainvoke(request)
+                except Exception:  # noqa: BLE001 — one dropped call is not a verdict
+                    logger.warning(
+                        "the permission reviewer could not be reached (attempt %d of %d)",
+                        attempt,
+                        attempts,
+                        exc_info=True,
+                    )
+                    continue
+                if not response.tool_calls:
+                    logger.warning(
+                        "the permission reviewer answered without a decision (attempt %d of %d)",
+                        attempt,
+                        attempts,
+                    )
+                    continue
+                try:
+                    decision = PermissionDecision.model_validate(response.tool_calls[0]["args"])
+                except Exception:  # noqa: BLE001 — a malformed verdict is not a verdict either
+                    logger.warning(
+                        "the permission reviewer returned a malformed decision (attempt %d of %d)",
+                        attempt,
+                        attempts,
+                        exc_info=True,
+                    )
+                    continue
+                # A verdict with no reason cannot be acted on. A failed attempt, not a refusal — the next may supply it.
+                if not decision.explanation.strip():
+                    logger.warning(
+                        "the permission reviewer gave no reason for its decision (attempt %d of %d)",
+                        attempt,
+                        attempts,
+                    )
+                    continue
+                return decision
         logger.warning("the permission reviewer did not decide in %d attempts; denying", attempts)
         return PermissionDecision(
             action="deny",
             explanation="The safety check could not run, so this request was refused.",
             risk="medium",
         )
-
-    # ---- grants -------------------------------------------------------------------------
 
     def _record_grant(self, grant: Grant) -> None:
         """Remember an approved widening for the session, so one grant is not re-asked on every command."""
@@ -204,8 +181,6 @@ class _DecidesPermissions:
             profile = profile.with_grant(grant, workspace=self._working_directory or "")
         return profile
 
-    # ---- ids ----------------------------------------------------------------------------
-
     def _new_permission_request_id(self, tool_call_id: str = "") -> str:
         """The id an answer is filed under, derived from the call so a replanned gate is the same gate."""
         return f"perm-{self._session_id}-{tool_call_id or uuid.uuid4()}"
@@ -217,8 +192,6 @@ class _DecidesPermissions:
     def _new_retry_request_id(self, tool_call_id: str) -> str:
         """The id for a second run, distinct from the preflight id since both can exist in one turn."""
         return f"retry-{self._session_id}-{tool_call_id}"
-
-    # ---- the planner --------------------------------------------------------------------
 
     async def _preflight_permissions(
         self, tool_calls: list[dict]
@@ -431,8 +404,6 @@ class _DecidesPermissions:
         if gate.grants_screen_mutations and plan is not None:
             plan.screen_mutations = True
 
-    # ---- resolution ---------------------------------------------------------------------
-
     def _resolve_tool_decisions(
         self, plans: dict[str, _ToolPlan], answers: dict[str, Any]
     ) -> dict[str, _ResolvedToolDecision]:
@@ -480,8 +451,6 @@ class _DecidesPermissions:
                     )
             decisions[tool_call_id] = decision
         return decisions
-
-    # ---- the second run -----------------------------------------------------------------
 
     def retry_gate(
         self,

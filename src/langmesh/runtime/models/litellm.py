@@ -23,7 +23,15 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import PrivateAttr, SecretStr
 
 from langmesh.base.serialization import compact
-from langmesh.runtime.cache_trace import ITEM, TOOLS, Piece, RequestTrace, diagnose, trace
+from langmesh.runtime.cache_trace import (
+    ITEM,
+    TOOLS,
+    Piece,
+    RequestTrace,
+    diagnose,
+    trace,
+    tracks_conversation_cache,
+)
 from langmesh.base.message_content import (
     REASONING_MODEL_KEY,
     carried_reasoning_for,
@@ -353,6 +361,8 @@ class ChatLiteLLMModel(BaseChatModel):
 
     def _cache_diagnosis(self, current: RequestTrace) -> dict[str, object]:
         """What this request kept from the last one, and remember it for the next."""
+        if not tracks_conversation_cache():
+            return diagnose(current, None)
         diagnosis = diagnose(current, self._previous_trace)
         self._previous_trace = current
         return diagnosis

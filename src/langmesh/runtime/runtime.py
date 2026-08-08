@@ -89,6 +89,7 @@ from langmesh.runtime.internals import (
     _model_visible_tool_result,
     _tool_timing_metadata,
     _utc_timestamp,
+    conversation_tokens,
 )
 
 
@@ -526,21 +527,19 @@ class AgentRuntime(
             locations, permission_mode_default=agent_configuration.permission_policy
         )
 
-        effective_model = agent_configuration.model_identifier
+        model_identifier = agent_configuration.model_identifier
         # Only a runtime that must build a client needs to be told which one.
-        if not effective_model and model is None:
+        if not model_identifier and model is None:
             raise ValueError(
                 f"Agent '{agent_configuration.identifier}' names no model. Set `provider` and `model` in its profile, pass `model_identifier=\"provider/model\"` to `langmesh.Session`, or hand the runtime a `model=` of your own."
             )
-        # A profile pinned to an unkeyed provider fails on its first call, which is the honest outcome.
-        self._effective_model_identifier = effective_model
 
         # A caller's own model wins, since accepting `BaseChatModel` is the whole of the model seam.
-        self._llm = (
+        self._model = (
             model
             if model is not None
             else build_chat_model(
-                effective_model,
+                model_identifier,
                 global_configuration,
                 agent_configuration,
                 self._working_directory,
@@ -567,7 +566,7 @@ class AgentRuntime(
         )
         # Tools are bound natively, so the provider sees each real schema and can emit several calls at once.
         self._tool_schemas: dict[str, Any] = {tool.name: tool.args_schema for tool in self._tools}
-        self._bound_model = self._llm.bind_tools(self._tools)
+        self._bound_model = self._model.bind_tools(self._tools)
         # The evaluator gates against the same narrowed allow-list the tool set was built from.
         self._permissions = (
             permissions
@@ -625,8 +624,6 @@ class AgentRuntime(
         self._prompt_loader = _CataloguePrompts(catalogue)
         self._cached_system_prompt: str | None = None
         self._task_manager = TaskManager()
-        # The reviewer behind `automatic`, built on first use and kept for the session's life.
-        self._reviewer_llm: Optional[BaseChatModel] = None
         self._goal: Optional[Goal] = None
         # Called when the goal changes, so the layer above can tell the daemon and the interface.
         self._on_goal_change: Optional[Callable[[Optional[Goal]], None]] = None
@@ -643,9 +640,10 @@ class AgentRuntime(
         self._steering_messages: asyncio.Queue[str] = asyncio.Queue()
         self._steering_available = asyncio.Event()
         self._active_tool_tasks: dict[str, asyncio.Task] = {}
-        # The latest call's occupancy and the model's window, so compaction can fire before an overflow.
-        self._latest_context_tokens: int = 0
-        self._context_window: int = 0
+        # The latest call replaces this estimate once usage arrives; restored sessions need it immediately.
+        self._latest_context_tokens = conversation_tokens(self._conversation)
+        context_window = getattr(self._model, "context_window", None)
+        self._context_window = max(0, int(context_window())) if callable(context_window) else 0
         # What the module-level tools read at call time, built from this runtime's own configuration and conversation.
         self._tool_context = _build_tool_context(
             global_configuration,
@@ -869,7 +867,7 @@ class AgentRuntime(
         self._token_usage["reasoning_tokens"] += reasoning
         self._token_usage["model_calls"] += 1
         # The latest call's input is the whole prompt, so it says how full the context is.
-        model = getattr(self, "_llm", None)
+        model = getattr(self, "_model", None)
         context_window = model.context_window() if model is not None else 0
         self._latest_context_tokens = input_tokens + output_tokens
         self._context_window = context_window
@@ -898,8 +896,8 @@ class AgentRuntime(
         return self._global_configuration.attachments.inline_image_bytes
 
     @property
-    def effective_model_identifier(self) -> str:
-        return self._effective_model_identifier
+    def model_identifier(self) -> str:
+        return self._agent_configuration.model_identifier
 
     @property
     def working_directory(self) -> str:
@@ -1131,7 +1129,7 @@ class AgentRuntime(
 
     def _model_supports_vision(self) -> bool:
         """Whether the model advertises image input. An unknown model is assumed capable, as elsewhere."""
-        model = find_model(self._effective_model_identifier)
+        model = find_model(self.model_identifier)
         return True if model is None else model.vision
 
     def get_execution_history(self) -> list[dict]:

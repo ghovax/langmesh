@@ -14,7 +14,7 @@ from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.request_handlers.request_handler import RequestHandler
 from a2a.server.tasks import TaskUpdater
-from a2a.types import Message, MessageSendParams, Part, Role, Task, TaskState, TextPart
+from a2a.types import DataPart, Message, MessageSendParams, Part, Role, Task, TaskState, TextPart
 from langchain_core.messages import messages_from_dict
 
 from langmesh.base.catalogue import machine_catalogue
@@ -31,7 +31,9 @@ from langmesh.protocol.metadata import (
     REPORT_REMINDER_KIND,
     INPUT_RESPONSE_KIND,
     Metadata,
+    PART_KIND,
     envelope_part,
+    part_payload,
     turn_metadata_envelope,
 )
 from langmesh.protocol.events import StatusEvent
@@ -119,7 +121,6 @@ class SessionExecutor(AgentExecutor):
         # One session, one conversation. The map has one entry, and exists because the machinery indexes it.
         self._conversations: dict[str, list] = {}
         self._startup_resume_tasks: set[asyncio.Task] = set()
-        self._compaction_tasks: set[asyncio.Task] = set()
         self._work_habits_acknowledged = False
         # A session is named after its first message, once.
         self._titled = False
@@ -166,14 +167,12 @@ class SessionExecutor(AgentExecutor):
             self._turn_store.publish_event({"session_id": session_id, "awaiting_input": awaiting})
         )
 
-    def compact_context(self, session_id: str) -> bool:
-        """Compact a context's conversation on request, as a background turn behind the per-context lock."""
+    async def compact_context(self, session_id: str) -> dict:
+        """Compact a context's conversation and return the completed pass rather than detaching it."""
         if self._agent_handler() is None:
-            return False
-        task = asyncio.create_task(self._run_compaction_turn(session_id))
-        self._compaction_tasks.add(task)
-        task.add_done_callback(self._compaction_tasks.discard)
-        return True
+            return {"compacted": False}
+        result = await self._run_compaction_turn(session_id)
+        return {"compacted": result is not None, **(result or {})}
 
     def _agent_handler(self) -> Optional[RequestHandler]:
         """The handler that drives this session's turns, built once: there is no registry to look one up in."""
@@ -191,11 +190,12 @@ class SessionExecutor(AgentExecutor):
         *,
         metadata_flags: dict,
         text: str = "",
-    ) -> None:
+        result_event_kind: str = "",
+    ) -> dict | None:
         """Drive one harness-initiated turn as a self-sent message, so it is real, persisted and replayable."""
         handler = self._agent_handler()
         if handler is None:
-            return
+            return None
         # A wake carries nothing, but prose written for the session rides as a message a transcript can draw.
         message = Message(
             role=Role.user if text else Role.agent,
@@ -205,8 +205,15 @@ class SessionExecutor(AgentExecutor):
             context_id=session_id,
             metadata=turn_metadata_envelope(metadata_flags),
         )
-        async for _event in handler.on_message_send_stream(MessageSendParams(message=message)):
-            pass
+        result = None
+        async for event in handler.on_message_send_stream(MessageSendParams(message=message)):
+            status_message = getattr(getattr(event, "status", None), "message", None)
+            for part in getattr(status_message, "parts", None) or []:
+                root = getattr(part, "root", part)
+                payload = part_payload(root.data) if isinstance(root, DataPart) else {}
+                if result_event_kind and payload.get(PART_KIND) == result_event_kind:
+                    result = dict(payload)
+        return result
 
     async def nudge_to_report(self, session_id: str) -> None:
         """Drive one turn saying the session has not answered yet. Once per session, and only the model can act on it."""
@@ -282,11 +289,15 @@ class SessionExecutor(AgentExecutor):
             )
         )
 
-    async def _run_compaction_turn(self, session_id: str) -> None:
+    async def _run_compaction_turn(self, session_id: str) -> dict | None:
         """Drive one manual-compaction turn, so it is persisted and replayable like any other."""
-        await self._drive_self_sent_turn(
-            session_id, COMPACTION_KIND, metadata_flags={Metadata.COMPACTION: True}
+        result = await self._drive_self_sent_turn(
+            session_id,
+            COMPACTION_KIND,
+            metadata_flags={Metadata.COMPACTION: True},
+            result_event_kind="compaction",
         )
+        return result if result and result.get("status") == "done" else None
 
     def abort_context(self, session_id: str) -> bool:
         # Stop is broadcast to every executor, but only the one holding this context has anything to stop.
@@ -940,9 +951,9 @@ class SessionExecutor(AgentExecutor):
             return True
         return False
 
-    def compact(self) -> bool:
-        """Compact this session's conversation as a background turn."""
-        return self.compact_context(self._session_id)
+    async def compact(self) -> dict:
+        """Compact this session's conversation and return its completed result."""
+        return await self.compact_context(self._session_id)
 
     def background_tool_call(self, tool_call_identifier: str) -> bool:
         """Detach a still-blocking foreground command so the turn can continue."""

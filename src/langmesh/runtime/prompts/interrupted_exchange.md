@@ -1,0 +1,1 @@
+This exchange was interrupted by a context-window overflow before the agent completed it. Record only what the visible partial work established, preserve what remains unfinished, and never imply that requested work was completed.

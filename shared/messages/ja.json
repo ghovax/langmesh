@@ -533,10 +533,6 @@
       "_": "MCP サーバー",
       "servers": "サーバー"
     },
-    "permission_reviewer": {
-      "_": "権限の判定",
-      "reasoning_effort": "推論の深さ"
-    },
     "providers": {
       "_": "モデルプロバイダー"
     },
@@ -750,10 +746,6 @@
       "_": "MCP サーバー。",
       "servers": "MCP サーバー（名前ごと）。コマンドや認証情報は MCP のパネルで編集します。"
     },
-    "permission_reviewer": {
-      "_": "あなたに確認できないときにツール呼び出しを判定するモデル。",
-      "reasoning_effort": "1 回のツール呼び出しを判定するときの推論の深さ。ルールと突き合わせるだけなので、エージェント本体ほどの深さは要りません。"
-    },
     "providers": "モデルプロバイダーの認証情報。",
     "remote_agents": {
       "_": "リモートのピア。",
@@ -914,14 +906,6 @@
         "required": "起動しない",
         "preferred": "リソース制限のみ",
         "off": "制限しない"
-      }
-    },
-    "permission_reviewer": {
-      "reasoning_effort": {
-        "minimal": "最小",
-        "low": "低",
-        "medium": "中",
-        "high": "高"
       }
     },
     "telemetry": {

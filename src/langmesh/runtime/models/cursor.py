@@ -15,7 +15,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Optional, Sequence, cast
+from typing import Any, AsyncIterator, Callable, Iterable, Optional, Sequence, cast
 
 import httpx
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -40,6 +40,7 @@ from langmesh.base.cursor_credentials import (
     valid_tokens,
 )
 from langmesh.base.configuration import PromptLoader
+from langmesh.runtime.cache_trace import tracks_conversation_cache
 from langmesh.base.cursor_subscription import (
     APPEND_PATH,
     RUN_HOSTS,
@@ -66,6 +67,11 @@ _PROMPTS = PromptLoader(Path(__file__).resolve().parent.parent / "prompts")
 _BUILTIN_JUSTIFICATION = "Requested by the Cursor agent while working on this turn."
 
 
+def _join_markdown_blocks(blocks: Iterable[str]) -> str:
+    cleaned = (block.strip() for block in blocks)
+    return (os.linesep * 2).join(block for block in cleaned if block)
+
+
 def _shell_arguments(values: list[str]) -> Optional[dict[str, Any]]:
     """`ShellArgs` becomes `bash`, taking the directory as a location only when the agent named one."""
     command, directory = (values + ["", ""])[:2]
@@ -90,7 +96,10 @@ def _write_arguments(values: list[str]) -> Optional[dict[str, Any]]:
     # A quoted delimiter that cannot occur in the body, so the content reaches the file exactly as written.
     marker = f"LANGMESH_{new_id('heredoc').upper().replace('-', '_')}"
     return {
-        "command": f"cat > {shlex.quote(path)} <<'{marker}'\n{content}\n{marker}",
+        "command": (
+            f"cat > {shlex.quote(path)} <<'{marker}'"
+            f"{os.linesep}{content}{os.linesep}{marker}"
+        ),
         "access_request": {"mutates": True},
     }
 
@@ -211,43 +220,56 @@ class ChatCursorModel(BaseChatModel):
         # `tool_choice` and `parallel_tool_calls` have no counterpart in Cursor's protocol, so they are dropped rather than faked.
         return self.bind(tools=[convert_to_openai_tool(tool) for tool in tools], **kwargs)
 
-    # Turning the harness's messages into one Cursor turn.
-
     @staticmethod
     def _system_prompt(messages: Sequence[BaseMessage]) -> str:
-        return "\n\n".join(
-            text
-            for text in (
-                message_text(message) for message in messages if isinstance(message, SystemMessage)
-            )
-            if text
+        content = _join_markdown_blocks(
+            message_text(message) for message in messages if isinstance(message, SystemMessage)
         )
+        return _PROMPTS.load("cursor_system_prompt", {"content": content}).strip()
+
+    @staticmethod
+    def _transcript_block(heading: str, content: str) -> str:
+        return _PROMPTS.load(
+            "cursor_transcript_message", {"heading": heading, "content": content}
+        ).strip()
 
     def _render(self, messages: Sequence[BaseMessage]) -> str:
-        """The conversation as the single user message Cursor's turn accepts, labelled once there is history to tell apart."""
+        """The conversation rendered through the Cursor transcript templates."""
         conversation = [message for message in messages if not isinstance(message, SystemMessage)]
         if len(conversation) == 1 and not isinstance(conversation[0], (AIMessage, ToolMessage)):
             return message_text(conversation[0])
         blocks: list[str] = []
         for message in conversation:
             if isinstance(message, ToolMessage):
-                blocks.append(f"## Tool result: {message.name or 'tool'}\n{message_text(message)}")
+                blocks.append(
+                    self._transcript_block(
+                        f"Tool result: {message.name or 'tool'}", message_text(message)
+                    )
+                )
                 continue
             if isinstance(message, AIMessage):
                 body = message_text(message)
                 if body:
-                    blocks.append(f"## Assistant\n{body}")
+                    blocks.append(self._transcript_block("Assistant", body))
                 for call in message.tool_calls or []:
                     arguments = call.get("args")
                     rendered = arguments if isinstance(arguments, str) else compact(arguments)
-                    blocks.append(f"## Assistant tool call: {call.get('name')}\n{rendered}")
+                    blocks.append(
+                        self._transcript_block(
+                            f"Assistant tool call: {call.get('name')}", rendered
+                        )
+                    )
                 continue
-            blocks.append(f"## User\n{message_text(message)}")
-        return (
-            self._preamble(any(isinstance(m, ToolMessage) for m in conversation))
-            + "\n\n"
-            + "\n\n".join(blocks)
-        )
+            blocks.append(self._transcript_block("User", message_text(message)))
+        return _PROMPTS.load(
+            "cursor_transcript",
+            {
+                "preamble": self._preamble(
+                    any(isinstance(message, ToolMessage) for message in conversation)
+                ),
+                "messages": _join_markdown_blocks(blocks),
+            },
+        ).strip()
 
     @staticmethod
     def _preamble(carries_tool_results: bool) -> str:
@@ -273,6 +295,8 @@ class ChatCursorModel(BaseChatModel):
 
     def _resumption_for(self, messages: Sequence[BaseMessage]) -> Optional[_Resumption]:
         """A checkpoint worth resuming from, or `None` when the transcript no longer begins with what it was made from."""
+        if not tracks_conversation_cache():
+            return None
         _prune_resumptions()
         entry = _resumptions.get(self._conversation_key(messages))
         if entry is None or entry.prefix_length >= len(messages):
@@ -288,6 +312,8 @@ class ChatCursorModel(BaseChatModel):
         blobs: dict[bytes, bytes],
         conversation_id: str,
     ) -> None:
+        if not tracks_conversation_cache():
+            return
         if not checkpoint:
             return
         _resumptions[self._conversation_key(messages)] = _Resumption(

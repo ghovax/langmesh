@@ -458,7 +458,7 @@ class _TurnRunner:
             save_conversation=self._save_runtime_conversation,
             suspend=self._suspend_turn,
             telemetry_span=self._turn_span,
-            model_identifier=lambda: self._runtime.effective_model_identifier
+            model_identifier=lambda: self._runtime.model_identifier
             if self._runtime is not None
             else "",
         )
@@ -513,7 +513,7 @@ class _TurnRunner:
                     ]
                 )
             # Paths always ride as a text block; images are inlined only where the model advertises vision.
-            model_identifier = runtime.effective_model_identifier if runtime is not None else ""
+            model_identifier = runtime.model_identifier if runtime is not None else ""
             self._turn_input, images_not_inlined = compose_turn_input(
                 self._user_text,
                 self._structured_payloads,

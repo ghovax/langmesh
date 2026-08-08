@@ -363,12 +363,6 @@ class ComputerControlConfiguration(Section):
     retrieval: RetrievalConfiguration = Field(default_factory=RetrievalConfiguration)
 
 
-class PermissionReviewerConfiguration(Section):
-    """The model call that answers a gate where nobody is there, on the session's model at a lower effort."""
-
-    reasoning_effort: Literal["minimal", "low", "medium", "high"] = Field("low")
-
-
 class ToolboxConfiguration(Section):
     """Whether a session may install tools for itself, into a directory deleted when it ends."""
 
@@ -557,9 +551,6 @@ class Configuration(Section):
         default_factory=ComputerControlConfiguration
     )
     toolbox: ToolboxConfiguration = Field(default_factory=ToolboxConfiguration)
-    permission_reviewer: PermissionReviewerConfiguration = Field(
-        default_factory=PermissionReviewerConfiguration
-    )
     dictation: DictationConfiguration = Field(default_factory=DictationConfiguration)
     tuning: TuningConfiguration = Field(default_factory=TuningConfiguration)
     composio: ComposioConfiguration = Field(default_factory=ComposioConfiguration)

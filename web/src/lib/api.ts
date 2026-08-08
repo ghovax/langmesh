@@ -1717,13 +1717,21 @@ export async function clearSessionGoal(sessionId: string): Promise<boolean> {
   }
 }
 
-export async function compactSession(sessionId: string): Promise<boolean> {
+export interface CompactionResult {
+  compacted: boolean;
+  status?: "done";
+  reason?: string;
+  ok?: boolean;
+  messages_before?: number;
+  messages_after?: number;
+}
+
+export async function compactSession(sessionId: string): Promise<CompactionResult | null> {
   try {
-    const result = await rpc<{ compacting?: boolean }>("session.compact", { id: sessionId });
-    return Boolean(result?.compacting);
+    return await rpc<CompactionResult>("session.compact", { id: sessionId });
   } catch (caught) {
     swallowed({ component: "api", operation: "compact a session" }, caught);
-    return false;
+    return null;
   }
 }
 

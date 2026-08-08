@@ -665,16 +665,27 @@ function reduceDataPart(
     case "compaction": {
       // A compaction marker: a live indicator, then a separator, rendered as a divider rather than a bubble.
       if (event.status === "started") {
-        state.messages = [
-          ...state.messages,
-          {
-            id: stableMessageId(state, "compaction", sourceId),
-            role: "compaction",
-            content: "",
-            timestamp: new Date().toISOString(),
-            meta: { status: "running", reason: event.reason ?? "" },
-          },
-        ];
+        const runningIndex = state.messages.findLastIndex(
+          (message) => message.role === "compaction" && message.meta?.status === "running",
+        );
+        if (runningIndex >= 0) {
+          state.messages = state.messages.map((message, index) =>
+            index === runningIndex
+              ? { ...message, meta: { ...message.meta, reason: event.reason ?? "" } }
+              : message,
+          );
+        } else {
+          state.messages = [
+            ...state.messages,
+            {
+              id: stableMessageId(state, "compaction", sourceId),
+              role: "compaction",
+              content: "",
+              timestamp: new Date().toISOString(),
+              meta: { status: "running", reason: event.reason ?? "" },
+            },
+          ];
+        }
         break;
       }
       if (event.status === "done") {
@@ -1799,21 +1810,60 @@ export function useChat(
     });
   }, [flush]);
 
-  // Kick off a manual compaction; the indicator and separator arrive over the stream.
+  // Kick off a manual compaction; the local marker covers passes that finish between stream subscriptions.
   const compact = useCallback(() => {
     const context = sessionIdRef.current;
     if (!context) return;
-    void compactSession(context).then((ok) => {
-      if (!ok) {
+    if (
+      stateRef.current.messages.some(
+        (message) => message.role === "compaction" && message.meta?.status === "running",
+      )
+    )
+      return;
+    const markerId = `compaction-request-${clientIdentifier()}`;
+    stateRef.current.messages = [
+      ...stateRef.current.messages,
+      {
+        id: markerId,
+        role: "compaction",
+        content: "",
+        timestamp: new Date().toISOString(),
+        meta: { status: "running", reason: "manual" },
+      },
+    ];
+    flushNow();
+    void compactSession(context).then((result) => {
+      const marker = stateRef.current.messages.find((message) => message.id === markerId);
+      if (!result?.compacted || result.status !== "done") {
+        if (marker?.meta?.status === "running") dropMessage(stateRef.current, markerId);
+        flushNow();
         toaster.create({
           type: "error",
           title: translation("compactFailedTitle"),
           description: translation("compactFailedBody"),
           closable: true,
         });
+        return;
       }
+      if (marker?.meta?.status !== "running") return;
+      const changed =
+        result.ok !== false && (result.messages_after ?? 0) < (result.messages_before ?? 0);
+      if (!changed) {
+        dropMessage(stateRef.current, markerId);
+      } else {
+        upsertMessage(stateRef.current, {
+          ...marker,
+          meta: {
+            status: "done",
+            reason: result.reason ?? "manual",
+            messagesBefore: result.messages_before ?? 0,
+            messagesAfter: result.messages_after ?? 0,
+          },
+        });
+      }
+      flushNow();
     });
-  }, []);
+  }, [flushNow, translation]);
 
   const abortTool = useCallback(
     (toolCallId: string) => {

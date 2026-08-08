@@ -45,10 +45,14 @@ def _without_provider_reasoning(messages: list) -> list:
 class _CompactsContext:
     """Keeping a conversation inside its window: what each exchange establishes is recorded, then its turns are dropped."""
 
-    async def _emit_batch(self, schema, request: list, what: str):
+    async def _emit_batch(self, schema, request: list, operation_name: str):
         """One structured call against this runtime's model, which is the shared pass every fold is built on."""
         return await emit_structured(
-            self._llm, schema, request, what, active_tuning().amount(Tunable.compaction_attempts)
+            self._model,
+            schema,
+            request,
+            operation_name,
+            active_tuning().amount(Tunable.compaction_attempts),
         )
 
     async def _emit_observations(self, request: list) -> list:
@@ -232,9 +236,9 @@ class _CompactsContext:
             return False
         return len(self._bounded_tail(self._conversation)) < len(self._conversation)
 
-    def _bounded_tail(self, recent: list) -> list:
+    def _bounded_tail(self, recent: list, reason: str = "automatic") -> list:
         """The newest turns that fit the budget, taken whole: recency is not smallness, and none is cut in half."""
-        budget = self._recent_working_set()
+        budget = self._recent_working_set(reason)
         if budget <= 0 or not recent:
             return recent
         # How many of the newest turns fit: running totals from the end, taken while they stay inside the budget.
@@ -281,10 +285,10 @@ class _CompactsContext:
             or message is self._conversation[opening]
         ]
 
-    def observe_exchange_soon(self) -> None:
+    def observe_exchange_soon(self, *, interrupted: bool = False) -> None:
         """Take the exchange now, before compaction can rewrite it, and fold it after the person has their answer."""
         exchange = self._current_exchange()
-        if len(exchange) < 2 or self._turn_store is None:
+        if len(exchange) < (1 if interrupted else 2) or self._turn_store is None:
             return
         exchange_identifier = self._exchange_of(exchange[0])
         self._observations_in_flight.add(exchange_identifier)
@@ -293,6 +297,7 @@ class _CompactsContext:
                 self._observation_tail,
                 exchange,
                 exchange_identifier,
+                interrupted,
             )
         )
         self._observation_tail = task
@@ -303,6 +308,7 @@ class _CompactsContext:
         earlier: asyncio.Task | None,
         exchange: list,
         exchange_identifier: str,
+        interrupted: bool,
     ) -> None:
         """Record one exchange after earlier observers, so every fold reads their completed entries."""
         identifier = new_id("recording")
@@ -310,7 +316,7 @@ class _CompactsContext:
             await self._publish_memory_recording(identifier, True)
             if earlier is not None:
                 await asyncio.gather(earlier, return_exceptions=True)
-            await self.observe_exchange(exchange, exchange_identifier)
+            await self.observe_exchange(exchange, exchange_identifier, interrupted=interrupted)
         finally:
             self._observations_in_flight.discard(exchange_identifier)
             await self._publish_memory_recording(identifier, False)
@@ -342,21 +348,25 @@ class _CompactsContext:
             logger.warning("could not publish memory recording state", exc_info=True)
 
     async def observe_exchange(
-        self, exchange: list | None = None, exchange_identifier: str = ""
+        self,
+        exchange: list | None = None,
+        exchange_identifier: str = "",
+        *,
+        interrupted: bool = False,
     ) -> None:
         """Record what the exchange established for the next complete memory snapshot."""
         exchange = self._current_exchange() if exchange is None else exchange
-        if len(exchange) < 2 or self._turn_store is None:
+        if len(exchange) < (1 if interrupted else 2) or self._turn_store is None:
             return
         tag = exchange_identifier or self._exchange_of(exchange[0])
         ledgers = await self._memory_snapshot()
         recorded = ledgers["observations"]
-        if any(entry.get("exchange") == tag for entry in recorded):
-            return  # already observed: a turn can end more than once
         asked = ledgers["directives"]
+        if any(entry.get("exchange") == tag for entry in [*recorded, *asked]):
+            return  # already observed: a turn can end more than once
         observations, directives = await asyncio.gather(
-            self._fold_into_observations(exchange, recorded, asked),
-            self._fold_into_directives(exchange, asked),
+            self._fold_into_observations(exchange, recorded, asked, interrupted=interrupted),
+            self._fold_into_directives(exchange, asked, interrupted=interrupted),
         )
         await self._commit_memory(
             [{**entry, "exchange": tag} for entry in observations],
@@ -372,12 +382,6 @@ class _CompactsContext:
         except Exception:  # noqa: BLE001 — a record that cannot be read is not a turn that cannot run
             logger.warning("could not read the memory ledgers", exc_info=True)
             return {"observations": [], "directives": []}
-
-    async def _settle_observations(self) -> None:
-        """Wait for completed exchanges to reach the ledger before dropping their turns."""
-        tail = self._observation_tail
-        if tail is not None:
-            await asyncio.gather(tail, return_exceptions=True)
 
     async def _consolidate_observations_if_needed(self, observations: list[dict]) -> list[dict]:
         """Consolidate an oversized live record only when the replacement is genuinely smaller."""
@@ -425,7 +429,12 @@ class _CompactsContext:
             logger.warning("could not append observational memory", exc_info=True)
 
     async def _fold_into_observations(
-        self, older: list, existing: list[dict], asked: list[dict]
+        self,
+        older: list,
+        existing: list[dict],
+        asked: list[dict],
+        *,
+        interrupted: bool = False,
     ) -> list[dict]:
         """New entries from these messages, with both records shown so it writes neither what it nor the other holds."""
         instructions = self._prompt_loader.load(
@@ -439,13 +448,24 @@ class _CompactsContext:
         entries = await self._emit_observations(
             [
                 SystemMessage(content=instructions),
+                *(
+                    [
+                        SystemMessage(
+                            content=self._prompt_loader.load("interrupted_exchange", {})
+                        )
+                    ]
+                    if interrupted
+                    else []
+                ),
                 *older,
                 HumanMessage(content=self._prompt_loader.load("observe_now", {})),
             ]
         )
         return self._identified(entries)
 
-    async def _fold_into_directives(self, older: list, existing: list[dict]) -> list[dict]:
+    async def _fold_into_directives(
+        self, older: list, existing: list[dict], *, interrupted: bool = False
+    ) -> list[dict]:
         """What the person asked for in these turns, in their meaning rather than their words."""
         spoken = [
             message
@@ -460,6 +480,15 @@ class _CompactsContext:
             DirectiveBatch,
             [
                 SystemMessage(content=instructions),
+                *(
+                    [
+                        SystemMessage(
+                            content=self._prompt_loader.load("interrupted_exchange", {})
+                        )
+                    ]
+                    if interrupted
+                    else []
+                ),
                 *spoken,
                 HumanMessage(content=self._prompt_loader.load("directives_now", {})),
             ],
@@ -479,7 +508,6 @@ class _CompactsContext:
                 messages_before=messages_before,
                 tokens_before=tokens_before,
             )
-            await self._settle_observations()
             self._conversation[:] = _without_provider_reasoning(
                 await self._compaction.compact(state)
             )
@@ -500,8 +528,7 @@ class _CompactsContext:
         yield CompactionStarted(
             reason=reason, messages_before=messages_before, tokens_before=tokens_before
         )
-        await self._settle_observations()
-        kept = self._bounded_tail(self._conversation)
+        kept = self._bounded_tail(self._conversation, reason)
         if len(kept) >= messages_before:
             # Everything already fits, so a deliberate request is answered rather than met with silence.
             yield CompactionDone(
@@ -516,9 +543,9 @@ class _CompactsContext:
             return
         self._conversation[:] = _without_provider_reasoning(kept)
         self._latest_context_tokens = conversation_tokens(self._conversation)
-        recorded = await self._consolidate_observations_if_needed(
-            (await self._memory_snapshot())["observations"]
-        )
+        recorded = (await self._memory_snapshot())["observations"]
+        if self._observation_tail is None:
+            recorded = await self._consolidate_observations_if_needed(recorded)
         await self._replace_memory_records_with_snapshot()
         self._latest_context_tokens = conversation_tokens(self._conversation)
         yield CompactionDone(

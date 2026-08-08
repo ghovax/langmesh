@@ -28,6 +28,7 @@ from langmesh.base.instructions import instructions_payload
 from langmesh.base.memories import memories_payload
 from langmesh.base.message_content import message_content_deltas, message_text
 from langmesh.base.model_errors import ContextWindowExceeded, over_context_window
+from litellm.exceptions import ContextWindowExceededError as ProviderContextWindowExceeded
 from langchain_core.utils.json import parse_partial_json
 from langmesh.base.skills import enabled_skills, skills_for_agent, skills_payload
 from langmesh.base.confinement import Denial
@@ -533,7 +534,16 @@ class _RunsTurns:
             try:
                 async for event in self._stream_model_call(messages, call):
                     yield event
-            except ContextWindowExceeded as overflow:
+            except (ContextWindowExceeded, ProviderContextWindowExceeded) as error:
+                overflow = (
+                    error
+                    if isinstance(error, ContextWindowExceeded)
+                    else ContextWindowExceeded(
+                        "The provider rejected the assembled request as larger than its context window.",
+                        model=self.model_identifier,
+                        context_window=self._context_window,
+                    )
+                )
                 # A refusal is itself a measurement, so the indicator stops reporting the last successful call's reading.
                 window = overflow.context_window or self._context_window
                 if window > 0:
@@ -541,7 +551,12 @@ class _RunsTurns:
                     self._latest_context_tokens = max(
                         self._latest_context_tokens, overflow.tokens or window
                     )
-                raise
+                self.observe_exchange_soon(interrupted=True)
+                async for compaction_event in self.compact(reason="overflow"):
+                    yield compaction_event
+                if overflow is error:
+                    raise
+                raise overflow from error
             if call.cancelled:
                 return
             if call.aborted_for_steering:
@@ -614,7 +629,7 @@ class _RunsTurns:
         self._latest_context_tokens = tokens
         raise ContextWindowExceeded(
             "The assembled request is larger than this model's context window.",
-            model=self.effective_model_identifier,
+            model=self.model_identifier,
             context_window=window,
             tokens=tokens,
         )
@@ -639,7 +654,7 @@ class _RunsTurns:
         aborted_for_steering = False
         # A generation span, started rather than made current so it is safe to hold across yields.
         generation_span = _telemetry.start_span(
-            "gen_ai.generation", {"gen_ai.request.model": self.effective_model_identifier}
+            "gen_ai.generation", {"gen_ai.request.model": self.model_identifier}
         )
         # A hook may read the conversation about to leave the process, and may change it.
         if not self._hooks.empty:

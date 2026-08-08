@@ -375,14 +375,14 @@ class Session:
         turn_input, images_not_inlined = compose_turn_input(
             message,
             [attachment_payload(records)],
-            runtime.effective_model_identifier,
+            runtime.model_identifier,
         )
         if images_not_inlined:
             # A library caller may have no client to raise a warning event to, so this goes to the log it does have.
             logger.warning(
                 "%d attached image(s) were not inlined: %s does not advertise vision support. The model has the file paths and can open them with its tools.",
                 images_not_inlined,
-                runtime.effective_model_identifier or "the session model",
+                runtime.model_identifier or "the session model",
             )
         return turn_input
 

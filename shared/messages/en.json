@@ -533,10 +533,6 @@
       "_": "MCP servers",
       "servers": "Servers"
     },
-    "permission_reviewer": {
-      "_": "Permission reviewer",
-      "reasoning_effort": "Reasoning effort"
-    },
     "providers": {
       "_": "Model providers"
     },
@@ -750,10 +746,6 @@
       "_": "MCP servers, read from mcp.json.",
       "servers": "MCP servers, by name. Edited on the MCP panel, which is where a server's command and credentials belong."
     },
-    "permission_reviewer": {
-      "_": "The model call that decides a tool call nobody is there to be asked about.",
-      "reasoning_effort": "How hard the judge thinks about one tool call. It weighs a command against a page of rules, which is not what an agent's own effort is for."
-    },
     "providers": "Credentials for each model provider. The provider's own environment variable wins over anything stored here.",
     "remote_agents": {
       "_": "Agents on other hosts, read from remote-agents.json.",
@@ -914,14 +906,6 @@
         "required": "Refuse to start",
         "preferred": "Limits only",
         "off": "Do not confine"
-      }
-    },
-    "permission_reviewer": {
-      "reasoning_effort": {
-        "minimal": "Minimal",
-        "low": "Low",
-        "medium": "Medium",
-        "high": "High"
       }
     },
     "telemetry": {

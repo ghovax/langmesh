@@ -74,7 +74,7 @@ class _ReviewsGoal:
             },
         )
         return await emit_structured(
-            self._llm,
+            self._model,
             GoalReview,
             [
                 SystemMessage(content=instructions),

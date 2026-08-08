@@ -93,7 +93,7 @@ async def _clear_goal(session, _params: dict) -> dict:
 
 
 async def _compact(session, _params: dict) -> dict:
-    return {"compacting": session.compact()}
+    return await session.compact()
 
 
 async def _list_jobs(session, _params: dict) -> dict:

@@ -196,7 +196,6 @@ SECTION_ORDER = (
     "workspace",
     "sandbox",
     "toolbox",
-    "permission_reviewer",
     # What it carries between turns, and what it knows about you.
     "compaction",
     "user_context",

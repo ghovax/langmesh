@@ -17,6 +17,7 @@ from typing import Any, AsyncIterator, Literal, Optional
 import json
 import logging
 from langmesh.base.serialization import compact, content_address
+from langmesh.runtime.cache_trace import auxiliary_model_call
 
 
 _logger = logging.getLogger(__name__)
@@ -68,41 +69,42 @@ def _only_with_a_parent(entry):
     return entry
 
 
-async def emit_structured(llm, schema, request: list, what: str, attempts: int):
+async def emit_structured(model, schema, request: list, operation_name: str, attempts: int):
     """One structured call: offered rather than forced, insisted on by the prompt, retried, and validated."""
     # The tool is offered and the prompt insists on it: forcing it, a thinking model behind a gateway refuses.
-    model = llm.bind_tools([schema], tool_choice="auto")
-    for attempt in range(1, attempts + 1):
-        try:
-            response = await model.ainvoke(request)
-        except Exception:  # noqa: BLE001 — one dropped call is not the end of the pass
-            _logger.warning(
-                "the %s pass could not be reached (attempt %d of %d)",
-                what,
-                attempt,
-                attempts,
-                exc_info=True,
-            )
-            continue
-        if response is None or not response.tool_calls:
-            _logger.warning(
-                "the %s pass answered without recording anything (attempt %d of %d)",
-                what,
-                attempt,
-                attempts,
-            )
-            continue
-        try:
-            return schema.model_validate(response.tool_calls[0]["args"])
-        except ValidationError:
-            _logger.warning(
-                "the %s pass did not fit its schema (attempt %d of %d)",
-                what,
-                attempt,
-                attempts,
-                exc_info=True,
-            )
-            continue
+    structured_model = model.bind_tools([schema], tool_choice="auto")
+    with auxiliary_model_call():
+        for attempt in range(1, attempts + 1):
+            try:
+                response = await structured_model.ainvoke(request)
+            except Exception:  # noqa: BLE001 — one dropped call is not the end of the pass
+                _logger.warning(
+                    "the %s pass could not be reached (attempt %d of %d)",
+                    operation_name,
+                    attempt,
+                    attempts,
+                    exc_info=True,
+                )
+                continue
+            if response is None or not response.tool_calls:
+                _logger.warning(
+                    "the %s pass answered without recording anything (attempt %d of %d)",
+                    operation_name,
+                    attempt,
+                    attempts,
+                )
+                continue
+            try:
+                return schema.model_validate(response.tool_calls[0]["args"])
+            except ValidationError:
+                _logger.warning(
+                    "the %s pass did not fit its schema (attempt %d of %d)",
+                    operation_name,
+                    attempt,
+                    attempts,
+                    exc_info=True,
+                )
+                continue
     return None
 
 

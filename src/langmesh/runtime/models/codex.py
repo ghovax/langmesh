@@ -43,6 +43,7 @@ from langmesh.runtime.cache_trace import (
     RequestTrace,
     diagnose,
     trace,
+    tracks_conversation_cache,
 )
 from langmesh.base.serialization import compact, upstream_detail
 from langmesh.base.subscription import (
@@ -436,6 +437,8 @@ class ChatCodexModel(BaseChatModel):
 
     def _cache_diagnosis(self, current: RequestTrace) -> dict[str, object]:
         """What this request kept from the last one, and remember it for the next."""
+        if not tracks_conversation_cache():
+            return diagnose(current, None)
         diagnosis = diagnose(current, self._previous_trace)
         self._previous_trace = current
         return diagnosis
