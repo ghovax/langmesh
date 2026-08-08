@@ -25,7 +25,15 @@ function columnCounts(count: number): number[] {
 const RESIZE_THICKNESS = 8; // px hit area for a handle (its visible line is 1px, centered)
 
 // A tiling container for the side panels, every boundary carrying a drag handle that repartitions.
-export function PanelTiles({ panels, gap = 8 }: { panels: TilePanel[]; gap?: number }) {
+export function PanelTiles({
+  panels,
+  gap = 8,
+  singlePanelOnMobile = false,
+}: {
+  panels: TilePanel[];
+  gap?: number;
+  singlePanelOnMobile?: boolean;
+}) {
   const columns: TilePanel[][] = [];
   {
     let index = 0;
@@ -132,6 +140,13 @@ export function PanelTiles({ panels, gap = 8 }: { panels: TilePanel[]; gap?: num
               minW={0}
               minH={0}
               position="relative"
+              display={{
+                base:
+                  singlePanelOnMobile && panel.key !== panels[panels.length - 1]?.key
+                    ? "none"
+                    : "block",
+                md: "block",
+              }}
               onPointerDownCapture={panel.onActivate}
               onFocusCapture={panel.onActivate}
               // No overflow clip: each panel clips its own content, so this would only cut the card's shadow.

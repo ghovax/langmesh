@@ -103,6 +103,7 @@ import {
 } from "@/lib/notify";
 import { swallowed } from "@/lib/swallowed";
 import { errorMessage } from "@/lib/errors";
+import { isCompactViewport } from "@/lib/viewport";
 
 // A Chakra Box that is also a motion component, so the right region can animate open and closed without losing its flex props.
 const MotionBox = motion.create(Box);
@@ -451,6 +452,11 @@ export function ChatPanel({
   const setSidePanelOpen = useCallback(
     (panel: SidePanelKey, open: boolean) => {
       const remainingPanels = openSidePanels.filter((openPanel) => openPanel !== panel);
+      if (isCompactViewport()) {
+        const activePanel = openSidePanels[openSidePanels.length - 1];
+        onOpenSidePanelsChange(!open && activePanel === panel ? [] : [panel]);
+        return;
+      }
       onOpenSidePanelsChange(
         open ? [...remainingPanels, panel].slice(-MAXIMUM_OPEN_SIDE_PANELS) : remainingPanels,
       );
@@ -883,50 +889,56 @@ export function ChatPanel({
   );
 
   // Built before the return so the region is gated on the tiles themselves, since an open panel with nothing to draw would reserve an empty column.
-  const sidePanels = [
-    backgroundPanelOpen && {
-      key: "background",
-      onActivate: () => markSidePanelActive("background"),
-      content: (
-        <BackgroundJobsPanel
-          open={backgroundPanelOpen}
-          onClose={() => setSidePanelOpen("background", false)}
-          messages={messages}
-          sessionId={sessionId}
-          workingDirectory={workingDirectory || homeDirectory || ""}
-          locations={workspaceLocations}
-        />
-      ),
-    },
-    memoryPanelOpen && {
-      key: "memory",
-      onActivate: () => markSidePanelActive("memory"),
-      content: (
-        <MemoryPanel
-          key={sessionId}
-          sessionId={sessionId}
-          recording={recordingMemory}
-          onClose={() => setSidePanelOpen("memory", false)}
-        />
-      ),
-    },
-    delegatedPanelOpen && {
-      key: "delegated",
-      onActivate: () => markSidePanelActive("delegated"),
-      content: (
-        <DelegatedWorkPanel
-          sessions={sessions}
-          rootSessionId={rootSessionId}
-          activeSessionId={sessionId}
-          unseenCompletions={unseenCompletions ?? EMPTY_UNSEEN_COMPLETIONS}
-          agents={agents}
-          onResume={(entry) => onResumeSession?.(entry)}
-          onDeleteSession={(entry) => onDeleteSession?.(entry.sessionId)}
-          onClose={() => setSidePanelOpen("delegated", false)}
-        />
-      ),
-    },
-  ].filter(Boolean) as TilePanel[];
+  const sidePanels = (
+    [
+      backgroundPanelOpen && {
+        key: "background",
+        onActivate: () => markSidePanelActive("background"),
+        content: (
+          <BackgroundJobsPanel
+            open={backgroundPanelOpen}
+            onClose={() => setSidePanelOpen("background", false)}
+            messages={messages}
+            sessionId={sessionId}
+            workingDirectory={workingDirectory || homeDirectory || ""}
+            locations={workspaceLocations}
+          />
+        ),
+      },
+      memoryPanelOpen && {
+        key: "memory",
+        onActivate: () => markSidePanelActive("memory"),
+        content: (
+          <MemoryPanel
+            key={sessionId}
+            sessionId={sessionId}
+            recording={recordingMemory}
+            onClose={() => setSidePanelOpen("memory", false)}
+          />
+        ),
+      },
+      delegatedPanelOpen && {
+        key: "delegated",
+        onActivate: () => markSidePanelActive("delegated"),
+        content: (
+          <DelegatedWorkPanel
+            sessions={sessions}
+            rootSessionId={rootSessionId}
+            activeSessionId={sessionId}
+            unseenCompletions={unseenCompletions ?? EMPTY_UNSEEN_COMPLETIONS}
+            agents={agents}
+            onResume={(entry) => onResumeSession?.(entry)}
+            onDeleteSession={(entry) => onDeleteSession?.(entry.sessionId)}
+            onClose={() => setSidePanelOpen("delegated", false)}
+          />
+        ),
+      },
+    ].filter(Boolean) as TilePanel[]
+  ).sort(
+    (first, second) =>
+      openSidePanels.indexOf(first.key as SidePanelKey) -
+      openSidePanels.indexOf(second.key as SidePanelKey),
+  );
 
   return (
     // Every profile name is resolved from this one catalogue, so the transcript and the sidebar cannot disagree.
@@ -1378,9 +1390,8 @@ export function ChatPanel({
               w={{ base: "100%", md: `min(${sidePanelWidth}px, 55%)` }}
               minW={{ base: "100%", md: "min(360px, 55%)" }}
               maxW={{ base: "100%", md: "80vw" }}
-              pr={2}
-              // Full-screen at `base`, so its bottom edge is the device's rather than the panel's.
-              pb={{ base: "calc(var(--safe-bottom, 0px) + 0.5rem)", md: 2 }}
+              pr={{ base: 0, md: 2 }}
+              pb={{ base: 0, md: 2 }}
               position={{ base: "absolute", md: "relative" }}
               inset={{ base: 0, md: "auto" }}
               zIndex={{ base: 3, md: "auto" }}
@@ -1401,7 +1412,7 @@ export function ChatPanel({
                 zIndex={1}
                 onPointerDown={startSidePanelResize}
               />
-              <PanelTiles gap={8} panels={sidePanels} />
+              <PanelTiles gap={8} panels={sidePanels} singlePanelOnMobile />
             </MotionBox>
           )}
         </AnimatePresence>

@@ -59,4 +59,4 @@ The app does not start a harness of its own. With nothing listening it says so a
 
 - Every setting the app exposes: [Configuration](configuration.md).
 - The same operations from a terminal: [The `langmesh` command](cli.md).
-- Writing your own agents and skills: [Agents and skills](agents-and-skills.md).
+- Writing your own agents and skills: [Agent system](agent-system.md).

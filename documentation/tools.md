@@ -73,7 +73,7 @@ A peer that dies before it reports cannot say so. That is the one thing the harn
 
 **MCP**
 
-`call_mcp_tool`, `list_mcp_tools`, `list_mcp_resources`, `read_mcp_resource` — bridge to any configured [MCP server](agents-and-skills.md#mcp-servers).
+`call_mcp_tool`, `list_mcp_tools`, `list_mcp_resources`, `read_mcp_resource` — bridge to any configured [MCP server](agent-system.md#mcp-servers).
 
 ## Screen control (`control_screen`)
 

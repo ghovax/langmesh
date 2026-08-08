@@ -49,6 +49,7 @@ import { useTray } from "@/lib/use-tray";
 import { playAttentionSound, playTurnEndSound, primeSounds } from "@/lib/sounds";
 import { swallowed } from "@/lib/swallowed";
 import { usePreferences } from "@/lib/preferences";
+import { isCompactViewport, useCompactViewport } from "@/lib/viewport";
 
 // The sessions sidebar is its own component; this page owns the data and the notification tracking.
 
@@ -193,6 +194,7 @@ function Workspace() {
   >([]);
   const [selectedPermissionMode, setSelectedPermissionMode] = useState<PermissionMode>("ask");
   const [historyOpen, setHistoryOpen] = useState(true);
+  const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   // The right-hand panels, held here because ChatPanel remounts on every conversation switch.
   const [openSidePanels, setOpenSidePanels] = useState<SidePanelKey[]>([]);
   // Default right-region width: comfortable for one panel without dwarfing the transcript.
@@ -200,9 +202,8 @@ function Workspace() {
   // Default sidebar width: enough for typical session titles, growing by drag and never the reverse.
   const [historyWidth, setHistoryWidth] = useState(268);
 
-  const isCompactViewport = useCallback(() => {
-    return window.matchMedia("(max-width: 767px)").matches;
-  }, []);
+  const compactViewport = useCompactViewport();
+  const visibleHistoryOpen = compactViewport ? mobileHistoryOpen : historyOpen;
 
   // Agents, cards, servers and memories are scoped to the selected folder, and the ref lets live reload refetch with the current one.
   const workingDirectoryRef = useRef(workingDirectory);
@@ -523,11 +524,11 @@ function Workspace() {
       const params = new URLSearchParams(window.location.search);
       params.set("session", sessionId);
       router.replace(`?${params.toString()}`, { scroll: false });
-      if (isCompactViewport()) setHistoryOpen(false);
+      if (isCompactViewport()) setMobileHistoryOpen(false);
       refreshSessions();
       setTimeout(refreshSessions, 5000);
     },
-    [isCompactViewport, refreshSessions, router, workspaceId],
+    [refreshSessions, router, workspaceId],
   );
 
   const handleStreamingChange = useCallback(
@@ -545,7 +546,7 @@ function Workspace() {
     const params = new URLSearchParams(window.location.search);
     params.delete("session");
     router.replace(`?${params.toString()}`, { scroll: false });
-    if (isCompactViewport()) setHistoryOpen(false);
+    if (isCompactViewport()) setMobileHistoryOpen(false);
   }
 
   // Switch the active workspace from its sidebar row, starting a fresh chat and swapping the `?workspace=` param.
@@ -560,7 +561,7 @@ function Workspace() {
     params.set("workspace", nextWorkspaceId);
     params.delete("session");
     router.replace(`?${params.toString()}`, { scroll: false });
-    if (isCompactViewport()) setHistoryOpen(false);
+    if (isCompactViewport()) setMobileHistoryOpen(false);
   }
 
   // Open a workspace's Settings from its sidebar menu, resetting the workspace only when it is a different one.
@@ -578,7 +579,7 @@ function Workspace() {
     if (switchingWorkspaces) params.delete("session");
     params.set("settings", section);
     router.replace(`?${params.toString()}`, { scroll: false });
-    if (isCompactViewport()) setHistoryOpen(false);
+    if (isCompactViewport()) setMobileHistoryOpen(false);
   }
 
   async function handleDeleteSession(sessionId: string) {
@@ -613,7 +614,7 @@ function Workspace() {
     }
     params.set("session", entry.sessionId);
     router.replace(`?${params.toString()}`, { scroll: false });
-    if (isCompactViewport()) setHistoryOpen(false);
+    if (isCompactViewport()) setMobileHistoryOpen(false);
   }
 
   // Opening a session from the delegated-work panel, deliberately without the remount `handleResumeSession` does.
@@ -788,7 +789,7 @@ function Workspace() {
       boxSizing="border-box"
     >
       <AnimatePresence initial={false}>
-        {historyOpen && (
+        {(historyOpen || mobileHistoryOpen) && (
           <MotionFlex
             direction="column"
             w={{ base: "100%", md: `${historyWidth}px` }}
@@ -796,14 +797,15 @@ function Workspace() {
             minW={{ base: "100%", md: "240px" }}
             ml={{ md: 2 }}
             mb={{ md: 2 }}
-            // On a phone this panel is the screen, so its bottom edge is the device's.
-            pb={{ base: "var(--safe-bottom, 0px)", md: 0 }}
             // `100%` rather than `100dvh`, because the parent has already reserved the top inset.
             h={{ base: "100%", md: "auto" }}
             flexShrink={0}
             position="relative"
             minH={0}
-            display="flex"
+            display={{
+              base: mobileHistoryOpen ? "flex" : "none",
+              md: historyOpen ? "flex" : "none",
+            }}
             initial={{ opacity: 0, x: -24 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -24 }}
@@ -844,7 +846,7 @@ function Workspace() {
         flex={1}
         minW={0}
         overflow="visible"
-        display={{ base: historyOpen ? "none" : "block", md: "block" }}
+        display={{ base: mobileHistoryOpen ? "none" : "block", md: "block" }}
       >
         <ChatPanel
           key={chatKey}
@@ -883,8 +885,12 @@ function Workspace() {
           connectionLost={!isConnected}
           onReconnect={reconnect}
           onStreamingChange={handleStreamingChange}
-          historyOpen={historyOpen}
-          onToggleHistory={() => setHistoryOpen((current) => !current)}
+          historyOpen={visibleHistoryOpen}
+          onToggleHistory={() =>
+            compactViewport
+              ? setMobileHistoryOpen((current) => !current)
+              : setHistoryOpen((current) => !current)
+          }
           models={models}
           modelProviders={modelProviders}
           recentModels={recentModels}

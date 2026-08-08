@@ -212,5 +212,5 @@ Two caveats when querying. The first call of a session has nothing to compare ag
 ## Where to go next
 
 - Configure providers and behavior: [Configuration guide](configuration.md).
-- Author agents, skills, memory, and MCP servers: [Agents and skills guide](agents-and-skills.md).
+- Author agents, skills, memory, and MCP servers: [Agent system guide](agent-system.md).
 - The tool surface in detail: [Tools guide](tools.md).

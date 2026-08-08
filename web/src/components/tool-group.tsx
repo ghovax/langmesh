@@ -11,6 +11,7 @@ import { RollingNumber } from "./rolling-number";
 import { ToolCallLabel } from "./tool-label";
 import { Pill } from "./ui/pill";
 import { DisclosureRow } from "./ui/disclosure-row";
+import { ActivitySpinner } from "./ui/activity-icon";
 import type { ToolEvent } from "@/lib/tool-event";
 import { hasBackgroundJobId, toolStatus } from "@/lib/tool-event";
 import {
@@ -81,6 +82,7 @@ export const ToolGroup = memo(function ToolGroup({ tools, keepOpen = false }: To
   const inputRequired = inputRequiredCount > 0;
   const failedCount = tools.filter((tool) => toolStatus(tool.status) === "failed").length;
   const active = runningCount > 0 || backgroundCount > 0 || inputRequired || keepOpen;
+  const showActivitySpinner = runningCount > 0 || (keepOpen && !inputRequired);
   // Tri-state, so the group can be toggled either way from its default: null follows the default.
   const [manualOverride, setManualOverride] = useState<boolean | null>(null);
   const bodyOpen = manualOverride ?? false;
@@ -215,8 +217,8 @@ export const ToolGroup = memo(function ToolGroup({ tools, keepOpen = false }: To
         maxH={80}
         followTailKey={tools.length}
         icon={
-          <Box color={headingIconColor}>
-            <HeadingIcon />
+          <Box color={headingIconColor} display="flex" alignItems="center">
+            {showActivitySpinner ? <ActivitySpinner /> : <HeadingIcon />}
           </Box>
         }
         title={titleSlot}

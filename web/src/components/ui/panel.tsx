@@ -19,7 +19,7 @@ import { FADE_BOTTOM, FADE_TOP, fadeOverlay, useScrollEdgeFade } from "@/lib/scr
 // The single height every top strip shares, so all their titles sit on one line.
 export const TOP_BAR_HEIGHT = "3rem";
 
-// The panel surface: a filled card that fills its tile, with the standard border and elevation.
+// The panel surface is edge-to-edge on phones and becomes an elevated card on wider screens.
 export function PanelCard({ children, ...rest }: FlexProps) {
   return (
     <Flex
@@ -29,10 +29,11 @@ export function PanelCard({ children, ...rest }: FlexProps) {
       minW={0}
       minH={0}
       bg="bg.panel"
-      borderRadius="md"
-      borderWidth="1px"
+      borderRadius={{ base: 0, md: "md" }}
+      borderWidth={{ base: 0, md: "1px" }}
       borderColor="border.muted"
-      boxShadow="panel"
+      boxShadow={{ base: "none", md: "panel" }}
+      pb={{ base: "var(--safe-bottom, 0px)", md: 0 }}
       overflow="hidden"
       {...rest}
     >

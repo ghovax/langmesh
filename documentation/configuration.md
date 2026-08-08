@@ -83,7 +83,7 @@ Which models each plan actually serves is discovered live from the account, so a
 
 Both are unofficial routes that the vendor can withdraw at any time.
 
-**Which model a session uses** is not set here — it belongs to the agent profile, in that agent's `AGENT.md` frontmatter (`model` and `provider`). See [Agents and skills](agents-and-skills.md#agents). A profile pinned to a provider you have no credentials for fails on its first call. It does not borrow another profile's model. Its own configuration defines an agent, and nothing else does.
+**Which model a session uses** is not set here — it belongs to the agent profile, in that agent's `AGENT.md` frontmatter (`model` and `provider`). See [Agent system](agent-system.md#agents). A profile pinned to a provider you have no credentials for fails on its first call. It does not borrow another profile's model. Its own configuration defines an agent, and nothing else does.
 
 ## Web search and retrieval
 
@@ -213,7 +213,7 @@ There is **no bypass mode**, and no standing "always allow": the only runtime de
 
 **A read-only session** is not a mode. It is a confinement with nowhere writable — `langmesh create --read-only`, or a `sandbox:` block on the agent profile that lists no `writable` paths. Nothing about a command's text decides it, so there is no spelling of a write that gets past.
 
-Three tools take per-call rules on each agent, and they are the three whose calls can be named: `bash` by its command (`sudo *: deny`, `rm -rf *: ask`, …), `mcp` by `server.tool` (`*.delete_*: deny`), and `screen` by the primitive a script reaches for (`evaluate: deny`). The longest matching pattern wins. A `deny` refuses the call outright in both modes — a reviewer may not overrule a rule you wrote. See [Agents and skills](agents-and-skills.md).
+Three tools take per-call rules on each agent, and they are the three whose calls can be named: `bash` by its command (`sudo *: deny`, `rm -rf *: ask`, …), `mcp` by `server.tool` (`*.delete_*: deny`), and `screen` by the primitive a script reaches for (`evaluate: deny`). The longest matching pattern wins. A `deny` refuses the call outright in both modes — a reviewer may not overrule a rule you wrote. See [Agent system](agent-system.md).
 
 `bash` ships with a short list of prefixes already set to `ask` or `deny`, because the confinement answers "where can this reach" and not "how much of the workspace survives this": `rm -rf .` is entirely inside the boundary, and so is `git reset --hard`. Your own entry at the same pattern replaces the shipped one, so writing `"rm -rf *": allow` turns it off.
 
@@ -303,7 +303,7 @@ The gate is what keeps the character similarity from doing harm. A short query i
 
 ## MCP servers
 
-`mcp.servers` mirrors what `.agents/mcp.json` declares and is normally edited there — see [Agents and skills](agents-and-skills.md#mcp-servers). A folder's own servers join the shared pool when a session in that folder starts. The pool only grows, so no other session loses its servers.
+`mcp.servers` mirrors what `.agents/mcp.json` declares and is normally edited there — see [Agent system](agent-system.md#mcp-servers). A folder's own servers join the shared pool when a session in that folder starts. The pool only grows, so no other session loses its servers.
 
 ## Remote peers
 
@@ -325,4 +325,4 @@ telemetry:
   sample_ratio: 1.0
 ```
 
-**There is no default agent setting**, here or anywhere. `langmesh create --agent` is required, and no profile is the one to fall back to. A default would run work under an agent nobody chose. It would also make every other profile's behaviour depend on that one. Which agent runs is always stated. Add your own under `~/.agents/agents/<id>/` or `.agents/agents/<id>/` in a working directory — see [Agents and skills](agents-and-skills.md).
+**There is no default agent setting**, here or anywhere. `langmesh create --agent` is required, and no profile is the one to fall back to. A default would run work under an agent nobody chose. It would also make every other profile's behaviour depend on that one. Which agent runs is always stated. Add your own under `~/.agents/agents/<id>/` or `.agents/agents/<id>/` in a working directory — see [Agent system](agent-system.md).

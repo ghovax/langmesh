@@ -1,13 +1,13 @@
 ---
-name: harness-configuration
-title: Configure the agentic harness via the built-in files and patterns
-description: Configure the agentic harness — provider credentials and model, permission modes, sandbox, agents, skills, MCP servers, and memories. Use when the user wants to add/change a provider key or model, add/change an agent or skill, connect an MCP server, set the Composio/Exa key, toggle the sandbox, or switch permission behavior.
+name: langmesh-configuration
+title: Configure LangMesh via its built-in files and patterns
+description: Configure LangMesh — provider credentials and model, permission modes, sandbox, agents, skills, MCP servers, and memories. Use when the user wants to add/change a provider key or model, add/change an agent or skill, connect an MCP server, set the Composio/Exa key, toggle the sandbox, or switch permission behavior.
 enabled: true
 ---
 
-# Configure the Agentic Harness
+# Configure LangMesh
 
-Use this skill when the user wants to change how the harness itself is set up. There are **three surfaces onto one file** (`~/.config/langmesh/configuration.yaml`): `langmesh configure` from the terminal, Settings in the desktop app, and editing the file directly — the daemon watches it and picks up a hand edit live. Always read the relevant existing file before editing.
+Use this skill when the user wants to change how LangMesh itself is set up. There are **three surfaces onto one file** (`~/.config/langmesh/configuration.yaml`): `langmesh configure` from the terminal, Settings in the desktop app, and editing the file directly — the daemon watches it and picks up a hand edit live. Always read the relevant existing file before editing.
 
 **Start with `langmesh configure --all`.** It walks the schema, not the file, so it lists every setting that exists — including the ones nobody has written down — each with what it is for, what it ships at, and what this machine currently runs on. Reading the file only ever shows the part already known about. A name the schema does not define is refused rather than written and ignored, so a typo fails where it is made.
 
@@ -170,7 +170,7 @@ Two things are deliberately **not** live, because they are fixed when a session 
 
 ## Verifying a change
 
-- Agents and skills: `langmesh create --agent <name>` refuses an unknown profile and lists the ones that exist. A session's `create_session` tool enumerates the same catalogue in its schema, so an unknown name cannot be asked for at all. The GUI reads it from `GET /agents/cards`.
+- Agent catalogue: `langmesh create --agent <name>` refuses an unknown profile and lists the ones that exist. A session's `create_session` tool enumerates the same catalogue in its schema, so an unknown name cannot be asked for at all. The GUI reads it from `GET /agents/cards`.
 - Configuration: `langmesh configure --all` prints every setting the schema defines as a JSON object of dotted path to `{about, default, current}`; `langmesh configure` alone prints only what has been changed. Credentials are included in both — it reads a file the user owns.
 - Providers and models: `GET /models` lists them grouped by provider; a provider's models unlock once its key resolves.
 - MCP: `GET /mcp/tools?working_directory=<path>` lists the servers and tools that folder sees. An unreachable server is listed with no tools and an `error` rather than failing the call.

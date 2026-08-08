@@ -29,7 +29,7 @@ Then the rest, in the order they build on each other. [Architecture](architectur
 | [As a library](library.md) | `langmesh.Session` in your own process, and every seam you can replace |
 | [The `langmesh` command](cli.md) | Every verb, the session states, JSON and exit codes |
 | [The desktop app](app.md) | The window, decisions, environments, and screen control |
-| [Agents and skills](agents-and-skills.md) | Authoring agents, skills, memory, and MCP servers |
+| [Agent system](agent-system.md) | Authoring agents, skills, memory, and MCP servers |
 | [Configuration](configuration.md) | Providers, keys, permissions, MCP, and every config key |
 | [Tools](tools.md) | The full tool surface, including screen control (`control_screen`) |
 | [Development](development.md) | The dev environment, running the pieces, building the app |

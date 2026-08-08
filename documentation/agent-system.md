@@ -1,4 +1,4 @@
-# Agents, skills, memory, and MCP
+# Agent system
 
 Everything that shapes how LangMesh behaves — its agents, their reusable skills, its memory, and its tool servers — is **plain Markdown and JSON on disk**. There are two layers, and they merge by name:
 
@@ -75,7 +75,7 @@ enabled: true
 ...
 ```
 
-Bundled skills include `coding`, `data-visualization`, `literature-search`, `harness-configuration`, and `context7-mcp`.
+Bundled skills include `coding`, `data-visualization`, `literature-search`, `langmesh-configuration`, and `context7-mcp`.
 
 ## Memory
 

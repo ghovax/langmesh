@@ -64,7 +64,7 @@ export function NewWorkspaceDialog({
       <Portal>
         <Dialog.Backdrop />
         <Dialog.Positioner>
-          <Dialog.Content w="min(560px, calc(100vw - 16px))">
+          <Dialog.Content w={{ base: "100%", sm: "min(560px, calc(100vw - 32px))" }}>
             <Dialog.Header display="flex" flexDirection="column" alignItems="flex-start" gap={1}>
               <Dialog.Title textStyle="panelTitle">{translation("title")}</Dialog.Title>
               <Text fontSize="sm" color="fg.muted">
