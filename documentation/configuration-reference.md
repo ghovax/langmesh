@@ -256,7 +256,7 @@ How large, how many, and how patient the tools are.
 | `tuning.defaults.oauth_poll_ceiling` | number | `10.0` | Ceiling on the widening pause between sign-in polls, so a slow sign-in is not asked about every second for minutes. |
 | `tuning.defaults.oauth_poll_give_up` | number | `300.0` | How long a browser sign-in is waited for before it is abandoned — a person's whole trip through a consent screen, not a network round trip. |
 | `tuning.defaults.subscription_resume_ttl` | number | `1800.0` | How long a subscription provider's server-side conversation state stays worth resuming from before the whole conversation is resent instead. |
-| `tuning.defaults.model_silence_give_up` | number | `180.0` | How long a model may hold a stream open saying nothing at all before the turn is ended. Long, because a model weighing a hard problem is silent and still working. |
+| `tuning.defaults.model_silence_give_up` | number | `180.0` | How long a model stream may make no meaningful progress before the turn fails. Empty transport keepalives do not reset it; text, reasoning, tool calls, usage and a terminal frame do. |
 | `tuning.defaults.file_url_ttl` | number | `600.0` | How long a signed file URL stays valid. |
 | `tuning.defaults.mcp_connect` | number | `20.0` | How long connecting to one MCP server waits. |
 | `tuning.defaults.card_resolve` | number | `20.0` | How long fetching a remote agent's card waits. |

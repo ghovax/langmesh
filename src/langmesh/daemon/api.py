@@ -586,9 +586,15 @@ async def _daemon_restart(_params: dict) -> dict:
         # `execv` rather than spawn-and-exit: it keeps the pid, so no successor races the lock file.
         await asyncio.sleep(0.5)
         if state.lifecycle is not None:
-            # Sleep them rather than reap them: their records are durable, and the successor picks each back up.
-            with contextlib.suppress(Exception):
-                await state.lifecycle.sleep_all()
+            sleeping = asyncio.create_task(state.lifecycle.sleep_all())
+            completed, _ = await asyncio.wait(
+                {sleeping},
+                timeout=active_tuning().duration(Tunable.sigterm_grace),
+            )
+            if completed:
+                await asyncio.gather(*completed, return_exceptions=True)
+            else:
+                logger.warning("daemon restart is replacing a session that did not settle")
         os.execv(sys.executable, [sys.executable, *_daemon_argv()])
 
     asyncio.get_running_loop().create_task(replace())

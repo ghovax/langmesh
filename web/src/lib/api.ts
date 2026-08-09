@@ -2054,42 +2054,57 @@ function attachTranscript(
   onFrame: (frame: SessionStreamFrame) => void,
   onDone: () => void,
 ): { abort: () => void } {
-  const controller = new AbortController();
-  apiFetch(path, {
-    signal: controller.signal,
-    headers: { Accept: "text/event-stream" },
-  })
-    .then(async (response) => {
-      if (!response.ok || !response.body) {
-        // Silence here reads exactly like a session with nothing to say, so say it.
-        swallowed(
-          { component: "session-stream", operation: "attach to the session" },
-          new Error("the daemon refused the attach stream"),
-          { status: response.status, path },
-        );
-        return;
+  let closed = false;
+  let terminated = false;
+  let requestController: AbortController | null = null;
+  const connect = async () => {
+    while (!closed && !terminated) {
+      requestController = new AbortController();
+      try {
+        const response = await apiFetch(path, {
+          signal: requestController.signal,
+          headers: { Accept: "text/event-stream" },
+        });
+        if (!response.ok || !response.body) {
+          swallowed(
+            { component: "session-stream", operation: "attach to the session" },
+            new Error("the daemon refused the attach stream"),
+            { status: response.status, path },
+          );
+          terminated = response.status >= 400 && response.status < 500 && response.status !== 401;
+        } else {
+          await pumpEventStream(response.body, (raw) => {
+            let frame: SessionStreamFrame;
+            try {
+              frame = JSON.parse(raw) as SessionStreamFrame;
+            } catch {
+              return;
+            }
+            onFrame(frame);
+            if (frame.kind === "done") {
+              terminated = true;
+              return "stop";
+            }
+          });
+        }
+      } catch {
+        if (closed) return;
       }
-      await pumpEventStream(response.body, (raw) => {
-        let frame: SessionStreamFrame;
-        try {
-          frame = JSON.parse(raw) as SessionStreamFrame;
-        } catch {
-          // A stream that closes is the normal end of one; nothing to report.
-          return;
-        }
-        onFrame(frame);
-        if (frame.kind === "done") {
-          controller.abort();
-          return "stop";
-        }
-      });
-    })
-    .catch(() => {
-      // An abort and a dropped connection both end the stream; onDone still fires.
-    })
-    .finally(onDone);
+      if (!closed && !terminated) {
+        forgetDaemonEndpoint();
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+    if (terminated) onDone();
+  };
+  void connect();
 
-  return { abort: () => controller.abort() };
+  return {
+    abort: () => {
+      closed = true;
+      requestController?.abort();
+    },
+  };
 }
 
 export function attachSession(

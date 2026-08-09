@@ -82,7 +82,7 @@ Everything durable is a constructor argument with an interface behind it. The de
 | Argument | Interface | Default | What it decides |
 |---|---|---|---|
 | `model` | LangChain [`BaseChatModel`](https://python.langchain.com/docs/concepts/chat_models/) | Built from configuration | Which model runs, and everything wrapped around it — tracing, rate limiting, a stub in tests |
-| `checkpoints` | `langmesh.Checkpoints` | `MemoryCheckpoints` | Where the conversation is saved, and therefore whether a session can resume |
+| `checkpoints` | `langmesh.Checkpoints` | `MemoryCheckpoints` | Where the conversation, goal and task state are saved, and therefore whether a session can resume |
 | `jobs` | `langmesh.JobStore` | `MemoryJobStore` | Where background jobs are recorded, and therefore whether one survives a restart |
 | `observer` | `langmesh.Observer` | None (dropped) | Where the audit trail goes — auto-approvals, goal changes, messages |
 | `approvals` | `langmesh.Approvals` | None (gates suspend) | Who answers a gated tool call when there is no human |
@@ -91,7 +91,7 @@ Everything durable is a constructor argument with an interface behind it. The de
 | `catalogue` | `langmesh.Catalogue` | The working directory's `.agents` plus the packaged base layer — **and nothing of `$HOME`** | Where agents, skills, memories, instructions and prompt templates come from |
 | `providers` | `{"anthropic": "sk-..."}` or `{"custom": {"api_key": ..., "base_url": ...}}` | Whatever the machine is configured with | Provider credentials, in code |
 | `model_identifier` | `"provider/model"` | The agent profile's own | Which model this session runs, overriding the profile |
-| `configuration` | `Configuration` | Read from XDG, **without creating it** | Providers, tuning, agent directories |
+| `configuration` | `Configuration` | Fresh in-memory defaults, with the per-session toolbox disabled | Providers, tuning and machine-level capabilities |
 | `agent` | `str` name **or** an `AgentConfiguration` you build | — (required) | The agent itself: prompt, model, permission mode, which built-in tools it has |
 | `tools` | LangChain [`BaseTool`](https://python.langchain.com/docs/concepts/tools/) | None | Tools the agent gains, on top of the harness's |
 | `permissions` | A `PermissionEvaluator`-shaped object | The built-in rule engine | Whether a call is gated at all |
@@ -281,7 +281,7 @@ An approver that raises escalates the gate rather than allowing it. A broken pol
 
 ### Observation
 
-`Observer` receives what the harness decided but did not say out loud: a bash command auto-approved and why, a goal set, a message appended. Turn *events* are not this — those come out of `stream()`. The goal *review*'s verdict is not observed either: what it decided is visible in the goal itself, whose status and evidence the session carries.
+`Observer` receives what the harness decided but did not say out loud: a bash command auto-approved and why, a goal set, a message appended. Turn *events* are not this — those come out of `stream()`. The goal review is visible there as typed lifecycle and progress events, while the resulting standing is retained on the goal itself.
 
 ```python
 class LogObserver:
@@ -405,26 +405,30 @@ class KeepDecisions:
 
 ## Driving a turn
 
-`ask()` is the convenience. `stream()` is the whole vocabulary — text chunks, tool calls, tool results, usage, suspensions, the same events a session sends a client over its socket:
+`ask()` is the convenience. `stream()` is the whole vocabulary — text chunks, tool calls, tool results, usage, suspensions and independent goal-review activity:
 
 ```python
-from langmesh.runtime.turn_events import TextChunk, ToolCall, Suspended
+from langmesh import GoalReviewFinished, GoalReviewProgress, Suspended, TextChunk, ToolCall
 
 async for event in session.stream("Refactor the parser to use the streaming reader."):
     match event:
         case TextChunk(text=text):
             print(text, end="", flush=True)
-        case ToolCall(tool_name=name):
+        case ToolCall(name=name):
             ...
         case Suspended(interactions=gates):
+            ...
+        case GoalReviewProgress(review_id=review_id, event=review_event):
+            ...
+        case GoalReviewFinished(standing=standing, assessment=assessment):
             ...
 ```
 
 Both drive one turn, unless the agent sets itself a goal with `update_goal`. A goal is a contract for an outcome rather than a note about one, so while it is open the session keeps taking turns toward it and keeps yielding their events.
 
-What decides whether it keeps going is not the agent, which can set a goal but cannot end one. Between turns the harness makes **one extra model call**: a review that reads the session against the goal and answers with a verdict and, unless the goal is reached, the instruction that opens the next turn. Budget for it — a goal that runs for eight turns costs eight reviews on top of the turns themselves, on the same model the session uses. It is a plain call and not a streamed turn, so nothing from it reaches `stream()`; what you see is the next turn beginning with the review's words. The loop ends when the review reports the goal satisfied or blocked, when the allowance in `Tunable.goal_continuation_turns` runs out and the goal is parked, or when the review cannot be reached often enough to matter — a review that fails leaves the goal exactly as it was. Asking again gives the allowance back and picks a parked goal up where it stopped.
+What decides whether it keeps going is not the agent, which can set a goal but cannot end one. Between turns the harness runs an isolated reviewer session that reads, searches and tests the work before submitting a verdict and, unless the goal is reached, the instruction that opens the next turn. Budget for it — a goal that runs for eight turns costs eight reviews on top of the turns themselves, on the same model the session uses. `GoalReviewStarted` identifies the review and exposes the typed goal, purpose and minimum conditions; each reviewer event is wrapped in `GoalReviewProgress`; `GoalReviewFinished` carries the terminal status, standing, contract status, assessment, evidence and continuation message. The internal assignment remains an implementation detail. The loop ends when the review reports the goal satisfied or blocked, when the allowance in `Tunable.goal_continuation_turns` runs out and the goal is parked, or when the review fails and leaves the goal unchanged. Asking again gives the allowance back and picks a parked goal up where it stopped.
 
-The harness checkpoints the conversation when a turn ends, including when it ends badly. A turn that raised still changed the conversation. To lose that is worse than to record a failure.
+The harness checkpoints the conversation, goal and task state when a call ends, including when it ends badly. A turn that raised still changed the session. To lose that is worse than to record a failure.
 
 Resuming is giving a new `Session` the same id and the same store:
 

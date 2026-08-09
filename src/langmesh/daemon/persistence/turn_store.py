@@ -366,15 +366,21 @@ class AppendOnlyTaskStore(TaskStore):
                         task_id=turn_id,
                         context_id=session_id or None,
                     )
+                    interrupted_at = datetime.now(timezone.utc).isoformat()
                     interrupted_status = TaskStatus(
                         state=TaskState.failed,
                         message=interrupted_message,
-                        timestamp=datetime.now(timezone.utc).isoformat(),
+                        timestamp=interrupted_at,
                     )
                     await connection.execute(
                         update(self._head)
                         .where(self._head.c.id == turn_id)
                         .values(status=_dump(interrupted_status))
+                    )
+                    await connection.execute(
+                        update(self._goal_reviews)
+                        .where(self._goal_reviews.c.review_id == session_id)
+                        .values(status=TaskState.failed.value, completed_at=interrupted_at)
                     )
                     failed_task_ids.append(turn_id)
         finally:

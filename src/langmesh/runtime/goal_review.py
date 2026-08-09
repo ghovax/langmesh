@@ -8,7 +8,7 @@ from contextlib import suppress
 from dataclasses import replace
 from datetime import datetime, timezone
 from tempfile import TemporaryDirectory
-from typing import Any, Literal, Optional
+from typing import Any, Awaitable, Callable, Literal, Optional
 
 from a2a.types import Message, Part, Role, Task, TaskState, TaskStatus, TextPart
 from a2a.utils import new_task
@@ -16,12 +16,18 @@ from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from langmesh.base.configuration import PermissionEvaluator
 from langmesh.base.identifiers import new_id
-from langmesh.base.serialization import lines
+from langmesh.base.serialization import compact
 from langmesh.base.tuning import Tunable, active_tuning
 from langmesh.protocol.events import ToolStatus
 from langmesh.runtime.goal import Goal, NonBlankText
 from langmesh.runtime.internals import says
-from langmesh.runtime.turn_events import ToolResult
+from langmesh.runtime.turn_events import (
+    GoalReviewFinished,
+    GoalReviewProgress,
+    GoalReviewStarted,
+    ToolResult,
+    TurnEvent,
+)
 from langmesh.worker.sink import _TurnEventSink
 
 
@@ -223,12 +229,19 @@ class _ReviewsGoal:
         return reviewer
 
     async def _run_goal_review_turn(
-        self, reviewer, instruction: str, sink: _TurnEventSink
+        self,
+        reviewer,
+        instruction: str,
+        sink: _TurnEventSink,
+        review_id: str,
+        publish: Callable[[TurnEvent], Awaitable[None]] | None,
     ) -> bool:
         async def run() -> None:
             async for event in reviewer.stream(
                 instruction, as_system_note=True, opens_exchange=True
             ):
+                if publish is not None:
+                    await publish(GoalReviewProgress(review_id=review_id, event=event))
                 await sink.handle(event)
 
         review_turn = asyncio.create_task(run())
@@ -265,10 +278,11 @@ class _ReviewsGoal:
         )
         task = new_task(message)
         task.status = TaskStatus(state=TaskState.working, timestamp=created_at)
-        await self._turn_store.create_goal_review(
-            review_id, self._session_id, goal.text, created_at
-        )
-        await self._turn_store.save(task)
+        if self._turn_store is not None:
+            await self._turn_store.create_goal_review(
+                review_id, self._session_id, goal.text, created_at
+            )
+            await self._turn_store.save(task)
 
         async def emit(part: Part) -> None:
             task.history = [
@@ -281,7 +295,8 @@ class _ReviewsGoal:
                     context_id=review_id,
                 ),
             ]
-            await self._turn_store.save_goal_review(self._session_id, review_id, task, part)
+            if self._turn_store is not None:
+                await self._turn_store.save_goal_review(self._session_id, review_id, task, part)
 
         async def save_conversation() -> None:
             return None
@@ -307,14 +322,15 @@ class _ReviewsGoal:
     ) -> None:
         completed_at = datetime.now(timezone.utc).isoformat()
         task.status = TaskStatus(state=status, timestamp=completed_at)
-        await self._turn_store.save(task)
-        await self._turn_store.finish_goal_review(
-            self._session_id,
-            review_id,
-            status.value,
-            standing,
-            completed_at,
-        )
+        if self._turn_store is not None:
+            await self._turn_store.save(task)
+            await self._turn_store.finish_goal_review(
+                self._session_id,
+                review_id,
+                status.value,
+                standing,
+                completed_at,
+            )
 
     @staticmethod
     def _require_review_submission(reviewer) -> None:
@@ -326,7 +342,9 @@ class _ReviewsGoal:
             [review_tool], tool_choice="submit_goal_review"
         )
 
-    async def review_goal(self) -> Optional[GoalReview]:
+    async def review_goal(
+        self, publish: Callable[[TurnEvent], Awaitable[None]] | None = None
+    ) -> Optional[GoalReview]:
         """Run the linked reviewer until it submits a verdict or the parent turn is cancelled."""
         goal = self.goal
         if goal is None or not goal.is_open:
@@ -339,9 +357,13 @@ class _ReviewsGoal:
         instructions = self._prompt_loader.load(
             "goal_review",
             {
-                "goal": goal.text,
-                "purpose": goal.purpose,
-                "requirements": lines(goal.requirements),
+                "goal_contract": compact(
+                    {
+                        "goal": goal.text,
+                        "purpose": goal.purpose,
+                        "minimum_conditions": goal.requirements,
+                    }
+                ),
                 "previous_review_message": goal.review_message,
                 "blocked_turns": active_tuning().amount(Tunable.goal_blocked_turns),
                 "blocked_available": goal.continuations
@@ -352,34 +374,65 @@ class _ReviewsGoal:
         assignment = self._prompt_loader.load(
             "goal_review_assignment",
             {
-                "goal": goal.text,
-                "purpose": goal.purpose,
-                "requirements": lines(goal.requirements),
+                "goal_contract": compact(
+                    {
+                        "goal": goal.text,
+                        "purpose": goal.purpose,
+                        "minimum_conditions": goal.requirements,
+                    }
+                ),
             },
         )
         task, sink = await self._goal_review_transcript(review_id, assignment, goal)
         transcript_finished = False
+        if publish is not None:
+            await publish(
+                GoalReviewStarted(
+                    review_id=review_id,
+                    goal=goal.text,
+                    purpose=goal.purpose,
+                    minimum_conditions=tuple(goal.requirements),
+                )
+            )
 
-        async def finish_transcript(status: TaskState, standing: str | None = None) -> None:
+        async def finish_transcript(status: TaskState, review: GoalReview | None = None) -> None:
             nonlocal transcript_finished
             if transcript_finished:
                 return
             transcript_finished = True
             await sink.flush()
-            await self._finish_goal_review_transcript(task, review_id, status, standing)
+            await self._finish_goal_review_transcript(
+                task, review_id, status, review.standing if review is not None else None
+            )
+            if publish is not None:
+                await publish(
+                    GoalReviewFinished(
+                        review_id=review_id,
+                        status=status.value,
+                        standing=review.standing if review is not None else None,
+                        assessment=review.assessment if review is not None else None,
+                        unmet=tuple(review.unmet) if review is not None else (),
+                        evidence=review.evidence if review is not None else None,
+                        blocker=review.blocker if review is not None else None,
+                        contract_status=review.goal_contract if review is not None else None,
+                        message=review.message if review is not None else None,
+                    )
+                )
 
         with TemporaryDirectory(prefix="langmesh-goal-review-") as scratch_directory:
             reviewer = self._goal_reviewer(scratch_directory)
             try:
                 instruction = instructions
                 while not self._abort_event.is_set():
-                    if not await self._run_goal_review_turn(reviewer, instruction, sink):
+                    if not await self._run_goal_review_turn(
+                        reviewer, instruction, sink, review_id, publish
+                    ):
                         await finish_transcript(TaskState.canceled)
                         return None
                     if reviewer._submitted_goal_review is not None:
                         review = reviewer._submitted_goal_review
                         review._review_id = review_id
-                        await finish_transcript(TaskState.completed, review.standing)
+                        await finish_transcript(TaskState.completed, review)
                         return review
                     logger.warning(
                         "the goal reviewer stopped without submitting its verdict; continuing it"
@@ -406,9 +459,7 @@ class _ReviewsGoal:
             return goal
         if review is None:
             logger.warning("the goal review did not land; carrying the goal on unchanged")
-            self.write_goal(
-                goal.updated(review_message=None, review_id=None)
-            )
+            self.write_goal(goal.updated(review_message=None, review_id=None))
             return self.goal
         if review.standing == "satisfied":
             self.write_goal(

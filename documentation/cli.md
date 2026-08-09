@@ -244,6 +244,8 @@ The app is addressed by bundle identifier rather than by name, so renaming or mo
 
 `restart` **keeps your sessions**. Each one loses its executor and comes back asleep, picking up where it left off on the next message; `sessions_slept` says how many that was. It exists because macOS caches the Accessibility trust check per process.
 
+A provider stream that ignores cancellation cannot strand the replacement: after `tuning.defaults.sigterm_grace`, restart reaps the old daemon and startup reconciliation marks its interrupted turn or review failed.
+
 A daemon that was already running when you granted the permission therefore never sees it, and neither do the sessions it hosts. The desktop app asks for the same thing over the control plane, with `daemon.restart`. That makes the grant flow one click, because a restart of the window does not restart the harness.
 
 `stop` and `restart` signal the process group; they do not call the API. A daemon wedged badly enough to need stopping may not answer its own socket.

@@ -307,6 +307,7 @@ tuning:
     oauth_poll_ceiling: 10.0
     oauth_poll_give_up: 300.0
     subscription_resume_ttl: 1800.0
+    # Empty transport keepalives do not reset this meaningful-progress deadline.
     model_silence_give_up: 180.0
     file_url_ttl: 600.0
     mcp_connect: 20.0

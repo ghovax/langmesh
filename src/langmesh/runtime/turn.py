@@ -27,7 +27,11 @@ from langmesh.runtime.prompt.environment import probe_local_environment, probe_u
 from langmesh.protocol.events import TurnContext
 from langmesh.base.instructions import instructions_payload
 from langmesh.base.memories import memories_payload
-from langmesh.base.message_content import message_content_deltas, message_text
+from langmesh.base.message_content import (
+    CARRIED_REASONING_KEYS,
+    message_content_deltas,
+    message_text,
+)
 from langmesh.base.model_errors import ContextWindowExceeded, over_context_window
 from litellm.exceptions import ContextWindowExceededError as ProviderContextWindowExceeded
 from langchain_core.utils.json import parse_partial_json
@@ -62,9 +66,33 @@ import platform
 import time
 import uuid
 from langmesh.base.serialization import compact, lines
+from langmesh.base.tuning import Tunable, active_tuning
 
 
 logger = logging.getLogger(__name__)
+
+
+def _chunk_advances_model_response(chunk: Any) -> bool:
+    message = getattr(chunk, "message", chunk)
+    if not isinstance(message, AIMessageChunk):
+        return False
+    generation_information = getattr(chunk, "generation_info", None) or {}
+    response_metadata = getattr(message, "response_metadata", None) or {}
+    additional = getattr(message, "additional_kwargs", None) or {}
+    if (
+        getattr(message, "tool_call_chunks", None)
+        or getattr(message, "tool_calls", None)
+        or getattr(message, "invalid_tool_calls", None)
+        or getattr(message, "usage_metadata", None)
+        or any(additional.get(key) for key in CARRIED_REASONING_KEYS)
+        or generation_information.get("finish_reason")
+        or response_metadata.get("finish_reason")
+        or getattr(message, "chunk_position", None) == "last"
+    ):
+        return True
+    return any(
+        block.get("text") or block.get("reasoning") for block in message.content_blocks
+    )
 
 
 class _RunsTurns:
@@ -655,12 +683,23 @@ class _RunsTurns:
         yield Status(code="awaiting_model")
         model_stream = self._bound_model.astream(messages)
         abort_waiter = asyncio.ensure_future(self._abort_event.wait())
+        silence_limit = active_tuning().duration(Tunable.model_silence_give_up)
+        progress_deadline = asyncio.get_running_loop().time() + silence_limit
         try:
             while True:
                 chunk_future = asyncio.ensure_future(_stream_next(model_stream))
-                await asyncio.wait(
-                    {chunk_future, abort_waiter}, return_when=asyncio.FIRST_COMPLETED
+                completed, _ = await asyncio.wait(
+                    {chunk_future, abort_waiter},
+                    timeout=max(0.0, progress_deadline - asyncio.get_running_loop().time()),
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
+                if not completed:
+                    chunk_future.cancel()
+                    with suppress(BaseException):
+                        await chunk_future
+                    raise TimeoutError(
+                        f"The model stream made no meaningful progress for {silence_limit:g} seconds."
+                    )
                 if self._abort_event.is_set():
                     # Stop won the race: drop the pending read and stop consuming the stream.
                     chunk_future.cancel()
@@ -678,6 +717,9 @@ class _RunsTurns:
                 chunk = chunk_future.result()
                 if chunk is _STREAM_EXHAUSTED:
                     break
+                if not _chunk_advances_model_response(chunk):
+                    continue
+                progress_deadline = asyncio.get_running_loop().time() + silence_limit
                 response_chunks.append(chunk)
                 # A call is announced the moment the model names it, and again as each argument finishes:
                 # writing a large one is seconds, and the turn would otherwise show nothing for all of them.

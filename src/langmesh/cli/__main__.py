@@ -249,7 +249,7 @@ def _command_daemon(arguments: argparse.Namespace) -> int:
         _emit({"stopping": pid})
         return 0
     if arguments.action == "restart":
-        # Stop, wait for the socket to go, and start again, which ends every live session and says so.
+        # Stop, reap a daemon that cannot finish cancelling its work, then start the replacement.
         import os
         import signal
 
@@ -263,8 +263,14 @@ def _command_daemon(arguments: argparse.Namespace) -> int:
             ensure_daemon()
             _emit({"restarted": False, "running": True})
             return 0
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        try:
+            process_group = os.getpgid(pid)
+            os.killpg(process_group, signal.SIGTERM)
+        except ProcessLookupError:
+            process_group = 0
+        except PermissionError:
+            _note("langmesh: not permitted to restart that process")
+            return 1
 
         # Wait for the process rather than its socket, because the socket goes early while the lock is still held.
         tuning = active_tuning()
@@ -277,15 +283,23 @@ def _command_daemon(arguments: argparse.Namespace) -> int:
                 return
             raise _StillRunning
 
-        try:
-            for attempt in Retrying(
-                retry=retry_if_exception_type(_StillRunning),
-                wait=wait_fixed(tuning.duration(Tunable.daemon_probe_interval)),
-                stop=stop_after_delay(tuning.duration(Tunable.daemon_startup)),
-            ):
-                with attempt:
-                    check_exited()
-        except RetryError:
+        def wait_for_exit(seconds: float) -> bool:
+            try:
+                for attempt in Retrying(
+                    retry=retry_if_exception_type(_StillRunning),
+                    wait=wait_fixed(tuning.duration(Tunable.daemon_probe_interval)),
+                    stop=stop_after_delay(seconds),
+                ):
+                    with attempt:
+                        check_exited()
+            except RetryError:
+                return False
+            return True
+
+        if not wait_for_exit(tuning.duration(Tunable.sigterm_grace)) and process_group:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process_group, signal.SIGKILL)
+        if not wait_for_exit(tuning.duration(Tunable.daemon_startup)):
             _note(f"langmesh: langmeshd ({pid}) did not exit; not starting a second one")
             return 1
         ensure_daemon()

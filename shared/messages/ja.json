@@ -1187,6 +1187,7 @@
     "emptyTitle": "目標レビューはまだありません",
     "failed": "失敗",
     "reviewNumber": "レビュー {number}",
+    "reviewing": "作業を検証中",
     "satisfied": "達成済み",
     "title": "目標レビュー",
     "unmet": "追加作業が必要",

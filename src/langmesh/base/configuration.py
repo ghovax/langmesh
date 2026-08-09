@@ -974,6 +974,11 @@ class PromptLoader:
         """Substitute ``{{ name }}`` placeholders strictly: a missing variable or a malformed brace raises."""
         where = f" in prompt '{template_name}'" if template_name else ""
         placeholder = re.compile(r"\{\{\s*(\w+)\s*\}\}")
+        unsupported_directive = re.search(r"\{[%#]|[%#]\}", template)
+        if unsupported_directive is not None:
+            raise ValueError(
+                f"Unsupported template directive {unsupported_directive.group(0)!r}{where}; prompts support only '{{{{ name }}}}' placeholders."
+            )
 
         def drop_if_empty(match: re.Match[str]) -> str:
             name = match.group(1)

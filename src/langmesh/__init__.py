@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from pathlib import Path
 from typing import Any, AsyncIterator, Mapping, Optional, Sequence
@@ -13,6 +15,7 @@ from langmesh.base.configuration import (
     Configuration,
     FilesystemConfiguration,
     SandboxConfiguration,
+    ToolboxConfiguration,
     ToolsConfiguration,
 )
 from langmesh.base.permission_mode import PermissionMode
@@ -55,6 +58,9 @@ from langmesh.runtime.turn_events import (
     CompactionStarted,
     Done,
     EventType,
+    GoalReviewFinished,
+    GoalReviewProgress,
+    GoalReviewStarted,
     Mcp,
     Status,
     Steering,
@@ -89,6 +95,9 @@ __all__ = [
     "Done",
     "EventType",
     "FilesystemConfiguration",
+    "GoalReviewFinished",
+    "GoalReviewProgress",
+    "GoalReviewStarted",
     "Instruction",
     "JobStore",
     "Mcp",
@@ -109,6 +118,7 @@ __all__ = [
     "TextChunk",
     "Thinking",
     "ThinkingDone",
+    "ToolboxConfiguration",
     "ToolCall",
     "ToolMiddleware",
     "ToolResult",
@@ -226,7 +236,11 @@ class Session:
         self._peers = peers
         self._mcp_manager = mcp_manager
         # Reading configuration must not leave a file in the caller's home directory.
-        self._configuration = configuration if configuration is not None else Configuration()
+        self._configuration = (
+            configuration
+            if configuration is not None
+            else Configuration(toolbox=ToolboxConfiguration(enabled=False))
+        )
         if providers:
             _apply_providers(self._configuration, providers)
         self._model_identifier = model_identifier
@@ -346,11 +360,14 @@ class Session:
         if not state:
             return False
         messages = state.get("conversation") or []
-        if not messages:
+        session_state = state.get("session") or {}
+        if not messages and not session_state:
             return False
         from langchain_core.load import loads as load_message
 
         self.runtime.conversation[:] = [load_message(entry) for entry in messages]
+        if session_state:
+            self.runtime.restore_session(session_state)
         return True
 
     async def save(self) -> None:
@@ -359,7 +376,10 @@ class Session:
 
         await self._checkpoints.save(
             self._session_id,
-            {"conversation": [dump_message(message) for message in self.conversation]},
+            {
+                "conversation": [dump_message(message) for message in self.conversation],
+                "session": self.runtime.session_snapshot(),
+            },
         )
 
     def _compose(self, message: str, attachments: Sequence[str | Path]) -> object:
@@ -422,8 +442,34 @@ class Session:
             goal = self.runtime.goal
             if goal is None or not goal.is_open:
                 return
-            # A pass of its own reads the work and writes what comes next, so the session never grades itself.
-            goal = self.runtime.apply_goal_review(await self.runtime.review_goal())
+            review_events: asyncio.Queue[TurnEventUnion] = asyncio.Queue()
+            review_task = asyncio.create_task(self.runtime.review_goal(review_events.put))
+            try:
+                while True:
+                    if not review_events.empty():
+                        yield review_events.get_nowait()
+                        continue
+                    if review_task.done():
+                        break
+                    next_event = asyncio.create_task(review_events.get())
+                    finished, _ = await asyncio.wait(
+                        {review_task, next_event}, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if next_event in finished:
+                        yield next_event.result()
+                    else:
+                        next_event.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await next_event
+                while not review_events.empty():
+                    yield review_events.get_nowait()
+                review = await review_task
+            finally:
+                if not review_task.done():
+                    review_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await review_task
+            goal = self.runtime.apply_goal_review(review)
             if goal is None or not goal.is_open or not goal.review_message:
                 return
             self.runtime.note_goal_continuation()
@@ -463,7 +509,6 @@ class Session:
 
     async def aclose(self) -> None:
         """Release what the session opened: background jobs, and the browser if it was used."""
-        import contextlib
         import sys
 
         if self._runtime is not None:

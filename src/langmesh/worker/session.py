@@ -1201,7 +1201,18 @@ class SessionExecutor(AgentExecutor):
             self._session_id, preserve_background_jobs=preserve_background_jobs
         )
         if owned_tasks:
-            await asyncio.gather(*owned_tasks, return_exceptions=True)
+            completed, pending = await asyncio.wait(
+                owned_tasks,
+                timeout=active_tuning().duration(Tunable.sigterm_grace),
+            )
+            if completed:
+                await asyncio.gather(*completed, return_exceptions=True)
+            if pending:
+                logger.warning(
+                    "session %s left %d cancelled task(s) that did not settle",
+                    self._session_id,
+                    len(pending),
+                )
         state_publishers = [
             task
             for task in (self._goal_state_tail, self._turn_state_tail)

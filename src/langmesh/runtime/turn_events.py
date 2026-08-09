@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, ClassVar, Union
+from typing import Any, ClassVar, Literal, Union
 
 from langmesh.base.ports import SuspensionGate
 from langmesh.protocol.events import ToolStatus, tool_status_from_result
@@ -30,6 +30,9 @@ class EventType(str, Enum):
     STEERING = "steering"
     COMPACTION_STARTED = "compaction_started"
     COMPACTION_DONE = "compaction_done"
+    GOAL_REVIEW_STARTED = "goal_review_started"
+    GOAL_REVIEW_PROGRESS = "goal_review_progress"
+    GOAL_REVIEW_FINISHED = "goal_review_finished"
 
 
 @dataclass(frozen=True)
@@ -209,6 +212,42 @@ class CompactionDone(TurnEvent):
     log_tokens: int = 0
 
 
+@dataclass(frozen=True)
+class GoalReviewStarted(TurnEvent):
+    """An independent review has begun for the current goal."""
+
+    TYPE = EventType.GOAL_REVIEW_STARTED
+    review_id: str
+    goal: str
+    purpose: str | None = None
+    minimum_conditions: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class GoalReviewProgress(TurnEvent):
+    """One ordinary turn event emitted by the independent reviewer."""
+
+    TYPE = EventType.GOAL_REVIEW_PROGRESS
+    review_id: str
+    event: TurnEvent
+
+
+@dataclass(frozen=True)
+class GoalReviewFinished(TurnEvent):
+    """The independent review ended, with its public verdict when one landed."""
+
+    TYPE = EventType.GOAL_REVIEW_FINISHED
+    review_id: str
+    status: Literal["completed", "canceled", "failed"]
+    standing: Literal["unmet", "satisfied", "blocked"] | None = None
+    assessment: str | None = None
+    unmet: tuple[str, ...] = ()
+    evidence: str | None = None
+    blocker: str | None = None
+    contract_status: Literal["complete", "needs_revision"] | None = None
+    message: str | None = None
+
+
 # The closed union of every turn event, so a consumer can prove exhaustiveness rather than fall through.
 TurnEventUnion = Union[
     Status,
@@ -227,4 +266,7 @@ TurnEventUnion = Union[
     Steering,
     CompactionStarted,
     CompactionDone,
+    GoalReviewStarted,
+    GoalReviewProgress,
+    GoalReviewFinished,
 ]

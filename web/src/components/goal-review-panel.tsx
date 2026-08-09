@@ -26,6 +26,7 @@ function GoalReviewTranscript({ review }: { review: GoalReviewSession }) {
   const translation = useTranslations("GoalReviewPanel");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [running, setRunning] = useState(review.status === "working");
+  const [observedStatus, setObservedStatus] = useState(review.status);
   const transcriptRef = useRef<TranscriptState>(createTranscriptState());
 
   useEffect(() => {
@@ -35,6 +36,16 @@ function GoalReviewTranscript({ review }: { review: GoalReviewSession }) {
         if (frame.kind === "snapshot") {
           transcriptRef.current = replayTurns(frame.turns);
           setMessages([...transcriptRef.current.messages]);
+          const snapshotStatus = frame.turns.at(-1)?.status?.state;
+          if (
+            snapshotStatus === "working" ||
+            snapshotStatus === "completed" ||
+            snapshotStatus === "canceled" ||
+            snapshotStatus === "failed"
+          ) {
+            setObservedStatus(snapshotStatus);
+            setRunning(snapshotStatus === "working");
+          }
         } else if (frame.kind === "live") {
           appendTranscriptPart(transcriptRef.current, frame.part);
           setMessages([...transcriptRef.current.messages]);
@@ -42,13 +53,23 @@ function GoalReviewTranscript({ review }: { review: GoalReviewSession }) {
           setRunning(frame.running);
         }
       },
-      () => setRunning(false),
+      () => undefined,
     );
     return attachment.abort;
   }, [review.review_id]);
 
-  const timeline = useMemo(() => timelineItems(messages), [messages]);
-  const isRunning = review.status === "working" && running;
+  const timeline = useMemo(
+    () =>
+      timelineItems(
+        messages.filter(
+          (message) =>
+            message.role !== "user" && message.role !== "peer" && message.role !== "goal",
+        ),
+      ),
+    [messages],
+  );
+  const status = review.status === "working" ? observedStatus : review.status;
+  const isRunning = status === "working" && running;
   return (
     <>
       <Flex align="center" gap={2} px={3} py={2} borderYWidth="1px" borderColor="border.muted">
@@ -57,7 +78,7 @@ function GoalReviewTranscript({ review }: { review: GoalReviewSession }) {
           {review.goal}
         </Text>
         <Badge size="sm" colorPalette="purple" variant="subtle">
-          {translation(review.standing ?? review.status)}
+          {translation(review.standing ?? status)}
         </Badge>
       </Flex>
       <VStack align="stretch" gap={2.5} px={4} py={3}>
@@ -68,6 +89,7 @@ function GoalReviewTranscript({ review }: { review: GoalReviewSession }) {
               messages={item.messages}
               thinkingTurns={item.thinkingTurns}
               keepOpen={isRunning && index === timeline.length - 1}
+              pendingLabel={translation("reviewing")}
             />
           ) : (
             <Box key={item.message.id} display="flex" flexDirection="column">

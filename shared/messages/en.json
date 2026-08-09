@@ -1187,6 +1187,7 @@
     "emptyTitle": "No goal reviews yet",
     "failed": "Failed",
     "reviewNumber": "Review {number}",
+    "reviewing": "Inspecting the work",
     "satisfied": "Satisfied",
     "title": "Goal reviews",
     "unmet": "More work needed",

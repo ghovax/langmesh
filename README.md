@@ -73,7 +73,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`stream()` instead of `ask()` gives the turn as it happens: text chunks, tool calls, tool results, suspensions. `model=` takes any LangChain chat model, and the same session composes with it:
+`stream()` instead of `ask()` gives the work as it happens: text chunks, tool calls, tool results, suspensions, and typed start/progress/finish events for an independent goal review. `model=` takes any LangChain chat model, and the same session composes with it:
 
 ```python
 from langchain_anthropic import ChatAnthropic

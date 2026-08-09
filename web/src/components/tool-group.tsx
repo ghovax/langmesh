@@ -67,9 +67,14 @@ interface ToolGroupProps {
   tools: ToolEvent[];
   // Keeps the group expanded after its calls complete, so the latest one stays open until the answer arrives.
   keepOpen?: boolean;
+  pendingLabel?: string;
 }
 
-export const ToolGroup = memo(function ToolGroup({ tools, keepOpen = false }: ToolGroupProps) {
+export const ToolGroup = memo(function ToolGroup({
+  tools,
+  keepOpen = false,
+  pendingLabel,
+}: ToolGroupProps) {
   const translation = useTranslations("ToolGroup");
   const backgroundCount = tools.filter(
     (tool) => toolStatus(tool.status) === "running" && hasBackgroundJobId(tool.result),
@@ -139,7 +144,7 @@ export const ToolGroup = memo(function ToolGroup({ tools, keepOpen = false }: To
         {latestTool ? (
           <ToolCallLabel name={latestTool.name} args={latestTool.arguments} ready />
         ) : (
-          translation("thinking")
+          (pendingLabel ?? translation("thinking"))
         )}
       </Text>
     </Box>

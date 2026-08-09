@@ -523,10 +523,6 @@ class ChatCursorModel(BaseChatModel):
         # A call is announced and then asked for, and it is the exec request that is handed back because it carries the arguments.
         announced: Optional[wire.ToolCall] = None
         run_identifier = str(uuid.uuid4())
-        # Cursor holds a run open with heartbeats, so what is bounded is silence since the last thing that happened.
-        silence_limit = active_tuning().duration(Tunable.model_silence_give_up)
-        progressed_at = time.monotonic()
-        went_quiet = False
         async for data in response.aiter_bytes():
             for flags, payload in deframer.feed(data):
                 if flags & wire.TRAILER_FLAG:
@@ -543,11 +539,6 @@ class ChatCursorModel(BaseChatModel):
                     # Kept rather than resumed from: a mid-turn checkpoint is the newest description, and the next turn uses it.
                     self._remember_resumption(messages, message.checkpoint, blobs, conversation_id)
                 announced = message.tool_call or announced
-                if message.heartbeat and time.monotonic() - progressed_at > silence_limit:
-                    went_quiet = True
-                    break
-                if not message.heartbeat:
-                    progressed_at = time.monotonic()
                 if message.text_delta:
                     yield _chunk(content_block=_text_block(message.text_delta, run_identifier))
                 if message.thinking_delta:
@@ -568,9 +559,7 @@ class ChatCursorModel(BaseChatModel):
                     async for chunk in self._close_turn(announced, input_tokens, output_tokens):
                         yield chunk
                     return
-            if went_quiet:
-                break
-        # Reached when the stream closes without a turn ending or the model went quiet, so report what arrived rather than raising.
+        # Reached when the stream closes without a turn ending, so report what arrived rather than raising.
         async for chunk in self._close_turn(announced, input_tokens, output_tokens):
             yield chunk
 
