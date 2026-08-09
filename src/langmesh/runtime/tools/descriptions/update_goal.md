@@ -30,7 +30,7 @@ A goal that is satisfied, blocked, cleared or parked is not one to keep working 
 
 `purpose` is what that end state is for: the reason the user wants it, the problem it solves, the thing that would still be wrong if it were skipped. It is what lets a closed route be told apart from a lost goal — a reviewer who knows what the outcome is for can send you down a different road to the same place, and one who does not can only ask you to try the same road again. Write the need, not a restatement of the goal.
 
-`requirements` are the conditions that must hold for the goal to be true, each one something a reader could go and look at: a command that passes, a file that exists and says a particular thing, a behaviour that can be reproduced, a number that lands inside a range. Say what would be looked at and what it would show. Cover the whole of the goal — a requirement missing from this list is a part of the outcome nobody will check — and keep them independent, since one condition that folds three things together cannot be half met.
+`requirements` are the minimum conditions that must hold for the goal to be true, each one something a reader could go and look at: a command that passes, a file that exists and says a particular thing, a behaviour that can be reproduced, a number that lands inside a range. Say what would be looked at and what it would show. Cover every condition already known to be necessary, while recognising that the independent review may discover additional conditions the initial contract missed. Keep them independent, since one condition that folds three things together cannot be half met.
 
 Vague requirements make a goal that cannot be audited. "Tests pass" names no tests; "it works" names no behaviour; "the code is clean" names nothing at all. A goal like that either never closes or closes on somebody's impression.
 
@@ -39,5 +39,5 @@ Write all three in the language the user is speaking: the goal is shown to them,
 Arguments:
   - goal: The end state, written so it is either true or not.
   - purpose: What that end state is for, in the user's terms.
-  - requirements: The conditions that would prove it, each one checkable.
+  - requirements: The minimum conditions already known, each one checkable.
   - explanation: A short reason for setting it, in the words the user reads.

@@ -74,8 +74,8 @@ interface ChatInputProps {
   initialDraft?: string;
   onDraftChange?: (draft: string) => void;
   workingDirectory?: string;
-  // Whether the working directory is valid, resolved at the workspace level and used here to gate send.
-  directoryValid?: boolean;
+  // Optimistically available while validation runs, and false only after the directory is rejected.
+  directoryAvailable?: boolean;
   agents: { id: string; name: string; title?: string; description?: string }[];
   selectedAgent: string;
   onAgentChange: (agent: string) => void;
@@ -351,7 +351,7 @@ export function ChatInput({
   onDraftChange,
   workingDirectory,
   awaitingDecision,
-  directoryValid = false,
+  directoryAvailable = false,
   agents,
   selectedAgent,
   onAgentChange,
@@ -643,7 +643,7 @@ export function ChatInput({
     const trimmed = inputValue.trim();
     // A typed message is always required: an attachment is context on top of what you say, never a substitute.
     if (!trimmed) return;
-    if (!directoryValid) return;
+    if (!directoryAvailable) return;
     if (uploadingCount > 0) return;
     const startedAt = performance.now();
     setSendPending(true);
@@ -807,7 +807,7 @@ export function ChatInput({
                   ? translation("placeholderConnecting")
                   : awaitingDecision
                     ? translation("placeholderAwaitingDecision")
-                    : !directoryValid
+                    : !directoryAvailable
                       ? translation("placeholderInvalidPath")
                       : attachments.length > 0
                         ? translation("placeholderAttachments")
@@ -826,7 +826,7 @@ export function ChatInput({
               fieldSizing="content"
               maxH="44"
               overflowY="auto"
-              borderColor={dragActive ? "blue.muted" : directoryValid ? "border" : "red.muted"}
+              borderColor={dragActive ? "blue.muted" : directoryAvailable ? "border" : "red.muted"}
               bg="bg.panel"
               resize="none"
             />
@@ -870,7 +870,7 @@ export function ChatInput({
                   borderColor={recording ? undefined : "border"}
                   // The spinner covers both waits, and the button is disabled while loading rather than hidden.
                   loading={transcribing || dictationState === "loading"}
-                  disabled={composerClosed || !directoryValid || dictationState === "loading"}
+                  disabled={composerClosed || !directoryAvailable || dictationState === "loading"}
                 >
                   {recording ? <LuMicOff /> : <LuMic />}
                 </IconButton>
@@ -890,7 +890,7 @@ export function ChatInput({
                 variant="outline"
                 bg="bg"
                 borderColor="border"
-                disabled={composerClosed || !directoryValid}
+                disabled={composerClosed || !directoryAvailable}
               >
                 <LuPaperclip />
               </IconButton>
@@ -923,7 +923,7 @@ export function ChatInput({
                 disabled={
                   sendPending ||
                   composerClosed ||
-                  !directoryValid ||
+                  !directoryAvailable ||
                   uploadingCount > 0 ||
                   !inputValue.trim()
                 }
@@ -955,6 +955,7 @@ export function ChatInput({
           agents={agents}
           value={selectedAgent}
           onChange={onAgentChange}
+          disabled={!!sessionId}
           placeholder={translation("agentPlaceholder")}
           fitted
           labelHidden={hiddenLabels.has("agent")}
@@ -975,9 +976,7 @@ export function ChatInput({
         {/* Adjustable at any point in a session's life, so a conversation need not restart to run under a looser mode. */}
         <PermissionModeControl
           value={permissionMode}
-          onChange={(mode) => {
-            if (mode) onPermissionModeChange?.(mode);
-          }}
+          onChange={(mode) => onPermissionModeChange?.(mode)}
           fitted
           labelHidden={hiddenLabels.has("permission")}
         />

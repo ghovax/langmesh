@@ -407,10 +407,27 @@ async def _serve() -> int:
         commons_state.daemon_port,
     )
 
+    async def resume_pending_sessions() -> None:
+        from langmesh.base.background_store import get_background_job_store
+
+        assert state.registry is not None
+        assert state.lifecycle is not None
+        records = [
+            record
+            for session_id in get_background_job_store().sessions_requiring_resume()
+            if (record := state.registry.get(session_id)) is not None and record.is_live
+        ]
+        await asyncio.gather(*(state.lifecycle.start(record) for record in records))
+
+    resume_task = asyncio.create_task(resume_pending_sessions())
+
     try:
         await serving
     finally:
         watcher.cancel()
+        resume_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await resume_task
         # Sessions must not outlive their supervisor, which can no longer persist anything for them.
         with contextlib.suppress(Exception):
             await state.lifecycle.aclose()

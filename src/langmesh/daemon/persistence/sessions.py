@@ -6,6 +6,7 @@ import json
 import logging
 from typing import Any
 
+from langmesh.base.permission_mode import PermissionMode
 from langmesh.base.sqlite_lock import sqlite_write_lock
 from langmesh.commons.database import SessionRecord as SessionRow
 from langmesh.daemon.registry import LIVE, SessionRecord
@@ -40,7 +41,7 @@ class SqliteSessionStore:
                     agent=row.agent,
                     working_directory=row.working_directory or "",
                     runtime_working_directory=row.runtime_working_directory or "",
-                    permission_mode=row.permission_mode or "ask",
+                    permission_mode=str(PermissionMode.resolve(row.permission_mode)),
                     sandbox=_decode_sandbox(row.sandbox or ""),
                     workspace_id=row.workspace_id or "",
                     parent=row.parent or "",

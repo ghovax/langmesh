@@ -210,12 +210,12 @@ class BackgroundJobStore:
             ).fetchone()
         return row is not None
 
-    def contexts_with_undelivered(self, agent_name: str) -> list[str]:
-        """Distinct contexts of an agent with a deliverable result, which are the ones to wake on startup."""
+    def sessions_requiring_resume(self) -> list[str]:
+        """Sessions with interrupted or undelivered work that must be woken after daemon startup."""
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT DISTINCT session_id FROM background_jobs WHERE agent_name = ? AND status IN (?, ?)",
-                (agent_name, STATUS_COMPLETED, STATUS_ABANDONED),
+                "SELECT DISTINCT session_id FROM background_jobs WHERE status IN (?, ?, ?)",
+                (STATUS_RUNNING, STATUS_COMPLETED, STATUS_ABANDONED),
             ).fetchall()
         return [row["session_id"] for row in rows]
 

@@ -24,7 +24,6 @@ function locationToInput(location: Location): LocationInput {
     kind: location.kind,
     base_directory: location.base_directory,
     host_alias: location.host_alias,
-    permission_mode: location.permission_mode,
   };
 }
 
@@ -148,7 +147,6 @@ export function WorkspaceLocationsPanel({ workspaceId }: { workspaceId: string }
             onChange={updateDraft}
             onAdd={addDraft}
             onRemove={removeDraft}
-            showPermission
             loading={loadedWorkspaceId !== workspaceId}
           />
           {loadedWorkspaceId === workspaceId ? (

@@ -23,12 +23,16 @@ class PermissionMode(StrEnum):
             return None
 
     @classmethod
-    def coerce(
+    def resolve(
         cls, value: str | PermissionMode | None, default: PermissionMode | None = None
     ) -> PermissionMode:
-        """The mode a value names, falling back to ``default``. The parse to use at a string boundary."""
+        """Resolve an absent mode to a default and reject every unknown value."""
+        if value is None or value == "":
+            return default if default is not None else cls.ASK
         parsed = cls.parse(value)
-        return parsed if parsed is not None else (default if default is not None else cls.ASK)
+        if parsed is None:
+            raise ValueError(f"unknown permission mode: {value!r}")
+        return parsed
 
     @property
     def restrictiveness(self) -> int:
@@ -38,7 +42,7 @@ class PermissionMode(StrEnum):
     @classmethod
     def more_restrictive(cls, *modes: str | PermissionMode | None) -> PermissionMode:
         """The stricter of the given modes. The child-session clamp, so a peer is never looser than its creator."""
-        candidates = [mode for mode in (cls.parse(value) for value in modes) if mode is not None]
+        candidates = [cls.resolve(value) for value in modes if value is not None and value != ""]
         return max(candidates, key=lambda mode: mode.restrictiveness) if candidates else cls.ASK
 
     @classmethod
@@ -48,14 +52,17 @@ class PermissionMode(StrEnum):
         *,
         requested: str | PermissionMode | None = None,
         fallback: str | PermissionMode | None = None,
-        ceiling: str | PermissionMode | None = None,
     ) -> PermissionMode:
-        """The mode a child of ``parent`` runs under: inherited when unstated, never looser, and never asking under a parent that cannot answer."""
-        parent_mode = cls.parse(parent)
+        """Resolve a session mode from its request and defaults without widening past its parent."""
+        parent_mode = None if parent is None or parent == "" else cls.resolve(parent)
         chosen = cls.more_restrictive(
-            cls.parse(requested) or parent_mode or cls.parse(fallback),
+            (
+                cls.resolve(requested)
+                if requested is not None and requested != ""
+                else parent_mode
+                or cls.resolve(fallback)
+            ),
             parent_mode,
-            ceiling,
         )
         if parent_mode is not None and parent_mode.never_asks and not chosen.never_asks:
             raise ValueError(

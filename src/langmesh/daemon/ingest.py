@@ -67,6 +67,67 @@ async def _turn_load_session_state(params: dict) -> Any:
     return await state.turn_store.load_session_state(str(params.get("session_id") or ""))
 
 
+async def _goal_review_create(params: dict) -> dict:
+    await state.turn_store.create_goal_review(
+        str(params.get("review_id") or ""),
+        str(params.get("session_id") or ""),
+        str(params.get("goal") or ""),
+        str(params.get("created_at") or ""),
+    )
+    state.broadcaster.publish(
+        {
+            "type": "goal_reviews_changed",
+            "session": str(params.get("session_id") or ""),
+            "review": str(params.get("review_id") or ""),
+        }
+    )
+    review_id = str(params.get("review_id") or "")
+    _SEQUENCE[review_id] = _SEQUENCE.get(review_id, 0) + 1
+    state.event_bus.publish(
+        review_id, {"seq": _SEQUENCE[review_id], "turn": {"running": True}}
+    )
+    return {"created": True}
+
+
+async def _goal_review_save(params: dict) -> dict:
+    task = params.get("task")
+    if not isinstance(task, Task):
+        task = Task.model_validate(task or {})
+    await state.turn_store.save(task)
+    review_id = str(params.get("review_id") or "")
+    part = params.get("part")
+    if hasattr(part, "model_dump"):
+        part = part.model_dump(by_alias=True, exclude_none=True, mode="json")
+    _SEQUENCE[review_id] = _SEQUENCE.get(review_id, 0) + 1
+    state.event_bus.publish(
+        review_id,
+        {"seq": _SEQUENCE[review_id], "part": part},
+    )
+    return {"saved": task.id}
+
+
+async def _goal_review_finish(params: dict) -> dict:
+    await state.turn_store.finish_goal_review(
+        str(params.get("review_id") or ""),
+        str(params.get("status") or ""),
+        str(params.get("standing") or "") or None,
+        str(params.get("completed_at") or ""),
+    )
+    state.broadcaster.publish(
+        {
+            "type": "goal_reviews_changed",
+            "session": str(params.get("session_id") or ""),
+            "review": str(params.get("review_id") or ""),
+        }
+    )
+    review_id = str(params.get("review_id") or "")
+    _SEQUENCE[review_id] = _SEQUENCE.get(review_id, 0) + 1
+    state.event_bus.publish(
+        review_id, {"seq": _SEQUENCE[review_id], "turn": {"running": False}}
+    )
+    return {"finished": True}
+
+
 async def _turn_list_for_session(params: dict) -> Any:
     tasks = await state.turn_store.turns_for_session(str(params.get("session_id") or ""))
     return [task.model_dump(by_alias=True, exclude_none=True, mode="json") for task in tasks]
@@ -274,6 +335,9 @@ _METHODS = {
     "session.claim_work_habits": _session_claim_work_habits,
     "turn.load_checkpoint": _turn_load_checkpoint,
     "turn.load_session_state": _turn_load_session_state,
+    "goal_review.create": _goal_review_create,
+    "goal_review.save": _goal_review_save,
+    "goal_review.finish": _goal_review_finish,
     "turn.list_for_session": _turn_list_for_session,
     "session.event": _session_event,
     "session.title": _session_title,

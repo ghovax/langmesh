@@ -70,7 +70,7 @@ class PeerSessions:
             agent=agent,
             working_directory=working_directory,
             inherited_conversation=inherited_conversation,
-            # No mode is sent: the daemon gives a child its parent's, narrowed by the profile's ceiling.
+            # No mode is sent: the daemon gives a child its parent's mode.
             parent=self.session_id,
         )
         return result

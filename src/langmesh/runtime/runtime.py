@@ -43,6 +43,7 @@ from langmesh.runtime.tools.registry import (
     ask_user as ask_user_tool,
     load_skill as load_skill_tool,
     wait_for as wait_for_tool,
+    submit_goal_review as submit_goal_review_tool,
 )
 from langmesh.base.ports import Observation
 from langmesh.runtime.tools.context import ToolContext
@@ -461,6 +462,7 @@ class AgentRuntime(
         "set_tasks": "_tool_set_tasks",
         "update_tasks": "_tool_update_tasks",
         "update_goal": "_tool_update_goal",
+        "submit_goal_review": "_tool_submit_goal_review",
         "search_web": "_tool_search_web",
         "read_turn": "_tool_read_turn",
         "control_screen": "_tool_control_screen",
@@ -500,6 +502,8 @@ class AgentRuntime(
         hooks: Sequence[Any] = (),
         pipeline: Sequence[Any] = (),
         compaction: Any = None,
+        toolset: Sequence[BaseTool] | None = None,
+        accepts_goal_review: bool = False,
     ):
         from langmesh.runtime.hooks import HookRunner
         from langmesh.runtime.pipeline import ToolPipeline
@@ -520,12 +524,14 @@ class AgentRuntime(
         self._global_configuration = global_configuration
         self._working_directory = working_directory or str(Path.home())
         self._project_directory = project_directory or self._working_directory
+        # The daemon already resolved the session mode; a direct library caller falls back to the profile.
+        self._permission_mode = PermissionMode.resolve(
+            permission_mode, agent_configuration.permission_default
+        )
         # The locations the agent may address, with a local one synthesized when none were supplied.
         self._locations: dict[str, ResolvedLocation] = {}
         self._locations_by_name: dict[str, ResolvedLocation] = {}
-        self._build_locations(
-            locations, permission_mode_default=agent_configuration.permission_policy
-        )
+        self._build_locations(locations)
 
         model_identifier = agent_configuration.model_identifier
         # Only a runtime that must build a client needs to be told which one.
@@ -552,18 +558,21 @@ class AgentRuntime(
         self._extra_tools = {tool.name: tool for tool in tools}
         # What a caller's tool is gated at: asking by default, so adding one cannot silently widen a session.
         self._supplied_tool_gate = supplied_tool_gate
-        # Resolved before the tools, because which tools exist depends on it.
-        self._permission_mode: PermissionMode = PermissionMode.more_restrictive(
-            permission_mode, agent_configuration.permission_policy
+        configured_tools = (
+            list(toolset)
+            if toolset is not None
+            else _build_tools(
+                agent_configuration,
+                global_configuration,
+                self._working_directory,
+                can_reach_peers=session_access is not None,
+                extra_tools=tools,
+                permission_mode=self._permission_mode,
+            )
         )
-        self._tools = _build_tools(
-            agent_configuration,
-            global_configuration,
-            self._working_directory,
-            can_reach_peers=session_access is not None,
-            extra_tools=tools,
-            permission_mode=self._permission_mode,
-        )
+        self._tools = [tool for tool in configured_tools if tool.name != "submit_goal_review"]
+        if accepts_goal_review:
+            self._tools.append(submit_goal_review_tool)
         # Tools are bound natively, so the provider sees each real schema and can emit several calls at once.
         self._tool_schemas: dict[str, Any] = {tool.name: tool.args_schema for tool in self._tools}
         self._bound_model = self._model.bind_tools(self._tools)
@@ -595,6 +604,8 @@ class AgentRuntime(
         self._transcript = transcript
         # Where a fold's entries are appended. Absent in a library run, which keeps no ledger.
         self._turn_store = turn_store
+        self._accepts_goal_review = accepts_goal_review
+        self._submitted_goal_review = None
         # When the turn now running began, for the transcript entry it will produce.
         self._turn_started_at = None
         # The conversation and the prompt this runtime runs with.
@@ -627,13 +638,13 @@ class AgentRuntime(
         self._goal: Optional[Goal] = None
         # Called when the goal changes, so the layer above can tell the daemon and the interface.
         self._on_goal_change: Optional[Callable[[Optional[Goal]], None]] = None
-        # Set when the goal or tasks change, so durable state is written on mutation rather than every checkpoint.
-        self._session_dirty = False
+        self._session_revision = 0
+        self._persisted_session_revision = 0
         # The serialized observation pipeline, whose tail keeps every earlier write alive.
         self._observation_tail: asyncio.Task | None = None
         self._observations_in_flight: set[str] = set()
         self._execution_history: list[dict] = []
-        # The permission policy as one value, clamped at creation against the parent and the card's ceiling.
+        # The permission policy as one value, resolved by the daemon before this runtime is built.
         self._a2a_turn_id: str = ""
         # Reads another task by id from the shared store, so context-aware agents can coordinate.
         self._turn_reader: Optional[Callable] = None
@@ -670,18 +681,13 @@ class AgentRuntime(
         carried = {uri: resolved.executor for uri, resolved in self._locations.items()}
         self._locations = {}
         self._locations_by_name = {}
-        self._build_locations(
-            locations,
-            permission_mode_default=self._agent_configuration.permission_policy,
-            executors=carried,
-        )
+        self._build_locations(locations, executors=carried)
         # The system prompt is left alone: the environments are stated in the turn context, rebuilt every turn.
 
     def _build_locations(
         self,
         locations: list[dict] | None,
         *,
-        permission_mode_default: PermissionMode,
         executors: dict[str, Any] | None = None,
     ) -> None:
         """The resolved-location map, each entry carrying an executor and its effective policy."""
@@ -693,7 +699,6 @@ class AgentRuntime(
                     "name": "local",
                     "kind": "local",
                     "base_directory": self._working_directory,
-                    "permission_mode": str(permission_mode_default),
                 }
             ]
         for entry in entries:
@@ -710,9 +715,6 @@ class AgentRuntime(
                 kind=kind,
                 base_directory=base_directory,
                 executor=(executors or {}).get(uri) or executor_for(address),
-                permission_mode=PermissionMode.coerce(
-                    entry.get("permission_mode"), permission_mode_default
-                ),
             )
             self._locations[uri] = resolved
             self._locations_by_name[resolved.name] = resolved
@@ -743,18 +745,13 @@ class AgentRuntime(
 
     def _call_policy(self, location: ResolvedLocation | None) -> CallExecutionPolicy:
         """One call's execution policy, as a value, so concurrent calls to different locations cannot cross."""
-        mode = (
-            self._permission_mode
-            if location is None
-            else PermissionMode.more_restrictive(self._permission_mode, location.permission_mode)
-        )
         working_directory = (
             self._working_directory
             if location is None or location.is_remote
             else location.base_directory
         )
         return CallExecutionPolicy(
-            location=location, working_directory=working_directory, mode=mode
+            location=location, working_directory=working_directory, mode=self._permission_mode
         )
 
     def _canonical_working_directory(self, working_directory: str | None = None) -> str:
@@ -919,6 +916,13 @@ class AgentRuntime(
         for task in list(self._active_tool_tasks.values()):
             task.cancel()
 
+    def interrupt_for_restart(self) -> None:
+        """Stop live work while leaving its durable job records for startup recovery."""
+        self._abort_event.set()
+        self._background.cancel_all()
+        for task in list(self._active_tool_tasks.values()):
+            task.cancel()
+
     def abort_tool(self, tool_call_identifier: str) -> bool:
         task = self._active_tool_tasks.get(tool_call_identifier)
         aborted = False
@@ -951,20 +955,10 @@ class AgentRuntime(
     def _has_queued_steering(self) -> bool:
         return not self._steering_messages.empty()
 
-    @property
-    def configured_permission_mode(self) -> Optional[PermissionMode]:
-        """The ceiling the agent's card declares, or ``None`` where it declares none — which is most cards."""
-        return self._agent_configuration.permission_policy
-
     def set_permission_mode(self, mode: PermissionMode) -> PermissionMode:
-        """Change the policy mid-life and answer with what took, reaching the very next tool call."""
-        resolved = PermissionMode.more_restrictive(
-            mode, self._agent_configuration.permission_policy
-        )
-        if resolved is self._permission_mode:
-            return resolved
-        self._permission_mode = resolved
-        return resolved
+        """Adopt the mode the daemon resolved, reaching the very next tool call."""
+        self._permission_mode = mode
+        return mode
 
     def set_a2a_turn_id(self, turn_id: str) -> None:
         """Record the current turn's task id, so work raised during it can name the turn it belongs to."""
@@ -1007,16 +1001,20 @@ class AgentRuntime(
     def write_goal(self, goal: Optional[Goal]) -> None:
         """Set, replace or drop the goal, and announce it. The single writer, so no path changes it silently."""
         self._goal = goal
-        self._session_dirty = True
+        self._mark_session_dirty()
         if self._on_goal_change is not None:
             self._on_goal_change(goal)
 
     def note_goal_continuation(self) -> None:
-        """Count one harness-opened turn against the goal's allowance."""
+        """Count one review-opened turn and consume the message that opened it."""
         if self._goal is None:
             return
         self.write_goal(
-            self._goal.model_copy(update={"continuations": self._goal.continuations + 1})
+            self._goal.updated(
+                continuations=self._goal.continuations + 1,
+                review_message=None,
+                review_id=None,
+            )
         )
 
     def restore_goal_allowance(self) -> None:
@@ -1024,23 +1022,47 @@ class AgentRuntime(
         goal = self._goal
         if goal is None or goal.status not in (Goal.ACTIVE, Goal.PARKED):
             return
-        if goal.continuations == 0 and goal.status == Goal.ACTIVE:
+        if goal.continuations == 0 and goal.status == Goal.ACTIVE and not goal.review_message:
             return
-        self.write_goal(goal.model_copy(update={"continuations": 0, "status": Goal.ACTIVE}))
+        self.write_goal(
+            goal.updated(
+                continuations=0,
+                status=Goal.ACTIVE,
+                review_message=None,
+                review_id=None,
+            )
+        )
 
     def park_goal(self) -> None:
         """Stop working the goal until a person speaks. The goal is kept: it is still what the session is for."""
         if self._goal is None or not self._goal.is_open:
             return
-        self.write_goal(self._goal.model_copy(update={"status": Goal.PARKED}))
+        self.write_goal(
+            self._goal.updated(status=Goal.PARKED, review_message=None, review_id=None)
+        )
 
     def dirty_session_snapshot(self) -> Optional[dict]:
-        """The snapshot if it changed since the last persist. Peeks only: the flag clears after the write commits."""
-        return self.session_snapshot() if self._session_dirty else None
+        """Return state newer than the last persisted revision without acknowledging it."""
+        return (
+            self.session_snapshot()
+            if self._persisted_session_revision < self._session_revision
+            else None
+        )
 
-    def clear_session_dirty(self) -> None:
-        """Mark the durable state persisted, only after the atomic write succeeds."""
-        self._session_dirty = False
+    @property
+    def session_revision(self) -> int:
+        """The revision captured beside a session-state snapshot before it is persisted."""
+        return self._session_revision
+
+    def _mark_session_dirty(self) -> None:
+        """Advance the durable-state revision after a goal or task mutation."""
+        self._session_revision += 1
+
+    def clear_session_dirty(self, persisted_revision: int) -> None:
+        """Acknowledge exactly the revision whose write completed, without hiding newer mutations."""
+        self._persisted_session_revision = max(
+            self._persisted_session_revision, persisted_revision
+        )
 
     def _record_event(self, event_type: str, data: dict) -> None:
         record = {

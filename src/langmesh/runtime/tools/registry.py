@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from langchain.tools import tool
+from langchain_core.tools import StructuredTool
 from pydantic import Field
 
 from langmesh.base.identifiers import new_id
@@ -14,6 +15,7 @@ from langmesh.runtime.background import current_background_jobs, current_tool_ca
 from langmesh.base.tuning import Tunable, active_tuning, clip_to_tokens
 from langmesh.base.serialization import compact
 from langmesh.runtime.tools import context as tool_context
+from langmesh.runtime.goal_review import GoalReview
 
 from langmesh.base.configuration import PromptLoader
 
@@ -34,6 +36,18 @@ def _require_mcp_client_manager():
     if manager is None:
         raise RuntimeError("MCP is not configured.")
     return manager
+
+
+def _submit_goal_review(**arguments: Any) -> str:
+    raise NotImplementedError("Dispatched by AgentRuntime._execute_tool.")
+
+
+submit_goal_review = StructuredTool.from_function(
+    func=_submit_goal_review,
+    name="submit_goal_review",
+    description=_DESCRIPTIONS.load("submit_goal_review", {}).strip(),
+    args_schema=GoalReview,
+)
 
 
 @tool
@@ -78,13 +92,14 @@ async def bash(
         process = await asyncio.create_subprocess_exec(
             # Still a shell command; the working directory is the process's own, not a `cd` the model can escape.
             *_confinement.resolve_command(command, spawn),
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workspace or None,
             env=spawn.environment,
             preexec_fn=spawn.preexec,
-            # A process group, not a session: `killpg` needs the group, and the session is what makes it attributable.
-            process_group=0,
+            # A new session denies terminal prompts while still giving `killpg` a dedicated group.
+            start_new_session=True,
         )
         process_holder["process"] = process
         process_id = process.pid
@@ -509,6 +524,7 @@ _DESCRIBED = (
     control_screen,
     ask_user,
     load_skill,
+    submit_goal_review,
 )
 
 

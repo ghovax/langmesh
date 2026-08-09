@@ -151,7 +151,7 @@ class JobStore(Protocol):
 
     def has_undelivered_jobs(self, session_id: str, agent_name: str) -> bool: ...
 
-    def contexts_with_undelivered(self, agent_name: str) -> Sequence[str]: ...
+    def sessions_requiring_resume(self) -> Sequence[str]: ...
 
 
 class MemoryJobStore:
@@ -215,7 +215,7 @@ class MemoryJobStore:
         return [
             job
             for job in self._jobs.values()
-            if job["status"] == "completed"
+            if job["status"] in {"completed", "abandoned"}
             and job["session_id"] == session_id
             and job["agent_name"] == agent_name
         ]
@@ -223,12 +223,12 @@ class MemoryJobStore:
     def has_undelivered_jobs(self, session_id: str, agent_name: str) -> bool:
         return bool(self.undelivered_jobs(session_id, agent_name))
 
-    def contexts_with_undelivered(self, agent_name: str) -> Sequence[str]:
+    def sessions_requiring_resume(self) -> Sequence[str]:
         return sorted(
             {
                 job["session_id"]
                 for job in self._jobs.values()
-                if job["status"] == "completed" and job["agent_name"] == agent_name
+                if job["status"] in {"running", "completed", "abandoned"}
             }
         )
 

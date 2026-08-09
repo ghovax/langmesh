@@ -19,6 +19,7 @@ import json
 import logging
 from langmesh.base.serialization import compact, content_address
 from langmesh.runtime.cache_trace import auxiliary_model_call
+from langmesh.runtime.goal import NonBlankText
 
 
 _logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ ENTRY_CATEGORY = Literal["fact", "decision", "constraint", "failure", "artifact"
 #: How well an entry is established, stated rather than left for the reader to guess.
 ENTRY_STANDING = Literal["verified", "reported", "inferred"]
 #: What a superseding entry does to what it supersedes, so a chain reads as changes and not as a pile of claims.
-ENTRY_REVISION = Literal["", "correction", "refinement", "merge", "retraction"]
+ENTRY_REVISION = Literal["correction", "refinement", "merge", "retraction"]
 
 #: What each field means, written where prose belongs rather than wedged into the model.
 _FIELDS = PromptLoader(Path(__file__).parent / "descriptions")
@@ -47,26 +48,26 @@ class Observation(BaseModel):
     """One immutable finding in the ledger. A correction is a new entry naming the old, never an edit."""
 
     category: ENTRY_CATEGORY = Field(description=says("observation_category"))
-    claim: str = Field(description=says("observation_claim"))
-    detail: str = Field(description=says("observation_detail"))
-    evidence: str = Field(default="", description=says("observation_evidence"))
+    claim: NonBlankText = Field(description=says("observation_claim"))
+    detail: NonBlankText = Field(description=says("observation_detail"))
+    evidence: NonBlankText | None = Field(default=None, description=says("observation_evidence"))
     standing: ENTRY_STANDING = Field(description=says("observation_standing"))
     supersedes: list[str] = Field(default_factory=list, description=says("observation_supersedes"))
-    revision: ENTRY_REVISION = Field(default="", description=says("entry_revision"))
+    revision: ENTRY_REVISION | None = Field(default=None, description=says("entry_revision"))
 
     @model_validator(mode="after")
-    def _drop_a_dangling_revision(self):
-        return _only_with_a_parent(self)
+    def _require_a_complete_revision(self):
+        return _complete_revision(self)
 
     def identity(self) -> str:
         """Addressed by what it says, not by when it was written, so the same finding twice is one entry."""
         return content_address(self.model_dump(exclude={"supersedes", "revision"}))
 
 
-def _only_with_a_parent(entry):
-    """A revision kind names what an entry does to another; with nothing superseded there is no such relation."""
-    if not entry.supersedes:
-        entry.revision = ""
+def _complete_revision(entry):
+    """A revision and the entries it supersedes exist together or not at all."""
+    if bool(entry.supersedes) != (entry.revision is not None):
+        raise ValueError("revision and supersedes must be provided together")
     return entry
 
 
@@ -115,9 +116,7 @@ async def _emit_streamed_structured(
         for item in items:
             identity = getattr(item, "identity", None)
             item_identifier = (
-                str(identity())
-                if callable(identity)
-                else compact(item.model_dump(mode="json"))
+                str(identity()) if callable(identity) else compact(item.model_dump(mode="json"))
             )
             if item_identifier in published_items:
                 continue
@@ -250,16 +249,16 @@ class Directive(BaseModel):
     """Something the person asked for, kept because an instruction outlives the turn that carried it."""
 
     kind: Literal["requirement", "preference"] = Field(description=says("directive_kind"))
-    summary: str = Field(description=says("directive_summary"))
-    detail: str = Field(default="", description=says("directive_detail"))
-    occasion: str = Field(default="", description=says("directive_occasion"))
+    summary: NonBlankText = Field(description=says("directive_summary"))
+    detail: NonBlankText | None = Field(default=None, description=says("directive_detail"))
+    occasion: NonBlankText | None = Field(default=None, description=says("directive_occasion"))
     still_binding: bool = Field(default=True, description=says("directive_still_binding"))
     supersedes: list[str] = Field(default_factory=list, description=says("directive_supersedes"))
-    revision: ENTRY_REVISION = Field(default="", description=says("entry_revision"))
+    revision: ENTRY_REVISION | None = Field(default=None, description=says("entry_revision"))
 
     @model_validator(mode="after")
-    def _drop_a_dangling_revision(self):
-        return _only_with_a_parent(self)
+    def _require_a_complete_revision(self):
+        return _complete_revision(self)
 
     def identity(self) -> str:
         """Addressed by the instruction and whether it binds, since a lifting restates it and is not the same fact."""

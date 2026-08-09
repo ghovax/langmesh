@@ -169,7 +169,7 @@ export function SettingsDialog({
   liveSandboxEnforce = "required" as SandboxEnforce,
   sandboxBackend = { backend: "", detail: "" },
   liveWorktreeStrategy = "none",
-  onPermissionModeChange,
+  onPermissionModeSaved,
   onSandboxEnforceChange,
   onWorktreeStrategyChange,
 }: {
@@ -189,7 +189,7 @@ export function SettingsDialog({
   liveSandboxEnforce?: SandboxEnforce;
   sandboxBackend?: { backend: string; detail: string };
   liveWorktreeStrategy?: WorktreeStrategyValue;
-  onPermissionModeChange?: (mode: PermissionMode) => void;
+  onPermissionModeSaved?: (mode: PermissionMode) => void | Promise<void>;
   onSandboxEnforceChange?: (enforce: SandboxEnforce) => void | Promise<void>;
   onWorktreeStrategyChange?: (strategy: WorktreeStrategyValue) => void | Promise<void>;
 }) {
@@ -267,7 +267,7 @@ export function SettingsDialog({
     fetchSettings()
       .then((settings) => {
         if (cancelled) return;
-        setPermissionMode(settings.permission_mode);
+        if (!settingsAgent) setPermissionMode(settings.permission_mode);
         setSavedPermissionMode(settings.permission_mode);
         setSandboxEnforce(settings.sandbox.enforce);
         setSavedSandboxEnforce(settings.sandbox.enforce);
@@ -433,13 +433,13 @@ export function SettingsDialog({
             setSaved(next);
             if (current === saved) setCurrent(next);
           };
-          reconcile(
-            settings.permission_mode,
-            fields.permissionMode,
-            fields.savedPermissionMode,
-            setPermissionMode,
-            setSavedPermissionMode,
-          );
+          setSavedPermissionMode(settings.permission_mode);
+          if (fields.permissionMode === fields.savedPermissionMode) {
+            setPermissionMode(settings.permission_mode);
+            setAgentConfiguration((current) =>
+              current ? { ...current, permission_mode: settings.permission_mode } : current,
+            );
+          }
           reconcile(
             settings.sandbox.enforce,
             fields.sandboxEnforce,
@@ -557,6 +557,7 @@ export function SettingsDialog({
         .then((configuration) => {
           setAgentConfiguration(configuration);
           setSavedAgentConfiguration(configuration);
+          setPermissionMode(configuration.permission_mode);
         })
         .catch((caught) =>
           swallowed({ component: "settings", operation: "read the permission state" }, caught),
@@ -577,6 +578,7 @@ export function SettingsDialog({
         if (cancelled) return;
         setAgentConfiguration(configuration);
         setSavedAgentConfiguration(configuration);
+        setPermissionMode(configuration.permission_mode);
         setAgentError("");
       })
       .catch((error) => {
@@ -595,6 +597,7 @@ export function SettingsDialog({
 
   async function handleSave() {
     setSaving(true);
+    const permissionChanged = permissionMode !== savedPermissionMode;
     try {
       const nextExaApiKey = exaApiKey.trim();
       const nextComposioApiKey = composioApiKey.trim();
@@ -627,7 +630,6 @@ export function SettingsDialog({
         setSavedPermissionMode(permissionMode);
         setSavedSandboxEnforce(sandboxEnforce);
         setSavedWorktreeStrategy(worktreeStrategy);
-        onPermissionModeChange?.(permissionMode);
         void onSandboxEnforceChange?.(sandboxEnforce);
         void onWorktreeStrategyChange?.(worktreeStrategy);
       }
@@ -668,6 +670,7 @@ export function SettingsDialog({
         setSavedAgentConfiguration(savedConfiguration);
         onAgentChange?.(settingsAgent);
       }
+      if (permissionChanged) await onPermissionModeSaved?.(permissionMode);
       onOpenChange(false);
     } finally {
       setSaving(false);
@@ -813,7 +816,10 @@ export function SettingsDialog({
                 <PermissionModeControl
                   value={permissionMode}
                   onChange={(next) => {
-                    if (next) setPermissionMode(next);
+                    setPermissionMode(next);
+                    setAgentConfiguration((current) =>
+                      current ? { ...current, permission_mode: next } : current,
+                    );
                   }}
                 />
               ),
@@ -1049,7 +1055,10 @@ export function SettingsDialog({
               models={models}
               providers={modelProviders}
               recentModels={recentModels}
-              onChange={setAgentConfiguration}
+              onChange={(configuration) => {
+                setAgentConfiguration(configuration);
+                setPermissionMode(configuration.permission_mode);
+              }}
             />
           ) : null,
         },
@@ -1447,10 +1456,8 @@ function AgentPermissionsEditor({
             </Box>
           </SettingField>
           <SettingField label={translation("permissionMode")}>
-            {/* The one picker that may answer none, since most cards mean to declare no ceiling at all. */}
             <PermissionModeControl
               value={configuration.permission_mode}
-              unsetLabel={translation("permissionNoCeiling")}
               onChange={(permissionModeValue) =>
                 updateConfiguration({ permission_mode: permissionModeValue })
               }

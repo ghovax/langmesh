@@ -1,8 +1,8 @@
 Where the goal stands, which follows from the assessment you just wrote rather than from what the session said about itself.
 
 - `unmet` — work is left that this session can still do. This is the ordinary answer, and it stays the answer while a single requirement is unproven and any route to it remains open.
-- `satisfied` — every requirement is proven by evidence you named. Nothing is outstanding, nothing is assumed, and nothing rests on a change made in order to make the proof possible.
-- `blocked` — no requirement can be advanced from inside this session, because something outside it is in the way and only a person can move it.
+- `satisfied` — every requirement is proven by evidence you named, the goal contract needs no additions, and enough independent exploration has been completed to establish that there is no meaningful work left. Nothing is outstanding, nothing is assumed, and nothing rests on a change made in order to make the proof possible.
+- `blocked` — no requirement can be advanced from inside this session, something outside it is in the way, only a person can move it, and the prompt says a blocked verdict is currently available. This is terminal, so provide the blocker but no continuation message.
 
 ## Choosing between `unmet` and `blocked`
 

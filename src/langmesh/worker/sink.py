@@ -15,7 +15,7 @@ from langmesh.protocol.events import (
     PermissionRequestEvent,
     PrefixDivergence,
     QuestionEvent,
-    SteeringEvent,
+    InboundMessageEvent,
     StatusEvent,
     ThinkingDoneEvent,
     ThinkingEvent,
@@ -338,7 +338,7 @@ class _TurnEventSink:
                 await self.flush()
                 await self._emit(
                     _event_part(
-                        SteeringEvent(
+                        InboundMessageEvent(
                             text=event.text,
                             message_id=event.message_id,
                             peer_sender=event.peer_sender,

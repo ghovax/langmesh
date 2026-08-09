@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import logging
 import sys
@@ -39,7 +40,7 @@ from langmesh.protocol.metadata import (
 from langmesh.protocol.events import StatusEvent
 from langmesh.protocol.parts import _event_part
 from langmesh.protocol.turn_record import PendingInteraction, ToolGate, TurnRecord
-from langmesh.runtime.goal import Goal
+from langmesh.runtime.goal import Goal, GoalReviewPhase
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import SuspensionGate
 from langmesh.worker.turn import _ContextState, _TurnRunner
@@ -131,6 +132,9 @@ class SessionExecutor(AgentExecutor):
         self._mcp_connect: Optional[asyncio.Task] = None
         # Held so the screen warm-up is not collected mid-flight; nothing ever awaits it.
         self._screen_warm: Optional[asyncio.Task] = None
+        self._goal_state_tail: Optional[asyncio.Task] = None
+        self._turn_state_tail: Optional[asyncio.Task] = None
+        self._session_state_lock = asyncio.Lock()
 
     def _publish_stream_event(self, session_id: str, part) -> None:
         """Forward a turn part to the daemon for fan-out. Fire-and-forget: the turn must not wait on a watcher."""
@@ -141,15 +145,33 @@ class SessionExecutor(AgentExecutor):
 
     def _notify_turn_state(self, session_id: str, running: bool) -> None:
         """Tell the daemon whether a turn is in flight, and whether anything still holds this process."""
-        asyncio.create_task(
-            self._turn_store.publish_event(
+        previous = self._turn_state_tail
+
+        async def publish() -> None:
+            if previous is not None:
+                await asyncio.gather(previous, return_exceptions=True)
+            await self._turn_store.publish_event(
                 {
                     "session_id": session_id,
                     "running": running,
                     "retains": self._has_live_background_work(),
                 }
             )
-        )
+
+        task = asyncio.create_task(publish())
+        self._turn_state_tail = task
+        task.add_done_callback(self._finish_turn_state_publish)
+
+    def _finish_turn_state_publish(self, task: asyncio.Task) -> None:
+        """Retire the ordered activity publisher and report its last failure."""
+        if self._turn_state_tail is task:
+            self._turn_state_tail = None
+        error = None if task.cancelled() else task.exception()
+        if error is not None:
+            logger.error(
+                "could not publish turn state",
+                exc_info=(type(error), error, error.__traceback__),
+            )
 
     def _has_live_background_work(self) -> bool:
         """Whether any runtime still has background work, including results that finished but never reached the model."""
@@ -226,28 +248,107 @@ class SessionExecutor(AgentExecutor):
             metadata_flags={Metadata.REPORT_REMINDER: True},
         )
 
+    def _arm_goal_review(self, session_id: str) -> None:
+        """Queue one review and keep a single workflow draining the queue."""
+        state = self._contexts.get(session_id)
+        if state is None or state.aborted:
+            return
+        if state.goal_review_pending:
+            return
+        state.goal_review_pending = True
+        self._notify_turn_state(session_id, True)
+        active_review = state.goal_review_task
+        if active_review is not None and not active_review.done():
+            return
+        review_task = asyncio.create_task(self._run_goal_reviews(session_id))
+        state.goal_review_task = review_task
+        review_task.add_done_callback(
+            lambda completed: self._finish_goal_review(session_id, completed)
+        )
+
+    async def _run_goal_reviews(self, session_id: str) -> None:
+        """Drain reviews requested by completed turns, including turns opened by the current review."""
+        while True:
+            state = self._contexts.get(session_id)
+            if state is None or state.aborted or not state.goal_review_pending:
+                return
+            state.goal_review_pending = False
+            await self.continue_goal(session_id)
+
+    async def _cancel_goal_review(self, session_id: str) -> bool:
+        """Cancel and join the owned review before another turn uses the same runtime."""
+        state = self._contexts.get(session_id)
+        review_task = state.goal_review_task if state is not None else None
+        if state is not None and state.goal_review_pending:
+            state.goal_review_pending = False
+            self._notify_turn_state(session_id, False)
+        if review_task is None or review_task.done() or review_task is asyncio.current_task():
+            return False
+        review_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await review_task
+        if state is not None and state.goal_review_task is review_task:
+            state.goal_review_task = None
+        if state is not None and state.goal_review_pending:
+            state.goal_review_pending = False
+            self._notify_turn_state(session_id, False)
+        return True
+
+    def _finish_goal_review(self, session_id: str, review_task: asyncio.Task) -> None:
+        """Retire the owned review workflow and report an unexpected failure."""
+        state = self._contexts.get(session_id)
+        if state is not None and state.goal_review_task is review_task:
+            state.goal_review_task = None
+        if state is not None and state.goal_review_pending:
+            state.goal_review_pending = False
+            self._notify_turn_state(session_id, False)
+        error = None if review_task.cancelled() else review_task.exception()
+        if error is not None:
+            logger.error(
+                "goal review workflow failed",
+                exc_info=(type(error), error, error.__traceback__),
+            )
+        self._maybe_evict(session_id)
+
     async def continue_goal(self, session_id: str) -> None:
         """Read the goal against the session, then open a turn on what the review wrote, if it wrote one."""
         state = self._contexts.get(session_id)
         runtime = state.runtime if state is not None else None
         if runtime is None:
             return
-        self._notify_goal_state(session_id, runtime.goal, reviewing=True)
+        review_phase_active = False
         try:
+            if runtime.has_pending_observational_memory():
+                self._notify_goal_state(
+                    session_id, runtime.goal, review_phase=GoalReviewPhase.WAITING_FOR_MEMORY
+                )
+                review_phase_active = True
+                await runtime.wait_for_observational_memory()
+            if runtime.goal is None or not runtime.goal.is_open:
+                return
+            self._notify_goal_state(session_id, runtime.goal, review_phase=GoalReviewPhase.CHECKING)
+            review_phase_active = True
             try:
                 goal = runtime.apply_goal_review(await runtime.review_goal())
             finally:
                 self._notify_goal_state(session_id, runtime.goal)
+                review_phase_active = False
             # Written before the turn opens: a verdict held only in memory is one a restart would lose.
             await self._persist_session_state(session_id, runtime)
-            if goal is not None and goal.is_open and goal.direction.strip():
+            goal = runtime.goal
+            if goal is not None and goal.is_open and goal.review_message:
                 await self._drive_self_sent_turn(
                     session_id,
                     GOAL_CONTINUATION_KIND,
-                    metadata_flags={Metadata.GOAL_CONTINUATION: True},
-                    text=goal.direction,
+                    metadata_flags={
+                        Metadata.GOAL_CONTINUATION: True,
+                        Metadata.GOAL_REVIEW_ID: goal.review_id,
+                    },
+                    text=goal.review_message,
                 )
         finally:
+            if review_phase_active:
+                self._notify_goal_state(session_id, runtime.goal)
             # Exactly one release for the hold the turn took on our behalf, whichever way the review went.
             self._notify_turn_state(session_id, False)
 
@@ -258,36 +359,92 @@ class SessionExecutor(AgentExecutor):
         goal = runtime.goal if runtime is not None else None
         if runtime is None or goal is None:
             return False
+        if state.goal_review_task is not None and not state.goal_review_task.done():
+            state.goal_review_task.cancel()
+        if state.goal_review_pending:
+            state.goal_review_pending = False
+            self._notify_turn_state(session_id, False)
         runtime.write_goal(
-            goal.model_copy(update={"status": Goal.CLEARED}) if goal.is_open else None
+            goal.updated(status=Goal.CLEARED, review_message=None, review_id=None)
+            if goal.is_open
+            else None
         )
         asyncio.create_task(self._persist_session_state(session_id, runtime))
         return True
 
     async def _persist_session_state(self, session_id: str, runtime: AgentRuntime) -> None:
         """Write the durable session state outside a turn, since calling off a goal changes it between turns."""
-        snapshot = runtime.dirty_session_snapshot()
-        if snapshot is None:
-            return
-        try:
-            await self._turn_store.save_session_state(session_id, snapshot)
-        except Exception:  # noqa: BLE001 — the goal is already off in the live session
-            logger.exception("could not persist the session state for %s", session_id)
-            return
-        runtime.clear_session_dirty()
+        async with self._session_state_lock:
+            snapshot = runtime.dirty_session_snapshot()
+            if snapshot is None:
+                return
+            revision = runtime.session_revision
+            try:
+                await self._turn_store.save_session_state(session_id, snapshot)
+            except Exception:  # noqa: BLE001 — the goal is already off in the live session
+                logger.exception("could not persist the session state for %s", session_id)
+                return
+            runtime.clear_session_dirty(revision)
 
-    def _notify_goal_state(self, session_id: str, goal, reviewing: bool = False) -> None:
-        """Tell the daemon what the goal is now; `reviewing` rides along unstored, being true of a moment not a goal."""
-        asyncio.create_task(
-            self._turn_store.publish_event(
+    async def _persist_turn_checkpoint(
+        self,
+        session_id: str,
+        turn_id: str,
+        messages: list[dict],
+        inherited_snapshot_id: str,
+        runtime: Optional[AgentRuntime],
+    ) -> None:
+        """Persist a turn checkpoint and its matching session revision under the shared state lock."""
+        async with self._session_state_lock:
+            session_state = runtime.dirty_session_snapshot() if runtime is not None else None
+            revision = runtime.session_revision if session_state is not None else None
+            await self._turn_store.save_turn_state(
+                session_id,
+                turn_id,
+                messages,
+                session_state,
+                inherited_snapshot_id,
+            )
+            if runtime is not None and revision is not None:
+                runtime.clear_session_dirty(revision)
+
+    def _notify_goal_state(
+        self, session_id: str, goal, review_phase: Optional[GoalReviewPhase] = None
+    ) -> None:
+        """Tell the daemon the goal and its transient pre-continuation phase."""
+        previous = self._goal_state_tail
+
+        async def publish() -> None:
+            if previous is not None:
+                await asyncio.gather(previous, return_exceptions=True)
+            await self._turn_store.publish_event(
                 {
                     "session_id": session_id,
-                    "goal": (
-                        {**goal.public(), "reviewing": reviewing} if goal is not None else None
-                    ),
+                    "goal": {
+                        **goal.public(),
+                        **(
+                            {"review_phase": review_phase.value} if review_phase is not None else {}
+                        ),
+                    }
+                    if goal is not None
+                    else None,
                 }
             )
-        )
+
+        task = asyncio.create_task(publish())
+        self._goal_state_tail = task
+        task.add_done_callback(self._finish_goal_state_publish)
+
+    def _finish_goal_state_publish(self, task: asyncio.Task) -> None:
+        """Retire the ordered publisher and surface the last failed update."""
+        if self._goal_state_tail is task:
+            self._goal_state_tail = None
+        error = None if task.cancelled() else task.exception()
+        if error is not None:
+            logger.error(
+                "could not publish goal state",
+                exc_info=(type(error), error, error.__traceback__),
+            )
 
     async def _run_compaction_turn(self, session_id: str) -> dict | None:
         """Drive one manual-compaction turn, so it is persisted and replayable like any other."""
@@ -307,6 +464,14 @@ class SessionExecutor(AgentExecutor):
         # Mark Stopped first, so no later completion can re-arm a pump that would wake the agent again.
         state.aborted = True
         handled = False
+        if state.goal_review_task is not None:
+            if not state.goal_review_task.done():
+                state.goal_review_task.cancel()
+            handled = True
+        if state.goal_review_pending:
+            state.goal_review_pending = False
+            self._notify_turn_state(session_id, False)
+            handled = True
         if state.resume_pump is not None:
             if not state.resume_pump.done():
                 state.resume_pump.cancel()
@@ -314,6 +479,9 @@ class SessionExecutor(AgentExecutor):
             handled = True
         if state.runtime is not None:
             state.runtime.abort()
+            if state.runtime.goal is not None and state.runtime.goal.is_open:
+                state.runtime.park_goal()
+                asyncio.create_task(self._persist_session_state(session_id, state.runtime))
             handled = True
         return handled
 
@@ -347,9 +515,7 @@ class SessionExecutor(AgentExecutor):
         """Adopt a new permission mode now rather than on the next turn, since the turn to reach is the running one."""
         from langmesh.base.permission_mode import PermissionMode
 
-        resolved = PermissionMode.parse(mode)
-        if resolved is None:
-            return self._permission_mode
+        resolved = PermissionMode.resolve(mode)
         self._permission_mode = str(resolved)
         # What a later runtime starts from, and what this session asks for when it creates a peer.
         self._peers.permission_mode = self._permission_mode
@@ -438,8 +604,13 @@ class SessionExecutor(AgentExecutor):
         state = self._contexts.get(session_id)
         if state is None or not state.pending_reset:
             return
-        if state.runtime is not None and state.runtime.has_pending_jobs():
-            return  # still delivering — keep the runtime (and its pump) alive
+        review_running = state.goal_review_task is not None and not state.goal_review_task.done()
+        runtime_busy = state.runtime is not None and (
+            state.runtime.has_pending_jobs()
+            or state.runtime.has_pending_observational_memory()
+        )
+        if state.running or review_running or runtime_busy:
+            return
         state.runtime = None
         state.pending_reset = False
 
@@ -451,14 +622,21 @@ class SessionExecutor(AgentExecutor):
             self._contexts[session_id] = state
         return state
 
-    def teardown_context(self, session_id: str) -> None:
-        """Release every trace of a deleted session, so deleting one can never accumulate live state."""
+    def teardown_context(self, session_id: str, *, preserve_background_jobs: bool = False) -> None:
+        """Release a context while optionally preserving interrupted jobs for startup recovery."""
         state = self._contexts.pop(session_id, None)
         if state is not None:
             if state.resume_pump is not None and not state.resume_pump.done():
                 state.resume_pump.cancel()
+            if state.goal_review_task is not None and not state.goal_review_task.done():
+                state.goal_review_task.cancel()
+            if state.goal_review_pending:
+                self._notify_turn_state(session_id, False)
             if state.runtime is not None:
-                state.runtime.abort()
+                if preserve_background_jobs:
+                    state.runtime.interrupt_for_restart()
+                else:
+                    state.runtime.abort()
         self._conversations.pop(session_id, None)
 
     def _arm_resume_pump(self, session_id: str, runtime: Optional[AgentRuntime] = None) -> None:
@@ -511,6 +689,8 @@ class SessionExecutor(AgentExecutor):
         has_stored_result = self._job_store.has_undelivered_jobs(session_id, self._agent_name)
         if not has_live_result and not has_stored_result:
             return
+        if runtime is not None and runtime.goal is not None:
+            self._notify_goal_state(session_id, runtime.goal)
         # An agent-authored resume, so no consumer sees a user message the user never sent.
         await self._drive_self_sent_turn(
             session_id, AUTONOMOUS_RESUME_KIND, metadata_flags={Metadata.AUTONOMOUS_RESUME: True}
@@ -623,10 +803,12 @@ class SessionExecutor(AgentExecutor):
             )
             store.mark_delivered(job["job_id"])
 
-    async def resume_pending_on_startup(self) -> None:
-        """After a restart, record interrupted jobs and replay the finished ones the model never saw."""
+    async def resume_pending_jobs(self) -> None:
+        """Record this session's interrupted jobs and replay results its model never saw."""
         store = self._job_store
         for job in store.running_jobs(self._agent_name):
+            if job["session_id"] != self._session_id:
+                continue
             store.mark_abandoned(
                 job["job_id"],
                 compact(
@@ -640,10 +822,11 @@ class SessionExecutor(AgentExecutor):
                     }
                 ),
             )
-        for session_id in store.contexts_with_undelivered(self._agent_name):
-            wake_task = asyncio.create_task(self._run_autonomous_turn(session_id))
-            self._startup_resume_tasks.add(wake_task)
-            wake_task.add_done_callback(self._startup_resume_tasks.discard)
+        if not store.has_undelivered_jobs(self._session_id, self._agent_name):
+            return
+        wake_task = asyncio.create_task(self._run_autonomous_turn(self._session_id))
+        self._startup_resume_tasks.add(wake_task)
+        wake_task.add_done_callback(self._startup_resume_tasks.discard)
 
     def _workspace(self, requested_working_directory: str = "") -> SessionWorktree:
         """Where this session's work happens, resolved once by the daemon rather than renegotiated per turn."""
@@ -752,6 +935,7 @@ class SessionExecutor(AgentExecutor):
             self._screen_warm = asyncio.create_task(asyncio.to_thread(warm_screen))
 
         self._context(self._session_id)
+        await self.resume_pending_jobs()
 
     async def start_turn(self, parts: list, metadata: dict) -> str:
         """Start a turn and answer with its task id as soon as it has one, rather than when the turn is over."""
@@ -1002,15 +1186,29 @@ class SessionExecutor(AgentExecutor):
             "permission_mode": self._permission_mode,
         }
 
-    async def aclose(self) -> None:
+    async def aclose(self, *, preserve_background_jobs: bool = False) -> None:
         """Stop cleanly, in an order where nothing is torn down while something else still needs it."""
-        import contextlib
-
-        from langmesh.runtime.background import cancel_all_background_jobs
-
-        self.teardown_context(self._session_id)
-        with contextlib.suppress(Exception):
-            cancel_all_background_jobs()
+        state = self._contexts.get(self._session_id)
+        owned_tasks = [
+            task
+            for task in (
+                state.resume_pump if state is not None else None,
+                state.goal_review_task if state is not None else None,
+            )
+            if task is not None and not task.done()
+        ]
+        self.teardown_context(
+            self._session_id, preserve_background_jobs=preserve_background_jobs
+        )
+        if owned_tasks:
+            await asyncio.gather(*owned_tasks, return_exceptions=True)
+        state_publishers = [
+            task
+            for task in (self._goal_state_tail, self._turn_state_tail)
+            if task is not None and not task.done()
+        ]
+        if state_publishers:
+            await asyncio.gather(*state_publishers, return_exceptions=True)
         # The browser surface is closed by the session that opened it, and only if a screen tool ever ran.
         if "langmesh.computer.web" in sys.modules:
             with contextlib.suppress(Exception):

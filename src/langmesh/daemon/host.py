@@ -111,7 +111,7 @@ class SessionHost:
         """Which session owns a process group, which is how a call from a tool child is attributed."""
         return self._session_of_group.get(group, "")
 
-    async def stop(self, session_id: str) -> bool:
+    async def stop(self, session_id: str, *, preserve_background_jobs: bool = False) -> bool:
         """Drop a session's executor, which is what ends its tool children too."""
         held = self._sessions.pop(session_id, None)
         for group in self._groups_of_session.pop(session_id, set()):
@@ -119,9 +119,8 @@ class SessionHost:
         self._starting.pop(session_id, None)
         if held is None:
             return False
-        # `aclose` cancels the background jobs, and each one ends its own child from the handle it holds.
         with contextlib.suppress(Exception):
-            await held.executor.aclose()
+            await held.executor.aclose(preserve_background_jobs=preserve_background_jobs)
         return True
 
     async def aclose(self) -> None:

@@ -141,16 +141,16 @@ def _resolve_sandbox(agent: str, working_directory: str, parent, read_only: bool
     return profile.as_dict()
 
 
-def _agent_permission_ceiling(agent: str, working_directory: str) -> Optional[PermissionMode]:
-    """The loosest mode the agent's profile allows, or ``None`` when it cannot be read."""
+def _agent_permission_default(agent: str, working_directory: str) -> Optional[PermissionMode]:
+    """The mode the agent profile supplies when the session creator does not choose one."""
     from langmesh.commons.services.agents import _agent_configuration_for_request
 
     try:
         _, configuration = _agent_configuration_for_request(agent, working_directory)
-    except Exception:  # noqa: BLE001 — an unreadable profile clamps nothing rather than failing
-        logger.debug("could not read the permission ceiling of agent %s", agent, exc_info=True)
+    except Exception:  # noqa: BLE001 — an unreadable profile falls back to the machine default
+        logger.debug("could not read the permission default of agent %s", agent, exc_info=True)
         return None
-    return configuration.permission_policy
+    return configuration.permission_default
 
 
 async def _session_create(params: dict) -> dict:
@@ -180,17 +180,19 @@ async def _session_create(params: dict) -> dict:
     if parent is not None and not working_directory:
         working_directory = parent.working_directory
 
+    profile_default = _agent_permission_default(agent, working_directory)
+    requested_mode = params.get("permission_mode")
+    if requested_mode not in (None, "") and PermissionMode.parse(requested_mode) is None:
+        raise RpcError(
+            "permission_mode must be one of: ask, automatic.",
+            status_code=400,
+            code="invalid_permission_mode",
+        )
     try:
         mode = PermissionMode.child_of(
             parent.permission_mode if parent is not None else None,
-            requested=params.get("permission_mode"),
-            fallback=configured,
-            # The agent's ceiling shapes what is inherited, but a person who asks for automatic means it.
-            ceiling=(
-                None
-                if PermissionMode.parse(params.get("permission_mode")) is PermissionMode.AUTOMATIC
-                else _agent_permission_ceiling(agent, working_directory)
-            ),
+            requested=requested_mode,
+            fallback=profile_default or configured,
         )
     except ValueError as conflict:
         # A session that cannot answer a gate asking for a peer that raises them: refused at creation.
@@ -363,20 +365,23 @@ async def _session_permission_mode(params: dict) -> dict:
             code="invalid_permission_mode",
         )
     parent = state.registry.get(record.parent) if record.parent else None
-    # A person choosing automatic is choosing it; the agent's ceiling still governs everything they did not choose.
-    mode = PermissionMode.more_restrictive(
-        requested,
-        parent.permission_mode if parent is not None else None,
-        None
-        if requested is PermissionMode.AUTOMATIC
-        else _agent_permission_ceiling(record.agent, record.working_directory),
-    )
+    try:
+        mode = PermissionMode.child_of(
+            parent.permission_mode if parent is not None else None,
+            requested=requested,
+        )
+    except ValueError as conflict:
+        raise RpcError(str(conflict), status_code=409, code="unattended_conflict") from conflict
     changed = [record] if record.permission_mode != str(mode) else []
     state.registry.mark(record.id, permission_mode=str(mode), updated_at=_now())
     for descendant in state.registry.descendants_of(record.id):
         if not descendant.is_live:
             continue
-        clamped = PermissionMode.more_restrictive(descendant.permission_mode, mode)
+        clamped = (
+            PermissionMode.AUTOMATIC
+            if mode is PermissionMode.AUTOMATIC
+            else PermissionMode.resolve(descendant.permission_mode)
+        )
         if descendant.permission_mode == str(clamped):
             continue
         state.registry.mark(descendant.id, permission_mode=str(clamped), updated_at=_now())
@@ -851,25 +856,16 @@ async def rpc(request: Request) -> JSONResponse:
         )
 
 
-@router.get("/sessions/{session_id}/attach")
-async def attach(session_id: str, request: Request) -> EventSourceResponse:
-    """Watch a session: a snapshot of what happened, then everything as it happens."""
-    _session(session_id)
-    # Same scoping as the control plane: a session watches its own subtree, a person's client is not narrowed.
-    caller = getattr(request.state, "calling_session", "")
-    if caller:
-        refusal = _refuse_session_caller(caller, "session.get", {"id": session_id})
-        if refusal is not None:
-            raise refusal
-
+def _attach_transcript(context_id: str, request: Request) -> EventSourceResponse:
+    """Stream any durable conversation context through the shared snapshot-and-tail transport."""
     async def stream():
         assert state.turn_store is not None
-        subscription = state.event_bus.subscribe(session_id)
+        subscription = state.event_bus.subscribe(context_id)
         try:
             # The newest page, not the whole conversation: a long one costs most of a second to read,
             # revalidate and re-encode, and the client asks for what came before it when somebody scrolls.
             page = await state.turn_store.turn_page_for_session(
-                session_id, limit=active_tuning().amount(Tunable.attach_snapshot_rows)
+                context_id, limit=active_tuning().amount(Tunable.attach_snapshot_rows)
             )
             yield {
                 "data": compact(
@@ -917,9 +913,38 @@ async def attach(session_id: str, request: Request) -> EventSourceResponse:
                     )
                 }
         finally:
-            state.event_bus.unsubscribe(session_id, subscription)
+            state.event_bus.unsubscribe(context_id, subscription)
 
     return EventSourceResponse(stream())
+
+
+@router.get("/sessions/{session_id}/attach")
+async def attach(session_id: str, request: Request) -> EventSourceResponse:
+    """Watch a session: a snapshot of what happened, then everything as it happens."""
+    _session(session_id)
+    caller = getattr(request.state, "calling_session", "")
+    if caller:
+        refusal = _refuse_session_caller(caller, "session.get", {"id": session_id})
+        if refusal is not None:
+            raise refusal
+    return _attach_transcript(session_id, request)
+
+
+@router.get("/goal-reviews/{review_id}/attach")
+async def attach_goal_review(review_id: str, request: Request) -> EventSourceResponse:
+    """Watch a linked goal-review transcript through the same stream as an ordinary session."""
+    assert state.turn_store is not None
+    review = await state.turn_store.goal_review(review_id)
+    if review is None:
+        raise RpcError(f"No goal review {review_id!r}.", status_code=404, code="no_such_review")
+    caller = getattr(request.state, "calling_session", "")
+    if caller:
+        refusal = _refuse_session_caller(
+            caller, "session.get", {"id": str(review.get("session_id") or "")}
+        )
+        if refusal is not None:
+            raise refusal
+    return _attach_transcript(review_id, request)
 
 
 @router.get("/events")

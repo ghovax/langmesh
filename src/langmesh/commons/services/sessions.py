@@ -27,10 +27,10 @@ def _reset_work_habits_acknowledgements() -> None:
 
 
 def _normalize_permission_mode(mode: str) -> str:
-    """A stored mode as the enum reads it, falling back to the interactive default rather than a guess."""
+    """A validated permission mode at a persistence boundary."""
     from langmesh.base.permission_mode import PermissionMode
 
-    return str(PermissionMode.coerce(mode))
+    return str(PermissionMode.resolve(mode))
 
 
 def _session_worktree_from_record(record: SessionRecord) -> SessionWorktree:
@@ -204,7 +204,7 @@ def _sessions_payload() -> dict[str, list[dict[str, Any]]]:
                     "runtime_repository_root": row.runtime_repository_root or "",
                     "worktree_head": row.worktree_head or "",
                     "worktree_error": row.worktree_error or "",
-                    "permission_mode": _normalize_permission_mode(row.permission_mode or "ask"),
+                    "permission_mode": _normalize_permission_mode(row.permission_mode),
                     "input_draft": row.input_draft or "",
                     "filesystem_leases": (
                         state.file_lease_manager.active_for_session(row.id)

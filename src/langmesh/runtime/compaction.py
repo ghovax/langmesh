@@ -320,6 +320,24 @@ class _CompactsContext:
         self._observation_tail = task
         task.add_done_callback(self._finish_observation)
 
+    def has_pending_observational_memory(self) -> bool:
+        """Whether an exchange is still being interpreted into findings or instructions."""
+        return self._observation_tail is not None
+
+    async def wait_for_observational_memory(self) -> None:
+        """Wait until every observation queued so far, including newly chained work, has settled."""
+        while self._observation_tail is not None:
+            pending = self._observation_tail
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+            finally:
+                if self._observation_tail is pending and pending.done():
+                    self._observation_tail = None
+
     async def _observe_exchange_after(
         self,
         earlier: asyncio.Task | None,

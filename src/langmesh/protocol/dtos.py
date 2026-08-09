@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SessionTitle(BaseModel):
@@ -40,8 +40,7 @@ class AgentConfigurationResponse(BaseModel):
     model: str = ""
     provider: str = ""
     reasoning_effort: str = "high"
-    # `None` where the card sets no ceiling, shown as such rather than as an invented bound.
-    permission_mode: Literal["ask", "automatic"] | None = None
+    permission_mode: Literal["ask", "automatic"]
     tools_enabled: list[str]
     tools_disabled: list[str]
     bash: AgentBashConfigurationResponse
@@ -62,6 +61,12 @@ class AgentConfigurationUpdateRequest(BaseModel):
     tools_enabled: list[str] | None = None
     tools_disabled: list[str] | None = None
     bash: AgentBashConfigurationRequest | None = None
+
+    @model_validator(mode="after")
+    def _reject_null_permission_mode(self) -> AgentConfigurationUpdateRequest:
+        if "permission_mode" in self.model_fields_set and self.permission_mode is None:
+            raise ValueError("permission_mode cannot be null")
+        return self
 
 
 class AgentsList(BaseModel):
@@ -161,10 +166,9 @@ class MCPResourceReadRequest(BaseModel):
 
 class LocationInput(BaseModel):
     # `name` is not accepted — it is derived from the connection (see _derive_location_name).
-    kind: str  # "local" | "remote"
+    kind: Literal["local", "remote"]
     base_directory: str
     host_alias: str = ""
-    permission_mode: str = "ask"
 
 
 class WorkspaceCreateRequest(BaseModel):

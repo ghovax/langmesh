@@ -603,7 +603,7 @@ function Workspace() {
     }
   }
 
-  async function handleResumeSession(entry: SessionEntry) {
+  function handleResumeSession(entry: SessionEntry) {
     // Opening a session acknowledges its notification.
     setUnseenCompletions((current) => {
       if (!current.has(entry.sessionId)) return current;
@@ -613,15 +613,14 @@ function Workspace() {
     });
     setSelectedAgent(entry.agent);
     setSelectedPermissionMode(entry.permissionMode);
-    // The restoration effect rebinds the working directory to this session's own folder.
+    setWorkingDirectory(entry.workingDirectory);
     setActiveSessionId(entry.sessionId);
     void rememberLastSession(entry.workspaceId || workspaceId, entry.sessionId);
     setChatKey((current) => current + 1);
     const params = new URLSearchParams(window.location.search);
-    if (entry.workspaceId) {
+    if (entry.workspaceId && entry.workspaceId !== workspaceId) {
       writeLastWorkspace(entry.workspaceId);
       params.set("workspace", entry.workspaceId);
-      setWorkingDirectory("");
       setRestoredContext(null);
     }
     params.set("session", entry.sessionId);
@@ -637,6 +636,7 @@ function Workspace() {
       next.delete(entry.sessionId);
       return next;
     });
+    setWorkingDirectory(entry.workingDirectory);
     setActiveSessionId(entry.sessionId);
     void rememberLastSession(entry.workspaceId || workspaceId, entry.sessionId);
     const params = new URLSearchParams(window.location.search);
@@ -766,9 +766,9 @@ function Workspace() {
     [historyWidth],
   );
 
-  // Derive the working directory from the workspace's first local location, bouncing a dead deep link back to the home screen.
+  // Resolve the workspace directory only when a session does not already own one.
   useEffect(() => {
-    if (!workspaceId) return;
+    if (!workspaceId || (activeSessionId && activeSession?.workingDirectory)) return;
     let cancelled = false;
     getWorkspace(workspaceId)
       .then((workspace) => {
@@ -786,7 +786,7 @@ function Workspace() {
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, homeWorkspace, router]);
+  }, [workspaceId, activeSessionId, activeSession?.workingDirectory, homeWorkspace, router]);
 
   return (
     // The chat is the base surface and only the side panels are elevated cards, each carrying its own background and inset.

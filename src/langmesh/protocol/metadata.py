@@ -40,6 +40,7 @@ class Metadata:
     COMPACTION = "compaction"
     REPORT_REMINDER = "reportReminder"
     GOAL_CONTINUATION = "goalContinuation"
+    GOAL_REVIEW_ID = "goalReviewId"
     # Set by a session sending another session a message, whose presence is what makes the turn a peer turn.
     PEER_SENDER = "peerSender"
     # When the harness took this message, stamped by the receiving side because that is the clock it can vouch for.

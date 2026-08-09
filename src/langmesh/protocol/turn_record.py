@@ -18,6 +18,7 @@ TURN_KIND_FIELD = "kind"
 REFERENCE_TURN_IDS_FIELD = "referenceTurnIds"
 # Which session sent a peer turn. Beside the kind, since attributing a report needs the sender.
 PEER_SENDER_FIELD = "peerSender"
+GOAL_REVIEW_ID_FIELD = "goalReviewId"
 
 
 class TurnKind(StrEnum):
@@ -96,6 +97,7 @@ class TurnRecord(BaseModel):
     kind: Optional[TurnKind] = None
     # Set only on a peer turn, and durable: a transcript read later still needs to attribute the report.
     peer_sender: str = ""
+    goal_review_id: str = ""
     pending: Optional[PendingInteraction] = None
     reference_task_ids: list[str] = Field(default_factory=list)
 
@@ -124,9 +126,12 @@ class TurnRecord(BaseModel):
         )
         raw_sender = data.get(PEER_SENDER_FIELD)
         peer_sender = raw_sender if isinstance(raw_sender, str) else ""
+        raw_goal_review_id = data.get(GOAL_REVIEW_ID_FIELD)
+        goal_review_id = raw_goal_review_id if isinstance(raw_goal_review_id, str) else ""
         return cls(
             kind=kind,
             peer_sender=peer_sender,
+            goal_review_id=goal_review_id,
             pending=pending,
             reference_task_ids=reference_task_ids,
         )
@@ -139,6 +144,8 @@ class TurnRecord(BaseModel):
             state[TURN_KIND_FIELD] = str(self.kind)
         if self.peer_sender:
             state[PEER_SENDER_FIELD] = self.peer_sender
+        if self.goal_review_id:
+            state[GOAL_REVIEW_ID_FIELD] = self.goal_review_id
         if self.pending is not None:
             state[PENDING_INTERACTION_FIELD] = self.pending.model_dump()
         if self.reference_task_ids:

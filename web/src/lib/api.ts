@@ -328,7 +328,6 @@ export interface Location {
   host_known: boolean;
   base_directory: string;
   uri: string;
-  permission_mode: string;
   created_at: string;
 }
 
@@ -347,7 +346,6 @@ export interface LocationInput {
   kind: "local" | "remote";
   base_directory: string;
   host_alias?: string;
-  permission_mode?: string;
 }
 
 export interface WorkspaceCreateInput {
@@ -646,8 +644,8 @@ export interface AgentConfiguration {
   model: string;
   provider: string;
   reasoning_effort: string;
-  /** The loosest mode this agent allows, or `null` where it sets no ceiling — which most cards mean. */
-  permission_mode: PermissionMode | null;
+  /** The mode a new session using this agent starts with. */
+  permission_mode: PermissionMode;
   tools_enabled: string[];
   tools_disabled: string[];
   bash: AgentBashConfiguration;
@@ -658,8 +656,7 @@ export interface SaveAgentConfigurationPayload {
   model?: string;
   provider?: string;
   reasoning_effort?: string;
-  // `null` clears the ceiling; omitted leaves it as it was.
-  permission_mode?: PermissionMode | null;
+  permission_mode?: PermissionMode;
   tools_enabled?: string[];
   tools_disabled?: string[];
   bash?: Partial<AgentBashConfiguration>;
@@ -1364,17 +1361,15 @@ export async function fetchHostHomeDirectory(alias: string): Promise<string> {
 export interface SessionGoal {
   text: string;
   // What the end state is for, which is what lets a closed route be told apart from a lost goal.
-  purpose?: string;
+  purpose: string | null;
   requirements: string[];
   // `active` while worked, `blocked` on an obstacle it cannot pass, `parked` after a long unattended stretch,
   // `satisfied` or `cleared` once it is resolved and kept on the record rather than dropped.
   status: "active" | "blocked" | "parked" | "satisfied" | "cleared";
-  blocker: string;
-  evidence?: string;
-  // The last thing the review told the session to do, which is also what opened its most recent turn.
-  direction?: string;
-  // True only while the review is actually reading the work, which is a moment rather than a state.
-  reviewing?: boolean;
+  blocker: string | null;
+  evidence: string | null;
+  // A transient phase before the next goal turn, absent while the working session itself is active.
+  review_phase?: "waiting_for_background" | "waiting_for_memory" | "checking";
 }
 
 export interface SessionSummary {
@@ -1611,7 +1606,7 @@ export interface RecordEntry {
   summary?: string;
   still_binding?: boolean;
   supersedes?: string[];
-  revision?: "correction" | "refinement" | "merge" | "retraction" | "";
+  revision?: "correction" | "refinement" | "merge" | "retraction" | null;
   written_at?: string;
 }
 
@@ -1923,6 +1918,7 @@ export type TurnKind = "user" | "peer" | "goal" | "autonomous" | "compaction";
 export interface TurnState {
   kind?: TurnKind;
   peerSender?: string;
+  goalReviewId?: string;
   referenceTurnIds?: string[];
 }
 
@@ -2053,13 +2049,13 @@ export type SessionStreamFrame =
   | { kind: "turn"; seq: number; running: boolean }
   | { kind: "done" };
 
-export function attachSession(
-  sessionId: string,
+function attachTranscript(
+  path: string,
   onFrame: (frame: SessionStreamFrame) => void,
   onDone: () => void,
 ): { abort: () => void } {
   const controller = new AbortController();
-  apiFetch(`/sessions/${encodeURIComponent(sessionId)}/attach`, {
+  apiFetch(path, {
     signal: controller.signal,
     headers: { Accept: "text/event-stream" },
   })
@@ -2069,7 +2065,7 @@ export function attachSession(
         swallowed(
           { component: "session-stream", operation: "attach to the session" },
           new Error("the daemon refused the attach stream"),
-          { status: response.status, session: sessionId },
+          { status: response.status, path },
         );
         return;
       }
@@ -2094,6 +2090,39 @@ export function attachSession(
     .finally(onDone);
 
   return { abort: () => controller.abort() };
+}
+
+export function attachSession(
+  sessionId: string,
+  onFrame: (frame: SessionStreamFrame) => void,
+  onDone: () => void,
+): { abort: () => void } {
+  return attachTranscript(`/sessions/${encodeURIComponent(sessionId)}/attach`, onFrame, onDone);
+}
+
+export function attachGoalReview(
+  reviewId: string,
+  onFrame: (frame: SessionStreamFrame) => void,
+  onDone: () => void,
+): { abort: () => void } {
+  return attachTranscript(`/goal-reviews/${encodeURIComponent(reviewId)}/attach`, onFrame, onDone);
+}
+
+export interface GoalReviewSession {
+  review_id: string;
+  session_id: string;
+  goal: string;
+  status: "working" | "completed" | "canceled" | "failed";
+  standing: "unmet" | "satisfied" | "blocked" | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export async function fetchGoalReviews(sessionId: string): Promise<GoalReviewSession[]> {
+  const response = await apiFetch(`/sessions/${encodeURIComponent(sessionId)}/goal-reviews`);
+  if (!response.ok) throw new Error(`goal reviews request failed: ${response.status}`);
+  const data = (await response.json()) as { reviews?: GoalReviewSession[] };
+  return data.reviews ?? [];
 }
 
 // The transport for handled-error reports, installed here because this module owns the daemon's address.

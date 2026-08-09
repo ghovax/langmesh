@@ -90,6 +90,7 @@ export interface MessageMeta {
   attachments?: MessageAttachment[];
   // On a peer message: which session sent it, since a report comes from somewhere with an id.
   peerSender?: string;
+  goalReviewId?: string;
 }
 
 export interface ChatMessage {
@@ -316,6 +317,12 @@ interface ReduceState {
   tokenUsage: TokenUsage | null; // latest cumulative token totals, if any reported
   // Per-source occurrence counter, so a key comes from the server messageId rather than array position.
   keyCounts: Map<string, number>;
+}
+
+export type TranscriptState = ReduceState;
+
+export function createTranscriptState(): TranscriptState {
+  return newReduceState();
 }
 
 // Whether a replayed transcript would render exactly what is on screen, which is the end-of-stream flash.
@@ -588,17 +595,23 @@ function reduceInboundMessage(
   message: A2AMessage,
   peerSender = "",
   fromGoalReview = false,
+  turnGoalReviewId = "",
 ): void {
   const text = (message.parts ?? [])
     .filter((part) => part.kind === "text")
     .map((part) => part.text ?? "")
     .join("");
   const attachments = attachmentsFromMessage(message);
+  const messageTurnMetadata = asRecord(message.metadata?.[METADATA_KEY]);
+  const goalReviewId = fromGoalReview
+    ? String(messageTurnMetadata.goalReviewId ?? turnGoalReviewId).trim()
+    : "";
   // No prose and no attachments is nothing to render, and replay must match the live path exactly.
   if (!text.trim() && attachments.length === 0) return;
   const meta = {
     ...(attachments.length > 0 ? { attachments } : {}),
     ...(peerSender ? { peerSender } : {}),
+    ...(goalReviewId ? { goalReviewId } : {}),
   };
   const role = fromGoalReview ? "goal" : peerSender ? "peer" : "user";
   upsertMessage(state, {
@@ -621,6 +634,14 @@ function reduceAgentPart(state: ReduceState, part: A2APart, sourceId?: string): 
   reduceDataPart(state, partPayload(part.data), sourceId);
 }
 
+export function appendTranscriptPart(
+  state: TranscriptState,
+  part: A2APart,
+  sourceId?: string,
+): void {
+  reduceAgentPart(state, part, sourceId);
+}
+
 function reduceAgentMessage(state: ReduceState, message: A2AMessage): void {
   for (const part of message.parts ?? []) reduceAgentPart(state, part, message.messageId);
 }
@@ -633,12 +654,13 @@ function reduceDataPart(
   // Every event here belongs to this session, and is read through the generated union's discriminant.
   const event = data as unknown as WireEvent;
   switch (event.kind) {
-    case "steering": {
+    case "inbound_message": {
       const text = (event.text ?? "").trim();
       if (!text) break;
       // Delivered once however often it arrives, since attaching replays turns the session already holds.
       const steeringSender = (event.peer_sender ?? "").trim();
-      const role = steeringSender ? "peer" : "user";
+      const goalReviewId = (event.goal_review_id ?? "").trim();
+      const role = goalReviewId ? "goal" : steeringSender ? "peer" : "user";
       const identifier = (event.message_id ?? "").trim();
       const alreadyShown = identifier
         ? state.messages.some((message) => message.id === `${role}-${identifier}`)
@@ -657,7 +679,14 @@ function reduceDataPart(
           role,
           content: text,
           timestamp: new Date().toISOString(),
-          ...(steeringSender ? { peerSender: steeringSender } : {}),
+          ...(steeringSender || goalReviewId
+            ? {
+                meta: {
+                  ...(steeringSender ? { peerSender: steeringSender } : {}),
+                  ...(goalReviewId ? { goalReviewId } : {}),
+                },
+              }
+            : {}),
         },
       ];
       break;
@@ -1044,8 +1073,10 @@ export function replayTurns(turns: A2ATurn[]): {
     const opened = turnState(turn);
     const peerSender = opened.peerSender ?? "";
     const fromGoalReview = opened.kind === "goal";
+    const goalReviewId = opened.goalReviewId ?? "";
     for (const message of replayMessages) {
-      if (message.role === "user") reduceInboundMessage(state, message, peerSender, fromGoalReview);
+      if (message.role === "user")
+        reduceInboundMessage(state, message, peerSender, fromGoalReview, goalReviewId);
       else reduceAgentMessage(state, message);
     }
     if (!hasAssistantTextAfterLastUser(state)) {
@@ -1510,7 +1541,7 @@ export function useChat(
               sessionIdentifier = created.id;
               sessionIdRef.current = created.id;
               setSessionId(created.id);
-              // The mode the session actually got, which a profile ceiling or a parent clamp may have tightened.
+              // The mode the session actually got, which a parent session may have constrained.
               if (created.permission_mode && created.permission_mode !== permissionMode) {
                 setGrantedPermissionMode(created.permission_mode);
               }

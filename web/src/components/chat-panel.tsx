@@ -16,6 +16,7 @@ import {
 import {
   LuArrowDown,
   LuBookMarked,
+  LuClipboardCheck,
   LuEllipsis,
   LuFolderOpen,
   LuGitBranch,
@@ -45,7 +46,7 @@ import {
   useState,
   type PointerEvent,
 } from "react";
-import { useChat, type ChatMessage } from "@/lib/use-chat";
+import { useChat } from "@/lib/use-chat";
 import { ChatMessageItem, ChatToolGroup, UserMessageCard } from "./chat-message";
 import { TOP_BAR_HEIGHT } from "@/components/ui/panel";
 import { ChatInput } from "./chat-input";
@@ -55,6 +56,7 @@ import { BackgroundJobsPanel } from "./background-jobs-panel";
 import { MemoryPanel } from "./memory-panel";
 import { CONTROL_ICON_SIZE } from "./session-controls";
 import { DelegatedWorkPanel } from "./delegated-work-panel";
+import { GoalReviewPanel } from "./goal-review-panel";
 import type { SessionEntry } from "./session-row";
 import { GitStatusBar } from "./git-status-bar";
 import { GoalBar } from "./goal-bar";
@@ -78,7 +80,7 @@ import {
 
 import {
   clearSessionGoal,
-  fetchSettings,
+  fetchAgentConfiguration,
   getWorkspace,
   revealInFinder,
   saveSessionDraft,
@@ -104,12 +106,13 @@ import {
 import { swallowed } from "@/lib/swallowed";
 import { errorMessage } from "@/lib/errors";
 import { isCompactViewport } from "@/lib/viewport";
+import { timelineItems } from "@/lib/chat-timeline";
 
 // A Chakra Box that is also a motion component, so the right region can animate open and closed without losing its flex props.
 const MotionBox = motion.create(Box);
 
 // The panels that can share the right-hand region: the terminal and background pair, and delegated work.
-export type SidePanelKey = "background" | "delegated" | "memory";
+export type SidePanelKey = "background" | "delegated" | "memory" | "reviews";
 
 const MAXIMUM_OPEN_SIDE_PANELS = 2;
 
@@ -178,89 +181,10 @@ interface ChatPanelProps {
   onAgentModelChange: (modelIdentifier: string) => void | Promise<void>;
 }
 
-type TimelineItem =
-  | { kind: "message"; message: ChatMessage }
-  // A tool_group with no messages is a reasoning phase, and `thinkingTurns` says so.
-  | { kind: "tool_group"; id: string; messages: ChatMessage[]; thinkingTurns: number };
-
 function folderDisplayName(workingDirectory?: string): string {
   const directory = (workingDirectory ?? "").trim();
   if (!directory) return "";
   return directory.split(/[\\/]/).filter(Boolean).at(-1) ?? directory;
-}
-
-function timelineItems(messages: ChatMessage[]): TimelineItem[] {
-  const items: TimelineItem[] = [];
-  let index = 0;
-  // The first reasoning phase since the last plain row, keying the group so thinking and its tools stay one element.
-  let pendingThinkingId: string | null = null;
-  // Count reasoning messages so a tools-less Thinking group is distinguishable from an empty one.
-  let pendingThinkingTurns = 0;
-  while (index < messages.length) {
-    const message = messages[index];
-    if (message.role === "thinking") {
-      pendingThinkingId ??= message.id;
-      pendingThinkingTurns += 1;
-      index += 1;
-      continue;
-    }
-    if (message.role === "assistant" && !message.content.trim()) {
-      index += 1;
-      continue;
-    }
-    if (message.role !== "tool_call") {
-      if (pendingThinkingId) {
-        items.push({
-          kind: "tool_group",
-          id: pendingThinkingId,
-          messages: [],
-          thinkingTurns: pendingThinkingTurns,
-        });
-      }
-      items.push({ kind: "message", message });
-      pendingThinkingId = null;
-      pendingThinkingTurns = 0;
-      index += 1;
-      continue;
-    }
-
-    const toolMessages: ChatMessage[] = [];
-    // The leading reasoning keys the group, and reasoning phases are tallied from it plus any interleaved between calls.
-    const groupKey = pendingThinkingId;
-    let thinkingTurns = pendingThinkingTurns;
-    pendingThinkingId = null;
-    pendingThinkingTurns = 0;
-    // Gather contiguous tool calls, letting hidden reasoning pass so it never splits one batch into two.
-    while (index < messages.length) {
-      const next = messages[index];
-      if (next.role === "tool_call") {
-        toolMessages.push(next);
-        index += 1;
-      } else if (next.role === "thinking") {
-        thinkingTurns += 1;
-        index += 1;
-      } else {
-        break;
-      }
-    }
-    items.push({
-      kind: "tool_group",
-      // Prefer the leading thinking id so the key survives the thinking-to-tools transition.
-      id: groupKey ?? toolMessages[0].id,
-      messages: toolMessages,
-      thinkingTurns,
-    });
-  }
-  // A trailing reasoning phase is emitted here and rendered only while the turn is live, so settled reasoning leaves no row.
-  if (pendingThinkingId) {
-    items.push({
-      kind: "tool_group",
-      id: pendingThinkingId,
-      messages: [],
-      thinkingTurns: pendingThinkingTurns,
-    });
-  }
-  return items;
 }
 
 export function ChatPanel({
@@ -309,6 +233,9 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const translation = useTranslations("ChatPanel");
   const [permissionMode, setPermissionModeState] = useState<PermissionMode>(initialPermissionMode);
+  const persistedPermissionModeRef = useRef(initialPermissionMode);
+  const permissionRequestRef = useRef(0);
+  const permissionSyncRef = useRef<Promise<void>>(Promise.resolve());
   const {
     messages,
     tokenUsage,
@@ -339,8 +266,8 @@ export function ChatPanel({
     workspaceId,
   );
 
-  // One source of truth for the working directory's validity, read by the status bar and send gate.
-  const { status: directoryStatus, directoryValid } = useDirectoryStatus(workingDirectory);
+  // One source of truth for the working directory, optimistic until validation explicitly rejects it.
+  const { status: directoryStatus, directoryAvailable } = useDirectoryStatus(workingDirectory);
   // Mounted whenever a daemon is there: a directory check runs on every switch, and unmounting on it jumped.
   const chatReady = isConnected;
   // The one condition under which the transcript is in the DOM, read by the render and by everything touching scroll.
@@ -392,24 +319,36 @@ export function ChatPanel({
     };
   }, [workspaceId]);
 
-  // On mount, read the stored permission mode so the user's last choice survives a reload when no session is active.
+  // A new conversation starts with the selected agent's mode and mirrors it to the machine setting.
   useEffect(() => {
-    if (initialSessionId) return;
+    if (initialSessionId || !agent) return;
     let cancelled = false;
-    fetchSettings()
-      .then((settings) => {
-        if (cancelled || settings.permission_mode === permissionMode) return;
-        setPermissionModeState(settings.permission_mode);
+    const requestVersion = ++permissionRequestRef.current;
+    fetchAgentConfiguration(agent, workingDirectory)
+      .then((configuration) => {
+        if (cancelled || requestVersion !== permissionRequestRef.current) return;
+        const nextMode = configuration.permission_mode;
+        persistedPermissionModeRef.current = nextMode;
+        setPermissionModeState(nextMode);
+        onPermissionModeChange?.(nextMode);
+        const mirrorAgentMode = async () => {
+          if (cancelled || requestVersion !== permissionRequestRef.current) return;
+          await saveSettings({ permission_mode: nextMode });
+          persistedPermissionModeRef.current = nextMode;
+        };
+        permissionSyncRef.current = permissionSyncRef.current.then(
+          mirrorAgentMode,
+          mirrorAgentMode,
+        );
+        return permissionSyncRef.current;
       })
       .catch((caught) =>
-        swallowed({ component: "chat-panel", operation: "read the settings" }, caught),
+        swallowed({ component: "chat-panel", operation: "load the agent permission mode" }, caught),
       );
     return () => {
       cancelled = true;
     };
-    // Only without a session, since a session's own permission mode is the one that governs it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialSessionId]);
+  }, [agent, initialSessionId, onPermissionModeChange, workingDirectory]);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollContentRef = useRef<HTMLDivElement>(null);
@@ -423,6 +362,8 @@ export function ChatPanel({
   const backgroundPanelOpen = openSidePanels.includes("background");
   const memoryPanelOpen = openSidePanels.includes("memory");
   const delegatedPanelOpen = openSidePanels.includes("delegated");
+  const reviewPanelOpen = openSidePanels.includes("reviews");
+  const [selectedGoalReviewId, setSelectedGoalReviewId] = useState<string | null>(null);
   const { colorMode, toggleColorMode } = useColorMode();
   // Whether the transcript is near the bottom, driving the jump-to-latest affordance.
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -483,6 +424,14 @@ export function ChatPanel({
       onOpenSidePanelsChange([...openSidePanels.filter((openPanel) => openPanel !== panel), panel]);
     },
     [openSidePanels, onOpenSidePanelsChange],
+  );
+
+  const openGoalReview = useCallback(
+    (reviewId: string) => {
+      setSelectedGoalReviewId(reviewId);
+      setSidePanelOpen("reviews", true);
+    },
+    [setSidePanelOpen],
   );
 
   // Pinned means the viewport is at the bottom: pinned follows new content, unpinned never pulls the reader back down.
@@ -608,18 +557,21 @@ export function ChatPanel({
     return () => observer.disconnect();
   }, [timelineMounted]);
 
-  // Follow the session the parent selected, as a render-phase adjustment rather than an effect.
-  const [previousInitialSession, setPreviousInitialSession] = useState({
-    id: initialSessionId,
-    permissionMode: initialPermissionMode,
+  const [permissionSource, setPermissionSource] = useState({
+    sessionId: initialSessionId,
+    mode: initialPermissionMode,
   });
   if (
-    initialSessionId !== previousInitialSession.id ||
-    initialPermissionMode !== previousInitialSession.permissionMode
+    permissionSource.sessionId !== initialSessionId ||
+    permissionSource.mode !== initialPermissionMode
   ) {
-    setPreviousInitialSession({ id: initialSessionId, permissionMode: initialPermissionMode });
+    setPermissionSource({ sessionId: initialSessionId, mode: initialPermissionMode });
     setPermissionModeState(initialPermissionMode);
   }
+
+  useLayoutEffect(() => {
+    persistedPermissionModeRef.current = initialPermissionMode;
+  }, [initialPermissionMode, initialSessionId]);
 
   useLayoutEffect(() => {
     scrollMetricsRef.current = { scrollHeight: 0, firstKey: "", count: 0 };
@@ -631,41 +583,55 @@ export function ChatPanel({
     onStreamingChangeRef.current?.(isStreaming);
   }, [isStreaming]);
 
-  // One control doing two things: without a session it chooses what the next one starts under, with one it also changes that session.
-  async function handlePermissionModeChange(nextMode: PermissionMode) {
+  // Keep the machine, selected agent, and active session on the same mode in request order.
+  function handlePermissionModeChange(nextMode: PermissionMode) {
+    const requestVersion = ++permissionRequestRef.current;
+    const targetAgent = agent;
+    const targetSession = sessionId;
     setPermissionModeState(nextMode);
     onPermissionModeChange?.(nextMode);
-    // Persist to server settings so it survives across sessions.
-    saveSettings({ permission_mode: nextMode }).catch((caught) =>
-      swallowed({ component: "chat-panel", operation: "save the settings" }, caught),
-    );
-    // Raise the agent's own ceiling first, since the daemon meets any request against it and would otherwise clamp silently.
-    try {
-      await saveAgentConfiguration(agent, { permission_mode: nextMode }, workingDirectory);
-    } catch (caught) {
-      swallowed(
-        { component: "chat-panel", operation: "raise the agent's permission ceiling" },
-        caught,
-      );
-    }
-    if (!sessionId) return;
-    setSessionPermissionMode(sessionId, nextMode)
-      .then((applied) => {
-        setPermissionModeState(applied);
-        // Told to the parent as well, because the server clamps against the parent session and the agent's ceiling.
-        if (applied !== nextMode) onPermissionModeChange?.(applied);
-      })
-      .catch((caught) => {
-        // The session kept the mode it had, so the chip goes back to saying so.
-        setPermissionModeState(permissionMode);
-        onPermissionModeChange?.(permissionMode);
+    const synchronize = async () => {
+      const previousMode = persistedPermissionModeRef.current;
+      try {
+        await saveSettings({ permission_mode: nextMode });
+        await saveAgentConfiguration(targetAgent, { permission_mode: nextMode }, workingDirectory);
+        const appliedMode = targetSession
+          ? await setSessionPermissionMode(targetSession, nextMode)
+          : nextMode;
+        persistedPermissionModeRef.current = appliedMode;
+        if (requestVersion === permissionRequestRef.current) {
+          setPermissionModeState(appliedMode);
+          onPermissionModeChange?.(appliedMode);
+        }
+      } catch (caught) {
+        await Promise.allSettled([
+          saveSettings({ permission_mode: previousMode }),
+          saveAgentConfiguration(targetAgent, { permission_mode: previousMode }, workingDirectory),
+          targetSession
+            ? setSessionPermissionMode(targetSession, previousMode)
+            : Promise.resolve(previousMode),
+        ]);
+        persistedPermissionModeRef.current = previousMode;
+        if (requestVersion !== permissionRequestRef.current) return;
+        setPermissionModeState(previousMode);
+        onPermissionModeChange?.(previousMode);
         toaster.create({
           type: "error",
           title: translation("permissionModeFailedTitle"),
           description: errorMessage(caught),
           closable: true,
         });
-      });
+      }
+    };
+    permissionSyncRef.current = permissionSyncRef.current.then(synchronize, synchronize);
+    return permissionSyncRef.current;
+  }
+
+  async function handleSettingsPermissionModeSaved(nextMode: PermissionMode) {
+    const appliedMode = sessionId ? await setSessionPermissionMode(sessionId, nextMode) : nextMode;
+    persistedPermissionModeRef.current = appliedMode;
+    setPermissionModeState(appliedMode);
+    onPermissionModeChange?.(appliedMode);
   }
 
   const handleInputDraftChange = useCallback(
@@ -935,6 +901,18 @@ export function ChatPanel({
           />
         ),
       },
+      reviewPanelOpen && {
+        key: "reviews",
+        onActivate: () => markSidePanelActive("reviews"),
+        content: (
+          <GoalReviewPanel
+            sessionId={sessionId}
+            selectedReviewId={selectedGoalReviewId}
+            onSelectedReviewChange={setSelectedGoalReviewId}
+            onClose={() => setSidePanelOpen("reviews", false)}
+          />
+        ),
+      },
     ].filter(Boolean) as TilePanel[]
   ).sort(
     (first, second) =>
@@ -990,6 +968,13 @@ export function ChatPanel({
                 colorPalette="purple"
                 indicator={delegatedSessionCount > 0}
                 onClick={() => setSidePanelOpen("delegated", !delegatedPanelOpen)}
+              />
+              <ToolbarAction
+                label={translation("goalReviews")}
+                icon={<LuClipboardCheck size={14} />}
+                active={reviewPanelOpen}
+                colorPalette="purple"
+                onClick={() => setSidePanelOpen("reviews", !reviewPanelOpen)}
               />
               {/* What this conversation remembers of the turns that have left its window. */}
               <ToolbarAction
@@ -1234,6 +1219,7 @@ export function ChatPanel({
                                 message={item.message}
                                 onRetry={item.message.role === "error" ? handleRetry : undefined}
                                 streaming={isStreaming && isLastItem}
+                                onOpenReview={openGoalReview}
                               />
                             );
                           // Assistant messages stream, so their wrapper stays stable; complete rows get a single gentle fade.
@@ -1364,7 +1350,7 @@ export function ChatPanel({
                   initialDraft={initialInputDraft}
                   onDraftChange={handleInputDraftChange}
                   workingDirectory={workingDirectory}
-                  directoryValid={directoryValid}
+                  directoryAvailable={directoryAvailable}
                   agents={agents}
                   selectedAgent={agent}
                   onAgentChange={onAgentChange}
@@ -1439,7 +1425,7 @@ export function ChatPanel({
           selectedAgent={agent}
           onAgentChange={onAgentChange}
           livePermissionMode={permissionMode}
-          onPermissionModeChange={handlePermissionModeChange}
+          onPermissionModeSaved={handleSettingsPermissionModeSaved}
           liveSandboxEnforce={sandboxEnforce}
           sandboxBackend={sandboxBackend}
           onSandboxEnforceChange={onSandboxEnforceChange}

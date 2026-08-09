@@ -19,10 +19,8 @@ import {
   fetchHomeDirectory,
   fetchHostHomeDirectory,
   type LocationInput,
-  type PermissionMode,
   type SshHost,
 } from "@/lib/api";
-import { PermissionModeControl } from "./session-controls";
 import { SimpleSelect, type SelectOption } from "./ui/simple-select";
 import { swallowed } from "@/lib/swallowed";
 
@@ -32,7 +30,6 @@ export function emptyLocation(): LocationInput {
     kind: "local",
     base_directory: "",
     host_alias: "",
-    permission_mode: "ask",
   };
 }
 
@@ -70,13 +67,11 @@ export function LocationForm({
   hosts,
   value,
   onChange,
-  showPermission = false,
   onRemove,
 }: {
   hosts: SshHost[];
   value: LocationInput;
   onChange: (next: LocationInput) => void;
-  showPermission?: boolean;
   onRemove?: () => void;
 }) {
   const translation = useTranslations("LocationForm");
@@ -247,20 +242,6 @@ export function LocationForm({
           </Alert.Root>
         )}
       </Flex>
-
-      {showPermission && (
-        <Flex direction="column" gap={1}>
-          <Text textStyle="fieldLabel">{translation("permissionMode")}</Text>
-          {/* The same control the composer carries, so one picker serves wherever a permission mode is chosen. */}
-          <PermissionModeControl
-            layout="field"
-            value={(value.permission_mode as PermissionMode) ?? "ask"}
-            onChange={(next) => {
-              if (next) set({ permission_mode: next });
-            }}
-          />
-        </Flex>
-      )}
     </Flex>
   );
 }
@@ -272,7 +253,6 @@ export function LocationEditorList({
   onChange,
   onAdd,
   onRemove,
-  showPermission = false,
   loading = false,
 }: {
   hosts: SshHost[];
@@ -280,7 +260,6 @@ export function LocationEditorList({
   onChange: (index: number, value: LocationInput) => void;
   onAdd: () => void;
   onRemove: (index: number) => void;
-  showPermission?: boolean;
   loading?: boolean;
 }) {
   const translation = useTranslations("LocationForm");
@@ -302,12 +281,6 @@ export function LocationEditorList({
               <Skeleton h={5} w={24} borderRadius="sm" />
               <Skeleton h={8} w="full" borderRadius="md" />
             </Flex>
-            {showPermission ? (
-              <Flex direction="column" gap={1}>
-                <Skeleton h={5} w={24} borderRadius="sm" />
-                <Skeleton h={8} w="full" borderRadius="md" />
-              </Flex>
-            ) : null}
           </Flex>
         </Box>
         <Skeleton h={8} w="full" borderRadius="md" />
@@ -323,7 +296,6 @@ export function LocationEditorList({
             hosts={hosts}
             value={location}
             onChange={(value) => onChange(index, value)}
-            showPermission={showPermission}
             onRemove={locations.length > 1 ? () => onRemove(index) : undefined}
           />
         </Box>

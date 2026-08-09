@@ -50,6 +50,13 @@ async def session_record(
     return {"entries": entries}
 
 
+@router.get("/sessions/{session_id}/goal-reviews")
+async def session_goal_reviews(session_id: str):
+    """The independent review sessions linked to one working session."""
+    assert state.turn_store is not None
+    return {"reviews": await state.turn_store.goal_reviews_for_session(session_id)}
+
+
 @router.get("/sessions/{session_id}/turns")
 async def session_turns(session_id: str):
     """Every turn a session has had, with its history and artifacts, for replay."""

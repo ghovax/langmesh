@@ -2,27 +2,40 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from enum import StrEnum
+from typing import Annotated, Any, ClassVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints, model_validator
+
+
+NonBlankText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class GoalReviewPhase(StrEnum):
+    """The truthful phase between a working turn ending and its review message landing."""
+
+    WAITING_FOR_BACKGROUND = "waiting_for_background"
+    WAITING_FOR_MEMORY = "waiting_for_memory"
+    CHECKING = "checking"
 
 
 class Goal(BaseModel):
     """The session's single contract for completion. The agent states it; the review decides where it stands."""
 
     #: The end state, in the agent's own words.
-    text: str
+    text: NonBlankText
     #: What that end state is for, which is what lets a closed route be told apart from a lost goal.
-    purpose: str = ""
-    #: The conditions that must hold for the goal to be met, each one checkable.
-    requirements: list[str] = []
+    purpose: NonBlankText | None = None
+    #: The minimum conditions that must hold for the goal to be met, each one checkable.
+    requirements: list[NonBlankText] = []
     status: str = "active"
     #: What is in the way, written by the review when it accepts that nothing here can pass it.
-    blocker: str = ""
+    blocker: NonBlankText | None = None
     #: What proved each requirement, written by the review when it accepts the goal as met.
-    evidence: str = ""
-    #: The review's instruction to the session, which opens the turn that follows it.
-    direction: str = ""
+    evidence: NonBlankText | None = None
+    #: The review's exact message to the session, which opens the turn that follows it.
+    review_message: NonBlankText | None = None
+    review_id: NonBlankText | None = None
     #: How many turns have been opened since a person last spoke, and deliberately not shown to the model.
     continuations: int = 0
 
@@ -37,10 +50,20 @@ class Goal(BaseModel):
     #: No longer what the person wants, kept for the same reason. Only a person sets this.
     CLEARED: ClassVar[str] = "cleared"
 
+    @model_validator(mode="after")
+    def _link_review_message_to_its_transcript(self):
+        if (self.review_message is None) != (self.review_id is None):
+            raise ValueError("A review continuation and its transcript id must be present together.")
+        return self
+
     @property
     def is_open(self) -> bool:
         """Whether this goal is still being worked, as opposed to waiting on a person."""
         return self.status == self.ACTIVE
+
+    def updated(self, **changes: Any) -> Goal:
+        """Make a validated replacement so linked goal fields cannot diverge."""
+        return type(self).model_validate({**self.model_dump(), **changes})
 
     def for_model(self) -> dict:
         """What the agent is shown: the goal itself, never the bookkeeping around it."""
@@ -56,7 +79,7 @@ class Goal(BaseModel):
         return picture
 
     def public(self) -> dict:
-        """What the interface shows: the goal, what it is for, its requirements, and where it stands."""
+        """What the interface shows: the goal, its purpose, its minimum conditions, and its standing."""
         return {
             "text": self.text,
             "purpose": self.purpose,
@@ -64,5 +87,4 @@ class Goal(BaseModel):
             "status": self.status,
             "blocker": self.blocker,
             "evidence": self.evidence,
-            "direction": self.direction,
         }

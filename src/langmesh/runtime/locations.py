@@ -20,8 +20,6 @@ class ResolvedLocation:
     kind: str  # "local" | "remote"
     base_directory: str
     executor: LocationExecutor
-    permission_mode: PermissionMode
-
     @property
     def is_remote(self) -> bool:
         return self.kind == "remote"

@@ -157,6 +157,39 @@
       ],
       "type": "object"
     },
+    "InboundMessageEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "goal_review_id": {
+          "default": "",
+          "type": "string"
+        },
+        "kind": {
+          "const": "inbound_message",
+          "default": "inbound_message",
+          "type": "string"
+        },
+        "message_id": {
+          "default": "",
+          "type": "string"
+        },
+        "peer_sender": {
+          "default": "",
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
     "McpEvent": {
       "additionalProperties": false,
       "properties": {
@@ -414,35 +447,6 @@
         "kind": {
           "const": "status",
           "default": "status",
-          "type": "string"
-        },
-        "timestamp": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "kind"
-      ],
-      "type": "object"
-    },
-    "SteeringEvent": {
-      "additionalProperties": false,
-      "properties": {
-        "kind": {
-          "const": "steering",
-          "default": "steering",
-          "type": "string"
-        },
-        "message_id": {
-          "default": "",
-          "type": "string"
-        },
-        "peer_sender": {
-          "default": "",
-          "type": "string"
-        },
-        "text": {
-          "default": "",
           "type": "string"
         },
         "timestamp": {
@@ -833,11 +837,11 @@
           "compaction": "#/$defs/CompactionEvent",
           "done": "#/$defs/DoneEvent",
           "error": "#/$defs/ErrorEvent",
+          "inbound_message": "#/$defs/InboundMessageEvent",
           "mcp_event": "#/$defs/McpEvent",
           "permission_request": "#/$defs/PermissionRequestEvent",
           "question": "#/$defs/QuestionEvent",
           "status": "#/$defs/StatusEvent",
-          "steering": "#/$defs/SteeringEvent",
           "text": "#/$defs/TextEvent",
           "thinking": "#/$defs/ThinkingEvent",
           "thinking_done": "#/$defs/ThinkingDoneEvent",
@@ -877,7 +881,7 @@
           "$ref": "#/$defs/CompactionEvent"
         },
         {
-          "$ref": "#/$defs/SteeringEvent"
+          "$ref": "#/$defs/InboundMessageEvent"
         },
         {
           "$ref": "#/$defs/TokenUsageEvent"

@@ -1,4 +1,4 @@
-What kind of change this entry makes to the ones it supersedes. Leave it empty when it supersedes nothing.
+What kind of change this entry makes to the ones it supersedes. Use `null` when it supersedes nothing.
 
 - `correction` — the earlier entry was wrong. What it asserted is not the case, and this states what is.
 - `refinement` — the earlier entry was right but partial or imprecise. This says the same thing with what it was missing.

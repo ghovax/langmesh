@@ -150,11 +150,12 @@ class CompactionEvent(_EventBase):
     log_tokens: int = 0
 
 
-class SteeringEvent(_EventBase):
-    kind: Literal["steering"] = "steering"
+class InboundMessageEvent(_EventBase):
+    kind: Literal["inbound_message"] = "inbound_message"
     text: str = ""
     #: The session that sent this, when it was not the person.
     peer_sender: str = ""
+    goal_review_id: str = ""
     #: The id the sender gave this message, so a client can recognise the message it already showed.
     message_id: str = ""
 
@@ -238,7 +239,7 @@ WireEvent = Annotated[
         StatusEvent,
         DoneEvent,
         CompactionEvent,
-        SteeringEvent,
+        InboundMessageEvent,
         TokenUsageEvent,
         PermissionRequestEvent,
         QuestionEvent,
@@ -259,7 +260,7 @@ WIRE_EVENT_MODELS: tuple[type[_EventBase], ...] = (
     StatusEvent,
     DoneEvent,
     CompactionEvent,
-    SteeringEvent,
+    InboundMessageEvent,
     TokenUsageEvent,
     PermissionRequestEvent,
     QuestionEvent,

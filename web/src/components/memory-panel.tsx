@@ -3,7 +3,7 @@
 // What a session remembers: the findings its work established, and the instructions it was given.
 
 import { Badge, Box, Button, Collapsible, Flex, Spinner, Text, VStack } from "@chakra-ui/react";
-import { Fragment, memo, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   LuArchive,
@@ -16,7 +16,6 @@ import {
   LuGitMerge,
   LuCompass,
   LuFlag,
-  LuHistory,
   LuInfo,
   LuLock,
   LuPencil,
@@ -27,6 +26,7 @@ import { RelativeTime } from "@/components/ui/relative-time";
 import { fetchSessionRecord, subscribeEvents, type RecordEntry } from "@/lib/api";
 import { swallowed } from "@/lib/swallowed";
 import { InlineMarkdown } from "./markdown-content";
+import { Tooltip } from "./ui/tooltip";
 
 // A live entry and the versions it grew out of, newest first, so the reader sees one item rather than a pile.
 interface Revised {
@@ -110,7 +110,6 @@ interface EntryLabels {
   kind: Record<string, string>;
   standing: Record<string, string>;
   lifted: string;
-  revisions: (count: number) => string;
   revision: Record<string, string>;
 }
 
@@ -184,6 +183,7 @@ function Body({
 
 const Entry = memo(function Entry({ revised, labels }: { revised: Revised; labels: EntryLabels }) {
   const { entry, earlier } = revised;
+  const revisionMark = entry.revision ? REVISION_MARK[entry.revision] : undefined;
   const label = entry.category
     ? labels.category[entry.category]
     : entry.kind
@@ -191,7 +191,7 @@ const Entry = memo(function Entry({ revised, labels }: { revised: Revised; label
       : "";
   const standing =
     entry.standing && entry.standing !== "verified" ? labels.standing[entry.standing] : "";
-  const qualifiers = [
+  const entryQualifiers = [
     label ? (
       <Qualifier
         key="label"
@@ -210,7 +210,11 @@ const Entry = memo(function Entry({ revised, labels }: { revised: Revised; label
     entry.written_at ? (
       <RelativeTime key="learned" date={entry.written_at} textStyle="xs" color="fg.subtle" />
     ) : null,
-    earlier.length > 0 ? (
+  ].filter(Boolean);
+  const revisionLabel = entry.revision ? labels.revision[entry.revision] : "";
+  const RevisionIcon = revisionMark?.icon;
+  const revisionQualifier =
+    earlier.length > 0 && revisionMark && RevisionIcon && revisionLabel ? (
       <Collapsible.Trigger key="revisions" asChild>
         <Button
           variant="plain"
@@ -221,67 +225,91 @@ const Entry = memo(function Entry({ revised, labels }: { revised: Revised; label
           textStyle="xs"
           fontWeight="medium"
           css={{ "& svg": { width: "13px", height: "13px" } }}
-          colorPalette={REVISION_MARK[entry.revision ?? ""]?.tone ?? "blue"}
+          colorPalette={revisionMark?.tone ?? "blue"}
         >
-          {(() => {
-            const Mark = REVISION_MARK[entry.revision ?? ""]?.icon ?? LuHistory;
-            return <Mark />;
-          })()}
-          {entry.revision === "merge"
-            ? labels.revision.merge
-            : `${entry.revision ? `${labels.revision[entry.revision]} · ` : ""}${labels.revisions(earlier.length)}`}
+          <RevisionIcon />
+          {revisionLabel}
         </Button>
       </Collapsible.Trigger>
+    ) : null;
+  const qualifiers = [...entryQualifiers, revisionQualifier].filter(Boolean);
+  const tooltipQualifiers = [
+    ...entryQualifiers,
+    revisionMark && revisionLabel ? (
+      <Qualifier key="revision" mark={revisionMark.icon} tone={revisionMark.tone}>
+        {revisionLabel}
+      </Qualifier>
     ) : null,
   ].filter(Boolean);
+  const tooltipContent = (
+    <Box whiteSpace="normal" maxW="360px">
+      <Body entry={entry} expanded />
+      <Flex align="center" gap={0.5} mt={2} wrap="wrap" color="fg.muted">
+        {tooltipQualifiers.map((qualifier, index) => (
+          <Fragment key={index}>
+            {index > 0 ? <Dot /> : null}
+            {qualifier}
+          </Fragment>
+        ))}
+      </Flex>
+    </Box>
+  );
   return (
     <Collapsible.Root>
-      <Box
-        borderWidth="1px"
-        borderColor="border"
-        borderRadius="md"
-        px={2}
-        py={1.5}
-        bg="bg.subtle"
-        opacity={retired(entry) ? 0.55 : 1}
+      <Tooltip
+        content={tooltipContent}
+        rich
+        openDelay={250}
+        closeDelay={60}
+        positioning={{ placement: "left" }}
       >
-        <Body entry={entry} />
-        {/* Wider than the gaps inside the body: these are qualifiers about the entry, not another line of it. */}
-        <Flex align="center" gap={0.5} mt={2} wrap="wrap" color="fg.muted">
-          {qualifiers.map((qualifier, index) => (
-            <Fragment key={index}>
-              {index > 0 ? <Dot /> : null}
-              {qualifier}
-            </Fragment>
-          ))}
-        </Flex>
-        <Collapsible.Content>
-          <VStack
-            align="stretch"
-            gap={2.5}
-            mt={1.5}
-            mb={0.5}
-            ps={2}
-            borderLeftWidth="2px"
-            borderColor="border.emphasized"
-          >
-            {earlier.map((older) => (
-              <Box key={older.id} opacity={0.8}>
-                <Body entry={older} muted expanded />
-                {older.written_at ? (
-                  <RelativeTime
-                    date={older.written_at}
-                    display="block"
-                    mt={1}
-                    textStyle="2xs"
-                    color="fg.subtle"
-                  />
-                ) : null}
-              </Box>
+        <Box
+          borderWidth="1px"
+          borderColor="border"
+          borderRadius="md"
+          px={2}
+          py={1.5}
+          bg="bg.subtle"
+          opacity={retired(entry) ? 0.55 : 1}
+        >
+          <Body entry={entry} />
+          {/* Wider than the gaps inside the body: these are qualifiers about the entry, not another line of it. */}
+          <Flex align="center" gap={0.5} mt={2} wrap="wrap" color="fg.muted">
+            {qualifiers.map((qualifier, index) => (
+              <Fragment key={index}>
+                {index > 0 ? <Dot /> : null}
+                {qualifier}
+              </Fragment>
             ))}
-          </VStack>
-        </Collapsible.Content>
-      </Box>
+          </Flex>
+          <Collapsible.Content>
+            <VStack
+              align="stretch"
+              gap={2.5}
+              mt={1.5}
+              mb={0.5}
+              ps={2}
+              borderLeftWidth="2px"
+              borderColor="border.emphasized"
+            >
+              {earlier.map((older) => (
+                <Box key={older.id} opacity={0.8}>
+                  <Body entry={older} muted expanded />
+                  {older.written_at ? (
+                    <RelativeTime
+                      date={older.written_at}
+                      display="block"
+                      mt={1}
+                      textStyle="2xs"
+                      color="fg.subtle"
+                    />
+                  ) : null}
+                </Box>
+              ))}
+            </VStack>
+          </Collapsible.Content>
+        </Box>
+      </Tooltip>
     </Collapsible.Root>
   );
 });
@@ -352,10 +380,6 @@ export function MemoryPanel({
     };
   }, [sessionId]);
 
-  const countRevisions = useCallback(
-    (count: number) => translation("revisions", { count }),
-    [translation],
-  );
   const labels: EntryLabels = useMemo(
     () => ({
       category: {
@@ -375,7 +399,6 @@ export function MemoryPanel({
         inferred: translation("standing.inferred"),
       },
       lifted: translation("lifted"),
-      revisions: countRevisions,
       revision: {
         correction: translation("revision.correction"),
         refinement: translation("revision.refinement"),
@@ -383,7 +406,7 @@ export function MemoryPanel({
         retraction: translation("revision.retraction"),
       },
     }),
-    [translation, countRevisions],
+    [translation],
   );
   // What was asked for comes first: an instruction governs the findings under it.
   const sections: Array<[string, Revised[]]> = [

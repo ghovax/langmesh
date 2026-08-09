@@ -305,7 +305,7 @@ async def cursor_auth_signout():
 async def get_settings():
     """The stored API credentials, so the settings dialog can pre-fill them."""
     assert state.global_configuration is not None
-    # The configured floor rather than some agent's own setting, which is what a session gets when its creator does not say.
+    # The machine default, used when a caller has not selected an agent-specific mode.
     permission_mode = _normalize_permission_mode(state.global_configuration.agent.permission_mode)
     return {
         "permission_mode": permission_mode,

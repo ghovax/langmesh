@@ -24,7 +24,7 @@ export type WireEvent =
   | StatusEvent
   | DoneEvent
   | CompactionEvent
-  | SteeringEvent
+  | InboundMessageEvent
   | TokenUsageEvent
   | PermissionRequestEvent
   | QuestionEvent
@@ -85,6 +85,18 @@ export interface ErrorEvent {
   title?: string;
   tool_call_id?: string;
   tool_name?: string;
+}
+/**
+ * This interface was referenced by `LangMeshEvents`'s JSON-Schema
+ * via the `definition` "InboundMessageEvent".
+ */
+export interface InboundMessageEvent {
+  goal_review_id?: string;
+  kind: "inbound_message";
+  message_id?: string;
+  peer_sender?: string;
+  text?: string;
+  timestamp?: string;
 }
 /**
  * This interface was referenced by `LangMeshEvents`'s JSON-Schema
@@ -181,17 +193,6 @@ export interface QuestionEvent {
 export interface StatusEvent {
   code?: string;
   kind: "status";
-  timestamp?: string;
-}
-/**
- * This interface was referenced by `LangMeshEvents`'s JSON-Schema
- * via the `definition` "SteeringEvent".
- */
-export interface SteeringEvent {
-  kind: "steering";
-  message_id?: string;
-  peer_sender?: string;
-  text?: string;
   timestamp?: string;
 }
 /**

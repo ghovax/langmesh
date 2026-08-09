@@ -201,8 +201,7 @@ def _apply_agent_configuration_update(
         updated.provider = request.provider or None
     if request.reasoning_effort is not None:
         updated.reasoning_effort = request.reasoning_effort
-    # `model_fields_set`, not `is not None`: `null` means clear the ceiling, which the editor must be able to do.
-    if "permission_mode" in request.model_fields_set:
+    if request.permission_mode is not None:
         updated.permission_mode = request.permission_mode
     if request.tools_enabled is not None:
         updated.tools_enabled = list(request.tools_enabled)

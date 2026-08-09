@@ -125,6 +125,7 @@ export function AgentSelectControl({
   placeholder,
   fitted = false,
   labelHidden = false,
+  disabled = false,
 }: {
   agents: { id: string; name: string; title?: string; description?: string }[];
   value: string;
@@ -134,6 +135,7 @@ export function AgentSelectControl({
   fitted?: boolean;
   /** The row this sits in has no space for the name; show the icon and the arrow alone. */
   labelHidden?: boolean;
+  disabled?: boolean;
 }) {
   const translation = useTranslations("SessionControls");
   const metrics = controlMetrics(layout);
@@ -148,6 +150,7 @@ export function AgentSelectControl({
   return (
     <Select.Root
       collection={collection}
+      disabled={disabled}
       value={value ? [value] : []}
       onValueChange={(details) => {
         if (details.value[0]) onChange(details.value[0]);
@@ -254,17 +257,14 @@ export function PermissionModeControl({
   layout = "chip",
   fitted = false,
   labelHidden = false,
-  unsetLabel,
 }: {
-  value: PermissionMode | null;
-  onChange: (mode: PermissionMode | null) => void;
+  value: PermissionMode;
+  onChange: (mode: PermissionMode) => void;
   size?: "xs" | "sm";
   layout?: "chip" | "field";
   fitted?: boolean;
   /** The row this sits in has no space for the mode's name; the icon and its colour say it. */
   labelHidden?: boolean;
-  /** When given, offers a first choice meaning no mode, which only an agent card wants. */
-  unsetLabel?: string;
 }) {
   const translation = useTranslations("SessionControls");
   const permissionChoices: {
@@ -288,27 +288,26 @@ export function PermissionModeControl({
       colorPalette: "blue",
     },
   ];
-  const UNSET = "__unset__";
-  const permissionItems = [
-    ...(unsetLabel ? [{ value: UNSET, label: unsetLabel }] : []),
-    ...permissionChoices.map(({ value: itemValue, label }) => ({ value: itemValue, label })),
-  ];
+  const permissionItems = permissionChoices.map(({ value: itemValue, label }) => ({
+    value: itemValue,
+    label,
+  }));
   const metrics = controlMetrics(layout);
   const markers = fitMarkers(fitted ? "permission" : undefined, labelHidden, true);
   const collection = createListCollection({ items: permissionItems });
-  const selectedAppearance = permissionAppearance(value ?? "ask");
+  const selectedAppearance = permissionAppearance(value);
   const selectedLabel =
-    permissionItems.find((item) => item.value === (value ?? UNSET))?.label ??
+    permissionItems.find((item) => item.value === value)?.label ??
     translation("permissionAskLabel");
 
   return (
     <Select.Root
       collection={collection}
-      value={[value ?? UNSET]}
+      value={[value]}
       onValueChange={(details) => {
         const chosen = details.value[0];
         if (!chosen) return;
-        onChange(chosen === UNSET ? null : (chosen as PermissionMode));
+        onChange(chosen as PermissionMode);
       }}
       size="xs"
       {...markers}

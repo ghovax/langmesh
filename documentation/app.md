@@ -36,7 +36,7 @@ You can leave a session parked for as long as you like. The whole turn is checkp
 
 A project is a set of **environments**. An environment says where a session's work happens: a directory on this machine, or one on an SSH host. Add one in **Settings**, under **Environments**. The SSH hosts come from your `~/.ssh/config`, so a host you already use is one you can pick — and picking one fills the path in with that host's home directory, since you cannot be expected to know its layout.
 
-An environment also carries the permission mode that its sessions start with. A scratch directory and a production checkout can therefore behave differently, with nothing for you to remember. Adding or editing one reaches the sessions already running in that workspace: they pick it up on their next turn rather than only after a restart.
+Adding or editing an environment reaches the sessions already running in that workspace: they pick it up on their next turn rather than only after a restart.
 
 ## Screen control
 

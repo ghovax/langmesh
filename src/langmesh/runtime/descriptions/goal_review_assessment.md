@@ -4,6 +4,8 @@ Go through the goal's requirements one at a time and say, for each, what in the 
 
 Write it about the evidence, not about the session's mood. "It said it was finished" is not a reading of the work. Neither is "it seems close". If the session claimed something and never showed it, that claim is exactly the gap to name here.
 
+Do not stop at the written checklist. Assess whether the work explored the relevant system deeply enough for those requirements to mean what the user intended, and whether the goal itself omitted a necessary condition. Name meaningful adjacent surfaces you inspected, questions you used to challenge the implementation, and useful lines of inquiry still open. Passing the old requirements does not establish completeness when the contract was too narrow.
+
 ## Read it against the session, not with it
 
 Take the adversarial side deliberately. The session has every reason to present its work as complete and none to argue against itself, so you are the only reading that is trying to find what is wrong. Assume nothing on its word. Where it says a thing passes, find the output. Where it says a thing is equivalent, check that it is. Where it explains why something did not need doing, treat the explanation as the claim most likely to be covering a gap.

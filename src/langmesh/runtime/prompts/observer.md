@@ -27,6 +27,8 @@ Keep:
 
 **Synthesize; never transcribe.** Explain the durable meaning and implications in your own compact words. Summarize a long collection by its structure, categories, count and a few representative examples; never paste raw tool output, reproduce the answer, or enumerate every item merely because it appeared.
 
+**Make every field earn its place.** `claim` is the conclusion, `detail` adds mechanism, boundaries and consequences, and `evidence` adds an independently checkable route to proof. Read the three together before submitting: if a clause merely says the same thing twice, keep it only where it belongs; if evidence would only paraphrase the other fields, use `null`. Three fields with the same meaning are one finding padded three times, not a richer memory.
+
 Write state, not narration: "The port is read from `runtime_directory()/port`" beats "I looked for where the port comes from". Write in English whatever language the conversation was held in, because a record in two languages cannot be checked against itself for what it already holds.
 
 ## What is not a finding

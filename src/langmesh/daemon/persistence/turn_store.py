@@ -268,6 +268,17 @@ class AppendOnlyTaskStore(TaskStore):
             Column("state", Text),
             Column("updated_at", String),
         )
+        self._goal_reviews = Table(
+            "goal_review_sessions",
+            self._metadata,
+            Column("review_id", String, primary_key=True),
+            Column("session_id", String, nullable=False),
+            Column("goal", Text, nullable=False),
+            Column("status", String, nullable=False),
+            Column("standing", String),
+            Column("created_at", String, nullable=False),
+            Column("completed_at", String),
+        )
         # User message history scoped to the working directory, for arrow-key recall within a project.
         self._user_messages = Table(
             "user_message_history",
@@ -302,6 +313,9 @@ class AppendOnlyTaskStore(TaskStore):
                 )
                 await connection.exec_driver_sql(
                     "CREATE INDEX IF NOT EXISTS idx_user_message_history_working_directory_created_at ON user_message_history(working_directory, created_at DESC)"
+                )
+                await connection.exec_driver_sql(
+                    "CREATE INDEX IF NOT EXISTS idx_goal_review_sessions_session_created ON goal_review_sessions(session_id, created_at DESC)"
                 )
         finally:
             release_sqlite_write_lock(write_lock)
@@ -519,6 +533,70 @@ class AppendOnlyTaskStore(TaskStore):
                 )
         finally:
             release_sqlite_write_lock(write_lock)
+
+    async def create_goal_review(
+        self, review_id: str, session_id: str, goal: str, created_at: str
+    ) -> None:
+        """Register one review session before its first transcript event is saved."""
+        await self._ensure_initialized()
+        write_lock = await acquire_sqlite_write_lock()
+        try:
+            async with self._engine.begin() as connection:
+                await connection.execute(
+                    sqlite_insert(self._goal_reviews).values(
+                        review_id=review_id,
+                        session_id=session_id,
+                        goal=goal,
+                        status="working",
+                        standing=None,
+                        created_at=created_at,
+                        completed_at=None,
+                    )
+                )
+        finally:
+            release_sqlite_write_lock(write_lock)
+
+    async def finish_goal_review(
+        self, review_id: str, status: str, standing: str | None, completed_at: str
+    ) -> None:
+        """Settle one review session while preserving its linked transcript."""
+        await self._ensure_initialized()
+        write_lock = await acquire_sqlite_write_lock()
+        try:
+            async with self._engine.begin() as connection:
+                await connection.execute(
+                    update(self._goal_reviews)
+                    .where(self._goal_reviews.c.review_id == review_id)
+                    .values(status=status, standing=standing, completed_at=completed_at)
+                )
+        finally:
+            release_sqlite_write_lock(write_lock)
+
+    async def goal_reviews_for_session(self, session_id: str) -> list[dict]:
+        """List a session's review sessions newest first."""
+        await self._ensure_initialized()
+        async with self._engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    select(self._goal_reviews)
+                    .where(self._goal_reviews.c.session_id == session_id)
+                    .order_by(self._goal_reviews.c.created_at.desc())
+                )
+            ).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def goal_review(self, review_id: str) -> dict | None:
+        """Read one review-session descriptor by its stable identifier."""
+        await self._ensure_initialized()
+        async with self._engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    select(self._goal_reviews).where(
+                        self._goal_reviews.c.review_id == review_id
+                    )
+                )
+            ).mappings().first()
+        return dict(row) if row is not None else None
 
     async def load_checkpoint(self, session_id: str) -> dict:
         """The context's whole conversation and its shared-prefix boundary, for the caller to rehydrate and repair."""
@@ -1076,10 +1154,22 @@ class AppendOnlyTaskStore(TaskStore):
         write_lock = await acquire_sqlite_write_lock()
         try:
             async with self._engine.begin() as connection:
+                review_ids = list(
+                    (
+                        await connection.execute(
+                            select(self._goal_reviews.c.review_id).where(
+                                self._goal_reviews.c.session_id == session_id
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                context_ids = [session_id, *review_ids]
                 turn_ids = (
                     (
                         await connection.execute(
-                            select(self._head.c.id).where(self._head.c.session_id == session_id)
+                            select(self._head.c.id).where(self._head.c.session_id.in_(context_ids))
                         )
                     )
                     .scalars()
@@ -1093,20 +1183,25 @@ class AppendOnlyTaskStore(TaskStore):
                         delete(self._artifacts).where(self._artifacts.c.turn_id == turn_id)
                     )
                 await connection.execute(
-                    delete(self._head).where(self._head.c.session_id == session_id)
+                    delete(self._head).where(self._head.c.session_id.in_(context_ids))
                 )
                 await connection.execute(
-                    delete(self._checkpoint).where(self._checkpoint.c.session_id == session_id)
+                    delete(self._checkpoint).where(self._checkpoint.c.session_id.in_(context_ids))
                 )
                 await connection.execute(
                     delete(self._conversation_inheritance).where(
-                        self._conversation_inheritance.c.session_id == session_id
+                        self._conversation_inheritance.c.session_id.in_(context_ids)
                     )
                 )
                 await self._delete_unreferenced_conversation_snapshots(connection)
                 await connection.execute(
                     delete(self._session_state).where(
-                        self._session_state.c.session_id == session_id
+                        self._session_state.c.session_id.in_(context_ids)
+                    )
+                )
+                await connection.execute(
+                    delete(self._goal_reviews).where(
+                        self._goal_reviews.c.session_id == session_id
                     )
                 )
             for turn_id in turn_ids:

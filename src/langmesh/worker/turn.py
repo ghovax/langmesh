@@ -22,7 +22,7 @@ from langmesh.base.configuration import PromptLoader
 from langmesh.base.serialization import conversation_snapshot_id
 from langmesh.base.tuning import Tunable, active_tuning
 from langmesh.protocol.errors import _safe_turn_error
-from langmesh.protocol.events import ErrorEvent, StatusEvent
+from langmesh.protocol.events import ErrorEvent, InboundMessageEvent, StatusEvent
 from langmesh.protocol.metadata import (
     METADATA_KEY,
     Metadata,
@@ -41,6 +41,7 @@ from langmesh.protocol.parts import (
     _work_habits_acknowledgement_parts,
 )
 from langmesh.protocol.turn_record import TurnKind, TurnRecord
+from langmesh.runtime.goal import GoalReviewPhase
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import SuspensionGate
 from langmesh.worker.sink import _TurnEventSink
@@ -65,6 +66,8 @@ class _ContextState:
     runtime: Optional[Any] = None
     # After a turn ends with work in flight, this waits for each result and drives a turn to deliver it.
     resume_pump: Optional[asyncio.Task] = None
+    goal_review_task: Optional[asyncio.Task] = None
+    goal_review_pending: bool = False
     # A turn is in flight, so a message can be injected into it rather than starting another.
     running: bool = False
     # The user stopped the session: no pump is armed, so a late job cannot wake a fresh turn.
@@ -90,6 +93,7 @@ class _Ingested:
     report_reminder: bool
     # Opened for a goal the session has not finished.
     goal_continuation: bool
+    goal_review_id: str
     # The session that sent this message, empty for a person's and for a harness-initiated turn.
     peer_sender: str
     permission_mode: str
@@ -220,18 +224,14 @@ class _TurnRunner:
     async def _save_runtime_conversation(self) -> None:
         # A safe-point snapshot of the conversation. A delegated turn keeps its throwaway one in memory.
         if self._runtime is not None:
-            # Goal and tasks ride the same safe points, written atomically and only when they changed.
-            session_state = self._runtime.dirty_session_snapshot()
             messages, inherited_snapshot_id = self._checkpoint_messages(self._runtime.conversation)
-            await self._executor._turn_store.save_turn_state(
+            await self._executor._persist_turn_checkpoint(
                 self._task.context_id,
                 self._task.id,
                 messages,
-                session_state,
                 inherited_snapshot_id,
+                self._runtime,
             )
-            if session_state is not None:
-                self._runtime.clear_session_dirty()
 
     async def _suspend_turn(self, interactions: list[SuspensionGate], plans: dict) -> bool:
         # Every pause is durable, so a session waiting on a human survives a daemon restart.
@@ -281,6 +281,7 @@ class _TurnRunner:
         self._compaction = bool(self._metadata.get(Metadata.COMPACTION))
         self._report_reminder = bool(self._metadata.get(Metadata.REPORT_REMINDER))
         self._goal_continuation = bool(self._metadata.get(Metadata.GOAL_CONTINUATION))
+        self._goal_review_id = str(self._metadata.get(Metadata.GOAL_REVIEW_ID, ""))
         self._peer_sender = str(self._metadata.get(Metadata.PEER_SENDER, ""))
         return _Ingested(
             message=message,
@@ -290,6 +291,7 @@ class _TurnRunner:
             compaction=self._compaction,
             report_reminder=self._report_reminder,
             goal_continuation=self._goal_continuation,
+            goal_review_id=self._goal_review_id,
             peer_sender=self._peer_sender,
             permission_mode=self._permission_mode,
             requested_working_directory=self._requested_working_directory,
@@ -398,6 +400,7 @@ class _TurnRunner:
         stamped = TurnRecord.from_metadata(task.metadata)
         stamped.kind = self._turn_kind
         stamped.peer_sender = ingested.peer_sender
+        stamped.goal_review_id = ingested.goal_review_id
         task.metadata = stamped.apply_to(task.metadata)
         parent_context = _telemetry.context_from_traceparent(
             (ingested.message.metadata or {}).get("traceparent", "")
@@ -417,6 +420,8 @@ class _TurnRunner:
     async def _prepare_runtime(self, resolved: _Resolved) -> _Prepared | object:
         """Build or warm-fetch the runtime, register it, and stand up the event sink."""
         task = resolved.task
+        if not resolved.ingested.goal_continuation:
+            await self._executor._cancel_goal_review(task.context_id)
         # A wake with nothing left to deliver closes the task without a model call rather than an empty turn.
         if self._autonomous:
             existing_state = self._executor._contexts.get(task.context_id)
@@ -432,7 +437,9 @@ class _TurnRunner:
                 return self._DONE
 
         self._track_context_activity = self._on_turn_state is not None
-        self._track_steerable_turn = self._on_turn_state is not None
+        self._track_steerable_turn = (
+            self._on_turn_state is not None and not resolved.ingested.compaction
+        )
         # A turn opened from outside means the session is wanted working, so lift any prior Stop suppression.
         if resolved.ingested.from_outside:
             self._executor._context(task.context_id).aborted = False
@@ -462,6 +469,17 @@ class _TurnRunner:
             if self._runtime is not None
             else "",
         )
+        if resolved.ingested.goal_continuation or resolved.ingested.peer_sender:
+            await self._emit(
+                _event_part(
+                    InboundMessageEvent(
+                        text=resolved.ingested.user_text,
+                        message_id=resolved.ingested.message.message_id,
+                        peer_sender=resolved.ingested.peer_sender,
+                        goal_review_id=resolved.ingested.goal_review_id,
+                    )
+                )
+            )
         return _Prepared(resolved=resolved, runtime=runtime, sink=self._sink)
 
     async def _reconcile_goal(self, prepared: _Prepared) -> object | None:
@@ -600,20 +618,14 @@ class _TurnRunner:
                 if self._runtime is not None
                 else self._executor._conversations.get(task.context_id, [])
             )
-            # Goal and tasks persist atomically beside the checkpoint, so the two can never drift apart.
-            session_state = (
-                self._runtime.dirty_session_snapshot() if self._runtime is not None else None
-            )
             checkpoint_messages, inherited_snapshot_id = self._checkpoint_messages(messages)
-            await self._executor._turn_store.save_turn_state(
+            await self._executor._persist_turn_checkpoint(
                 task.context_id,
                 task.id,
                 checkpoint_messages,
-                session_state,
                 inherited_snapshot_id,
+                self._runtime,
             )
-            if session_state is not None and self._runtime is not None:
-                self._runtime.clear_session_dirty()
             # The rate-limit reading, captured here because the headers only ride on a model call in this process.
             await self._publish_usage_snapshot()
         # Stop accepting steering, then discard what arrived too late: the client re-delivers it as a fresh turn.
@@ -621,11 +633,15 @@ class _TurnRunner:
             state.running = False
         if state is not None and state.runtime is not None:
             state.runtime.discard_pending_steering()
-        # A hold for the review, since turns are counted and the session is not idle until it has decided.
-        # Asked once and remembered: it is awaited below, and a goal called off meanwhile would never release it.
         carries_on = self._goal_carries_on()
-        if self._on_turn_state is not None and carries_on:
-            self._on_turn_state(task.context_id, True)
+        if carries_on:
+            self._executor._arm_goal_review(task.context_id)
+        elif self._goal_waits_for_background():
+            self._executor._notify_goal_state(
+                task.context_id,
+                self._runtime.goal,
+                review_phase=GoalReviewPhase.WAITING_FOR_BACKGROUND,
+            )
         if self._track_context_activity and self._on_turn_state is not None:
             self._on_turn_state(task.context_id, False)
         if self._context_serialization_lock is not None:
@@ -633,11 +649,12 @@ class _TurnRunner:
         # Arm a pump for work still in flight, passing the runtime this turn used rather than a cache lookup.
         self._executor._arm_resume_pump(task.context_id, self._runtime)
         await self._maybe_continue_goal(carries_on)
+        self._executor._maybe_evict(task.context_id)
         self._maybe_nudge_to_report()
 
     def _goal_carries_on(self) -> bool:
         """Whether this turn ending leads straight into a review rather than into a wait for the person."""
-        if not self._completed:
+        if not self._completed and not self._compaction:
             return False
         state = self._executor._contexts.get(self._task.context_id)
         if state is None or state.aborted:
@@ -648,10 +665,15 @@ class _TurnRunner:
             return False
         return goal.continuations < active_tuning().amount(Tunable.goal_continuation_turns)
 
+    def _goal_waits_for_background(self) -> bool:
+        if not self._completed or self._compaction or self._runtime is None:
+            return False
+        goal = self._runtime.goal
+        return bool(goal is not None and goal.is_open and self._runtime.has_pending_jobs())
+
     async def _maybe_continue_goal(self, carries_on: bool) -> None:
         """Open another turn when this one ended with the goal unfinished, which is what makes a goal outlive a turn."""
         if carries_on:
-            asyncio.create_task(self._executor.continue_goal(self._task.context_id))
             return
         runtime = self._runtime
         goal = runtime.goal if runtime is not None else None

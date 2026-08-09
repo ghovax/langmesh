@@ -130,8 +130,9 @@
     "copy": "コピー",
     "deleteQueued": "削除",
     "errorTitle": "問題が発生しました",
-    "fromGoalReview": "目標レビューより",
-    "fromPeerSession": "ピアセッションから",
+    "openReview": "レビューを開く",
+    "relayedFromGoalReviewAgent": "目標レビューエージェントから転送",
+    "relayedFromPeerSession": "ピアセッションから転送",
     "showLess": "折りたたむ",
     "showMore": "もっと見る",
     "tryAgain": "再試行",
@@ -155,6 +156,7 @@
     "hideConversations": "会話を隠す",
     "hideConversationsSidebar": "会話サイドバーを隠す",
     "history": "履歴",
+    "goalReviews": "目標レビュー",
     "inheritedContextBoundary": "以前の文脈を継承 · 子会話はここから始まります",
     "jumpToLatest": "最新へ移動",
     "loadConversationErrorDescription": "トランスクリプトの読み込みに失敗しました。接続を確認して、もう一度お試しください。",
@@ -244,16 +246,17 @@
     "blocked": "行き詰まり",
     "blocker": "障害",
     "cleared": "取り消し済み",
-    "direction": "次にすること",
     "dismiss": "閉じる",
     "evidence": "根拠",
-    "requirements": "完了条件",
-    "reviewing": "作業を確認中",
+    "requirements": "最低条件",
+    "checking": "作業を確認中",
     "satisfied": "達成",
     "stop": "中止",
     "stopBody": "目標は解除され、セッションは目標なしで続きます。すでに行われた作業はそのままです。",
     "stopConfirm": "目標を中止",
     "stopTitle": "この目標に向けた作業を中止しますか？",
+    "waitingForBackground": "バックグラウンド処理の完了待ち",
+    "waitingForMemory": "メモリの完了待ち",
     "waiting": "確認待ち",
     "working": "取り組み中"
   },
@@ -265,7 +268,6 @@
     "noHosts": "~/.ssh/config にホストがありません。そこに追加してください。",
     "baseDirectory": "フォルダのパス",
     "openFolder": "フォルダを開く",
-    "permissionMode": "権限モード",
     "addLocation": "環境を追加",
     "loadingLocations": "ワークスペースの環境を読み込み中",
     "conflictSameDirectory": "2 つの項目が同じフォルダ {directory} を使用しています。どちらかを削除するか、別のフォルダを選択してください。",
@@ -302,7 +304,6 @@
       "refinement": "詳細化",
       "retraction": "撤回"
     },
-    "revisions": "以前のバージョン {count} 件",
     "standing": {
       "inferred": "推論",
       "reported": "報告"
@@ -617,7 +618,6 @@
         "glob_results": "glob が返すパス数",
         "goal_blocked_turns": "ゴールを行き詰まりと報告できるまでの回数",
         "goal_continuation_turns": "無人で続けられるターン数",
-        "goal_review_attempts": "目標レビューの試行回数",
         "grep_per_file": "1 ファイルあたりの検索一致数",
         "grep_results": "検索一致数の合計",
         "maximum_line_chars": "1 行あたりの保持文字数",
@@ -680,7 +680,7 @@
   "SettingsAbout": {
     "agent": {
       "_": "エージェントの既定値。",
-      "permission_mode": "セッションが制限範囲を超えて手を伸ばそうとしたとき、誰が答えるか。エージェントのプロファイルがより厳しければそちらが優先されます。"
+      "permission_mode": "セッションが制限範囲を超えて手を伸ばそうとしたとき、ユーザーもエージェントプロファイルもモードを選ばなかった場合に誰が答えるか。"
     },
     "attachments": {
       "_": "添付したファイルが、それを運ぶ会話にどれだけの負担をかけてよいか。",
@@ -826,9 +826,8 @@
         "focus_settle": "入力欄にフォーカスしてから入力を始めるまでの待ち。",
         "frame_resolve_timeout": "フレーム参照の解決を待つ時間。操作のタイムアウトより意図的に短くしています。消えたフレームがあっても列挙が止まらないようにするためです。",
         "glob_results": "1 回の glob が返すパス数。",
-        "goal_blocked_turns": "レビューの「行き詰まり」という判定が受け入れられるまでに、目標が何ターン推し進められている必要があるか。それより早く報告された行き詰まりは、もう一度の後押しとして扱われます。一度の失敗は行き詰まりではなく、最初の拒否で放棄された目標は誰も放棄を求めていません。",
+        "goal_blocked_turns": "レビューが「行き詰まり」という判定を送信できるようになるまでに、目標を何ターン推し進める必要があるか。それまでは、次に行うべき有用な内容を添えて「未達」と判定する必要があります。一度の失敗は行き詰まりではなく、最初の拒否で目標を放棄することはできません。",
         "goal_continuation_turns": "セッションが人を待たずに自らの目標のために連続して開けるターン数。目標レビューはこれより早く実行を終えられますが、これを超えて続けることはできません。",
-        "goal_review_attempts": "判定を得るために目標レビューを何回まで試みてから、判定なしでターンを終えるか。レビューが成立しなければ何も解決されず、目標はそのまま残ります。",
         "grep_per_file": "1 つのファイルから返す一致数。",
         "grep_results": "1 回の検索が返す一致数の合計。",
         "maximum_line_chars": "長すぎる 1 行から残す文字数。圧縮された 1 行が結果全体を埋めないようにします。",
@@ -967,7 +966,6 @@
     "loadingAgentConfiguration": "エージェント設定を読み込み中",
     "modelProviders": "モデルプロバイダー",
     "permissionMode": "権限モード",
-    "permissionNoCeiling": "上限なし",
     "profile": "プロファイル",
     "proxyServer": "プロキシサーバー",
     "proxyServerHint": "IP がブロックされたサイト向けに、Web フェッチとダウンロードをプロキシ経由でルーティングします。",
@@ -1105,7 +1103,7 @@
     "goal": "ゴール",
     "goalActive": "このゴールに取り組み中",
     "goalPurpose": "目的",
-    "goalRequirements": "完了条件",
+    "goalRequirements": "最低条件",
     "include": "対象",
     "language": "言語",
     "limit": "上限",
@@ -1179,6 +1177,20 @@
     "validation": "検証",
     "violation": "違反",
     "yes": "はい"
+  },
+  "GoalReviewPanel": {
+    "blocked": "ブロック中",
+    "canceled": "キャンセル済み",
+    "collapse": "目標レビューを折りたたむ",
+    "completed": "完了",
+    "emptyDescription": "独立したレビューが作業を確認すると、ここに表示されます。",
+    "emptyTitle": "目標レビューはまだありません",
+    "failed": "失敗",
+    "reviewNumber": "レビュー {number}",
+    "satisfied": "達成済み",
+    "title": "目標レビュー",
+    "unmet": "追加作業が必要",
+    "working": "確認中"
   },
   "WorkspaceLocationsPanel": {
     "loadError": "ワークスペースの環境を読み込めませんでした",

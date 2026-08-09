@@ -17,32 +17,42 @@ export function GoalBar({ goal, onClear }: { goal: SessionGoal; onClear: () => v
   if (!text) return null;
 
   const status = goal.status || "active";
-  // Being read is not a status the goal holds, so it colours the label without becoming one.
-  const reviewing = !!goal.reviewing && status === "active";
+  const reviewPhase = status === "active" ? goal.review_phase : "";
   // A resolved goal stops driving the session but stays on the record, so the bar keeps showing it.
   const resolved = status === "satisfied" || status === "cleared";
-  // The status is the one thing here that changes, so it is the one thing that carries a colour.
+  // Each phase and settled status has its own colour, while the goal text keeps the plain foreground.
   const tone =
-    status === "blocked"
-      ? "red.fg"
-      : status === "parked"
+    reviewPhase === "waiting_for_background"
+      ? "cyan.fg"
+      : reviewPhase === "waiting_for_memory"
         ? "orange.fg"
-        : status === "satisfied"
-          ? "green.fg"
-          : status === "cleared"
-            ? "fg.muted"
-            : "blue.fg";
-  const statusLabel = reviewing
-    ? translation("reviewing")
-    : status === "blocked"
-      ? translation("blocked")
-      : status === "parked"
-        ? translation("waiting")
-        : status === "satisfied"
-          ? translation("satisfied")
-          : status === "cleared"
-            ? translation("cleared")
-            : translation("working");
+        : reviewPhase === "checking"
+          ? "purple.fg"
+          : status === "blocked"
+            ? "red.fg"
+            : status === "parked"
+              ? "orange.fg"
+              : status === "satisfied"
+                ? "green.fg"
+                : status === "cleared"
+                  ? "fg.muted"
+                  : "blue.fg";
+  const statusLabel =
+    reviewPhase === "waiting_for_background"
+      ? translation("waitingForBackground")
+      : reviewPhase === "waiting_for_memory"
+        ? translation("waitingForMemory")
+        : reviewPhase === "checking"
+          ? translation("checking")
+          : status === "blocked"
+            ? translation("blocked")
+            : status === "parked"
+              ? translation("waiting")
+              : status === "satisfied"
+                ? translation("satisfied")
+                : status === "cleared"
+                  ? translation("cleared")
+                  : translation("working");
 
   // The requirements are the goal's substance, but taller than the bar, so they live in the hover card.
   const detail = (
@@ -68,7 +78,7 @@ export function GoalBar({ goal, onClear }: { goal: SessionGoal; onClear: () => v
           </List.Root>
         </Box>
       )}
-      {/* What the review last decided: why it is stuck, what convinced it, or what it asked for next. */}
+      {/* What the review settled belongs here; its continuation message already lives in the chat. */}
       {!!goal.blocker && (
         <Box mt={2}>
           <Text textStyle="fieldLabel" color="fg.subtle" mb={0.5}>
@@ -83,14 +93,6 @@ export function GoalBar({ goal, onClear }: { goal: SessionGoal; onClear: () => v
             {translation("evidence")}
           </Text>
           <MarkdownContent content={goal.evidence} fontSize="xs" />
-        </Box>
-      )}
-      {status === "active" && !!goal.direction && (
-        <Box mt={2}>
-          <Text textStyle="fieldLabel" color="fg.subtle" mb={0.5}>
-            {translation("direction")}
-          </Text>
-          <MarkdownContent content={goal.direction} fontSize="xs" />
         </Box>
       )}
     </Box>
@@ -134,9 +136,7 @@ export function GoalBar({ goal, onClear }: { goal: SessionGoal; onClear: () => v
                 <LuCircleSlash size={13} />
               )}
             </Box>
-            {/* One size, so the two read as one line, but told apart three ways: the label carries the
-                status colour and the heavier weight, the goal carries the plain foreground, and a dot
-                sits between them — the same separator the record's qualifiers use. */}
+            {/* Keep the status, separator, and goal readable as one line. */}
             <Text
               textStyle="xs"
               fontWeight="medium"

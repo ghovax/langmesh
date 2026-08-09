@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 import json
 import logging
 import os
@@ -830,8 +830,8 @@ class AgentConfiguration(BaseModel):
     model: Optional[str] = None
     provider: Optional[str] = None
     reasoning_effort: str = "high"
-    # A ceiling: the loosest mode a session on this profile may have. `None` is the default, and bounds nothing.
-    permission_mode: Optional[Literal["ask", "automatic"]] = None
+    # The mode this profile starts with when the session creator does not choose one.
+    permission_mode: Literal["ask", "automatic"] = "ask"
 
     # An agent's own confinement, narrowing the global one. Unset means whatever the machine says.
     sandbox: Optional[SandboxConfiguration] = None
@@ -855,9 +855,9 @@ class AgentConfiguration(BaseModel):
         return f"{self.provider}/{self.model}"
 
     @property
-    def permission_policy(self) -> Optional[PermissionMode]:
-        """The card's mode, or ``None`` where it declares none. A ceiling, so absent must not be coerced to a value."""
-        return PermissionMode.parse(self.permission_mode) if self.permission_mode else None
+    def permission_default(self) -> PermissionMode:
+        """The card's default permission mode."""
+        return PermissionMode.resolve(self.permission_mode)
 
     @classmethod
     def from_markdown(cls, path: str | Path) -> AgentConfiguration:
@@ -902,6 +902,7 @@ def write_agent_markdown(path: str | Path, configuration: AgentConfiguration) ->
     )
     # `name` is the identity the harness addresses this agent by, stated even when it matches the directory.
     front.setdefault("name", configuration.identifier)
+    front["permission_mode"] = configuration.permission_mode
     rendered = yaml.safe_dump(
         front, sort_keys=False, allow_unicode=True, default_flow_style=False
     ).strip()
@@ -949,7 +950,7 @@ class PromptLoader:
         self._directory = Path(prompts_directory)
         self._extension = extension
 
-    def load(self, template_name: str, variables: dict[str, str]) -> str:
+    def load(self, template_name: str, variables: Mapping[str, object]) -> str:
         """A template rendered with these variables, its text read from disk only when the file has changed."""
         from langmesh.base.file_cache import parsed_file
 
@@ -960,13 +961,15 @@ class PromptLoader:
         return self._replace_variables(content, variables, template_name)
 
     @classmethod
-    def render(cls, template: str, variables: dict[str, str], template_name: str = "") -> str:
+    def render(
+        cls, template: str, variables: Mapping[str, object], template_name: str = ""
+    ) -> str:
         """Render a template already in hand, for a catalogue that carries its prompts in memory."""
         return cls._replace_variables(template, variables, template_name)
 
     @staticmethod
     def _replace_variables(
-        template: str, variables: dict[str, str], template_name: str = ""
+        template: str, variables: Mapping[str, object], template_name: str = ""
     ) -> str:
         """Substitute ``{{ name }}`` placeholders strictly: a missing variable or a malformed brace raises."""
         where = f" in prompt '{template_name}'" if template_name else ""

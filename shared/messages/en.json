@@ -130,8 +130,9 @@
     "copy": "Copy",
     "deleteQueued": "Delete",
     "errorTitle": "Something went wrong",
-    "fromGoalReview": "From the goal review",
-    "fromPeerSession": "From a peer session",
+    "openReview": "Open review",
+    "relayedFromGoalReviewAgent": "Relayed from the goal review agent",
+    "relayedFromPeerSession": "Relayed from a peer session",
     "showLess": "Show less",
     "showMore": "Show more",
     "tryAgain": "Try again",
@@ -155,6 +156,7 @@
     "hideConversations": "Hide conversations",
     "hideConversationsSidebar": "Hide conversations sidebar",
     "history": "History",
+    "goalReviews": "Goal reviews",
     "inheritedContextBoundary": "Earlier context inherited · child conversation starts here",
     "jumpToLatest": "Jump to latest",
     "loadConversationErrorDescription": "The transcript failed to load. Check the connection and try again.",
@@ -244,16 +246,17 @@
     "blocked": "Blocked",
     "blocker": "In the way",
     "cleared": "Called off",
-    "direction": "Doing next",
     "dismiss": "Dismiss",
     "evidence": "What proved it",
-    "requirements": "Done when",
-    "reviewing": "Checking the work",
+    "requirements": "Minimum conditions",
+    "checking": "Checking the work",
     "satisfied": "Reached",
     "stop": "Stop",
     "stopBody": "The goal is cleared and the session carries on without one. What has already been done is untouched.",
     "stopConfirm": "Stop the goal",
     "stopTitle": "Stop working toward this goal?",
+    "waitingForBackground": "Waiting for background work",
+    "waitingForMemory": "Waiting for memories",
     "waiting": "Waiting for you",
     "working": "Working toward"
   },
@@ -265,7 +268,6 @@
     "noHosts": "No hosts in ~/.ssh/config. Add one there.",
     "baseDirectory": "Folder path",
     "openFolder": "Open folder",
-    "permissionMode": "Permission mode",
     "addLocation": "Add environment",
     "loadingLocations": "Loading workspace environments",
     "conflictSameDirectory": "Two entries use the same folder {directory}. Remove one or choose a different folder.",
@@ -302,7 +304,6 @@
       "refinement": "Refined",
       "retraction": "Retracted"
     },
-    "revisions": "{count, plural, one {# earlier version} other {# earlier versions}}",
     "standing": {
       "inferred": "Inferred",
       "reported": "Reported"
@@ -617,7 +618,6 @@
         "glob_results": "Paths a glob returns",
         "goal_blocked_turns": "Goal blocked turns",
         "goal_continuation_turns": "Goal continuation turns",
-        "goal_review_attempts": "Goal review attempts",
         "grep_per_file": "Search matches per file",
         "grep_results": "Search matches in total",
         "maximum_line_chars": "Longest line kept (characters)",
@@ -680,7 +680,7 @@
   "SettingsAbout": {
     "agent": {
       "_": "What a session runs under when its creator does not say.",
-      "permission_mode": "Who answers when a session asks to reach past its confinement, unless its agent profile caps it lower."
+      "permission_mode": "Who answers when a session asks to reach past its confinement when neither you nor its agent profile chooses a mode."
     },
     "attachments": {
       "_": "What a file you attach may cost the conversation it rides in.",
@@ -826,9 +826,8 @@
         "focus_settle": "Pause after focusing a field, before typing into it.",
         "frame_resolve_timeout": "How long resolving a frame reference waits. Deliberately well below the action timeout: a frame that has gone waits out its budget rather than erroring, and listing every frame would otherwise stall on the one that left.",
         "glob_results": "Paths one glob returns.",
-        "goal_blocked_turns": "How many turns a goal must have been pushed for before the review's verdict of “blocked” is accepted. Reported earlier than that, an impasse counts as one more push instead. One failure is not an impasse, and a goal abandoned on the first refusal is one nobody asked to abandon.",
+        "goal_blocked_turns": "How many turns a goal must have been pushed before the review may submit a “blocked” verdict. Until then the reviewer must submit “unmet” with a useful next message. One failure is not an impasse, and a goal abandoned on the first refusal is one nobody asked to abandon.",
         "goal_continuation_turns": "How many turns in a row a session may open for its own goal before it stops and waits for the person. The goal review can end a run earlier than this; nothing can carry one past it.",
-        "goal_review_attempts": "How many times the goal review is asked for a verdict before the turn ends without one. A review that never lands resolves nothing: the goal is left exactly as it was.",
         "grep_per_file": "Matches one search returns from any single file.",
         "grep_results": "Total matches one search returns.",
         "maximum_line_chars": "Characters of a single over-long line kept before it is clipped, so one minified blob cannot fill a result on its own.",
@@ -967,7 +966,6 @@
     "loadingAgentConfiguration": "Loading agent configuration",
     "modelProviders": "Model providers",
     "permissionMode": "Permission mode",
-    "permissionNoCeiling": "No ceiling",
     "profile": "Profile",
     "proxyServer": "Proxy server",
     "proxyServerHint": "Routes web fetches and downloads through a proxy for IP-blocked sites.",
@@ -1105,7 +1103,7 @@
     "goal": "Goal",
     "goalActive": "Now working toward this",
     "goalPurpose": "So that",
-    "goalRequirements": "Done when",
+    "goalRequirements": "Minimum conditions",
     "include": "Include",
     "language": "Language",
     "limit": "Limit",
@@ -1179,6 +1177,20 @@
     "validation": "Validation",
     "violation": "Violation",
     "yes": "Yes"
+  },
+  "GoalReviewPanel": {
+    "blocked": "Blocked",
+    "canceled": "Canceled",
+    "collapse": "Collapse goal reviews",
+    "completed": "Completed",
+    "emptyDescription": "Independent reviews will appear here as they inspect the work.",
+    "emptyTitle": "No goal reviews yet",
+    "failed": "Failed",
+    "reviewNumber": "Review {number}",
+    "satisfied": "Satisfied",
+    "title": "Goal reviews",
+    "unmet": "More work needed",
+    "working": "Checking"
   },
   "WorkspaceLocationsPanel": {
     "loadError": "Could not load workspace environments",

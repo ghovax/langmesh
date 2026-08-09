@@ -75,7 +75,7 @@ function fromValidation(path: string, result: DirectoryValidation): DirectorySta
 
 export function useDirectoryStatus(workingDirectory?: string): {
   status: DirectoryStatus;
-  directoryValid: boolean;
+  directoryAvailable: boolean;
 } {
   const directory = (workingDirectory ?? "").trim();
   const [status, setStatus] = useState<DirectoryStatus>({
@@ -117,7 +117,7 @@ export function useDirectoryStatus(workingDirectory?: string): {
     };
   }, [directory]);
 
-  // Valid only once the status names the directory being asked about, not the previous one.
-  const directoryValid = !!directory && status.path === directory && status.valid;
-  return { status, directoryValid };
+  const validationSettled = status.path === directory && !status.checking;
+  const directoryAvailable = !!directory && (!validationSettled || status.valid);
+  return { status, directoryAvailable };
 }

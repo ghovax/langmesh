@@ -18,6 +18,7 @@ from langmesh.commons.services.agents import (
     _agent_configuration_payload,
     _apply_agent_configuration_update,
     _card_for,
+    forget_resolved_profiles,
     _path_scope,
     _record_model_selection,
     _reload_agent_cards,
@@ -71,6 +72,7 @@ async def update_agent_configuration(
         write_agent_markdown(
             agent_markdown_path, _apply_agent_configuration_update(configuration, request)
         )
+        forget_resolved_profiles()
         saved_configuration = _agent_configuration_payload(agent_name, working_directory)
         if saved_configuration.provider and saved_configuration.model:
             await asyncio.to_thread(

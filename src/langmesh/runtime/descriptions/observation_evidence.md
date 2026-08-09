@@ -1,3 +1,3 @@
-Where the claim can be checked: the path, command, identifier, exact error, or shortest decisive output excerpt.
+The smallest independently checkable basis for the claim: an exact path and symbol or line, a reproducible command plus its decisive result, a stable identifier, a measured value with its method, or an exact error tied to the action that produced it.
 
-A pointer, not a retelling or copied result. What was asked and then answered, or which turn something came up in, is not evidence — none of it is something a reader could go and verify. Leave it empty rather than fill it with the shape of the exchange.
+Evidence answers “how can I verify this?” while `claim` answers “what is true?” and `detail` answers “why does it matter or work that way?” It must contribute verification information absent from both, not paraphrase either field or merely point back to the detail. Use `null` when there is no independently checkable basis; what was asked and answered, or which turn mentioned it, is not evidence.

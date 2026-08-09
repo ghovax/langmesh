@@ -79,6 +79,45 @@ class DaemonTurnStore(TaskStore):
     async def load_session_state(self, session_id: str) -> dict:
         return await self._call("turn.load_session_state", session_id=session_id) or {}
 
+    async def create_goal_review(
+        self, review_id: str, session_id: str, goal: str, created_at: str
+    ) -> None:
+        await self._call(
+            "goal_review.create",
+            review_id=review_id,
+            session_id=session_id,
+            goal=goal,
+            created_at=created_at,
+        )
+
+    async def save_goal_review(
+        self, session_id: str, review_id: str, task: Task, part: Any
+    ) -> None:
+        await self._call(
+            "goal_review.save",
+            session_id=session_id,
+            review_id=review_id,
+            task=task,
+            part=part,
+        )
+
+    async def finish_goal_review(
+        self,
+        session_id: str,
+        review_id: str,
+        status: str,
+        standing: str | None,
+        completed_at: str,
+    ) -> None:
+        await self._call(
+            "goal_review.finish",
+            session_id=session_id,
+            review_id=review_id,
+            status=status,
+            standing=standing,
+            completed_at=completed_at,
+        )
+
     async def turns_for_session(self, session_id: str) -> list[Task]:
         raw = await self._call("turn.list_for_session", session_id=session_id) or []
         return [Task.model_validate(entry) for entry in raw]

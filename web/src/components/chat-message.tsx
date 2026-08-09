@@ -31,6 +31,7 @@ interface ChatMessageProps {
   onRetry?: () => void;
   // This is the last row of a live turn, which drives the newly-arrived-token animation.
   streaming?: boolean;
+  onOpenReview?: (reviewId: string) => void;
 }
 
 // The structured error category the server hands the interface, never the raw provider text.
@@ -149,10 +150,14 @@ function MessageFooter({
   content,
   sentAt,
   queued,
+  reviewId,
+  onOpenReview,
 }: {
   content: string;
   sentAt: string;
   queued?: QueuedMessageState;
+  reviewId?: string;
+  onOpenReview?: (reviewId: string) => void;
 }) {
   const translation = useTranslations("ChatMessage");
   // A minute is the finest step the wording has, so re-reading the clock more often would change nothing.
@@ -215,6 +220,12 @@ function MessageFooter({
           {copied ? translation("copied") : translation("copy")}
         </Button>
       )}
+      {reviewId && onOpenReview && (
+        <Button size="2xs" variant="ghost" color="fg.subtle" onClick={() => onOpenReview(reviewId)}>
+          <LuTarget size={11} />
+          {translation("openReview")}
+        </Button>
+      )}
       {queued && (
         <Button size="2xs" variant="ghost" colorPalette="red" onClick={queued.onDelete}>
           <LuTrash2 size={11} />
@@ -231,12 +242,14 @@ export function UserMessageCard({
   banner = "",
   bannerIcon,
   queued,
+  onOpenReview,
 }: {
   message: ChatMessage;
   banner?: string;
   // The mark beside the banner, since who is speaking is read before the words are.
   bannerIcon?: ReactNode;
   queued?: QueuedMessageState;
+  onOpenReview?: (reviewId: string) => void;
 }) {
   const translation = useTranslations("ChatMessage");
   const attachments = (message.meta?.attachments as MessageAttachment[] | undefined) ?? [];
@@ -312,7 +325,13 @@ export function UserMessageCard({
           {expanded ? translation("showLess") : translation("showMore")}
         </Button>
       )}
-      <MessageFooter content={message.content} sentAt={message.timestamp} queued={queued} />
+      <MessageFooter
+        content={message.content}
+        sentAt={message.timestamp}
+        queued={queued}
+        reviewId={message.meta?.goalReviewId}
+        onOpenReview={onOpenReview}
+      />
     </Flex>
   );
 }
@@ -321,6 +340,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
   message,
   onRetry,
   streaming = false,
+  onOpenReview,
 }: ChatMessageProps) {
   const translation = useTranslations("ChatMessage");
   switch (message.role) {
@@ -329,15 +349,16 @@ export const ChatMessageItem = memo(function ChatMessageItem({
     }
 
     case "peer": {
-      return <UserMessageCard message={message} banner={translation("fromPeerSession")} />;
+      return <UserMessageCard message={message} banner={translation("relayedFromPeerSession")} />;
     }
 
     case "goal": {
       return (
         <UserMessageCard
           message={message}
-          banner={translation("fromGoalReview")}
+          banner={translation("relayedFromGoalReviewAgent")}
           bannerIcon={<LuTarget />}
+          onOpenReview={onOpenReview}
         />
       );
     }

@@ -418,13 +418,17 @@ class Session:
             if goal.continuations >= allowance:
                 self.runtime.park_goal()
                 return
+            await self.runtime.wait_for_observational_memory()
+            goal = self.runtime.goal
+            if goal is None or not goal.is_open:
+                return
             # A pass of its own reads the work and writes what comes next, so the session never grades itself.
             goal = self.runtime.apply_goal_review(await self.runtime.review_goal())
-            if goal is None or not goal.is_open or not goal.direction.strip():
+            if goal is None or not goal.is_open or not goal.review_message:
                 return
             self.runtime.note_goal_continuation()
             async for event in self.runtime.stream(
-                goal.direction, as_system_note=True, opens_exchange=True
+                goal.review_message, as_system_note=True, opens_exchange=True
             ):
                 yield event
 

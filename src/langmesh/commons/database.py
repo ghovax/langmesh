@@ -48,7 +48,7 @@ class SessionRecord(Base):
     worktree_error: Mapped[str] = mapped_column(Text, default="")
     title: Mapped[str] = mapped_column(Text, default="")
     # Per-session permission mode for future turns and frontend hydration.
-    permission_mode: Mapped[str] = mapped_column(Text, default="ask")
+    permission_mode: Mapped[str] = mapped_column(Text, nullable=False, default="ask")
     input_draft: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
@@ -140,7 +140,6 @@ class LocationRecord(Base):
     kind: Mapped[str] = mapped_column(Text, nullable=False)  # "local" | "remote"
     host_alias: Mapped[str] = mapped_column(Text, default="")  # SSH alias for remotes
     base_directory: Mapped[str] = mapped_column(Text, nullable=False)
-    permission_mode: Mapped[str] = mapped_column(Text, default="ask")
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
     __table_args__ = (Index("idx_locations_workspace", "workspace_id"),)

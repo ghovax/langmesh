@@ -37,7 +37,7 @@ def build_agent_card(
             id=skill.identifier,
             name=skill.identifier,
             description=skill.description or skill.display_title,
-            tags=["harness", "skill"],
+            tags=[],
         )
         for skill in available_skills
     ]
@@ -49,8 +49,8 @@ def build_agent_card(
                 description=(configuration.description or display_name) + f" {capability}",
                 tags=[
                     "harness",
-                    configuration.permission_mode or "unbounded",
-                    configuration.model or "unconfigured-model",
+                    configuration.permission_mode,
+                    configuration.model or "unknown",
                 ],
                 examples=[f"Ask {display_name} to help with a task in its domain."],
             )

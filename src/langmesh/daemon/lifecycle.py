@@ -146,7 +146,7 @@ class SessionLifecycle:
         if record is None or not record.is_live or not self._host.hosts(session_id):
             return False
         logger.info("sleeping session %s", session_id)
-        await self._host.stop(session_id)
+        await self._host.stop(session_id, preserve_background_jobs=True)
         self._registry.sleep(session_id, updated_at=_now())
         # Deliberately not closing subscribers, since a watcher should see the next turn when the session wakes.
         self._changed()
