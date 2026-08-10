@@ -371,6 +371,8 @@ class _RunsTurns:
         events: list[TurnEvent] = []
         while not self._steering_messages.empty():
             message, message_id, peer_sender = self._steering_messages.get_nowait()
+            # The steering message opens a new exchange, so the one it interrupts is closed and observed now.
+            self.observe_exchange_soon()
             self._conversation.append(HumanMessage(content=message))
             events.append(Steering(text=message, message_id=message_id, peer_sender=peer_sender))
         if self._steering_messages.empty():
@@ -487,6 +489,8 @@ class _RunsTurns:
             # A superseded suspension leaves dangling calls; close them so appending this turn stays valid.
             self._ensure_environment_note()
             self._close_dangling_tool_calls()
+            # A new opening closes whatever exchange preceded it, so no user message is left unobserved.
+            self.observe_exchange_soon()
             # Usually prose, but an attachment turn carries a content list so a vision model sees the pixels.
             turn_message = (
                 self._reminder_message(

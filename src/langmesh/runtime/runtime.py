@@ -643,6 +643,8 @@ class AgentRuntime(
         # The serialized observation pipeline, whose tail keeps every earlier write alive.
         self._observation_tail: asyncio.Task | None = None
         self._observations_in_flight: set[str] = set()
+        # The exchange most recently queued for observation, so a closing exchange is never queued twice.
+        self._last_enqueued_exchange: str | None = None
         self._execution_history: list[dict] = []
         # The permission policy as one value, resolved by the daemon before this runtime is built.
         self._a2a_turn_id: str = ""

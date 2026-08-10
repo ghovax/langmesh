@@ -310,6 +310,9 @@ class _CompactsContext:
         if len(exchange) < (1 if interrupted else 2) or self._turn_store is None:
             return
         exchange_identifier = self._exchange_of(exchange[0])
+        if exchange_identifier == self._last_enqueued_exchange:
+            return
+        self._last_enqueued_exchange = exchange_identifier
         self._observations_in_flight.add(exchange_identifier)
         task = asyncio.create_task(
             self._observe_exchange_after(
