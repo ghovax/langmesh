@@ -1023,7 +1023,8 @@
     "notConnectedDescription": "Input cannot be sent until the terminal reconnects."
   },
   "ToolCall": {
-    "background": "Background"
+    "background": "Background",
+    "submittingVerdict": "Submitting the independent goal review"
   },
   "ToolCard": {
     "inputRequired": "Input required",
@@ -1049,6 +1050,17 @@
     "accessRequested": "Access requested",
     "accessWrite": "Writes to",
     "answers": "Answers",
+    "assessment": "Assessment",
+    "blocker": "In the way",
+    "contractComplete": "Complete",
+    "contractNeedsRevision": "Needs revision",
+    "evidence": "Evidence",
+    "fieldContract": "Contract",
+    "fieldStanding": "Standing",
+    "standingBlocked": "Blocked",
+    "standingSatisfied": "Satisfied",
+    "standingUnmet": "More work needed",
+    "unmet": "Not proven",
     "browserAuthorizationBody": "Chrome is asking you to approve the debugging connection — the prompt is in the browser window, not here. Click Allow and this will connect. Don't toggle remote debugging off and on; that dismisses the prompt.",
     "browserAuthorizationTitle": "Waiting for you to allow Chrome's connection",
     "browserEnableBody": "Turn on Chrome's remote-debugging switch once, approve the prompt, then retry.",

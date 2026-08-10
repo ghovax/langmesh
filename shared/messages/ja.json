@@ -1023,7 +1023,8 @@
     "notConnectedDescription": "ターミナルが再接続するまで入力を送信できません。"
   },
   "ToolCall": {
-    "background": "バックグラウンド"
+    "background": "バックグラウンド",
+    "submittingVerdict": "独立した目標レビューを提出中"
   },
   "ToolCard": {
     "inputRequired": "入力が必要",
@@ -1049,6 +1050,17 @@
     "accessRequested": "要求したアクセス",
     "accessWrite": "書き込み先",
     "answers": "回答",
+    "assessment": "評価",
+    "blocker": "障害",
+    "contractComplete": "完了",
+    "contractNeedsRevision": "修正が必要",
+    "evidence": "根拠",
+    "fieldContract": "契約",
+    "fieldStanding": "判定",
+    "standingBlocked": "停止",
+    "standingSatisfied": "達成",
+    "standingUnmet": "追加作業が必要",
+    "unmet": "未検証",
     "browserAuthorizationBody": "Chrome がデバッグ接続の承認を求めています。プロンプトはこの画面ではなくブラウザーのウィンドウに表示されます。「許可」をクリックすれば接続されます。リモートデバッグを切り替え直さないでください — プロンプトが消えてしまいます。",
     "browserAuthorizationTitle": "Chrome の接続許可を待っています",
     "browserEnableBody": "Chrome のリモートデバッグを一度オンにし、プロンプトを承認してから再試行してください。",

@@ -18,7 +18,7 @@ An answer that is not a tool call is asked for again a couple of times, and afte
 
 ## What you are looking at
 
-`confinement` is the box: the directories this session may read, the ones it may write, the ones its owner declared off-limits, and whether the network is open. `requested_access` is what this call asks for on top of that.
+`confinement` is the box: the directories this session may read, the ones it may write, the ones its owner declared off-limits, and whether the network is open. `requested_access` is what this call asks for on top of that. `instructions` are the standing rules the person set in this session — the requirements and preferences already recorded — and a request that plainly serves one is easier to allow, while one that cuts against one is reason to deny.
 
 Judge the **width** of the request before its risk. A request must name the narrowest path that does the work. One that asks for a parent directory when a file would do, or for the network when the work is local, is a reason to deny on its own — the agent can always come back with a smaller one.
 

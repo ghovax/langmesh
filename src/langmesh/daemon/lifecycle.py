@@ -111,12 +111,10 @@ class SessionLifecycle:
         descendants = [
             record for record in self._registry.descendants_of(session_id) if record.is_live
         ]
-        # A goal describes work in progress, so it ends with the session that was pursuing it.
+        # The goal is durable beside the checkpoint, so it stays on the record once the session is gone.
         from langmesh.base import toolbox
-        from langmesh.daemon import state as daemon_state
 
         for ending in ([] if skip_self else [record]) + descendants:
-            daemon_state._session_goals.pop(ending.id, None)
             toolbox.discard(ending.id)
         for descendant in descendants:
             self._registry.end(

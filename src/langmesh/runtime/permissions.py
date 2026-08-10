@@ -78,12 +78,16 @@ class _DecidesPermissions:
 
     async def _review(self, gate: _PreflightGate) -> PermissionDecision:
         """The reviewer's verdict on one gate. Takes a gate, so it cannot reach a call that raised none."""
+        # The person's standing instructions, so the reviewer can judge a request against what they asked for.
+        snapshot = await self._memory_snapshot()
+        directives = self._readable(self._live(snapshot.get("directives") or []))
         context = compact(
             {
                 "tool": gate.tool_name,
                 "working_directory": self._working_directory,
                 "command": gate.command,
                 "arguments": gate.arguments,
+                "instructions": directives,
                 "requested_access": {
                     "reads": list(gate.escape.reads),
                     "writes": list(gate.escape.writes),

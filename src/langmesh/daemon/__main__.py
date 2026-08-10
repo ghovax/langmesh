@@ -305,6 +305,13 @@ async def _serve() -> int:
     state.registry = SessionRegistry(store=commons_state.session_store)
     restored = await asyncio.to_thread(commons_state.session_store.load_all)
     state.registry.restore(restored)
+    # Goals are durable beside the checkpoint, so a restart brings them back even before any worker reports one.
+    if commons_state.turn_store is not None:
+        persisted_goals = await commons_state.turn_store.session_goals(
+            [record.id for record in restored]
+        )
+        for session_id, goal in persisted_goals.items():
+            commons_state._session_goals[session_id] = goal
     live = [record for record in restored if record.is_live]
     if live:
         logger.info(

@@ -68,6 +68,7 @@ const NEVER_MUTATES: ReadonlySet<string> = new Set([
   "set_tasks",
   "update_tasks",
   "update_goal",
+  "submit_goal_review",
   "load_skill",
   "ask_user",
   "work_habits",
@@ -145,6 +146,8 @@ const TOOL_GLYPHS: Record<string, { glyph: GlyphName; tint: string }> = {
   set_tasks: { glyph: "list-checks", tint: "blue.fg" },
   update_tasks: { glyph: "square-check", tint: "blue.fg" },
   update_goal: { glyph: "target", tint: "orange.fg" },
+  // The internal reviewer's verdict: it changes only what the record holds about the goal it was asked to read.
+  submit_goal_review: { glyph: "badge-check", tint: "purple.fg" },
   // A wait is the one call doing nothing on purpose, so it reads that way in the muted tint.
   wait_for: { glyph: "clock", tint: "fg.muted" },
   read_turn: { glyph: "history", tint: "blue.fg" },

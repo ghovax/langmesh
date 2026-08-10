@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Sequence
 
 from sqlalchemy import (
     Column,
@@ -25,6 +25,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from pydantic import ValidationError
+
 from a2a.server.context import ServerCallContext
 from a2a.server.tasks import TaskStore
 from a2a.types import DataPart, Message, Part, Role, Task, TaskState, TaskStatus
@@ -32,11 +34,30 @@ from a2a.types import DataPart, Message, Part, Role, Task, TaskState, TaskStatus
 from langmesh.base.message_content import content_block_identifier
 from langmesh.base.serialization import compact, conversation_snapshot_id
 from langmesh.protocol.turn_record import ReconcileAction, TurnRecord, reconcile_action
+from langmesh.runtime.goal import Goal
 
 
 def _dump(model) -> str:
     """Serialize a model to JSON by field names, mirroring how the SDK's own store round-trips."""
     return json.dumps(model.model_dump(mode="json"))
+
+
+def _goal_from_persisted_state(raw: str | None) -> dict | None:
+    """The goal a persisted session state carries, as the interface shows it, or None when it has none."""
+    if not raw:
+        return None
+    try:
+        state = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    stored = state.get("goal") if isinstance(state, dict) else None
+    if not isinstance(stored, dict) or not str(stored.get("text", "") or "").strip():
+        return None
+    try:
+        return Goal.model_validate(stored).public()
+    except ValidationError:
+        # A stored goal that no longer validates is dropped rather than guessed at.
+        return None
 
 
 # Adjacent same-kind deltas merge into one message, so a replay re-reduces far fewer and larger rows.
@@ -637,6 +658,27 @@ class AppendOnlyTaskStore(TaskStore):
             return data if isinstance(data, dict) else {}
         except (json.JSONDecodeError, TypeError):
             return {}
+
+    async def session_goals(self, session_ids: Sequence[str]) -> dict[str, dict]:
+        """The goals persisted beside each session's checkpoint, keyed by session, for those that have one."""
+        await self._ensure_initialized()
+        session_ids = [identifier for identifier in session_ids if identifier]
+        if not session_ids:
+            return {}
+        async with self._engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    select(self._session_state.c.session_id, self._session_state.c.state).where(
+                        self._session_state.c.session_id.in_(session_ids)
+                    )
+                )
+            ).all()
+        goals: dict[str, dict] = {}
+        for session_id, raw in rows:
+            goal = _goal_from_persisted_state(raw)
+            if goal is not None:
+                goals[session_id] = goal
+        return goals
 
     async def _persisted_count(self, connection, turn_id: str) -> int:
         """How many history rows are already persisted, so a save appends only the suffix not yet stored."""

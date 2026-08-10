@@ -488,7 +488,17 @@ export function SessionsSidebar({
                       [workspace.id]: nextOpen,
                     }));
                   }}
-                  onActivate={() => onSwitchWorkspace(workspace.id)}
+                  onActivate={() => {
+                    // Switching must not collapse the workspace that was open: keep it unless the person closed it by hand.
+                    if (workspace.id !== currentWorkspaceId && currentWorkspaceId) {
+                      setWorkspaceOpenOverrides((current) =>
+                        current[currentWorkspaceId] === false
+                          ? current
+                          : { ...current, [currentWorkspaceId]: true },
+                      );
+                    }
+                    onSwitchWorkspace(workspace.id);
+                  }}
                   glyph={<LuFolderOpen size={13} />}
                   label={
                     <Tooltip
