@@ -17,7 +17,7 @@ The conversation messages kept before this record are the most recent ones that 
 
 ## What the person asked for
 
-These are the instructions that still bind. An instruction governs the work rather than describing it and does not lapse merely because its original turn was folded away.
+These are the instructions the person gave. A directive with `still_binding` set to false retires the instruction it supersedes; everything else governs the work and does not lapse merely because its original turn was folded away.
 
 ```jsonl
 {{ directives }}

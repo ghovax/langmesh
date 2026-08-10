@@ -98,9 +98,6 @@ def _chunk_advances_model_response(chunk: Any) -> bool:
 class _RunsTurns:
     """The turn itself: what the model is told, what comes back, and when it is over."""
 
-    #: The checklist for this turn, cleared as soon as the one request that carries it is built.
-    _pending_checklist: Optional[HumanMessage] = None
-
     def _locations_summary(self) -> list[dict]:
         """The locations as the model sees them: the URI to pass, and enough to choose the right one."""
         return [
@@ -405,13 +402,11 @@ class _RunsTurns:
         self,
         content: str,
         image_blocks: list[dict] | None = None,
-        transient: bool = False,
         marks: dict[str, Any] | None = None,
     ) -> HumanMessage:
         """Something neither party said, as a user-role message, which keeps the conversation append-only."""
         text = self._prompt_loader.load("reminder", {"content": content.strip()}).strip()
-        # `transient` marks a note assembled for one request and never appended, so no cache breakpoint sits on it.
-        tags = {"reminder": True, **({"transient": True} if transient else {}), **(marks or {})}
+        tags = {"reminder": True, **(marks or {})}
         if image_blocks:
             return HumanMessage(
                 content=[{"type": "text", "text": text}, *image_blocks], additional_kwargs=tags
@@ -459,10 +454,6 @@ class _RunsTurns:
         resume_answers: Optional[dict[str, Any]] = None,
     ) -> AsyncIterator[TurnEvent]:
         self._abort_event.clear()
-        deferred_memory_exchanges = (
-            set(self._observations_in_flight) if resume_plans is None else set()
-        )
-        first_model_opening = True
         # A turn runs until the model is done or the user interrupts: an unfinished goal outlives this loop.
         turn_tool_calls_log: list[dict] = []
         turn_tool_results_log: list[dict] = []
@@ -506,9 +497,9 @@ class _RunsTurns:
             )
             self._conversation.append(turn_message)
             # Only when the user speaks: a tool-result hop is the same instruction, and repeating it buys nothing.
-            self._pending_checklist = self._reminder_message(
-                self._prompt_loader.load("turn_checklist", {}),
-                transient=True,
+            # The checklist joins the conversation like any other message, so it is checkpointed and never lost.
+            self._conversation.append(
+                self._reminder_message(self._prompt_loader.load("turn_checklist", {}))
             )
             # The event-log recorder only wants prose from LangChain's standard blocks.
             recorded_user_message = message_text(turn_message)
@@ -536,17 +527,15 @@ class _RunsTurns:
             for steering_event in await self._drain_steering_messages():
                 yield steering_event
 
-            await self._append_unseen_memory(
-                deferred_memory_exchanges if first_model_opening else None
-            )
+            # One memory update per opening whenever anything new is recorded, carrying the whole of both ledgers.
+            await self._append_memory_update()
 
             # Drop old turns once the configured window threshold is reached.
-            if not (first_model_opening and deferred_memory_exchanges) and self._should_compact():
+            if self._should_compact():
                 async for compaction_event in self.compact(reason="auto"):
                     yield compaction_event
 
             messages = self._build_turn_messages()
-            first_model_opening = False
 
             # The model call: yields the stream and hands back the assembled response, or a terminal condition.
             call = _ModelCallOutcome()
@@ -627,14 +616,8 @@ class _RunsTurns:
                 yield steering_event
 
     def _build_turn_messages(self) -> list:
-        """This iteration's messages: the static prompt, the conversation, and the turn context appended once."""
-        messages = [SystemMessage(content=self._build_static_system_prompt())] + self._conversation
-        if self._pending_checklist is None:
-            return messages
-        # Last, and only ever last: it never joins the conversation, so anywhere else its absence next time rewrites the prefix.
-        checklist = self._pending_checklist
-        self._pending_checklist = None
-        return messages + [checklist]
+        """This iteration's messages: the static prompt and the whole conversation."""
+        return [SystemMessage(content=self._build_static_system_prompt())] + self._conversation
 
     def _refuse_if_over_window(self, messages: list) -> None:
         """Refuse a request that cannot fit before sending it, with numbers, since the harness knows the window."""

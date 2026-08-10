@@ -141,29 +141,26 @@ class _CompactsContext:
         template: str,
         observations: list[dict],
         directives: list[dict],
-        *,
-        represented: dict[str, list[dict]] | None = None,
     ):
-        """One persistent memory addition, carrying the identities needed to append each entry exactly once."""
-        represented = represented or {"observations": observations, "directives": directives}
+        """One complete memory record, carrying the identities the next replacement can find."""
         return self._reminder_message(
             self._prompt_loader.load(
                 template,
                 {
-                    "observations": lines(self._readable(self._live(observations))),
-                    "directives": lines(self._readable(self._live(directives))),
+                    "observations": lines(self._readable(observations)),
+                    "directives": lines(self._readable(directives)),
                 },
             ),
             marks={
                 "memory_record": {
-                    "observations": self._entry_ids(represented["observations"]),
-                    "directives": self._entry_ids(represented["directives"]),
+                    "observations": self._entry_ids(observations),
+                    "directives": self._entry_ids(directives),
                 }
             },
         )
 
     def _recorded_memory_ids(self) -> dict[str, set[str]]:
-        """The ledger entries already appended to the persistent conversation."""
+        """The ledger entries already carried by a memory record in the conversation."""
         recorded = {"observations": set(), "directives": set()}
         for message in self._conversation:
             mark = message.additional_kwargs.get("memory_record")
@@ -173,27 +170,32 @@ class _CompactsContext:
                 recorded[ledger].update(str(identifier) for identifier in mark.get(ledger, []))
         return recorded
 
-    async def _append_unseen_memory(self, excluded_exchanges: set[str] | None = None) -> None:
-        """Append unseen entries except records that were in flight when this model opening began."""
+    async def _append_memory_update(self) -> None:
+        """Append one memory update when new memory has finished recording; the update carries the whole live memory."""
         snapshot = await self._memory_snapshot()
-        recorded = self._recorded_memory_ids()
-        excluded_exchanges = excluded_exchanges or set()
         observations = [
             entry
-            for entry in snapshot["observations"]
-            if str(entry.get("id") or "") not in recorded["observations"]
-            and str(entry.get("exchange") or "") not in excluded_exchanges
+            for entry in self._live(snapshot["observations"])
+            if str(entry.get("exchange") or "") not in self._observations_in_flight
         ]
         directives = [
             entry
-            for entry in snapshot["directives"]
-            if str(entry.get("id") or "") not in recorded["directives"]
-            and str(entry.get("exchange") or "") not in excluded_exchanges
+            for entry in self._live(snapshot["directives"])
+            if str(entry.get("exchange") or "") not in self._observations_in_flight
         ]
-        if observations or directives:
-            self._conversation.append(
-                self._build_memory_message("observation_update", observations, directives)
-            )
+        if not observations and not directives:
+            return
+        recorded = self._recorded_memory_ids()
+        has_new_entries = any(
+            str(entry.get("id") or "") not in recorded[ledger]
+            for ledger, entries in (("observations", observations), ("directives", directives))
+            for entry in entries
+        )
+        if not has_new_entries:
+            return
+        self._conversation.append(
+            self._build_memory_message("observation_update", observations, directives)
+        )
 
     async def _replace_memory_records_with_snapshot(self) -> None:
         """At the explicit rewrite boundary, replace old notices with one complete live memory snapshot."""
@@ -203,20 +205,20 @@ class _CompactsContext:
             if not message.additional_kwargs.get("memory_record")
         ]
         snapshot = await self._memory_snapshot()
-        observations = snapshot["observations"]
-        directives = snapshot["directives"]
+        observations = [
+            entry
+            for entry in self._live(snapshot["observations"])
+            if str(entry.get("exchange") or "") not in self._observations_in_flight
+        ]
+        directives = [
+            entry
+            for entry in self._live(snapshot["directives"])
+            if str(entry.get("exchange") or "") not in self._observations_in_flight
+        ]
         if not observations and not directives:
             return
-        visible_directives = [
-            entry for entry in self._live(directives) if entry.get("still_binding", True)
-        ]
         self._conversation.append(
-            self._build_memory_message(
-                "observation_log",
-                observations,
-                visible_directives,
-                represented=snapshot,
-            )
+            self._build_memory_message("observation_log", observations, directives)
         )
 
     def _usable_context(self) -> int:

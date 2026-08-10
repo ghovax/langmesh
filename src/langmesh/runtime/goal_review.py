@@ -350,7 +350,7 @@ class _ReviewsGoal:
         if goal is None or not goal.is_open:
             return None
         await self.wait_for_observational_memory()
-        await self._append_unseen_memory()
+        await self._append_memory_update()
         goal = self.goal
         if goal is None or not goal.is_open:
             return None

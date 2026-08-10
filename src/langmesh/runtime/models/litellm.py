@@ -217,7 +217,6 @@ class ChatLiteLLMModel(BaseChatModel):
     def _apply_cache_breakpoints(
         self,
         dicts: list[dict[str, Any]],
-        messages: Sequence[BaseMessage] = (),
     ) -> list[dict[str, Any]]:
         """Mark the messages the provider should cache up to, since Anthropic caches nothing unless asked."""
         route = self._route()
@@ -229,18 +228,8 @@ class ChatLiteLLMModel(BaseChatModel):
             or route in self._CACHE_BREAKPOINT_ROUTES
         ):
             return dicts
-        # `dicts` is built one-for-one from `messages`, in order, so the index is the join.
-        transient = {
-            index
-            for index, message in enumerate(messages)
-            if getattr(message, "additional_kwargs", {}).get("transient")
-        }
-        durable = [
-            entry
-            for index, entry in enumerate(dicts)
-            if entry["role"] != "system" and index not in transient
-        ]
-        # Disjoint by construction, so the two selections never mark the same message or exceed four breakpoints.
+        # The durable tail is every non-system message; the two selections never overlap or exceed four breakpoints.
+        durable = [entry for entry in dicts if entry["role"] != "system"]
         system = [entry for entry in dicts if entry["role"] == "system"][
             : self._LEADING_BREAKPOINTS
         ]
@@ -385,7 +374,7 @@ class ChatLiteLLMModel(BaseChatModel):
         )
         # One name for the prose this call produces, minted here because nothing LiteLLM streams identifies the block.
         block = f"litellm-{uuid4().hex}-"
-        sent = self._apply_cache_breakpoints(self._messages_to_dicts(messages), messages)
+        sent = self._apply_cache_breakpoints(self._messages_to_dicts(messages))
         # Taken before the request and reported once the response says what the cache did.
         current_trace = self._trace_request(params, sent)
         reported = False
@@ -530,7 +519,7 @@ class ChatLiteLLMModel(BaseChatModel):
     ) -> ChatResult:
         params = self._completion_kwargs(stop=stop, **kwargs)
         response = await litellm.acompletion(
-            messages=self._apply_cache_breakpoints(self._messages_to_dicts(messages), messages),
+            messages=self._apply_cache_breakpoints(self._messages_to_dicts(messages)),
             **params,
         )
         return self._response_to_result(response)
@@ -544,7 +533,7 @@ class ChatLiteLLMModel(BaseChatModel):
     ) -> ChatResult:
         params = self._completion_kwargs(stop=stop, **kwargs)
         response = litellm.completion(
-            messages=self._apply_cache_breakpoints(self._messages_to_dicts(messages), messages),
+            messages=self._apply_cache_breakpoints(self._messages_to_dicts(messages)),
             **params,
         )
         return self._response_to_result(response)
