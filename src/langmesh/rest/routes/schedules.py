@@ -34,7 +34,7 @@ def _fail(error: Exception) -> HTTPException:
 
 @router.get("/schedules")
 async def list_schedules(workspace_id: str = ""):
-    # Dispatched off the loop, since the write lock refuses to run on it rather than deadlocking quietly.
+    # Dispatched off the loop, so a slow database write never stalls the interface.
     return {"schedules": await asyncio.to_thread(_schedules.listing, workspace_id)}
 
 

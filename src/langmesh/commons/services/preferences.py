@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from langmesh.base.sqlite_lock import sqlite_write_lock
 from langmesh.commons import state
 from langmesh.commons.database import SOLE_INTERFACE, InterfacePreferenceRecord
 
@@ -49,17 +48,16 @@ def update_preferences(changes: dict[str, Any]) -> dict[str, Any]:
     if "color_mode" in known and known["color_mode"] not in COLOR_MODES:
         raise ValueError(f"Unknown colour mode {known['color_mode']!r}.")
     assert state.session_factory is not None
-    with sqlite_write_lock():
-        database = state.session_factory()
-        try:
-            record = database.get(InterfacePreferenceRecord, SOLE_INTERFACE)
-            if record is None:
-                record = InterfacePreferenceRecord(id=SOLE_INTERFACE, **{**DEFAULTS, **known})
-                database.add(record)
-            else:
-                for name, value in known.items():
-                    setattr(record, name, value)
-            database.commit()
-            return _as_payload(record)
-        finally:
-            database.close()
+    database = state.session_factory()
+    try:
+        record = database.get(InterfacePreferenceRecord, SOLE_INTERFACE)
+        if record is None:
+            record = InterfacePreferenceRecord(id=SOLE_INTERFACE, **{**DEFAULTS, **known})
+            database.add(record)
+        else:
+            for name, value in known.items():
+                setattr(record, name, value)
+        database.commit()
+        return _as_payload(record)
+    finally:
+        database.close()

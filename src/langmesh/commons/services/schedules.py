@@ -13,7 +13,6 @@ from langmesh.base.schedules import (
     next_firing,
     validate,
 )
-from langmesh.base.sqlite_lock import sqlite_write_lock
 from langmesh.commons import state
 from langmesh.commons.database import ScheduleRecord, WorkspaceRecord
 
@@ -113,9 +112,8 @@ def create(
             created_at=_now(),
             updated_at=_now(),
         )
-        with sqlite_write_lock():
-            database_session.add(record)
-            database_session.commit()
+        database_session.add(record)
+        database_session.commit()
         payload = serialize(record)
     finally:
         database_session.close()
@@ -151,10 +149,9 @@ def set_enabled(schedule_id: str, enabled: bool) -> dict[str, Any]:
         record = database_session.get(ScheduleRecord, schedule_id)
         if record is None:
             raise ScheduleError(f"No schedule {schedule_id!r}.")
-        with sqlite_write_lock():
-            record.enabled = enabled
-            record.updated_at = _now()
-            database_session.commit()
+        record.enabled = enabled
+        record.updated_at = _now()
+        database_session.commit()
         payload = serialize(record)
     finally:
         database_session.close()
@@ -168,9 +165,8 @@ def delete(schedule_id: str) -> None:
         record = database_session.get(ScheduleRecord, schedule_id)
         if record is None:
             raise ScheduleError(f"No schedule {schedule_id!r}.")
-        with sqlite_write_lock():
-            database_session.delete(record)
-            database_session.commit()
+        database_session.delete(record)
+        database_session.commit()
     finally:
         database_session.close()
     _announce()
@@ -183,12 +179,11 @@ def record_run(schedule_id: str, *, session_id: str = "", error: str = "") -> No
         record = database_session.get(ScheduleRecord, schedule_id)
         if record is None:
             return
-        with sqlite_write_lock():
-            record.last_fired_at = _now()
-            record.last_session_id = session_id
-            record.last_error = error
-            record.updated_at = _now()
-            database_session.commit()
+        record.last_fired_at = _now()
+        record.last_session_id = session_id
+        record.last_error = error
+        record.updated_at = _now()
+        database_session.commit()
     finally:
         database_session.close()
     _announce()

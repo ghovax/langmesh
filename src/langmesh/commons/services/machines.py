@@ -9,7 +9,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from langmesh.base.sqlite_lock import sqlite_write_lock
 from langmesh.commons import state
 from langmesh.commons.database import MachineRecord
 
@@ -75,30 +74,29 @@ def remember_machine(link: str) -> dict[str, Any]:
     """Add a machine, or refresh the token of one already known, keyed on its address."""
     described = read_pairing_link(link)
     assert state.session_factory is not None
-    with sqlite_write_lock():
-        database = state.session_factory()
-        try:
-            record = (
-                database.query(MachineRecord)
-                .filter(MachineRecord.endpoint == described["endpoint"])
-                .first()
+    database = state.session_factory()
+    try:
+        record = (
+            database.query(MachineRecord)
+            .filter(MachineRecord.endpoint == described["endpoint"])
+            .first()
+        )
+        if record is None:
+            record = MachineRecord(
+                id=str(uuid.uuid4()),
+                name=described["name"],
+                endpoint=described["endpoint"],
+                token=described["token"],
+                created_at=_now(),
             )
-            if record is None:
-                record = MachineRecord(
-                    id=str(uuid.uuid4()),
-                    name=described["name"],
-                    endpoint=described["endpoint"],
-                    token=described["token"],
-                    created_at=_now(),
-                )
-                database.add(record)
-            else:
-                # The name is left alone, since a re-pair is about the token and the name may have been edited.
-                record.token = described["token"]
-            database.commit()
-            return _serialize(record)
-        finally:
-            database.close()
+            database.add(record)
+        else:
+            # The name is left alone, since a re-pair is about the token and the name may have been edited.
+            record.token = described["token"]
+        database.commit()
+        return _serialize(record)
+    finally:
+        database.close()
 
 
 def machine_address(machine_id: str) -> str:
@@ -121,32 +119,30 @@ def rename_machine(machine_id: str, name: str) -> dict[str, Any] | None:
     if not trimmed:
         return None
     assert state.session_factory is not None
-    with sqlite_write_lock():
-        database = state.session_factory()
-        try:
-            record = database.get(MachineRecord, machine_id)
-            if record is None:
-                return None
-            record.name = trimmed
-            database.commit()
-            return _serialize(record)
-        finally:
-            database.close()
+    database = state.session_factory()
+    try:
+        record = database.get(MachineRecord, machine_id)
+        if record is None:
+            return None
+        record.name = trimmed
+        database.commit()
+        return _serialize(record)
+    finally:
+        database.close()
 
 
 def forget_machine(machine_id: str) -> bool:
     assert state.session_factory is not None
-    with sqlite_write_lock():
-        database = state.session_factory()
-        try:
-            record = database.get(MachineRecord, machine_id)
-            if record is None:
-                return False
-            database.delete(record)
-            database.commit()
-            return True
-        finally:
-            database.close()
+    database = state.session_factory()
+    try:
+        record = database.get(MachineRecord, machine_id)
+        if record is None:
+            return False
+        database.delete(record)
+        database.commit()
+        return True
+    finally:
+        database.close()
 
 
 __all__ = [

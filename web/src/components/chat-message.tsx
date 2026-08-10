@@ -31,6 +31,8 @@ interface ChatMessageProps {
   onRetry?: () => void;
   // This is the last row of a live turn, which drives the newly-arrived-token animation.
   streaming?: boolean;
+  // The review whose transcript this row opens, when it is not the row's own meta.
+  reviewId?: string;
   onOpenReview?: (reviewId: string) => void;
 }
 
@@ -242,6 +244,7 @@ export function UserMessageCard({
   banner = "",
   bannerIcon,
   queued,
+  reviewId,
   onOpenReview,
 }: {
   message: ChatMessage;
@@ -249,6 +252,7 @@ export function UserMessageCard({
   // The mark beside the banner, since who is speaking is read before the words are.
   bannerIcon?: ReactNode;
   queued?: QueuedMessageState;
+  reviewId?: string;
   onOpenReview?: (reviewId: string) => void;
 }) {
   const translation = useTranslations("ChatMessage");
@@ -329,7 +333,7 @@ export function UserMessageCard({
         content={message.content}
         sentAt={message.timestamp}
         queued={queued}
-        reviewId={message.meta?.goalReviewId}
+        reviewId={reviewId ?? message.meta?.goalReviewId}
         onOpenReview={onOpenReview}
       />
     </Flex>
@@ -340,12 +344,15 @@ export const ChatMessageItem = memo(function ChatMessageItem({
   message,
   onRetry,
   streaming = false,
+  reviewId,
   onOpenReview,
 }: ChatMessageProps) {
   const translation = useTranslations("ChatMessage");
   switch (message.role) {
     case "user": {
-      return <UserMessageCard message={message} />;
+      return (
+        <UserMessageCard message={message} reviewId={reviewId} onOpenReview={onOpenReview} />
+      );
     }
 
     case "peer": {

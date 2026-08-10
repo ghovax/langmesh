@@ -31,7 +31,6 @@ from a2a.types import DataPart, Message, Part, Role, Task, TaskState, TaskStatus
 
 from langmesh.base.message_content import content_block_identifier
 from langmesh.base.serialization import compact, conversation_snapshot_id
-from langmesh.base.sqlite_lock import acquire_sqlite_write_lock, release_sqlite_write_lock
 from langmesh.protocol.turn_record import ReconcileAction, TurnRecord, reconcile_action
 
 
@@ -289,36 +288,32 @@ class AppendOnlyTaskStore(TaskStore):
             Column("created_at", DateTime, server_default=func.now()),
         )
         self._initialized = False
-        # How many history rows are persisted per task, kept in memory under the write lock rather than re-counted.
+        # How many history rows are persisted per task, kept in memory rather than re-counted.
         self._persisted_counts: dict[str, int] = {}
         # Tasks whose history has been terminally compacted, so a stray later save is caught rather than duplicating rows.
         self._terminal_turns: set[str] = set()
 
     async def initialize(self) -> None:
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                await connection.run_sync(self._metadata.create_all)
-                await connection.exec_driver_sql(
-                    "CREATE INDEX IF NOT EXISTS idx_turn_head_session_id_id ON turn_head(session_id, id)"
-                )
-                await connection.exec_driver_sql(
-                    "CREATE INDEX IF NOT EXISTS idx_turn_history_turn_id_row_id ON turn_history(turn_id, row_id)"
-                )
-                await connection.exec_driver_sql(
-                    "CREATE INDEX IF NOT EXISTS idx_turn_artifacts_turn_id_row_id ON turn_artifacts(turn_id, row_id)"
-                )
-                await connection.exec_driver_sql(
-                    "CREATE INDEX IF NOT EXISTS idx_conversation_inheritance_snapshot_id ON conversation_inheritance(snapshot_id)"
-                )
-                await connection.exec_driver_sql(
-                    "CREATE INDEX IF NOT EXISTS idx_user_message_history_working_directory_created_at ON user_message_history(working_directory, created_at DESC)"
-                )
-                await connection.exec_driver_sql(
-                    "CREATE INDEX IF NOT EXISTS idx_goal_review_sessions_session_created ON goal_review_sessions(session_id, created_at DESC)"
-                )
-        finally:
-            release_sqlite_write_lock(write_lock)
+        async with self._engine.begin() as connection:
+            await connection.run_sync(self._metadata.create_all)
+            await connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_turn_head_session_id_id ON turn_head(session_id, id)"
+            )
+            await connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_turn_history_turn_id_row_id ON turn_history(turn_id, row_id)"
+            )
+            await connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_turn_artifacts_turn_id_row_id ON turn_artifacts(turn_id, row_id)"
+            )
+            await connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_conversation_inheritance_snapshot_id ON conversation_inheritance(snapshot_id)"
+            )
+            await connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_user_message_history_working_directory_created_at ON user_message_history(working_directory, created_at DESC)"
+            )
+            await connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_goal_review_sessions_session_created ON goal_review_sessions(session_id, created_at DESC)"
+            )
         self._initialized = True
 
     async def _ensure_initialized(self) -> None:
@@ -328,63 +323,59 @@ class AppendOnlyTaskStore(TaskStore):
     async def reconcile_orphaned_turns(self) -> list[str]:
         """Restart reconciliation: a durable pause is restored, and anything else non-terminal is marked failed."""
         await self._ensure_initialized()
-        write_lock = await acquire_sqlite_write_lock()
         failed_task_ids: list[str] = []
         input_required = TaskState.input_required.value
-        try:
-            async with self._engine.begin() as connection:
-                head_rows = (await connection.execute(select(self._head))).mappings().all()
-                for head_row in head_rows:
-                    current_state = str(json.loads(head_row["status"]).get("state", ""))
-                    if current_state in _TERMINAL_TASK_STATES:
-                        continue
-                    metadata = (
-                        json.loads(head_row["turn_metadata"]) if head_row["turn_metadata"] else {}
-                    )
-                    kind = TurnRecord.from_metadata(metadata).kind
-                    if (
-                        reconcile_action(kind, current_state, input_required=input_required)
-                        is ReconcileAction.PRESERVE
-                    ):
-                        continue
-                    turn_id = str(head_row["id"])
-                    session_id = str(head_row["session_id"] or "")
-                    interrupted_message = Message(
-                        role=Role.agent,
-                        parts=[
-                            Part(
-                                root=DataPart(
-                                    data={
-                                        "kind": "error",
-                                        "code": "turn_interrupted",
-                                        "message": "This turn was interrupted because the daemon restarted.",
-                                    }
-                                )
+        async with self._engine.begin() as connection:
+            head_rows = (await connection.execute(select(self._head))).mappings().all()
+            for head_row in head_rows:
+                current_state = str(json.loads(head_row["status"]).get("state", ""))
+                if current_state in _TERMINAL_TASK_STATES:
+                    continue
+                metadata = (
+                    json.loads(head_row["turn_metadata"]) if head_row["turn_metadata"] else {}
+                )
+                kind = TurnRecord.from_metadata(metadata).kind
+                if (
+                    reconcile_action(kind, current_state, input_required=input_required)
+                    is ReconcileAction.PRESERVE
+                ):
+                    continue
+                turn_id = str(head_row["id"])
+                session_id = str(head_row["session_id"] or "")
+                interrupted_message = Message(
+                    role=Role.agent,
+                    parts=[
+                        Part(
+                            root=DataPart(
+                                data={
+                                    "kind": "error",
+                                    "code": "turn_interrupted",
+                                    "message": "This turn was interrupted because the daemon restarted.",
+                                }
                             )
-                        ],
-                        message_id=uuid.uuid4().hex,
-                        task_id=turn_id,
-                        context_id=session_id or None,
-                    )
-                    interrupted_at = datetime.now(timezone.utc).isoformat()
-                    interrupted_status = TaskStatus(
-                        state=TaskState.failed,
-                        message=interrupted_message,
-                        timestamp=interrupted_at,
-                    )
-                    await connection.execute(
-                        update(self._head)
-                        .where(self._head.c.id == turn_id)
-                        .values(status=_dump(interrupted_status))
-                    )
-                    await connection.execute(
-                        update(self._goal_reviews)
-                        .where(self._goal_reviews.c.review_id == session_id)
-                        .values(status=TaskState.failed.value, completed_at=interrupted_at)
-                    )
-                    failed_task_ids.append(turn_id)
-        finally:
-            release_sqlite_write_lock(write_lock)
+                        )
+                    ],
+                    message_id=uuid.uuid4().hex,
+                    task_id=turn_id,
+                    context_id=session_id or None,
+                )
+                interrupted_at = datetime.now(timezone.utc).isoformat()
+                interrupted_status = TaskStatus(
+                    state=TaskState.failed,
+                    message=interrupted_message,
+                    timestamp=interrupted_at,
+                )
+                await connection.execute(
+                    update(self._head)
+                    .where(self._head.c.id == turn_id)
+                    .values(status=_dump(interrupted_status))
+                )
+                await connection.execute(
+                    update(self._goal_reviews)
+                    .where(self._goal_reviews.c.review_id == session_id)
+                    .values(status=TaskState.failed.value, completed_at=interrupted_at)
+                )
+                failed_task_ids.append(turn_id)
         return failed_task_ids
 
     async def save_turn_state(
@@ -400,71 +391,67 @@ class AppendOnlyTaskStore(TaskStore):
         if not session_id:
             return
         now = datetime.now(timezone.utc).isoformat()
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                checkpoint_insert = sqlite_insert(self._checkpoint).values(
+        async with self._engine.begin() as connection:
+            checkpoint_insert = sqlite_insert(self._checkpoint).values(
+                session_id=session_id,
+                turn_id=turn_id,
+                messages=json.dumps(messages),
+                updated_at=now,
+            )
+            await connection.execute(
+                checkpoint_insert.on_conflict_do_update(
+                    index_elements=[self._checkpoint.c.session_id],
+                    set_={
+                        "turn_id": turn_id,
+                        "messages": checkpoint_insert.excluded.messages,
+                        "updated_at": now,
+                    },
+                )
+            )
+            detached = False
+            if inherited_snapshot_id:
+                snapshot_exists = (
+                    await connection.execute(
+                        select(self._conversation_snapshot.c.snapshot_id).where(
+                            self._conversation_snapshot.c.snapshot_id == inherited_snapshot_id
+                        )
+                    )
+                ).scalar()
+                if snapshot_exists is None:
+                    raise ValueError(
+                        f"Unknown inherited conversation snapshot {inherited_snapshot_id!r}"
+                    )
+                inheritance_insert = sqlite_insert(self._conversation_inheritance).values(
                     session_id=session_id,
-                    turn_id=turn_id,
-                    messages=json.dumps(messages),
+                    snapshot_id=inherited_snapshot_id,
+                )
+                await connection.execute(
+                    inheritance_insert.on_conflict_do_update(
+                        index_elements=[self._conversation_inheritance.c.session_id],
+                        set_={"snapshot_id": inheritance_insert.excluded.snapshot_id},
+                    )
+                )
+            else:
+                result = await connection.execute(
+                    delete(self._conversation_inheritance).where(
+                        self._conversation_inheritance.c.session_id == session_id
+                    )
+                )
+                detached = bool(result.rowcount)
+            if session_state is not None:
+                state_insert = sqlite_insert(self._session_state).values(
+                    session_id=session_id,
+                    state=json.dumps(session_state),
                     updated_at=now,
                 )
                 await connection.execute(
-                    checkpoint_insert.on_conflict_do_update(
-                        index_elements=[self._checkpoint.c.session_id],
-                        set_={
-                            "turn_id": turn_id,
-                            "messages": checkpoint_insert.excluded.messages,
-                            "updated_at": now,
-                        },
+                    state_insert.on_conflict_do_update(
+                        index_elements=[self._session_state.c.session_id],
+                        set_={"state": state_insert.excluded.state, "updated_at": now},
                     )
                 )
-                detached = False
-                if inherited_snapshot_id:
-                    snapshot_exists = (
-                        await connection.execute(
-                            select(self._conversation_snapshot.c.snapshot_id).where(
-                                self._conversation_snapshot.c.snapshot_id == inherited_snapshot_id
-                            )
-                        )
-                    ).scalar()
-                    if snapshot_exists is None:
-                        raise ValueError(
-                            f"Unknown inherited conversation snapshot {inherited_snapshot_id!r}"
-                        )
-                    inheritance_insert = sqlite_insert(self._conversation_inheritance).values(
-                        session_id=session_id,
-                        snapshot_id=inherited_snapshot_id,
-                    )
-                    await connection.execute(
-                        inheritance_insert.on_conflict_do_update(
-                            index_elements=[self._conversation_inheritance.c.session_id],
-                            set_={"snapshot_id": inheritance_insert.excluded.snapshot_id},
-                        )
-                    )
-                else:
-                    result = await connection.execute(
-                        delete(self._conversation_inheritance).where(
-                            self._conversation_inheritance.c.session_id == session_id
-                        )
-                    )
-                    detached = bool(result.rowcount)
-                if session_state is not None:
-                    state_insert = sqlite_insert(self._session_state).values(
-                        session_id=session_id,
-                        state=json.dumps(session_state),
-                        updated_at=now,
-                    )
-                    await connection.execute(
-                        state_insert.on_conflict_do_update(
-                            index_elements=[self._session_state.c.session_id],
-                            set_={"state": state_insert.excluded.state, "updated_at": now},
-                        )
-                    )
-                if detached:
-                    await self._delete_unreferenced_conversation_snapshots(connection)
-        finally:
-            release_sqlite_write_lock(write_lock)
+            if detached:
+                await self._delete_unreferenced_conversation_snapshots(connection)
 
     async def seed_inherited_conversation(self, session_id: str, messages: list[dict]) -> str:
         """Point a new child at a shared snapshot and start its local checkpoint empty."""
@@ -473,40 +460,36 @@ class AppendOnlyTaskStore(TaskStore):
             return ""
         snapshot_id = conversation_snapshot_id(messages)
         now = datetime.now(timezone.utc).isoformat()
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                await connection.execute(
-                    sqlite_insert(self._conversation_snapshot)
-                    .values(snapshot_id=snapshot_id, messages=compact(messages))
-                    .on_conflict_do_nothing(
-                        index_elements=[self._conversation_snapshot.c.snapshot_id]
-                    )
+        async with self._engine.begin() as connection:
+            await connection.execute(
+                sqlite_insert(self._conversation_snapshot)
+                .values(snapshot_id=snapshot_id, messages=compact(messages))
+                .on_conflict_do_nothing(
+                    index_elements=[self._conversation_snapshot.c.snapshot_id]
                 )
-                checkpoint_insert = sqlite_insert(self._checkpoint).values(
-                    session_id=session_id,
-                    turn_id="",
-                    messages="[]",
-                    updated_at=now,
+            )
+            checkpoint_insert = sqlite_insert(self._checkpoint).values(
+                session_id=session_id,
+                turn_id="",
+                messages="[]",
+                updated_at=now,
+            )
+            await connection.execute(
+                checkpoint_insert.on_conflict_do_update(
+                    index_elements=[self._checkpoint.c.session_id],
+                    set_={"turn_id": "", "messages": "[]", "updated_at": now},
                 )
-                await connection.execute(
-                    checkpoint_insert.on_conflict_do_update(
-                        index_elements=[self._checkpoint.c.session_id],
-                        set_={"turn_id": "", "messages": "[]", "updated_at": now},
-                    )
+            )
+            inheritance_insert = sqlite_insert(self._conversation_inheritance).values(
+                session_id=session_id,
+                snapshot_id=snapshot_id,
+            )
+            await connection.execute(
+                inheritance_insert.on_conflict_do_update(
+                    index_elements=[self._conversation_inheritance.c.session_id],
+                    set_={"snapshot_id": snapshot_id},
                 )
-                inheritance_insert = sqlite_insert(self._conversation_inheritance).values(
-                    session_id=session_id,
-                    snapshot_id=snapshot_id,
-                )
-                await connection.execute(
-                    inheritance_insert.on_conflict_do_update(
-                        index_elements=[self._conversation_inheritance.c.session_id],
-                        set_={"snapshot_id": snapshot_id},
-                    )
-                )
-        finally:
-            release_sqlite_write_lock(write_lock)
+            )
         return snapshot_id
 
     async def _delete_unreferenced_conversation_snapshots(self, connection) -> None:
@@ -523,60 +506,48 @@ class AppendOnlyTaskStore(TaskStore):
         if not session_id:
             return
         now = datetime.now(timezone.utc).isoformat()
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                state_insert = sqlite_insert(self._session_state).values(
-                    session_id=session_id,
-                    state=json.dumps(session_state),
-                    updated_at=now,
+        async with self._engine.begin() as connection:
+            state_insert = sqlite_insert(self._session_state).values(
+                session_id=session_id,
+                state=json.dumps(session_state),
+                updated_at=now,
+            )
+            await connection.execute(
+                state_insert.on_conflict_do_update(
+                    index_elements=[self._session_state.c.session_id],
+                    set_={"state": state_insert.excluded.state, "updated_at": now},
                 )
-                await connection.execute(
-                    state_insert.on_conflict_do_update(
-                        index_elements=[self._session_state.c.session_id],
-                        set_={"state": state_insert.excluded.state, "updated_at": now},
-                    )
-                )
-        finally:
-            release_sqlite_write_lock(write_lock)
+            )
 
     async def create_goal_review(
         self, review_id: str, session_id: str, goal: str, created_at: str
     ) -> None:
         """Register one review session before its first transcript event is saved."""
         await self._ensure_initialized()
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                await connection.execute(
-                    sqlite_insert(self._goal_reviews).values(
-                        review_id=review_id,
-                        session_id=session_id,
-                        goal=goal,
-                        status="working",
-                        standing=None,
-                        created_at=created_at,
-                        completed_at=None,
-                    )
+        async with self._engine.begin() as connection:
+            await connection.execute(
+                sqlite_insert(self._goal_reviews).values(
+                    review_id=review_id,
+                    session_id=session_id,
+                    goal=goal,
+                    status="working",
+                    standing=None,
+                    created_at=created_at,
+                    completed_at=None,
                 )
-        finally:
-            release_sqlite_write_lock(write_lock)
+            )
 
     async def finish_goal_review(
         self, review_id: str, status: str, standing: str | None, completed_at: str
     ) -> None:
         """Settle one review session while preserving its linked transcript."""
         await self._ensure_initialized()
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                await connection.execute(
-                    update(self._goal_reviews)
-                    .where(self._goal_reviews.c.review_id == review_id)
-                    .values(status=status, standing=standing, completed_at=completed_at)
-                )
-        finally:
-            release_sqlite_write_lock(write_lock)
+        async with self._engine.begin() as connection:
+            await connection.execute(
+                update(self._goal_reviews)
+                .where(self._goal_reviews.c.review_id == review_id)
+                .values(status=status, standing=standing, completed_at=completed_at)
+            )
 
     async def goal_reviews_for_session(self, session_id: str) -> list[dict]:
         """List a session's review sessions newest first."""
@@ -718,70 +689,66 @@ class AppendOnlyTaskStore(TaskStore):
             raise ValueError(
                 f"non-terminal save for already-terminal task {task.id}: a terminal save must be the last save for a task"
             )
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                # Head: tiny upsert of the latest status + metadata.
-                head_values = {
-                    "id": task.id,
-                    "session_id": task.context_id,
-                    "kind": task.kind,
-                    "status": _dump(task.status),
-                    "turn_metadata": json.dumps(task.metadata)
-                    if task.metadata is not None
-                    else None,
-                }
-                head_insert = sqlite_insert(self._head).values(**head_values)
+        async with self._engine.begin() as connection:
+            # Head: tiny upsert of the latest status + metadata.
+            head_values = {
+                "id": task.id,
+                "session_id": task.context_id,
+                "kind": task.kind,
+                "status": _dump(task.status),
+                "turn_metadata": json.dumps(task.metadata)
+                if task.metadata is not None
+                else None,
+            }
+            head_insert = sqlite_insert(self._head).values(**head_values)
+            await connection.execute(
+                head_insert.on_conflict_do_update(
+                    index_elements=[self._head.c.id],
+                    set_={
+                        "session_id": head_values["session_id"],
+                        "kind": head_values["kind"],
+                        "status": head_values["status"],
+                        "turn_metadata": head_values["turn_metadata"],
+                    },
+                )
+            )
+
+            # Insert only the messages not yet persisted, since the list only ever grows.
+            persisted = await self._persisted_count(connection, task.id)
+            new_messages = history[persisted:]
+            if new_messages:
                 await connection.execute(
-                    head_insert.on_conflict_do_update(
-                        index_elements=[self._head.c.id],
-                        set_={
-                            "session_id": head_values["session_id"],
-                            "kind": head_values["kind"],
-                            "status": head_values["status"],
-                            "turn_metadata": head_values["turn_metadata"],
-                        },
+                    self._history.insert(),
+                    [
+                        {"turn_id": task.id, "message": _dump(message)}
+                        for message in new_messages
+                    ],
+                )
+                self._persisted_counts[task.id] = persisted + len(new_messages)
+
+            if terminal:
+                # Compact in place with no new row ids, and record the terminal count so a stray save is caught.
+                compacted_count = await self._compact_persisted_history(connection, task.id)
+                self._persisted_counts[task.id] = compacted_count
+                self._terminal_turns.add(task.id)
+
+            # Artifacts: upsert each by id (replace-in-place is safe and bounded).
+            for artifact in artifacts:
+                artifact_json = _dump(artifact)
+                artifact_insert = sqlite_insert(self._artifacts).values(
+                    turn_id=task.id,
+                    artifact_id=artifact.artifact_id,
+                    artifact=artifact_json,
+                )
+                await connection.execute(
+                    artifact_insert.on_conflict_do_update(
+                        index_elements=[
+                            self._artifacts.c.turn_id,
+                            self._artifacts.c.artifact_id,
+                        ],
+                        set_={"artifact": artifact_json},
                     )
                 )
-
-                # Insert only the messages not yet persisted, since the list only ever grows.
-                persisted = await self._persisted_count(connection, task.id)
-                new_messages = history[persisted:]
-                if new_messages:
-                    await connection.execute(
-                        self._history.insert(),
-                        [
-                            {"turn_id": task.id, "message": _dump(message)}
-                            for message in new_messages
-                        ],
-                    )
-                    self._persisted_counts[task.id] = persisted + len(new_messages)
-
-                if terminal:
-                    # Compact in place with no new row ids, and record the terminal count so a stray save is caught.
-                    compacted_count = await self._compact_persisted_history(connection, task.id)
-                    self._persisted_counts[task.id] = compacted_count
-                    self._terminal_turns.add(task.id)
-
-                # Artifacts: upsert each by id (replace-in-place is safe and bounded).
-                for artifact in artifacts:
-                    artifact_json = _dump(artifact)
-                    artifact_insert = sqlite_insert(self._artifacts).values(
-                        turn_id=task.id,
-                        artifact_id=artifact.artifact_id,
-                        artifact=artifact_json,
-                    )
-                    await connection.execute(
-                        artifact_insert.on_conflict_do_update(
-                            index_elements=[
-                                self._artifacts.c.turn_id,
-                                self._artifacts.c.artifact_id,
-                            ],
-                            set_={"artifact": artifact_json},
-                        )
-                    )
-        finally:
-            release_sqlite_write_lock(write_lock)
 
     async def get(self, turn_id: str, context: ServerCallContext | None = None) -> Optional[Task]:
         await self._ensure_initialized()
@@ -1060,23 +1027,19 @@ class AppendOnlyTaskStore(TaskStore):
         rows = list(rows_by_identity.values())
         if not rows:
             return {"observations": [], "directives": []}
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                insert_result = await connection.execute(
-                    sqlite_insert(self._ledger)
-                    .on_conflict_do_nothing(
-                        index_elements=["session_id", "ledger", "entry_id"]
-                    )
-                    .returning(self._ledger.c.ledger, self._ledger.c.entry_id),
-                    rows,
+        async with self._engine.begin() as connection:
+            insert_result = await connection.execute(
+                sqlite_insert(self._ledger)
+                .on_conflict_do_nothing(
+                    index_elements=["session_id", "ledger", "entry_id"]
                 )
-                inserted_identities = [
-                    (str(ledger), str(entry_identifier))
-                    for ledger, entry_identifier in insert_result.all()
-                ]
-        finally:
-            release_sqlite_write_lock(write_lock)
+                .returning(self._ledger.c.ledger, self._ledger.c.entry_id),
+                rows,
+            )
+            inserted_identities = [
+                (str(ledger), str(entry_identifier))
+                for ledger, entry_identifier in insert_result.all()
+            ]
         appended: dict[str, list[dict]] = {"observations": [], "directives": []}
         for identity in inserted_identities:
             row = rows_by_identity[identity]
@@ -1139,82 +1102,74 @@ class AppendOnlyTaskStore(TaskStore):
 
     async def delete(self, turn_id: str, context: ServerCallContext | None = None) -> None:
         await self._ensure_initialized()
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
+        async with self._engine.begin() as connection:
+            await connection.execute(
+                delete(self._history).where(self._history.c.turn_id == turn_id)
+            )
+            await connection.execute(
+                delete(self._artifacts).where(self._artifacts.c.turn_id == turn_id)
+            )
+            await connection.execute(delete(self._head).where(self._head.c.id == turn_id))
+        self._persisted_counts.pop(turn_id, None)
+        self._terminal_turns.discard(turn_id)
+
+    async def delete_session(self, session_id: str) -> None:
+        """Drop every durable trace of a context, so session deletion does not need to know this store's tables."""
+        await self._ensure_initialized()
+        async with self._engine.begin() as connection:
+            review_ids = list(
+                (
+                    await connection.execute(
+                        select(self._goal_reviews.c.review_id).where(
+                            self._goal_reviews.c.session_id == session_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            context_ids = [session_id, *review_ids]
+            turn_ids = (
+                (
+                    await connection.execute(
+                        select(self._head.c.id).where(self._head.c.session_id.in_(context_ids))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for turn_id in turn_ids:
                 await connection.execute(
                     delete(self._history).where(self._history.c.turn_id == turn_id)
                 )
                 await connection.execute(
                     delete(self._artifacts).where(self._artifacts.c.turn_id == turn_id)
                 )
-                await connection.execute(delete(self._head).where(self._head.c.id == turn_id))
-            self._persisted_counts.pop(turn_id, None)
-            self._terminal_turns.discard(turn_id)
-        finally:
-            release_sqlite_write_lock(write_lock)
-
-    async def delete_session(self, session_id: str) -> None:
-        """Drop every durable trace of a context, so session deletion does not need to know this store's tables."""
-        await self._ensure_initialized()
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                review_ids = list(
-                    (
-                        await connection.execute(
-                            select(self._goal_reviews.c.review_id).where(
-                                self._goal_reviews.c.session_id == session_id
-                            )
-                        )
-                    )
-                    .scalars()
-                    .all()
+            await connection.execute(
+                delete(self._head).where(self._head.c.session_id.in_(context_ids))
+            )
+            await connection.execute(
+                delete(self._checkpoint).where(self._checkpoint.c.session_id.in_(context_ids))
+            )
+            await connection.execute(
+                delete(self._conversation_inheritance).where(
+                    self._conversation_inheritance.c.session_id.in_(context_ids)
                 )
-                context_ids = [session_id, *review_ids]
-                turn_ids = (
-                    (
-                        await connection.execute(
-                            select(self._head.c.id).where(self._head.c.session_id.in_(context_ids))
-                        )
-                    )
-                    .scalars()
-                    .all()
+            )
+            await self._delete_unreferenced_conversation_snapshots(connection)
+            await connection.execute(
+                delete(self._session_state).where(
+                    self._session_state.c.session_id.in_(context_ids)
                 )
-                for turn_id in turn_ids:
-                    await connection.execute(
-                        delete(self._history).where(self._history.c.turn_id == turn_id)
-                    )
-                    await connection.execute(
-                        delete(self._artifacts).where(self._artifacts.c.turn_id == turn_id)
-                    )
-                await connection.execute(
-                    delete(self._head).where(self._head.c.session_id.in_(context_ids))
+            )
+            await connection.execute(
+                delete(self._goal_reviews).where(
+                    self._goal_reviews.c.session_id == session_id
                 )
-                await connection.execute(
-                    delete(self._checkpoint).where(self._checkpoint.c.session_id.in_(context_ids))
-                )
-                await connection.execute(
-                    delete(self._conversation_inheritance).where(
-                        self._conversation_inheritance.c.session_id.in_(context_ids)
-                    )
-                )
-                await self._delete_unreferenced_conversation_snapshots(connection)
-                await connection.execute(
-                    delete(self._session_state).where(
-                        self._session_state.c.session_id.in_(context_ids)
-                    )
-                )
-                await connection.execute(
-                    delete(self._goal_reviews).where(
-                        self._goal_reviews.c.session_id == session_id
-                    )
-                )
-            for turn_id in turn_ids:
-                self._persisted_counts.pop(str(turn_id), None)
-                self._terminal_turns.discard(str(turn_id))
-        finally:
-            release_sqlite_write_lock(write_lock)
+            )
+        for turn_id in turn_ids:
+            self._persisted_counts.pop(str(turn_id), None)
+            self._terminal_turns.discard(str(turn_id))
 
     async def input_required_session_ids(self) -> list[str]:
         """Context ids whose persisted task is input-required, so the awaiting-input marker survives a restart."""

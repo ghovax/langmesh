@@ -434,6 +434,20 @@ export function ChatPanel({
     [setSidePanelOpen],
   );
 
+  // A review opening is the cue to surface its transcript: the panel follows the newest review automatically.
+  const seenReviewIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!sessionId) return;
+    return subscribeEvents((event) => {
+      const changed = event as { type: string; session?: string; review?: string };
+      if (changed.type !== "goal_reviews_changed" || changed.session !== sessionId) return;
+      const reviewId = changed.review;
+      if (!reviewId || seenReviewIds.current.has(reviewId)) return;
+      seenReviewIds.current.add(reviewId);
+      openGoalReview(reviewId);
+    });
+  }, [openGoalReview, sessionId]);
+
   // Pinned means the viewport is at the bottom: pinned follows new content, unpinned never pulls the reader back down.
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current;
@@ -646,6 +660,23 @@ export function ChatPanel({
 
   const currentFolderName = folderDisplayName(workingDirectory) || translation("thisFolder");
   const renderedTimeline = useMemo(() => timelineItems(messages), [messages]);
+  // The review a user message's turn started, so its transcript is reachable from that row.
+  const reviewIdByUserMessage = useMemo(() => {
+    const byUser = new Map<string, string>();
+    let lastUserMessageId = "";
+    for (const item of renderedTimeline) {
+      if (item.kind !== "message") continue;
+      const message = item.message;
+      if (message.role === "user") {
+        lastUserMessageId = message.id;
+        continue;
+      }
+      if (message.role === "goal" && message.meta?.goalReviewId) {
+        if (lastUserMessageId) byUser.set(lastUserMessageId, String(message.meta.goalReviewId));
+      }
+    }
+    return byUser;
+  }, [renderedTimeline]);
   const hasInheritedContext = Boolean(
     initialSessionId &&
     sessions.some((entry) => entry.sessionId === initialSessionId && entry.parentSessionId),
@@ -1220,6 +1251,11 @@ export function ChatPanel({
                                 onRetry={item.message.role === "error" ? handleRetry : undefined}
                                 streaming={isStreaming && isLastItem}
                                 onOpenReview={openGoalReview}
+                                reviewId={
+                                  item.message.role === "user"
+                                    ? reviewIdByUserMessage.get(item.message.id)
+                                    : undefined
+                                }
                               />
                             );
                           // Assistant messages stream, so their wrapper stays stable; complete rows get a single gentle fade.

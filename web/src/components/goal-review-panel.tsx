@@ -1,6 +1,6 @@
 "use client";
 
-import { Badge, Box, Button, Flex, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Box, Flex, VStack } from "@chakra-ui/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LuClipboardCheck } from "react-icons/lu";
 import { useTranslations } from "next-intl";
@@ -71,37 +71,26 @@ function GoalReviewTranscript({ review }: { review: GoalReviewSession }) {
   const status = review.status === "working" ? observedStatus : review.status;
   const isRunning = status === "working" && running;
   return (
-    <>
-      <Flex align="center" gap={2} px={3} py={2} borderYWidth="1px" borderColor="border.muted">
-        {isRunning ? <Spinner size="xs" /> : null}
-        <Text fontSize="xs" color="fg.muted" truncate flex={1}>
-          {review.goal}
-        </Text>
-        <Badge size="sm" colorPalette="purple" variant="subtle">
-          {translation(review.standing ?? status)}
-        </Badge>
-      </Flex>
-      <VStack align="stretch" gap={2.5} px={4} py={3}>
-        {timeline.map((item, index) =>
-          item.kind === "tool_group" ? (
-            <ChatToolGroup
-              key={item.id}
-              messages={item.messages}
-              thinkingTurns={item.thinkingTurns}
-              keepOpen={isRunning && index === timeline.length - 1}
-              pendingLabel={translation("reviewing")}
+    <VStack align="stretch" gap={2.5} px={4} py={3}>
+      {timeline.map((item, index) =>
+        item.kind === "tool_group" ? (
+          <ChatToolGroup
+            key={item.id}
+            messages={item.messages}
+            thinkingTurns={item.thinkingTurns}
+            keepOpen={isRunning && index === timeline.length - 1}
+            pendingLabel={translation("reviewing")}
+          />
+        ) : (
+          <Box key={item.message.id} display="flex" flexDirection="column">
+            <ChatMessageItem
+              message={item.message}
+              streaming={isRunning && index === timeline.length - 1}
             />
-          ) : (
-            <Box key={item.message.id} display="flex" flexDirection="column">
-              <ChatMessageItem
-                message={item.message}
-                streaming={isRunning && index === timeline.length - 1}
-              />
-            </Box>
-          ),
-        )}
-      </VStack>
-    </>
+          </Box>
+        ),
+      )}
+    </VStack>
   );
 }
 
@@ -169,20 +158,6 @@ export function GoalReviewPanel({
           />
         ) : (
           <Flex direction="column" minH="100%">
-            <Flex gap={1.5} px={2} pb={2} overflowX="auto" flexShrink={0}>
-              {reviews.map((review, index) => (
-                <Button
-                  key={review.review_id}
-                  size="xs"
-                  variant={review.review_id === selectedReviewId ? "solid" : "subtle"}
-                  colorPalette="purple"
-                  flexShrink={0}
-                  onClick={() => onSelectedReviewChange(review.review_id)}
-                >
-                  {translation("reviewNumber", { number: reviews.length - index })}
-                </Button>
-              ))}
-            </Flex>
             {selectedReview ? (
               <GoalReviewTranscript key={selectedReview.review_id} review={selectedReview} />
             ) : null}

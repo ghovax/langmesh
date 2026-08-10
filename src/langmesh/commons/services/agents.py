@@ -16,7 +16,6 @@ from langmesh.base.configuration import (
 )
 from langmesh.base.models import find_model, provider_and_suffix
 from langmesh.base.skills import load_skills, skills_for_agent
-from langmesh.base.sqlite_lock import sqlite_write_lock
 from pathlib import Path
 import langmesh.base.configuration as _configuration
 from langmesh.commons import state
@@ -54,29 +53,28 @@ def _record_model_selection(model_identifier: str) -> None:
         if definition is not None
         else suffix.replace("/", " / ").replace("-", " ").replace("_", " ").title()
     )
-    with sqlite_write_lock():
-        database_session = state.session_factory()
-        try:
-            record = database_session.get(ModelHistoryRecord, model_identifier)
-            selected_at = datetime.now(timezone.utc).isoformat()
-            if record is None:
-                database_session.add(
-                    ModelHistoryRecord(
-                        model_id=model_identifier,
-                        name=label,
-                        provider=provider,
-                        selected_at=selected_at,
-                    )
+    database_session = state.session_factory()
+    try:
+        record = database_session.get(ModelHistoryRecord, model_identifier)
+        selected_at = datetime.now(timezone.utc).isoformat()
+        if record is None:
+            database_session.add(
+                ModelHistoryRecord(
+                    model_id=model_identifier,
+                    name=label,
+                    provider=provider,
+                    selected_at=selected_at,
                 )
-            else:
-                record.name = label
-                record.provider = provider
-                record.selected_at = selected_at
-            database_session.commit()
-        except Exception:
-            database_session.rollback()
-        finally:
-            database_session.close()
+            )
+        else:
+            record.name = label
+            record.provider = provider
+            record.selected_at = selected_at
+        database_session.commit()
+    except Exception:
+        database_session.rollback()
+    finally:
+        database_session.close()
 
 
 def _recent_models(limit: int = 8) -> list[dict[str, str]]:
