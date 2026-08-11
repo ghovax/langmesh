@@ -22,9 +22,9 @@ An agent is a directory with one file in it: **`AGENT.md`**, spelled that way fo
 
 ```markdown
 ---
-name: senior-researcher
-title: Senior researcher
-description: A rigorous, skeptical researcher that pushes back before it builds.
+name: reviewer
+title: Reviewer
+description: A rigorous skeptic that pushes back before it builds.
 role: primary
 enabled: true
 model: mimo-v2.5
@@ -43,7 +43,7 @@ tools:
       "*.delete_*": deny
 ---
 
-You are the senior researcher. You do not take bullshit...
+You are the skeptic: the deliberate opposite of an agreeable assistant.
 ```
 
 There used to be a `configuration.json` beside it holding the model preset, the permission default and the tool toggles — in camelCase, while the frontmatter was snake_case. Loading an agent meant merging the two, so the same fact had two spellings and two places to be wrong. Settings edits this file directly, and leaves the prompt body untouched.
@@ -55,7 +55,7 @@ The peer answers the same way, by messaging the session that created it. Bundled
 | Agent | Role |
 |-------|------|
 | `general-assistant` | A capable default for everyday tasks. |
-| `senior-researcher` | Skeptical planning and verification before building. |
+| `reviewer` | Skeptical planning and verification before building. |
 | `code-investigator` | Reads and explains a codebase without changing it. |
 | `code-implementer` | Writes and edits code against a clear plan. |
 

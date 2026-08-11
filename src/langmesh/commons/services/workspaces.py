@@ -8,7 +8,7 @@ from langmesh.protocol.dtos import LocationInput, WorkspaceCreateRequest
 from pathlib import Path
 from typing import Any
 import subprocess
-import uuid
+from langmesh.base.identifiers import new_id
 from langmesh.commons import state
 from langmesh.commons.database import LocationRecord, WorkspaceRecord, SessionRecord
 from langmesh.commons.services.locations import (
@@ -65,7 +65,7 @@ def _create_workspace(request: WorkspaceCreateRequest) -> dict[str, Any]:
     try:
         now = _iso_now()
         workspace = WorkspaceRecord(
-            id=str(uuid.uuid4()),
+            id=new_id("workspace"),
             created_at=now,
             updated_at=now,
         )
@@ -90,7 +90,7 @@ def _ensure_default_project() -> None:
             return
         now = _iso_now()
         workspace = WorkspaceRecord(
-            id=str(uuid.uuid4()),
+            id=new_id("workspace"),
             created_at=now,
             updated_at=now,
         )

@@ -15,7 +15,7 @@ This machine (Apple Silicon `aarch64-darwin`) is managed **declaratively** with 
 - `update` — bumps all flake inputs and rebuilds
 - Rollback: `sudo darwin-rebuild rollback`
 
-**Hard rule:** never install software imperatively. No `brew install`, `npm i -g`, `pip install` (global), `cargo install`, or `curl ... | sh`. Add CLI tools to `home.nix` → `home.packages`, GUI apps to `darwin.nix` → `homebrew.casks`, then `rebuild`.
+**Hard rule:** never install software imperatively. No `brew install`, `npm i -g`, `pip install` (global), `cargo install`, or `curl ... | sh`. Add CLI tools to `home.packages` in `home.nix`, GUI apps to `homebrew.casks` in `darwin.nix`, then `rebuild`.
 
 ## Per-project environments with direnv
 

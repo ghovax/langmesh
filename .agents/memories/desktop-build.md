@@ -17,7 +17,7 @@ LangMesh ships as **two independent macOS artifacts**: the harness (`LangMesh Co
 
 `tauri.conf.json`'s `beforeBuildCommand` no longer invokes the freeze and `bundle.resources` no longer exists, so the app build is a Rust compile and a static export — nothing Python. Install the harness by `ditto`-ing it to `/Applications` and symlinking `Contents/MacOS/langmesh` onto `PATH`; install the app the same way. `langmesh app` then starts the daemon if needed and launches the window.
 
-## Freezing the harness → a signed .app (the Accessibility identity trick)
+## Freezing the harness into a signed .app (the Accessibility identity trick)
 
 `packaging/langmesh-daemon.spec` (PyInstaller) freezes `packaging/entry.py` into a binary named `langmesh`. It is **one image with two entry points** — `langmesh` and `langmeshd`, chosen by the first argument — which is not packaging convenience: every session runs inside the daemon process, so the whole fleet carries the signed bundle's identity and one Accessibility grant covers it, without any session ever being spawned. Heavy deps use dynamic imports (litellm, uvicorn[standard], langchain, a2a), so the spec `collect_all`s them explicitly and `copy_metadata`s the ones read via `importlib.metadata`. `.agents/{agents,skills}` + `mcp.json` are bundled at the frozen root (the shipped base layer; `.agents/memories` is NOT shipped).
 
