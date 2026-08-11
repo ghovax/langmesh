@@ -29,13 +29,13 @@ They are the same image, not two binaries, for two reasons. Packaging stays a si
 flowchart BT
     subgraph Clients
         Cli["langmesh (CLI)"]
-        App["Desktop app<br/>(Tauri + Next.js)"]
+        App["Desktop app<br/>(Tauri and Next.js)"]
         Peer["Another session"]
     end
 
-    subgraph Daemon["langmeshd — the control plane"]
+    subgraph Daemon["langmeshd — the controller"]
         Registry["Session registry"]
-        Lifecycle["Lifecycle + reaper"]
+        Lifecycle["Lifecycle and reaper"]
         Stores["Sole writer:<br/>history.db"]
     end
 
@@ -48,7 +48,7 @@ flowchart BT
     ModelProvider["Model provider<br/>(Anthropic, OpenAI, … via LiteLLM)"]
 
     Cli -->|unix socket| Daemon
-    App -->|loopback TCP + token| Daemon
+    App -->|loopback TCP and token| Daemon
     Peer -->|unix socket| Daemon
     Daemon --> Registry & Lifecycle & Stores
     Lifecycle -->|builds and holds| Session
@@ -180,7 +180,7 @@ What opens those turns is the layer that owns the session. For an unmet goal, th
 
 Every provider here bills a cached prefix at a fraction of a fresh one, and a conversation is almost entirely prefix: the system prompt, the tool schemas, and every turn that came before. So a session's cost is decided less by what it does than by whether the request it sends still matches the one before it. Two rules follow, and the harness holds both.
 
-**The persisted conversation is append-only until compaction.** Each ordinary call adds to its end and rewrites nothing, while the instructions and tool schemas stay stable for the session. Observers run in turn order — every closed exchange is queued, including one closed by a steering message arriving mid-turn, so no user message is left unobserved — and commit their observation and directive entries together. Every model opening reads both ledgers in one database snapshot and, whenever memory has finished recording, appends one memory update carrying the complete settled memory — every finding and every instruction, with nothing filtered — at the request tail. An exchange still being recorded is withheld entirely, absent rather than partial, and lands in the first update appended after its fold completes; an unchanged opening adds no update, and compaction replaces accumulated updates with a single complete snapshot.
+**The persisted conversation is append-only until compaction.** Each ordinary call adds to its end and rewrites nothing, while the instructions and tool schemas stay stable for the session. Observers run in turn order — every closed exchange is queued, including one closed by a steering message arriving mid-turn, so no user message is left unobserved — and commit their observation and directive entries together. Every model opening reads both ledgers in one database snapshot and, whenever memory has finished recording, appends one memory update carrying the complete settled memory — every finding and every instruction, with nothing filtered — just ahead of the message that opened the turn, whose words are always read last. An exchange still being recorded is withheld entirely, absent rather than partial, and lands in the first update appended after its fold completes; an unchanged opening adds no update, and compaction replaces accumulated updates with a single complete snapshot.
 
 That placement was learned from the measurement below. Per-turn context — the time, working directory, goal, task list, background work and reachable locations — used to be appended to a request and dropped afterwards. It showed up as a divergence on five of twelve calls in the first measured session, always at the final position. Persistent context is now appended to the conversation only when it says something new; memory updates and the turn checklist are themselves conversation messages, and a fresh one never rewrites the stable prefix before it.
 

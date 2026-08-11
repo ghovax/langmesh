@@ -6,6 +6,7 @@ Prefer a short wait and another check to one long sleep. A Stop interrupts the w
 
 Do not use `wait_for` to pass time when you have nothing to check. End your turn instead. The harness re-engages you when the background work finishes.
 
-Arguments:
-  - seconds: How long to wait before you continue. Prefer a few seconds, then check again.
-  - explanation: A short reason for the wait, in the words the user reads.
+This call takes these arguments:
+
+- `seconds` — How long to wait before you continue. Prefer a few seconds, then check again.
+- `explanation` — A short reason for the wait, in the words the user reads.

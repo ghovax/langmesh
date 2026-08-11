@@ -693,19 +693,10 @@ def _appearance() -> dict:
     return {"theme": "dark" if style.strip() == "Dark" else "light"}
 
 
-def _bluetooth_devices(limit: int = 15) -> list[str]:
-    """Connected Bluetooth peripherals by name, from `system_profiler`, degrading to empty."""
-    import json as json_module
-
-    raw = _run_command(["system_profiler", "-json", "SPBluetoothDataType"], timeout=8)
-    if not raw:
-        return []
-    try:
-        data = json_module.loads(raw)
-    except Exception:
-        return []
+def _bluetooth_from_profiler(profiler: dict, limit: int = 15) -> list[str]:
+    """Connected Bluetooth peripherals by name, from the shared `system_profiler` pass; empty when none."""
     names: dict[str, None] = {}
-    for section in data.get("SPBluetoothDataType", []):
+    for section in profiler.get("SPBluetoothDataType", []):
         if not isinstance(section, dict):
             continue
         for key in ("device_connected", "device_not_connected"):
@@ -714,6 +705,30 @@ def _bluetooth_devices(limit: int = 15) -> list[str]:
                     for name in entry:
                         names.setdefault(name, None)
     return list(names)[:limit]
+
+
+def _combined_system_profiler() -> dict:
+    """One `system_profiler` pass covering every data type the snapshot needs, since the process is the slow part."""
+    import json as json_module
+
+    raw = _run_command(
+        [
+            "system_profiler",
+            "-json",
+            "SPBluetoothDataType",
+            "SPAirPortDataType",
+            "SPDisplaysDataType",
+            "SPUSBDataType",
+        ],
+        timeout=30,
+    )
+    if not raw:
+        return {}
+    try:
+        data = json_module.loads(raw)
+    except Exception:  # noqa: BLE001 — a profiler pass that cannot be parsed yields no snapshot data
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _file_type_activity(limit: int = 14, scan_limit: int = 6000) -> dict:
@@ -892,9 +907,72 @@ def _hardware_profile() -> dict:
     return profile
 
 
-def _hardware_status() -> dict:
-    """Live hardware status: battery and power source, Wi-Fi, displays and USB peripherals."""
-    import json as json_module
+def _wifi_from_profiler(profiler: dict) -> dict:
+    """The connected Wi-Fi network and its signal, from the shared `system_profiler` pass; empty when none."""
+    import re
+
+    for controller in profiler.get("SPAirPortDataType", []):
+        interfaces = (
+            controller.get("spairport_airport_interfaces", [])
+            if isinstance(controller, dict)
+            else []
+        )
+        current = next(
+            (
+                interface.get("spairport_current_network_information")
+                for interface in interfaces
+                if isinstance(interface, dict)
+                and isinstance(interface.get("spairport_current_network_information"), dict)
+            ),
+            None,
+        )
+        if current is None:
+            continue
+        wifi: dict = {"connected": True}
+        network = current.get("_name")
+        if network and network != "<redacted>":
+            wifi["network"] = network
+        signal = current.get("spairport_signal_noise")
+        rssi = re.search(r"(-?\d+)\s*dBm", signal) if isinstance(signal, str) else None
+        if rssi:
+            wifi["signal_dbm"] = int(rssi.group(1))
+        channel = current.get("spairport_network_channel")
+        if channel:
+            wifi["channel"] = channel
+        return wifi
+    return {}
+
+
+def _displays_from_profiler(profiler: dict) -> list[str]:
+    """The attached displays by name, from the shared `system_profiler` pass."""
+    return [
+        screen.get("_name")
+        for gpu in profiler.get("SPDisplaysDataType", [])
+        if isinstance(gpu, dict)
+        for screen in gpu.get("spdisplays_ndrvs", [])
+        if isinstance(screen, dict) and screen.get("_name")
+    ]
+
+
+def _usb_from_profiler(profiler: dict, limit: int = 15) -> list[str]:
+    """Connected USB peripherals, external only; controllers, buses, hubs and roots are skipped."""
+    peripherals: list[str] = []
+
+    def _collect(items: list) -> None:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("_name")
+            if name and not any(marker in name for marker in ("Controller", "Bus", "Hub", "Root")):
+                peripherals.append(name)
+            _collect(item.get("_items", []))
+
+    _collect(profiler.get("SPUSBDataType", []))
+    return peripherals[:limit]
+
+
+def _hardware_status_from_profiler(profiler: dict) -> dict:
+    """Live hardware status: battery and power from `pmset`, Wi-Fi/displays/USB from the shared profiler pass."""
     import re
 
     status: dict = {}
@@ -915,85 +993,15 @@ def _hardware_status() -> dict:
             if remaining and remaining != "0:00":
                 status["battery_time_remaining"] = remaining
 
-    # macOS discloses the SSID only with Location Services, so state and signal are always reported and the name when given.
-    airport = _run_command(["system_profiler", "-json", "SPAirPortDataType"], timeout=8)
-    if airport:
-        try:
-            data = json_module.loads(airport)
-            for controller in data.get("SPAirPortDataType", []):
-                interfaces = (
-                    controller.get("spairport_airport_interfaces", [])
-                    if isinstance(controller, dict)
-                    else []
-                )
-                current = next(
-                    (
-                        interface.get("spairport_current_network_information")
-                        for interface in interfaces
-                        if isinstance(interface, dict)
-                        and isinstance(interface.get("spairport_current_network_information"), dict)
-                    ),
-                    None,
-                )
-                if current is None:
-                    continue
-                wifi: dict = {"connected": True}
-                network = current.get("_name")
-                if network and network != "<redacted>":
-                    wifi["network"] = network
-                signal = current.get("spairport_signal_noise")
-                rssi = re.search(r"(-?\d+)\s*dBm", signal) if isinstance(signal, str) else None
-                if rssi:
-                    wifi["signal_dbm"] = int(rssi.group(1))
-                channel = current.get("spairport_network_channel")
-                if channel:
-                    wifi["channel"] = channel
-                status["wifi"] = wifi
-                break
-        except Exception:
-            pass
-
-    # Attached displays, by name.
-    displays_raw = _run_command(["system_profiler", "-json", "SPDisplaysDataType"], timeout=8)
-    if displays_raw:
-        try:
-            data = json_module.loads(displays_raw)
-            names = [
-                screen.get("_name")
-                for gpu in data.get("SPDisplaysDataType", [])
-                if isinstance(gpu, dict)
-                for screen in gpu.get("spdisplays_ndrvs", [])
-                if isinstance(screen, dict) and screen.get("_name")
-            ]
-            if names:
-                status["displays"] = names
-        except Exception:
-            pass
-
-    # Connected USB peripherals — external only; internal controllers, buses, and hubs are skipped.
-    usb_raw = _run_command(["system_profiler", "-json", "SPUSBDataType"], timeout=8)
-    if usb_raw:
-        try:
-            data = json_module.loads(usb_raw)
-            peripherals: list[str] = []
-
-            def _collect(items: list) -> None:
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    name = item.get("_name")
-                    if name and not any(
-                        marker in name for marker in ("Controller", "Bus", "Hub", "Root")
-                    ):
-                        peripherals.append(name)
-                    _collect(item.get("_items", []))
-
-            _collect(data.get("SPUSBDataType", []))
-            if peripherals:
-                status["usb_devices"] = peripherals[:15]
-        except Exception:
-            pass
-
+    wifi = _wifi_from_profiler(profiler)
+    if wifi:
+        status["wifi"] = wifi
+    displays = _displays_from_profiler(profiler)
+    if displays:
+        status["displays"] = displays
+    usb = _usb_from_profiler(profiler)
+    if usb:
+        status["usb_devices"] = usb
     return status
 
 
@@ -1356,6 +1364,14 @@ def _build_user_context() -> dict:
 
     # Each probe is its own subprocess or scan and none needs another's answer, so they run together:
     # sequentially the slowest few decided the total, and `system_profiler` alone was most of it.
+    # `system_profiler` is the one probe worth spawning only once, so it runs here and its output is
+    # parsed after the pool rather than started again in every field that reads it.
+    profiler_holder: dict = {}
+
+    def _collect_system_profiler() -> dict:
+        profiler_holder["data"] = _combined_system_profiler()
+        return {}
+
     sections = (
         ("home_dotfiles", _home_dotfiles),
         ("recent_files", lambda: _recent_files(existing_roots)),
@@ -1363,7 +1379,6 @@ def _build_user_context() -> dict:
         ("shell_activity", _shell_activity_timeline),
         ("system_uptime", _system_uptime),
         ("hardware", _hardware_profile),
-        ("hardware_status", _hardware_status),
         ("appearance", _appearance),
         ("locale", _locale_profile),
         ("git_identity", _git_identity),
@@ -1372,7 +1387,6 @@ def _build_user_context() -> dict:
         ("homebrew", _homebrew_packages),
         ("editor_extensions", _editor_extensions),
         ("default_apps", _default_handlers),
-        ("bluetooth_devices", _bluetooth_devices),
         ("file_type_activity", _file_type_activity),
         ("recently_used_files", _recently_used_files),
         ("installed_applications", _installed_applications),
@@ -1382,6 +1396,7 @@ def _build_user_context() -> dict:
         ("running_app_durations_hours", _running_app_durations),
         ("app_launch_counts", _spotlight_app_usage),
         ("app_usage_hours_last_week", _app_usage),
+        (None, _collect_system_profiler),
         (None, _browser_site_activity),
     )
     with ThreadPoolExecutor(max_workers=min(12, len(sections))) as pool:
@@ -1398,5 +1413,14 @@ def _build_user_context() -> dict:
                 payload.update(value)
             else:
                 payload[key] = value
+
+    # The fields that read `system_profiler` are parsed from the one pass taken above.
+    profiler = profiler_holder.get("data") or {}
+    hardware_status = _hardware_status_from_profiler(profiler)
+    if hardware_status:
+        payload["hardware_status"] = hardware_status
+    bluetooth_devices = _bluetooth_from_profiler(profiler)
+    if bluetooth_devices:
+        payload["bluetooth_devices"] = bluetooth_devices
 
     return payload

@@ -193,7 +193,7 @@ class _RunsTurns:
             self._cached_system_prompt = self._prompt_loader.load(
                 "system_prompt",
                 {
-                    "system_prompt": self._system_prompt,
+                    "agent_prompt": self._system_prompt,
                     "thinking_language": thinking_language,
                     "context": context_json,
                     "user_environment": user_environment,
@@ -456,6 +456,8 @@ class _RunsTurns:
         resume_answers: Optional[dict[str, Any]] = None,
     ) -> AsyncIterator[TurnEvent]:
         self._abort_event.clear()
+        # The person's words are held until the request is assembled, so every part sent with them reads first.
+        pending_user_message = None
         # A turn runs until the model is done or the user interrupts: an unfinished goal outlives this loop.
         turn_tool_calls_log: list[dict] = []
         turn_tool_results_log: list[dict] = []
@@ -499,7 +501,6 @@ class _RunsTurns:
                 if as_system_note and isinstance(user_message, str)
                 else HumanMessage(content=user_message)
             )
-            self._conversation.append(turn_message)
             # Only when the user speaks: a tool-result hop is the same instruction, and repeating it buys nothing.
             # The checklist joins the conversation like any other message, so it is checkpointed and never lost.
             self._conversation.append(
@@ -507,7 +508,9 @@ class _RunsTurns:
             )
             # The event-log recorder only wants prose from LangChain's standard blocks.
             recorded_user_message = message_text(turn_message)
-        # After the turn's message, so the freshest picture is read last, and once per turn rather than per hop.
+            # Held until the request is assembled, so the person's words read last, after the reminders and data.
+            pending_user_message = turn_message
+        # The turn context follows the checklist but precedes the request, so the freshest picture is read first.
         self._append_turn_context()
         self._turn_started_at = datetime.now(timezone.utc)
 
@@ -538,6 +541,11 @@ class _RunsTurns:
             if self._should_compact():
                 async for compaction_event in self.compact(reason="auto"):
                     yield compaction_event
+
+            # The person's words join the request here, after every reminder and data part that travels with them.
+            if pending_user_message is not None:
+                self._conversation.append(pending_user_message)
+                pending_user_message = None
 
             messages = self._build_turn_messages()
 

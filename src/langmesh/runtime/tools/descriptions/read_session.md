@@ -2,6 +2,7 @@ Read one session's current state: which agent profile it runs, whether its proce
 
 Use this to orient yourself, never to wait. Do not call it in a loop to learn whether a peer finished. A peer's result reaches you on its own.
 
-Arguments:
-  - session: The id of the session to read. Required.
-  - explanation: A short reason for the read, in the words the user reads.
+This call takes these arguments:
+
+- `session` — The id of the session to read. Required.
+- `explanation` — A short reason for the read, in the words the user reads.

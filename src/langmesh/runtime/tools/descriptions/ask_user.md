@@ -8,6 +8,7 @@ Custom answers are on by default, so never add a redundant "Other" or catch-all 
 
 An answer comes back as the selected label, a bare string. That includes free text the user typed instead of choosing. Only a question marked `multiple` answers with an array.
 
-Arguments:
-  - questions: A list of question objects. Each holds "question" (the full text), "header" (a short label, about 30 characters), "options" (a list of {"label", "description"}), and two optional flags: "multiple" and "custom", which defaults to true.
-  - explanation: A short reason for asking, in the words the user reads.
+This call takes these arguments:
+
+- `questions` — A list of question objects. Each holds "question" (the full text), "header" (a short label, about 30 characters), "options" (a list of {"label", "description"}), and two optional flags: "multiple" and "custom", which defaults to true.
+- `explanation` — A short reason for asking, in the words the user reads.

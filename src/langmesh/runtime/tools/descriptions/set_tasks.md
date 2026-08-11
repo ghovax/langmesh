@@ -8,7 +8,8 @@ Use this to break complex work into steps that run in parallel or in order. A ta
 
 Keep each task short and factual, and tie it to work somebody can observe. Skip the list for work that your next response finishes. Once you create the list, keep it true to reality with `update_tasks`.
 
-Arguments:
-  - tasks: A list of task objects. Each holds:
-        - description (required): What somebody must do.
-        - dependencies (optional): A list of task identifiers this task waits for, such as ["task-...", ...].
+This call takes these arguments:
+
+- `tasks` — A list of task objects. Each holds:
+  - `description` (required) — What somebody must do.
+  - `dependencies` (optional) — A list of task identifiers this task waits for, such as ["task-...", ...].
