@@ -56,7 +56,6 @@ import { ModelSelect, modelSupportsVision } from "./model-select";
 import type { TokenUsage } from "@/lib/use-chat";
 import { InlineField } from "./ui/display";
 import { richTags } from "@/lib/i18n/rich-tags";
-import { CONTROL_ICON_SIZE } from "./session-controls";
 import { swallowed } from "@/lib/swallowed";
 import { useFittedRow } from "@/lib/use-fitted-row";
 import { errorMessage } from "@/lib/errors";
@@ -85,6 +84,8 @@ interface ChatInputProps {
   // The active agent's configured model, driving the chip and the attachment gates for every session running that agent.
   agentModel?: string;
   onAgentModelChange: (modelIdentifier: string) => void | Promise<void>;
+  // Re-fetches the model catalog through the daemon, the retry path for a failed initial load.
+  onRetryModels?: () => void | Promise<void>;
   // The session's permission mode and its change handler, surfaced here so it is adjustable inline.
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
@@ -302,14 +303,9 @@ function ContextUsageChip({
             )}
           </>
         )}
-        <Box
-          data-fit-label="context-detail"
-          data-fit-hidden={hidden.has("context-detail") ? "" : undefined}
-          display="flex"
-          alignItems="center"
-          flexShrink={0}
-        >
-          <LuCoins size={CONTROL_ICON_SIZE} />
+        {/* The tokens icon is the chip's fallback: it stays when the numbers are shed, so the chip is never an empty box. */}
+        <Box display="flex" alignItems="center" flexShrink={0}>
+          <LuCoins size={14} />
         </Box>
         <Text
           data-fit-label="context-detail"
@@ -360,6 +356,7 @@ export function ChatInput({
   recentModels = [],
   agentModel = "",
   onAgentModelChange,
+  onRetryModels,
   permissionMode = "ask",
   onPermissionModeChange,
   sandboxEnforce = "required",
@@ -967,6 +964,7 @@ export function ChatInput({
           value={agentModel}
           onChange={onAgentModelChange}
           fallbackModelId={agentModel}
+          onRetryModels={onRetryModels}
           compact
           fitted
           providerHidden={hiddenLabels.has("model-provider")}
@@ -1011,9 +1009,9 @@ export function ChatInput({
               }
             >
               {isCompacting ? (
-                <Spinner boxSize={`${CONTROL_ICON_SIZE}px`} borderWidth="1.5px" />
+                <Spinner boxSize={`${14}px`} borderWidth="1.5px" />
               ) : (
-                <LuFoldVertical size={CONTROL_ICON_SIZE} />
+                <LuFoldVertical size={14} />
               )}
               <Text
                 data-fit-label="compact"

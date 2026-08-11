@@ -1128,8 +1128,9 @@ export async function saveSettings(settings: SaveSettingsPayload): Promise<void>
 }
 
 // The model catalog for the picker, with availability, and the provider registry.
-export async function fetchModels(): Promise<ModelsResponse> {
-  const response = await apiFetch(`/models`);
+// `refresh` tells the daemon to drop its TTL'd live subscription catalogs and re-fetch them, the retry path.
+export async function fetchModels(refresh = false): Promise<ModelsResponse> {
+  const response = await apiFetch(refresh ? `/models?refresh=1` : `/models`);
   if (!response.ok) return { models: [], providers: [] };
   return response.json();
 }

@@ -256,45 +256,61 @@ const Entry = memo(function Entry({ revised, labels }: { revised: Revised; label
   );
   return (
     <Collapsible.Root>
-      <Tooltip
-        content={tooltipContent}
-        rich
-        openDelay={250}
-        closeDelay={60}
-        positioning={{ placement: "left" }}
+      <Box
+        borderWidth="1px"
+        borderColor="border"
+        borderRadius="md"
+        px={2}
+        py={1.5}
+        bg="bg.subtle"
+        opacity={retired(entry) ? 0.55 : 1}
       >
-        <Box
-          borderWidth="1px"
-          borderColor="border"
-          borderRadius="md"
-          px={2}
-          py={1.5}
-          bg="bg.subtle"
-          opacity={retired(entry) ? 0.55 : 1}
+        <Tooltip
+          content={tooltipContent}
+          rich
+          openDelay={250}
+          closeDelay={60}
+          positioning={{ placement: "left" }}
         >
-          <Body entry={entry} />
-          {/* Wider than the gaps inside the body: these are qualifiers about the entry, not another line of it. */}
-          <Flex align="center" gap={0.5} mt={2} wrap="wrap" color="fg.muted">
-            {qualifiers.map((qualifier, index) => (
-              <Fragment key={index}>
-                {index > 0 ? <Dot /> : null}
-                {qualifier}
-              </Fragment>
-            ))}
-          </Flex>
-          <Collapsible.Content>
-            <VStack
-              align="stretch"
-              gap={2.5}
-              mt={1.5}
-              mb={0.5}
-              ps={2}
-              borderLeftWidth="2px"
-              borderColor="border.emphasized"
-            >
-              {earlier.map((older) => (
-                <Box key={older.id} opacity={0.8}>
-                  <Body entry={older} muted expanded />
+          <Box>
+            <Body entry={entry} />
+            {/* Wider than the gaps inside the body: these are qualifiers about the entry, not another line of it. */}
+            <Flex align="center" gap={0.5} mt={2} wrap="wrap" color="fg.muted">
+              {qualifiers.map((qualifier, index) => (
+                <Fragment key={index}>
+                  {index > 0 ? <Dot /> : null}
+                  {qualifier}
+                </Fragment>
+              ))}
+            </Flex>
+          </Box>
+        </Tooltip>
+        <Collapsible.Content>
+          <VStack
+            align="stretch"
+            gap={2.5}
+            mt={1.5}
+            mb={0.5}
+            ps={2}
+            borderLeftWidth="2px"
+            borderColor="border.emphasized"
+          >
+            {/* Each earlier version stays one line until hovered, so a long revision history reads as a list, not a wall. */}
+            {earlier.map((older) => (
+              <Tooltip
+                key={older.id}
+                content={
+                  <Box whiteSpace="normal" maxW="360px">
+                    <Body entry={older} expanded />
+                  </Box>
+                }
+                rich
+                openDelay={250}
+                closeDelay={60}
+                positioning={{ placement: "left" }}
+              >
+                <Box opacity={0.8}>
+                  <Body entry={older} muted />
                   {older.written_at ? (
                     <RelativeTime
                       date={older.written_at}
@@ -305,11 +321,11 @@ const Entry = memo(function Entry({ revised, labels }: { revised: Revised; label
                     />
                   ) : null}
                 </Box>
-              ))}
-            </VStack>
-          </Collapsible.Content>
-        </Box>
-      </Tooltip>
+              </Tooltip>
+            ))}
+          </VStack>
+        </Collapsible.Content>
+      </Box>
     </Collapsible.Root>
   );
 });

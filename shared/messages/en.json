@@ -327,7 +327,8 @@
     "endpoint": "Endpoint",
     "apply": "Apply",
     "hide": "Hide",
-    "show": "Show"
+    "show": "Show",
+    "retryModels": "Reload models"
   },
   "NewWorkspaceDialog": {
     "title": "New workspace",

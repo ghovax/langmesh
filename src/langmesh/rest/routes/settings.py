@@ -9,12 +9,7 @@ from langmesh.base.credentials import ChatGPTLoginFlow, clear_tokens, load_token
 from langmesh.base.cursor_credentials import CursorLoginFlow
 from langmesh.base.cursor_credentials import clear_tokens as cursor_clear_tokens
 from langmesh.base.cursor_credentials import load_tokens as cursor_load_tokens
-from langmesh.base.cursor_subscription import (
-    clear_subscription_models_cache as cursor_clear_subscription_models_cache,
-)
-from langmesh.base.cursor_subscription import (
-    fetch_subscription_models as cursor_fetch_subscription_models,
-)
+from langmesh.base import cursor_subscription
 from langmesh.base.models import available_models, list_models, ModelDefinition
 from langmesh.base.subscription import (
     clear_subscription_models_cache,
@@ -119,15 +114,19 @@ async def open_accessibility_settings():
 
 
 @router.get("/models")
-async def list_models_endpoint():
+async def list_models_endpoint(refresh: bool = False):
     """The model catalog for the picker: every known model, whether its provider has a credential, and the provider registry."""
     assert state.global_configuration is not None
     configured_keys = state.global_configuration.configured_provider_keys()
     available_identifiers = {model.identifier for model in available_models(configured_keys)}
+    # A retry re-fetches the live subscription catalogs rather than serving their TTL'd copies.
+    if refresh:
+        clear_subscription_models_cache()
+        cursor_subscription.clear_subscription_models_cache()
     # The subscription providers list a static superset, so both accounts' live catalogs are fetched at once to grey the rest.
     live_chatgpt, live_cursor = await asyncio.gather(
         fetch_subscription_models(),
-        cursor_fetch_subscription_models(),
+        cursor_subscription.fetch_subscription_models(),
     )
     catalog = list_models()
     # Live models the static list has not caught are appended, filtered to what this harness can actually route.
@@ -270,7 +269,7 @@ async def cursor_auth_start():
     async def _await_completion() -> None:
         try:
             await flow.wait()
-            cursor_clear_subscription_models_cache()
+            cursor_subscription.clear_subscription_models_cache()
             await _reset_all_runtimes()
             _publish_broadcast({"type": "settings_changed"})
         except Exception:  # noqa: BLE001 — timeout/denial/cancellation just leaves us signed out
@@ -293,7 +292,7 @@ async def cursor_auth_signout():
         await state.cursor_login_flow.close()
         state.cursor_login_flow = None
     await asyncio.to_thread(cursor_clear_tokens)
-    cursor_clear_subscription_models_cache()
+    cursor_subscription.clear_subscription_models_cache()
     # Resumable conversation state belongs to the account that produced it, so it goes too.
     clear_resumptions()
     await _reset_all_runtimes()

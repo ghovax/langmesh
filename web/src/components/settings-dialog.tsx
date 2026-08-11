@@ -172,6 +172,7 @@ export function SettingsDialog({
   onPermissionModeSaved,
   onSandboxEnforceChange,
   onWorktreeStrategyChange,
+  onRetryModels,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -192,6 +193,8 @@ export function SettingsDialog({
   onPermissionModeSaved?: (mode: PermissionMode) => void | Promise<void>;
   onSandboxEnforceChange?: (enforce: SandboxEnforce) => void | Promise<void>;
   onWorktreeStrategyChange?: (strategy: WorktreeStrategyValue) => void | Promise<void>;
+  // Re-fetches the model catalog through the daemon, the retry path for a failed initial load.
+  onRetryModels?: () => void | Promise<void>;
 }) {
   const translation = useTranslations("SettingsDialog");
   const tc = useTranslations("Common");
@@ -1059,6 +1062,7 @@ export function SettingsDialog({
                 setAgentConfiguration(configuration);
                 setPermissionMode(configuration.permission_mode);
               }}
+              onRetryModels={onRetryModels}
             />
           ) : null,
         },
@@ -1371,12 +1375,14 @@ function AgentPermissionsEditor({
   providers,
   recentModels,
   onChange,
+  onRetryModels,
 }: {
   configuration: AgentConfiguration;
   models: ModelOption[];
   providers: ProviderOption[];
   recentModels: RecentModel[];
   onChange: (configuration: AgentConfiguration) => void;
+  onRetryModels?: () => void | Promise<void>;
 }) {
   const translation = useTranslations("SettingsDialog");
   const ruleDecisionItems = useMemo(
@@ -1452,6 +1458,7 @@ function AgentPermissionsEditor({
                     : ""
                 }
                 onChange={updateModel}
+                onRetryModels={onRetryModels}
               />
             </Box>
           </SettingField>

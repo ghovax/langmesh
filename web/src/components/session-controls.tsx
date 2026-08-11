@@ -33,9 +33,6 @@ import type { PermissionMode } from "@/lib/api";
 
 export type WorktreeStrategyValue = "none" | "branch" | "worktree";
 
-// One control size for the row, with `layout` deciding only what varies between the two shapes.
-export const CONTROL_ICON_SIZE = 14;
-
 function controlMetrics(layout: "chip" | "field") {
   const base = {
     borderRadius: "md" as const,
@@ -67,21 +64,21 @@ function permissionAppearance(permissionMode: PermissionMode) {
   return (
     {
       ask: {
-        icon: <LuHand size={CONTROL_ICON_SIZE} />,
+        icon: <LuHand size={14} />,
         color: "fg.subtle",
         background: "bg",
         borderColor: "border",
         colorPalette: undefined,
       },
       automatic: {
-        icon: <LuBadgeCheck size={CONTROL_ICON_SIZE} />,
+        icon: <LuBadgeCheck size={14} />,
         color: "blue.fg",
         background: "blue.subtle",
         borderColor: "blue.muted",
         colorPalette: "blue",
       },
     }[permissionMode] ?? {
-      icon: <LuHand size={CONTROL_ICON_SIZE} />,
+      icon: <LuHand size={14} />,
       color: "fg.subtle",
       background: "bg",
       borderColor: "border",
@@ -93,21 +90,21 @@ function permissionAppearance(permissionMode: PermissionMode) {
 function worktreeAppearance(worktreeStrategy: WorktreeStrategyValue) {
   return {
     none: {
-      icon: <LuHardDrive size={CONTROL_ICON_SIZE} />,
+      icon: <LuHardDrive size={14} />,
       color: "fg.subtle",
       background: "bg",
       borderColor: "border",
       colorPalette: undefined,
     },
     branch: {
-      icon: <LuGitBranch size={CONTROL_ICON_SIZE} />,
+      icon: <LuGitBranch size={14} />,
       color: "purple.fg",
       background: "purple.subtle",
       borderColor: "purple.muted",
       colorPalette: "purple",
     },
     worktree: {
-      icon: <LuGitFork size={CONTROL_ICON_SIZE} />,
+      icon: <LuGitFork size={14} />,
       color: "teal.fg",
       background: "teal.subtle",
       borderColor: "teal.muted",
@@ -194,7 +191,7 @@ export function AgentSelectControl({
             color="fg.muted"
             flexShrink={0}
           >
-            <LuUser size={CONTROL_ICON_SIZE} />
+            <LuUser size={14} />
           </Box>
           <Select.ValueText
             data-fit-label={fitted ? "agent" : undefined}
@@ -278,13 +275,13 @@ export function PermissionModeControl({
       value: "ask",
       label: translation("permissionAskLabel"),
       description: translation("permissionAskDescription"),
-      icon: <LuHand size={CONTROL_ICON_SIZE} />,
+      icon: <LuHand size={14} />,
     },
     {
       value: "automatic",
       label: translation("permissionAutomaticLabel"),
       description: translation("permissionAutomaticDescription"),
-      icon: <LuBadgeCheck size={CONTROL_ICON_SIZE} />,
+      icon: <LuBadgeCheck size={14} />,
       colorPalette: "blue",
     },
   ];
@@ -509,7 +506,7 @@ export function SandboxToggleControl({
   const appearance: ToggleAppearance = !confining
     ? {
         label: translation("sandboxGlobal"),
-        icon: <LuGlobe size={CONTROL_ICON_SIZE} />,
+        icon: <LuGlobe size={14} />,
         color: "red.fg",
         background: "red.subtle",
         borderColor: "red.muted",
@@ -518,7 +515,7 @@ export function SandboxToggleControl({
     : enforceable
       ? {
           label: translation("sandboxRestricted"),
-          icon: <LuBox size={CONTROL_ICON_SIZE} />,
+          icon: <LuBox size={14} />,
           color: "green.fg",
           background: "green.subtle",
           borderColor: "green.muted",
@@ -526,7 +523,7 @@ export function SandboxToggleControl({
         }
       : {
           label: translation("sandboxUnavailable"),
-          icon: <LuGlobe size={CONTROL_ICON_SIZE} />,
+          icon: <LuGlobe size={14} />,
           color: "orange.fg",
           background: "orange.subtle",
           borderColor: "orange.muted",
@@ -558,7 +555,7 @@ export function CompactionToggleControl({
   const appearance: ToggleAppearance = enabled
     ? {
         label: translation("compactionAutomatic"),
-        icon: <LuZap size={CONTROL_ICON_SIZE} />,
+        icon: <LuZap size={14} />,
         color: "blue.fg",
         background: "blue.subtle",
         borderColor: "blue.muted",
@@ -566,7 +563,7 @@ export function CompactionToggleControl({
       }
     : {
         label: translation("compactionManual"),
-        icon: <LuCircleSlash size={CONTROL_ICON_SIZE} />,
+        icon: <LuCircleSlash size={14} />,
         color: "fg.muted",
         background: "bg.subtle",
         borderColor: "border",
@@ -591,7 +588,7 @@ export function UserContextToggleControl({
   const appearance: ToggleAppearance = enabled
     ? {
         label: translation("userContextOn"),
-        icon: <LuUserSearch size={CONTROL_ICON_SIZE} />,
+        icon: <LuUserSearch size={14} />,
         color: "blue.fg",
         background: "blue.subtle",
         borderColor: "blue.muted",
@@ -599,7 +596,7 @@ export function UserContextToggleControl({
       }
     : {
         label: translation("userContextOff"),
-        icon: <LuCircleSlash size={CONTROL_ICON_SIZE} />,
+        icon: <LuCircleSlash size={14} />,
         color: "fg.muted",
         background: "bg.subtle",
         borderColor: "border",
@@ -624,7 +621,7 @@ export function DictationToggleControl({
   const appearance: ToggleAppearance = enabled
     ? {
         label: translation("dictationOn"),
-        icon: <LuMic size={CONTROL_ICON_SIZE} />,
+        icon: <LuMic size={14} />,
         color: "blue.fg",
         background: "blue.subtle",
         borderColor: "blue.muted",
@@ -632,7 +629,7 @@ export function DictationToggleControl({
       }
     : {
         label: translation("dictationOff"),
-        icon: <LuCircleSlash size={CONTROL_ICON_SIZE} />,
+        icon: <LuCircleSlash size={14} />,
         color: "fg.muted",
         background: "bg.subtle",
         borderColor: "border",
@@ -657,7 +654,7 @@ export function ComputerControlToggleControl({
   const appearance: ToggleAppearance = enabled
     ? {
         label: translation("computerControlOn"),
-        icon: <LuMousePointerClick size={CONTROL_ICON_SIZE} />,
+        icon: <LuMousePointerClick size={14} />,
         color: "blue.fg",
         background: "blue.subtle",
         borderColor: "blue.muted",
@@ -665,7 +662,7 @@ export function ComputerControlToggleControl({
       }
     : {
         label: translation("computerControlOff"),
-        icon: <LuCircleSlash size={CONTROL_ICON_SIZE} />,
+        icon: <LuCircleSlash size={14} />,
         color: "fg.muted",
         background: "bg.subtle",
         borderColor: "border",
@@ -690,7 +687,7 @@ export function SettingToggleControl({
   const appearance: ToggleAppearance = enabled
     ? {
         label: translation("settingOn"),
-        icon: <LuCheck size={CONTROL_ICON_SIZE} />,
+        icon: <LuCheck size={14} />,
         color: "blue.fg",
         background: "blue.subtle",
         borderColor: "blue.muted",
@@ -698,7 +695,7 @@ export function SettingToggleControl({
       }
     : {
         label: translation("settingOff"),
-        icon: <LuCircleSlash size={CONTROL_ICON_SIZE} />,
+        icon: <LuCircleSlash size={14} />,
         color: "fg.muted",
         background: "bg.subtle",
         borderColor: "border",
@@ -722,7 +719,7 @@ export function ToolboxToggleControl({
   const appearance: ToggleAppearance = enabled
     ? {
         label: translation("toolboxOn"),
-        icon: <LuPackage size={CONTROL_ICON_SIZE} />,
+        icon: <LuPackage size={14} />,
         color: "blue.fg",
         background: "blue.subtle",
         borderColor: "blue.muted",
@@ -730,7 +727,7 @@ export function ToolboxToggleControl({
       }
     : {
         label: translation("toolboxOff"),
-        icon: <LuCircleSlash size={CONTROL_ICON_SIZE} />,
+        icon: <LuCircleSlash size={14} />,
         color: "fg.muted",
         background: "bg.subtle",
         borderColor: "border",
@@ -771,14 +768,14 @@ export function WorktreeStrategyControl({
       label: translation("worktreeNoneLabel"),
       description: translation("worktreeNoneDescription"),
       title: translation("worktreeNoneTitle"),
-      icon: <LuHardDrive size={CONTROL_ICON_SIZE} />,
+      icon: <LuHardDrive size={14} />,
     },
     {
       value: "branch",
       label: translation("worktreeBranchLabel"),
       description: translation("worktreeBranchDescription"),
       title: translation("worktreeBranchTitle"),
-      icon: <LuGitBranch size={CONTROL_ICON_SIZE} />,
+      icon: <LuGitBranch size={14} />,
       colorPalette: "purple",
     },
     {
@@ -786,7 +783,7 @@ export function WorktreeStrategyControl({
       label: translation("worktreeCopyLabel"),
       description: translation("worktreeCopyDescription"),
       title: translation("worktreeCopyTitle"),
-      icon: <LuGitFork size={CONTROL_ICON_SIZE} />,
+      icon: <LuGitFork size={14} />,
       colorPalette: "teal",
     },
   ];

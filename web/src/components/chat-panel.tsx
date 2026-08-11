@@ -54,7 +54,6 @@ import { QuestionOverlay } from "./question-overlay";
 import { SettingsDialog, type SettingsSection } from "./settings-dialog";
 import { BackgroundJobsPanel } from "./background-jobs-panel";
 import { MemoryPanel } from "./memory-panel";
-import { CONTROL_ICON_SIZE } from "./session-controls";
 import { DelegatedWorkPanel } from "./delegated-work-panel";
 import { GoalReviewPanel } from "./goal-review-panel";
 import type { SessionEntry } from "./session-row";
@@ -179,6 +178,8 @@ interface ChatPanelProps {
   recentModels?: { id: string; name: string; provider: string }[];
   agentModel?: string;
   onAgentModelChange: (modelIdentifier: string) => void | Promise<void>;
+  // Re-fetches the model catalog through the daemon, the retry path for a failed initial load.
+  onRetryModels?: () => void | Promise<void>;
 }
 
 function folderDisplayName(workingDirectory?: string): string {
@@ -230,6 +231,7 @@ export function ChatPanel({
   recentModels = [],
   agentModel = "",
   onAgentModelChange,
+  onRetryModels,
 }: ChatPanelProps) {
   const translation = useTranslations("ChatPanel");
   const [permissionMode, setPermissionModeState] = useState<PermissionMode>(initialPermissionMode);
@@ -1014,7 +1016,7 @@ export function ChatPanel({
                   recordingMemory ? (
                     <Spinner size="xs" colorPalette="orange" />
                   ) : (
-                    <LuBookMarked size={CONTROL_ICON_SIZE} />
+                    <LuBookMarked size={14} />
                   )
                 }
                 active={memoryPanelOpen}
@@ -1395,6 +1397,7 @@ export function ChatPanel({
                   recentModels={recentModels}
                   agentModel={agentModel}
                   onAgentModelChange={onAgentModelChange}
+                  onRetryModels={onRetryModels}
                   permissionMode={effectivePermissionMode}
                   onPermissionModeChange={handlePermissionModeChange}
                   sandboxEnforce={sandboxEnforce}
@@ -1467,6 +1470,7 @@ export function ChatPanel({
           onSandboxEnforceChange={onSandboxEnforceChange}
           liveWorktreeStrategy={worktreeStrategy}
           onWorktreeStrategyChange={onWorktreeStrategyChange}
+          onRetryModels={onRetryModels}
         />
 
         <ConfirmDialog

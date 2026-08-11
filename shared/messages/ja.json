@@ -327,7 +327,8 @@
     "endpoint": "エンドポイント",
     "apply": "適用",
     "hide": "非表示",
-    "show": "表示"
+    "show": "表示",
+    "retryModels": "モデル一覧を再読み込み"
   },
   "NewWorkspaceDialog": {
     "title": "新規ワークスペース",

@@ -233,8 +233,9 @@ function Workspace() {
       .catch(() => setIsConnected(false));
   }, []);
 
-  const loadModelCatalog = useCallback(() => {
-    fetchModels()
+  // `refresh` drops the daemon's cached live subscription catalogs, the retry path from the model picker.
+  const loadModelCatalog = useCallback((refresh = false) => {
+    return fetchModels(refresh)
       .then((catalog) => {
         setModels(catalog.models);
         setModelProviders(catalog.providers);
@@ -909,6 +910,7 @@ function Workspace() {
           recentModels={recentModels}
           agentModel={agentModel}
           onAgentModelChange={handleAgentModelChange}
+          onRetryModels={() => loadModelCatalog(true)}
         />
       </Box>
     </Flex>
