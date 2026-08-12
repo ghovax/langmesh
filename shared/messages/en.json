@@ -365,7 +365,7 @@
       "reported": "Reported"
     },
     "title": "Memory",
-    "description": "The agent's working memory for this workspace: the findings it established and the instructions it follows."
+    "description": "The agent's working memory for this workspace."
   },
   "ModelSelect": {
     "visionBadge": "Vision — accepts image input",

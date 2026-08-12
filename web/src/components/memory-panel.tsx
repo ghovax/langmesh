@@ -319,7 +319,7 @@ export function MemoryPanel({
         closeLabel={translation("collapsePanel")}
       />
       <PanelBody pt={1}>
-        <Text textStyle="2xs" color="fg.subtle" mb={2}>
+        <Text textStyle="xs" color="fg.subtle" mb={2}>
           {translation("description")}
         </Text>
         {loadError ? (
