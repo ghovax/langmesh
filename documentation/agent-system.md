@@ -9,16 +9,17 @@ A project-local entry **overrides** a global one with the same name. A repositor
 
 Everything sits under `.agents/`:
 
-| Path | What it holds |
-|---|---|
-| `agents/<id>/AGENT.md` | The whole profile: frontmatter and the prompt body |
-| `skills/<id>/SKILL.md` | A reusable capability, loaded on demand |
-| `memories/*.md` | Persistent project memory |
-| `mcp.json` | MCP server configuration |
+| Path                   | What it holds                                                     |
+| ---------------------- | ----------------------------------------------------------------- |
+| `agents/<id>/AGENT.md` | The whole profile: frontmatter and the prompt body                |
+| `skills/<id>/SKILL.md` | A reusable capability, loaded on demand                           |
+| `memories/*.md`        | User-recorded passages, loaded on demand like skills              |
+| `observations.sqlite`  | Agent-maintained current knowledge for this workspace or location |
+| `mcp.json`             | MCP server configuration                                          |
 
 ## Agents
 
-An agent is a directory with one file in it: **`AGENT.md`**, spelled that way for the same reason a skill is `SKILL.md`. YAML frontmatter says everything the agent *is*; the body is its system prompt.
+An agent is a directory with one file in it: **`AGENT.md`**, spelled that way for the same reason a skill is `SKILL.md`. YAML frontmatter says everything the agent _is_; the body is its system prompt.
 
 ```markdown
 ---
@@ -52,12 +53,12 @@ Each agent is a profile a session can be created with, and the daemon serves [A2
 
 The peer answers the same way, by messaging the session that created it. Bundled agents:
 
-| Agent | Role |
-|-------|------|
-| `general-assistant` | A capable default for everyday tasks. |
-| `reviewer` | Skeptical planning and verification before building. |
-| `code-investigator` | Reads and explains a codebase without changing it. |
-| `code-implementer` | Writes and edits code against a clear plan. |
+| Agent               | Role                                                 |
+| ------------------- | ---------------------------------------------------- |
+| `general-assistant` | A capable default for everyday tasks.                |
+| `reviewer`          | Skeptical planning and verification before building. |
+| `code-investigator` | Reads and explains a codebase without changing it.   |
+| `code-implementer`  | Writes and edits code against a clear plan.          |
 
 ## Skills
 
@@ -72,6 +73,7 @@ enabled: true
 ---
 
 # Coding Patterns and Implementation Discipline
+
 ...
 ```
 
@@ -79,7 +81,9 @@ Bundled skills include `coding`, `data-visualization`, `literature-search`, `lan
 
 ## Memory
 
-`.agents/memories/*.md` are persistent notes. Only their metadata is injected into the prompt; the agent reads a memory's body **on demand**, so context stays small while knowledge accumulates across sessions.
+`.agents/memories/*.md` are passages the user records. Only their metadata is injected into the prompt; the agent reads a memory's body **on demand**, so context stays small while knowledge accumulates across sessions.
+
+Observational memory is separate: `.agents/observations.sqlite` is current workspace/location knowledge maintained deliberately by an agent through Bash. Entry payloads are never injected or generated after each message. The stable system prompt carries only a compact JSON descriptor—resolved path, revision, per-ledger counts, and timestamp extent—and nudges the agent to retrieve a relevant slice when prior work may matter. Exact retrieval uses SQLite; semantic retrieval exports minified JSONL into a fresh disposable Semble index. Git provides history; the database keeps only current rows. The `observational-memory` skill defines retrieval and atomic write protocols, while `consolidate-observations` runs only when the user explicitly invokes it.
 
 ## MCP servers
 

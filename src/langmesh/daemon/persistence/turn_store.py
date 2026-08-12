@@ -10,7 +10,6 @@ from typing import Optional, Sequence
 from sqlalchemy import (
     Column,
     DateTime,
-    Index,
     Integer,
     MetaData,
     String,
@@ -29,11 +28,13 @@ from pydantic import ValidationError
 
 from a2a.server.context import ServerCallContext
 from a2a.server.tasks import TaskStore
-from a2a.types import DataPart, Message, Part, Role, Task, TaskState, TaskStatus
+from a2a.types import Message, Role, Task, TaskState, TaskStatus
 
 from langmesh.base.message_content import content_block_identifier
 from langmesh.base.serialization import compact, conversation_snapshot_id
 from langmesh.protocol.turn_record import ReconcileAction, TurnRecord, reconcile_action
+from langmesh.protocol.events import ErrorEvent
+from langmesh.protocol.parts import _event_part
 from langmesh.runtime.goal import Goal
 
 
@@ -236,29 +237,6 @@ class AppendOnlyTaskStore(TaskStore):
             Column("artifact", Text),
             UniqueConstraint("turn_id", "artifact_id", name="uq_task_artifact_id"),
         )
-        # The turn's durable resume checkpoint: the model-facing conversation, one row per context.
-        # Append-only, and the reason for the shape: an entry is never updated or deleted, so a correction
-        # is a later row naming the earlier one, and the whole chain stays readable after the fact.
-        self._ledger = Table(
-            "session_ledger",
-            self._metadata,
-            Column("row_id", Integer, primary_key=True, autoincrement=True),
-            Column("session_id", String),
-            Column("ledger", String),
-            Column("entry_id", String),
-            Column("entry", Text),
-            Column("supersedes", Text),
-            Column("written_at", String),
-            UniqueConstraint("session_id", "ledger", "entry_id", name="uq_session_ledger_entry"),
-            sqlite_autoincrement=True,
-        )
-        Index(
-            "idx_session_ledger_session",
-            self._ledger.c.session_id,
-            self._ledger.c.ledger,
-            self._ledger.c.row_id,
-        )
-
         self._checkpoint = Table(
             "turn_checkpoint",
             self._metadata,
@@ -365,17 +343,7 @@ class AppendOnlyTaskStore(TaskStore):
                 session_id = str(head_row["session_id"] or "")
                 interrupted_message = Message(
                     role=Role.agent,
-                    parts=[
-                        Part(
-                            root=DataPart(
-                                data={
-                                    "kind": "error",
-                                    "code": "turn_interrupted",
-                                    "message": "This turn was interrupted because the daemon restarted.",
-                                }
-                            )
-                        )
-                    ],
+                    parts=[_event_part(ErrorEvent(code="turn_interrupted"))],
                     message_id=uuid.uuid4().hex,
                     task_id=turn_id,
                     context_id=session_id or None,
@@ -395,6 +363,26 @@ class AppendOnlyTaskStore(TaskStore):
                     update(self._goal_reviews)
                     .where(self._goal_reviews.c.review_id == session_id)
                     .values(status=TaskState.failed.value, completed_at=interrupted_at)
+                )
+                stored_state = (
+                    await connection.execute(
+                        select(self._session_state.c.state).where(
+                            self._session_state.c.session_id == session_id
+                        )
+                    )
+                ).scalar()
+                retryable_state = json.loads(stored_state) if stored_state else {}
+                retryable_state["turn_recovery"] = "retryable"
+                state_insert = sqlite_insert(self._session_state).values(
+                    session_id=session_id,
+                    state=json.dumps(retryable_state),
+                    updated_at=interrupted_at,
+                )
+                await connection.execute(
+                    state_insert.on_conflict_do_update(
+                        index_elements=[self._session_state.c.session_id],
+                        set_={"state": state_insert.excluded.state, "updated_at": interrupted_at},
+                    )
                 )
                 failed_task_ids.append(turn_id)
         return failed_task_ids
@@ -485,9 +473,7 @@ class AppendOnlyTaskStore(TaskStore):
             await connection.execute(
                 sqlite_insert(self._conversation_snapshot)
                 .values(snapshot_id=snapshot_id, messages=compact(messages))
-                .on_conflict_do_nothing(
-                    index_elements=[self._conversation_snapshot.c.snapshot_id]
-                )
+                .on_conflict_do_nothing(index_elements=[self._conversation_snapshot.c.snapshot_id])
             )
             checkpoint_insert = sqlite_insert(self._checkpoint).values(
                 session_id=session_id,
@@ -575,12 +561,16 @@ class AppendOnlyTaskStore(TaskStore):
         await self._ensure_initialized()
         async with self._engine.connect() as connection:
             rows = (
-                await connection.execute(
-                    select(self._goal_reviews)
-                    .where(self._goal_reviews.c.session_id == session_id)
-                    .order_by(self._goal_reviews.c.created_at.desc())
+                (
+                    await connection.execute(
+                        select(self._goal_reviews)
+                        .where(self._goal_reviews.c.session_id == session_id)
+                        .order_by(self._goal_reviews.c.created_at.desc())
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return [dict(row) for row in rows]
 
     async def goal_review(self, review_id: str) -> dict | None:
@@ -588,12 +578,16 @@ class AppendOnlyTaskStore(TaskStore):
         await self._ensure_initialized()
         async with self._engine.connect() as connection:
             row = (
-                await connection.execute(
-                    select(self._goal_reviews).where(
-                        self._goal_reviews.c.review_id == review_id
+                (
+                    await connection.execute(
+                        select(self._goal_reviews).where(
+                            self._goal_reviews.c.review_id == review_id
+                        )
                     )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         return dict(row) if row is not None else None
 
     async def load_checkpoint(self, session_id: str) -> dict:
@@ -738,9 +732,7 @@ class AppendOnlyTaskStore(TaskStore):
                 "session_id": task.context_id,
                 "kind": task.kind,
                 "status": _dump(task.status),
-                "turn_metadata": json.dumps(task.metadata)
-                if task.metadata is not None
-                else None,
+                "turn_metadata": json.dumps(task.metadata) if task.metadata is not None else None,
             }
             head_insert = sqlite_insert(self._head).values(**head_values)
             await connection.execute(
@@ -761,10 +753,7 @@ class AppendOnlyTaskStore(TaskStore):
             if new_messages:
                 await connection.execute(
                     self._history.insert(),
-                    [
-                        {"turn_id": task.id, "message": _dump(message)}
-                        for message in new_messages
-                    ],
+                    [{"turn_id": task.id, "message": _dump(message)} for message in new_messages],
                 )
                 self._persisted_counts[task.id] = persisted + len(new_messages)
 
@@ -1043,105 +1032,6 @@ class AppendOnlyTaskStore(TaskStore):
         next_before_row_id = min(int(row.row_id) for row in page_rows)
         return {"turns": tasks, "next_before_row_id": next_before_row_id, "has_more": has_more}
 
-    async def append_memory(
-        self, session_id: str, observations: list[dict], directives: list[dict]
-    ) -> dict[str, list[dict]]:
-        """Commit entries atomically and return only the rows this transaction inserted."""
-        entries = [("observations", entry) for entry in observations] + [
-            ("directives", entry) for entry in directives
-        ]
-        if not entries:
-            return {"observations": [], "directives": []}
-        await self._ensure_initialized()
-        written = datetime.now(timezone.utc).isoformat()
-        rows_by_identity = {
-            (ledger, str(entry.get("id") or "")): {
-                "session_id": session_id,
-                "ledger": ledger,
-                "entry_id": str(entry.get("id") or ""),
-                "entry": json.dumps(entry, ensure_ascii=False),
-                "supersedes": json.dumps(list(entry.get("supersedes") or []), ensure_ascii=False),
-                "written_at": written,
-            }
-            for ledger, entry in entries
-            if entry.get("id")
-        }
-        rows = list(rows_by_identity.values())
-        if not rows:
-            return {"observations": [], "directives": []}
-        async with self._engine.begin() as connection:
-            insert_result = await connection.execute(
-                sqlite_insert(self._ledger)
-                .on_conflict_do_nothing(
-                    index_elements=["session_id", "ledger", "entry_id"]
-                )
-                .returning(self._ledger.c.ledger, self._ledger.c.entry_id),
-                rows,
-            )
-            inserted_identities = [
-                (str(ledger), str(entry_identifier))
-                for ledger, entry_identifier in insert_result.all()
-            ]
-        appended: dict[str, list[dict]] = {"observations": [], "directives": []}
-        for identity in inserted_identities:
-            row = rows_by_identity[identity]
-            entry = json.loads(row["entry"])
-            entry["id"] = identity[1]
-            entry["written_at"] = written
-            appended[identity[0]].append(entry)
-        return appended
-
-    async def memory_entries(
-        self, session_id: str, *, live_only: bool = True
-    ) -> dict[str, list[dict]]:
-        """Read both memory ledgers with one statement, so they always describe one committed revision."""
-        await self._ensure_initialized()
-        async with self._engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    select(
-                        self._ledger.c.ledger,
-                        self._ledger.c.entry_id,
-                        self._ledger.c.entry,
-                        self._ledger.c.supersedes,
-                        self._ledger.c.written_at,
-                    )
-                    .where(
-                        self._ledger.c.session_id == session_id,
-                        self._ledger.c.ledger.in_(("observations", "directives")),
-                    )
-                    .order_by(self._ledger.c.row_id)
-                )
-            ).all()
-        entries: dict[str, list[dict]] = {"observations": [], "directives": []}
-        replaced: dict[str, set[str]] = {"observations": set(), "directives": set()}
-        for ledger, entry_id, payload, supersedes, written_at in rows:
-            try:
-                entry = json.loads(payload)
-            except ValueError:
-                continue
-            entry["id"] = str(entry_id)
-            entry["written_at"] = str(written_at or "")
-            entries[str(ledger)].append(entry)
-            try:
-                replaced[str(ledger)].update(json.loads(supersedes or "[]"))
-            except ValueError:
-                pass
-        if not live_only:
-            return entries
-        return {
-            ledger: [entry for entry in values if entry["id"] not in replaced[ledger]]
-            for ledger, values in entries.items()
-        }
-
-    async def ledger_entries(
-        self, session_id: str, ledger: str, *, live_only: bool = True
-    ) -> list[dict]:
-        """A session's ledger in the order it was written; live entries are those nothing later replaces."""
-        if ledger not in {"observations", "directives"}:
-            return []
-        return (await self.memory_entries(session_id, live_only=live_only))[ledger]
-
     async def delete(self, turn_id: str, context: ServerCallContext | None = None) -> None:
         await self._ensure_initialized()
         async with self._engine.begin() as connection:
@@ -1200,14 +1090,10 @@ class AppendOnlyTaskStore(TaskStore):
             )
             await self._delete_unreferenced_conversation_snapshots(connection)
             await connection.execute(
-                delete(self._session_state).where(
-                    self._session_state.c.session_id.in_(context_ids)
-                )
+                delete(self._session_state).where(self._session_state.c.session_id.in_(context_ids))
             )
             await connection.execute(
-                delete(self._goal_reviews).where(
-                    self._goal_reviews.c.session_id == session_id
-                )
+                delete(self._goal_reviews).where(self._goal_reviews.c.session_id == session_id)
             )
         for turn_id in turn_ids:
             self._persisted_counts.pop(str(turn_id), None)

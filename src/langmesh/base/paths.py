@@ -10,8 +10,8 @@ from pathlib import Path
 APPLICATION = "langmesh"
 
 CONFIGURATION_FILENAME = "configuration.yaml"
-DATABASE_FILENAME = "history.db"
-BACKGROUND_DATABASE_FILENAME = "background.db"
+DATABASE_FILENAME = "history.sqlite"
+BACKGROUND_DATABASE_FILENAME = "background.sqlite"
 DAEMON_SOCKET_FILENAME = "langmeshd.sock"
 DAEMON_TOKEN_FILENAME = "token"
 DAEMON_PORT_FILENAME = "port"
@@ -60,10 +60,6 @@ def configuration_file_path() -> Path:
 
 def database_file_path() -> Path:
     return data_directory() / DATABASE_FILENAME
-
-
-def background_database_path() -> Path:
-    return data_directory() / BACKGROUND_DATABASE_FILENAME
 
 
 def uploads_directory() -> Path:

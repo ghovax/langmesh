@@ -126,7 +126,6 @@ class Tunable(Enum):
     attach_snapshot_rows = Default(400, Scaling.NONE)
     session_title_attempts = Default(3, Scaling.NONE)
     permission_reviewer_attempts = Default(3, Scaling.NONE)
-    compaction_attempts = Default(3, Scaling.NONE)
     session_idle_sleep = Default(18000.0, Scaling.TIME)
     daemon_startup = Default(45.0, Scaling.TIME)
     control_plane_call = Default(60.0, Scaling.TIME)

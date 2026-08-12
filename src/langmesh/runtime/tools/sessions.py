@@ -101,6 +101,16 @@ async def _message_session(session: str, message: str, explanation: str) -> str:
         )
     # A peer parked on a decision does not take the message, and saying so is the point.
     if isinstance(outcome, dict) and outcome.get("awaiting_input"):
+        waiting = outcome.get("waiting_on") if isinstance(outcome.get("waiting_on"), dict) else {}
+        waiting_kind = str(waiting.get("kind") or "permission")
+        command = str(waiting.get("command") or "")
+        waiting_on = (
+            "an answer to the session's question"
+            if waiting_kind == "question"
+            else f"a permission decision for `{command}`"
+            if command
+            else "a permission decision"
+        )
         return compact(
             {
                 "code": "session_awaiting_input",
@@ -109,7 +119,7 @@ async def _message_session(session: str, message: str, explanation: str) -> str:
                 "message": _PROMPTS.load(
                     "session_awaiting_input",
                     {
-                        "waiting_on": str(outcome.get("waiting_on") or "a decision from the user"),
+                        "waiting_on": waiting_on,
                     },
                 ).strip(),
             }

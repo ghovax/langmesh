@@ -118,6 +118,7 @@ class Usage(TurnEvent):
     cache_read_tokens: int = 0
     reasoning_tokens: int = 0
     context_window: int = 0
+    context_window_estimated: bool = False
     cumulative: dict[str, Any] = field(default_factory=dict)
     #: Whether every byte shared with the last request was unchanged, which is what makes the read figure readable.
     prefix_intact: bool = False
@@ -208,8 +209,8 @@ class CompactionDone(TurnEvent):
     tokens_before: int = 0
     # What the fold actually reclaimed, reported by every strategy including a supplied one.
     tokens_after: int = 0
-    # How large the memory itself has become, on which the whole schedule of a long session turns.
-    log_tokens: int = 0
+    # Present only on a failed fold; the client resolves it through its locale catalogue.
+    error_code: str | None = None
 
 
 @dataclass(frozen=True)

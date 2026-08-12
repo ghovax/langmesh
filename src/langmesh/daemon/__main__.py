@@ -331,6 +331,14 @@ async def _serve() -> int:
         state.host,
         on_change=lambda: state.broadcaster.publish({"type": "sessions_changed"}),
     )
+    from langmesh.daemon.observation_watcher import ObservationRegistryWatcher
+
+    commons_state.observation_registry_watcher = ObservationRegistryWatcher(
+        state.registry,
+        state.host,
+        state.broadcaster,
+        commons_state.global_configuration,
+    )
     # The two places a workspace change has a supervision consequence, filled in only where there is a control plane to tell.
     from langmesh.daemon.pending_input import settle_and_reap
 
@@ -435,6 +443,8 @@ async def _serve() -> int:
         resume_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await resume_task
+        with contextlib.suppress(Exception):
+            await commons_state.observation_registry_watcher.aclose()
         # Sessions must not outlive their supervisor, which can no longer persist anything for them.
         with contextlib.suppress(Exception):
             await state.lifecycle.aclose()

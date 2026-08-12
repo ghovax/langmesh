@@ -84,8 +84,6 @@ class SessionRecord:
     hosted: bool = False
     # Set when the session is parked on a decision, rebuilt on restart from the turn store where the suspension lives.
     awaiting_input: bool = False
-    # Set while a turn is in flight, purely in memory because a stored value outlives the kill that ended it.
-    busy: bool = False
 
     @property
     def token(self) -> str:
@@ -101,27 +99,26 @@ class SessionRecord:
         """Live, but with no executor. The next message to it builds one."""
         return self.is_live and not self.hosted
 
-    @property
-    def activity(self) -> str:
-        """What this session is doing, derived from the world, ordered so the most interesting fact wins."""
+    def activity(self, *, busy: bool = False) -> str:
+        """What this session is doing, combining the record with the daemon's live turn fact."""
         if not self.is_live:
             return ENDED_ACTIVITY
         if self.awaiting_input:
             return WAITING
         if not self.hosted:
             return ASLEEP
-        if self.busy:
+        if busy:
             return WORKING
         return IDLE
 
-    def public(self) -> dict:
+    def public(self, *, busy: bool = False) -> dict:
         """The view a client gets, never including the capability token that a listing must not hand out."""
         return {
             "id": self.id,
             "agent": self.agent,
             "parent": self.parent,
             "lifecycle": self.lifecycle,
-            "activity": self.activity,
+            "activity": self.activity(busy=busy),
             "outcome": self.outcome,
             "awaiting_input": self.awaiting_input,
             "title": self.title,
@@ -146,7 +143,7 @@ class SessionRegistry:
     def restore(self, records: list[SessionRecord]) -> None:
         """Adopt the durable records at boot, each unhosted, which is what a live session asleep is."""
         for record in records:
-            self._sessions[record.id] = replace(record, hosted=False, busy=False)
+            self._sessions[record.id] = replace(record, hosted=False)
 
     def _persist(self, record: SessionRecord) -> None:
         """Write a record durably from a thread that may block, never from a coroutine."""
@@ -263,6 +260,19 @@ class SessionRegistry:
             self._persist_wherever_we_are(record)
         return record
 
+    def host(self, session_id: str, *, updated_at: str = "") -> Optional[SessionRecord]:
+        """Attach an idle executor; a newly hosted session cannot already be working or parked."""
+        return self.mark(
+            session_id,
+            hosted=True,
+            awaiting_input=False,
+            updated_at=updated_at,
+        )
+
+    def set_awaiting_input(self, session_id: str, awaiting: bool) -> Optional[SessionRecord]:
+        """Move between the two mutually exclusive live executor activities."""
+        return self.mark(session_id, awaiting_input=awaiting)
+
     def end(
         self,
         session_id: str,
@@ -278,14 +288,18 @@ class SessionRegistry:
             outcome=outcome,
             exit_reason=reason,
             hosted=False,
-            busy=False,
             awaiting_input=False,
             updated_at=updated_at,
         )
 
     def sleep(self, session_id: str, *, updated_at: str = "") -> Optional[SessionRecord]:
         """Note that a live session no longer has an executor. It stays live; it is now asleep."""
-        return self.mark(session_id, hosted=False, busy=False, updated_at=updated_at)
+        return self.mark(
+            session_id,
+            hosted=False,
+            awaiting_input=False,
+            updated_at=updated_at,
+        )
 
     def forget(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
@@ -294,4 +308,4 @@ class SessionRegistry:
 
 
 # Fields that describe a process rather than a session, and are therefore never written down.
-_VOLATILE_FIELDS = frozenset({"hosted", "busy", "awaiting_input"})
+_VOLATILE_FIELDS = frozenset({"hosted", "awaiting_input"})

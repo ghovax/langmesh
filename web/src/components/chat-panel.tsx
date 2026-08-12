@@ -9,7 +9,6 @@ import {
   IconButton,
   Menu,
   Separator,
-  Spinner,
   Text,
   VStack,
 } from "@chakra-ui/react";
@@ -147,7 +146,6 @@ interface ChatPanelProps {
   initialPermissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
   sessionRunning?: boolean;
-  initialRecordingMemory?: boolean;
   onSessionCreated: (sessionId: string) => void;
   onSlashCommand?: (command: string) => void;
   workingDirectory?: string;
@@ -209,7 +207,6 @@ export function ChatPanel({
   initialPermissionMode = "ask",
   onPermissionModeChange,
   sessionRunning = false,
-  initialRecordingMemory = false,
   onSessionCreated,
   workingDirectory,
   workspaceId = "",
@@ -254,6 +251,7 @@ export function ChatPanel({
     deliveringMessage,
     grantedPermissionMode,
     retryOutbox,
+    retryTurn,
     handlePermission,
     handleQuestion,
     declineQuestion,
@@ -274,28 +272,6 @@ export function ChatPanel({
   const chatReady = isConnected;
   // The one condition under which the transcript is in the DOM, read by the render and by everything touching scroll.
   const transcriptVisible = chatReady && !isHistoryLoading;
-  const [recordingMemoryEvent, setRecordingMemoryEvent] = useState<{
-    session: string;
-    active: boolean;
-  } | null>(null);
-  const recordingMemory =
-    recordingMemoryEvent?.session === sessionId
-      ? recordingMemoryEvent.active
-      : initialRecordingMemory;
-
-  useEffect(() => {
-    if (!sessionId) return;
-    return subscribeEvents((event) => {
-      const recording = event as {
-        type: string;
-        session?: string;
-        active?: boolean;
-      };
-      if (recording.type === "recording_memory_changed" && recording.session === sessionId)
-        setRecordingMemoryEvent({ session: recording.session, active: recording.active === true });
-    });
-  }, [sessionId]);
-
   // The workspace's locations for the terminal picker, refreshed when the workspace configuration changes.
   const [workspaceLocations, setWorkspaceLocations] = useState<Location[]>([]);
   useEffect(() => {
@@ -353,13 +329,9 @@ export function ChatPanel({
   }, [agent, initialSessionId, onPermissionModeChange, workingDirectory]);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const scrollContentRef = useRef<HTMLDivElement>(null);
   // Following the bottom, released the moment the user scrolls up and resumed when they return.
   const isPinnedRef = useRef(true);
-  const lastScrollTopRef = useRef(0);
   const onStreamingChangeRef = useRef(onStreamingChange);
-  // The previous layout pass, so a top prepend can be told from a bottom append and the reader's viewport preserved.
-  const scrollMetricsRef = useRef({ scrollHeight: 0, firstKey: "", count: 0 });
   const notifiedSessionIdRef = useRef<string | null>(null);
   const backgroundPanelOpen = openSidePanels.includes("background");
   const memoryPanelOpen = openSidePanels.includes("memory");
@@ -454,14 +426,14 @@ export function ChatPanel({
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    const distanceFromBottom =
-      container.scrollHeight - (container.scrollTop + container.clientHeight);
+    // A column-reverse scroller's latest edge is always the zero origin. Engines differ
+    // only on whether travel toward history is reported positive or negative.
+    const distanceFromBottom = Math.abs(container.scrollTop);
     const atBottom = distanceFromBottom <= 8;
     isPinnedRef.current = atBottom;
     setTranscriptPinned(atBottom);
     // A larger threshold for the jump button than for pinning, so the button does not flash while pinning stays strict.
     setIsAtBottom(distanceFromBottom <= 120);
-    lastScrollTopRef.current = container.scrollTop;
   }, []);
 
   useEffect(() => {
@@ -471,11 +443,10 @@ export function ChatPanel({
   const scrollToBottom = useCallback(() => {
     isPinnedRef.current = true;
     setIsAtBottom(true);
+    setTranscriptPinned(true);
     const container = scrollContainerRef.current;
     if (!container) return;
-    container.scrollTop = container.scrollHeight;
-    lastScrollTopRef.current = container.scrollTop;
-    scrollMetricsRef.current.scrollHeight = container.scrollHeight;
+    container.scrollTop = 0;
   }, []);
 
   const handleSend = useCallback(
@@ -535,43 +506,10 @@ export function ChatPanel({
     onSessionCreated(sessionId);
   }, [sessionId, onSessionCreated]);
 
-  // The single owner of scroll position: a top prepend preserves the viewport, everything else follows the bottom while pinned.
-  useLayoutEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container || !transcriptVisible) return;
-    const firstKey = messages.length > 0 ? messages[0].id : "";
-    const count = messages.length;
-    const previous = scrollMetricsRef.current;
-    const prepended =
-      count > previous.count && firstKey !== previous.firstKey && previous.count > 0;
-    if (prepended) {
-      // Shift down by exactly how much taller the content got, so background paging is invisible.
-      const delta = container.scrollHeight - previous.scrollHeight;
-      if (delta !== 0) container.scrollTop = container.scrollTop + delta;
-    } else if (isPinnedRef.current) {
-      container.scrollTop = container.scrollHeight;
-    }
-    scrollMetricsRef.current = { scrollHeight: container.scrollHeight, firstKey, count };
-    lastScrollTopRef.current = container.scrollTop;
-    // Streaming is in here because it changes the transcript's height without changing its messages: the last
-    // row stops being throttled and shows its whole text, and the tool group above it stops being held open.
-  }, [messages, queuedMessages, transcriptVisible, isStreaming]);
-
-  // Late-growing content keeps the bottom in view while pinned, re-running when the transcript container actually mounts.
   const timelineMounted = transcriptVisible && !historyError && messages.length > 0;
-  useEffect(() => {
-    const content = scrollContentRef.current;
-    const container = scrollContainerRef.current;
-    if (!content || !container) return;
-    const observer = new ResizeObserver(() => {
-      if (!isPinnedRef.current) return;
-      container.scrollTop = container.scrollHeight;
-      lastScrollTopRef.current = container.scrollTop;
-      scrollMetricsRef.current.scrollHeight = container.scrollHeight;
-    });
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, [timelineMounted]);
+  const compactionFailed = messages.some(
+    (message) => message.role === "compaction" && message.meta?.status === "failed",
+  );
 
   const [permissionSource, setPermissionSource] = useState({
     sessionId: initialSessionId,
@@ -590,11 +528,12 @@ export function ChatPanel({
   }, [initialPermissionMode, initialSessionId]);
 
   useLayoutEffect(() => {
-    scrollMetricsRef.current = { scrollHeight: 0, firstKey: "", count: 0 };
     isPinnedRef.current = true;
+    const container = scrollContainerRef.current;
+    if (container) container.scrollTop = 0;
   }, [initialSessionId]);
 
-  // Surface the streaming flag to the parent; new content is followed by the layout effect above.
+  // Surface the streaming flag to the parent; new content is followed by the layout effect below.
   useEffect(() => {
     onStreamingChangeRef.current?.(isStreaming);
   }, [isStreaming]);
@@ -756,16 +695,10 @@ export function ChatPanel({
   // "Reveal" opens the session's working directory in the OS file manager.
   const revealPath = (workingDirectory || "").trim();
 
-  // Try again re-runs a failed turn by resending the most recent user message, which produced no lasting state.
+  // Retry continues the existing durable turn. It never creates another user message.
   const handleRetry = useCallback(() => {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const candidate = messages[index];
-      if (candidate.role === "user" && candidate.content.trim()) {
-        send(candidate.content);
-        return;
-      }
-    }
-  }, [messages, send]);
+    void retryTurn();
+  }, [retryTurn]);
 
   // The first pending prompt, surfaced as an overlay above the input so a decision always grabs attention.
   let pendingPrompt:
@@ -913,7 +846,6 @@ export function ChatPanel({
           <MemoryPanel
             key={sessionId}
             sessionId={sessionId}
-            recording={recordingMemory}
             onClose={() => setSidePanelOpen("memory", false)}
           />
         ),
@@ -1011,17 +943,10 @@ export function ChatPanel({
               />
               {/* What this conversation remembers of the turns that have left its window. */}
               <ToolbarAction
-                label={translation(recordingMemory ? "recordingMemory" : "memory")}
-                icon={
-                  recordingMemory ? (
-                    <Spinner size="xs" colorPalette="orange" />
-                  ) : (
-                    <LuBookMarked size={14} />
-                  )
-                }
+                label={translation("memory")}
+                icon={<LuBookMarked size={14} />}
                 active={memoryPanelOpen}
                 colorPalette="orange"
-                indicator={recordingMemory}
                 onClick={() => setSidePanelOpen("memory", !memoryPanelOpen)}
               />
               <ToolbarAction
@@ -1084,7 +1009,7 @@ export function ChatPanel({
               flex={1}
               minH={0}
               display="flex"
-              flexDirection="column"
+              flexDirection="column-reverse"
               overflowY="auto"
               px={4}
               py={3}
@@ -1208,17 +1133,10 @@ export function ChatPanel({
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
                       transition={{ duration: 0.15, ease: "easeOut" }}
-                      style={{ width: "100%" }}
+                      style={{ width: "100%", flexShrink: 0 }}
                     >
                       {/* Tight enough that a tool line and the prose around it read as one document, with bubbles marking turns. */}
-                      <VStack
-                        ref={scrollContentRef}
-                        gap={2.5}
-                        align="stretch"
-                        w="full"
-                        maxW="80rem"
-                        mx="auto"
-                      >
+                      <VStack gap={2.5} align="stretch" w="full" maxW="80rem" mx="auto">
                         {hasInheritedContext ? (
                           <Flex align="center" gap={3} py={2} color="fg.muted">
                             <Separator flex={1} />
@@ -1228,7 +1146,8 @@ export function ChatPanel({
                             <Separator flex={1} />
                           </Flex>
                         ) : null}
-                        {/* No presence wrapper, deliberately: a transcript row appears when it exists and is gone when it does not. */}
+
+                        {/* No presence wrapper, deliberately: a transcript row appears when it exists and is gone when it does not. The scroller is a column-reverse flex, so the latest row sits at the scroll origin. */}
                         {renderedTimeline.map((item, itemIndex) => {
                           const isLastItem = itemIndex === renderedTimeline.length - 1;
                           const key = item.kind === "tool_group" ? item.id : item.message.id;
@@ -1250,7 +1169,15 @@ export function ChatPanel({
                             ) : (
                               <ChatMessageItem
                                 message={item.message}
-                                onRetry={item.message.role === "error" ? handleRetry : undefined}
+                                onRetry={
+                                  item.message.role === "error"
+                                    ? handleRetry
+                                    : item.message.role === "compaction" &&
+                                        item.message.meta?.status === "failed"
+                                      ? compact
+                                      : undefined
+                                }
+                                retrying={item.message.meta?.retrying === true}
                                 streaming={isStreaming && isLastItem}
                                 onOpenReview={openGoalReview}
                                 reviewId={
@@ -1297,7 +1224,9 @@ export function ChatPanel({
                                     ? "queuedUnreachable"
                                     : outboxHold === "decision"
                                       ? "queuedForDecision"
-                                      : "queued",
+                                      : outboxHold === "compaction"
+                                        ? "queuedForCompaction"
+                                        : "queued",
                                 ),
                                 failed: outboxHold === "unreachable",
                                 onDelete: () => dequeueMessage(index),
@@ -1382,7 +1311,7 @@ export function ChatPanel({
                   onSend={handleSend}
                   onAbort={abort}
                   isStreaming={isStreaming}
-                  disabled={!isConnected}
+                  disabled={!isConnected || compactionFailed}
                   awaitingDecision={!!pendingPrompt}
                   sessionId={sessionId}
                   initialDraft={initialInputDraft}

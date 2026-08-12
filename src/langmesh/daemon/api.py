@@ -100,12 +100,10 @@ def _assert_agent_exists(agent: str, working_directory: str) -> None:
 
 
 def _public(record: SessionRecord) -> dict:
-    """A session as a client sees it, with `busy` set from what is actually mid-turn before activity is derived."""
-    record.busy = record.id in state._running_contexts
+    """A session as a client sees it, combining its record with the daemon's live turn state."""
     return {
-        **record.public(),
+        **record.public(busy=record.id in state._running_contexts),
         "goal": state._session_goals.get(record.id),
-        "recording_memory": bool(state._recording_memory_contexts.get(record.id)),
     }
 
 
@@ -280,10 +278,10 @@ async def _session_list(params: dict) -> dict:
     }
 
 
-async def _waiting_on(session_id: str) -> str:
-    """What a parked session is parked on, as a sentence, since "blocked" alone cannot be acted on."""
+async def _waiting_on(session_id: str) -> dict:
+    """What a parked session is parked on, as locale-independent data."""
     if state.turn_store is None:
-        return ""
+        return {}
     try:
         for task in await state.turn_store.turns_for_session(session_id):
             pending = TurnRecord.from_metadata(task.metadata).pending
@@ -294,12 +292,12 @@ async def _waiting_on(session_id: str) -> str:
                 continue
             gate = unanswered[0]
             if gate.is_question:
-                return "a question it asked the user"
+                return {"kind": "question"}
             command = (gate.command or "").strip()
-            return f"a permission decision for `{command}`" if command else "a permission decision"
+            return {"kind": "permission", **({"command": command} if command else {})}
     except Exception:  # noqa: BLE001 — a record that cannot be read is not a reason to fail the call
         logger.debug("could not read what %s is waiting on", session_id, exc_info=True)
-    return ""
+    return {}
 
 
 async def _session_get(params: dict) -> dict:
@@ -400,7 +398,7 @@ async def _session_permission_mode(params: dict) -> dict:
 
 
 async def _session_send(params: dict) -> dict:
-    """Relay a message to the session's socket, injected at its next safe point rather than queued behind the turn."""
+    """Accept plain steering at a safe point, or serialize a structured message as a fresh turn."""
     record = _session(_require(params, "id"))
     if not record.is_live:
         raise RpcError(
@@ -427,6 +425,12 @@ async def _session_compact(params: dict) -> dict:
     """Ask a session to compact its own conversation."""
     record = _session(_require(params, "id"))
     return await state.wake_then_relay(record, "session/compact", params)
+
+
+async def _session_retry(params: dict) -> dict:
+    """Retry the failed durable turn without accepting another copy of its message."""
+    record = _session(_require(params, "id"))
+    return await state.wake_then_relay(record, "session/retry", params)
 
 
 async def _session_goal_clear(params: dict) -> dict:
@@ -706,6 +710,7 @@ METHODS: dict[str, Callable[[dict], Awaitable[dict]]] = {
     "turn.cancel": _turn_cancel,
     "session.respond": _session_respond,
     "session.compact": _session_compact,
+    "session.retry": _session_retry,
     "session.goal_clear": _session_goal_clear,
     "jobs.list": _jobs_list,
     "jobs.detach": _jobs_detach,
@@ -864,6 +869,7 @@ async def rpc(request: Request) -> JSONResponse:
 
 def _attach_transcript(context_id: str, request: Request) -> EventSourceResponse:
     """Stream any durable conversation context through the shared snapshot-and-tail transport."""
+
     async def stream():
         assert state.turn_store is not None
         subscription = state.event_bus.subscribe(context_id)

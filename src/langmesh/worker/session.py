@@ -9,7 +9,7 @@ import logging
 import sys
 import uuid
 from pathlib import Path
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -28,8 +28,11 @@ from langmesh.base.worktrees import SessionWorktree
 from langmesh.protocol.metadata import (
     AUTONOMOUS_RESUME_KIND,
     COMPACTION_KIND,
+    COMPACTION_PREPARE_KIND,
+    COMPACTION_RESUME_KIND,
     GOAL_CONTINUATION_KIND,
     REPORT_REMINDER_KIND,
+    RETRY_TURN_KIND,
     INPUT_RESPONSE_KIND,
     Metadata,
     PART_KIND,
@@ -122,7 +125,6 @@ class SessionExecutor(AgentExecutor):
         # One session, one conversation. The map has one entry, and exists because the machinery indexes it.
         self._conversations: dict[str, list] = {}
         self._startup_resume_tasks: set[asyncio.Task] = set()
-        self._work_habits_acknowledged = False
         # A session is named after its first message, once.
         self._titled = False
         # The report reminder fires at most once for a session's whole life.
@@ -135,6 +137,11 @@ class SessionExecutor(AgentExecutor):
         self._goal_state_tail: Optional[asyncio.Task] = None
         self._turn_state_tail: Optional[asyncio.Task] = None
         self._session_state_lock = asyncio.Lock()
+        # Linearizes external send decisions. Without this, two concurrent callers can both
+        # observe "idle" and start separate turns before either marks the context running.
+        self._send_lock = asyncio.Lock()
+        self._observation_registry_metadata: dict[str, Any] = {}
+        self._observation_registry_error: str | None = None
 
     def _publish_stream_event(self, session_id: str, part) -> None:
         """Forward a turn part to the daemon for fan-out. Fire-and-forget: the turn must not wait on a watcher."""
@@ -173,6 +180,12 @@ class SessionExecutor(AgentExecutor):
                 exc_info=(type(error), error, error.__traceback__),
             )
 
+    async def _settle_turn_state(self) -> None:
+        """Make a completed control operation observable as idle before answering its caller."""
+        pending = self._turn_state_tail
+        if pending is not None:
+            await asyncio.gather(pending, return_exceptions=True)
+
     def _has_live_background_work(self) -> bool:
         """Whether any runtime still has background work, including results that finished but never reached the model."""
         for context in self._contexts.values():
@@ -193,8 +206,86 @@ class SessionExecutor(AgentExecutor):
         """Compact a context's conversation and return the completed pass rather than detaching it."""
         if self._agent_handler() is None:
             return {"compacted": False}
-        result = await self._run_compaction_turn(session_id)
-        return {"compacted": result is not None, **(result or {})}
+        async with self._send_lock:
+            try:
+                state = self._contexts.get(session_id)
+                runtime = state.runtime if state is not None else None
+                if runtime is None:
+                    runtime = await self._runtime_for(session_id, self._workspace())
+                retry_operation = runtime.retry_compaction()
+                if retry_operation == "prepare":
+                    should_resume = runtime.resumes_after_compaction
+                    result = await self._drive_self_sent_turn(
+                        session_id,
+                        COMPACTION_RESUME_KIND if should_resume else COMPACTION_PREPARE_KIND,
+                        metadata_flags={
+                            Metadata.COMPACTION_RESUME
+                            if should_resume
+                            else Metadata.COMPACTION_PREPARE: True
+                        },
+                        result_event_kind="compaction",
+                    )
+                    return {"compacted": result is not None, **(result or {})}
+                if retry_operation == "fold":
+                    should_resume = runtime.resumes_after_compaction
+                    result = await self._run_compaction_turn(session_id)
+                    if should_resume and result and result.get("ok") is not False:
+                        await self._drive_self_sent_turn(
+                            session_id,
+                            COMPACTION_RESUME_KIND,
+                            metadata_flags={Metadata.COMPACTION_RESUME: True},
+                        )
+                    return {"compacted": result is not None, **(result or {})}
+                if runtime.awaiting_compaction_recording:
+                    result = await self._drive_self_sent_turn(
+                        session_id,
+                        COMPACTION_PREPARE_KIND,
+                        metadata_flags={Metadata.COMPACTION_PREPARE: True},
+                        result_event_kind="compaction",
+                    )
+                    return {"compacted": result is not None, **(result or {})}
+                if not runtime.compaction_failure and runtime.begin_compaction_preparation():
+                    result = await self._drive_self_sent_turn(
+                        session_id,
+                        COMPACTION_PREPARE_KIND,
+                        metadata_flags={Metadata.COMPACTION_PREPARE: True},
+                        result_event_kind="compaction",
+                    )
+                    return {"compacted": result is not None, **(result or {})}
+                should_resume = runtime.resumes_after_compaction
+                result = await self._run_compaction_turn(session_id)
+                if should_resume and result and result.get("ok") is not False:
+                    await self._drive_self_sent_turn(
+                        session_id,
+                        COMPACTION_RESUME_KIND,
+                        metadata_flags={Metadata.COMPACTION_RESUME: True},
+                    )
+                return {"compacted": result is not None, **(result or {})}
+            finally:
+                await self._settle_turn_state()
+
+    async def retry_turn(self, session_id: str) -> dict:
+        """Continue the durable failed turn without creating or replaying a user message."""
+        if self._agent_handler() is None:
+            return {"retried": False, "reason": "worker_unavailable"}
+        async with self._send_lock:
+            try:
+                state = self._contexts.get(session_id)
+                runtime = state.runtime if state is not None else None
+                if runtime is None:
+                    runtime = await self._runtime_for(session_id, self._workspace())
+                if runtime.compaction_failure:
+                    return {"retried": False, "reason": "compaction_required"}
+                if not runtime.begin_turn_retry():
+                    return {"retried": False, "reason": "not_retryable"}
+                result = await self._drive_self_sent_turn(
+                    session_id,
+                    RETRY_TURN_KIND,
+                    metadata_flags={Metadata.RETRY_TURN: True},
+                )
+                return {"retried": True, **(result or {})}
+            finally:
+                await self._settle_turn_state()
 
     def _agent_handler(self) -> Optional[RequestHandler]:
         """The handler that drives this session's turns, built once: there is no registry to look one up in."""
@@ -318,12 +409,6 @@ class SessionExecutor(AgentExecutor):
             return
         review_phase_active = False
         try:
-            if runtime.has_pending_observational_memory():
-                self._notify_goal_state(
-                    session_id, runtime.goal, review_phase=GoalReviewPhase.WAITING_FOR_MEMORY
-                )
-                review_phase_active = True
-                await runtime.wait_for_observational_memory()
             if runtime.goal is None or not runtime.goal.is_open:
                 return
             self._notify_goal_state(session_id, runtime.goal, review_phase=GoalReviewPhase.CHECKING)
@@ -554,16 +639,6 @@ class SessionExecutor(AgentExecutor):
                 state.pending_reset = True
                 self._maybe_evict(session_id)
 
-    async def _claim_work_habits_acknowledgement(self, session_id: str, **_flags) -> bool:
-        """Whether this turn emits the once-per-session work-habits acknowledgement, claimed through the daemon."""
-        if not self._global_configuration.user_context.enabled:
-            return False
-        if self._work_habits_acknowledged:
-            return False
-        claimed = await self._turn_store.claim_work_habits(session_id)
-        self._work_habits_acknowledged = True
-        return claimed
-
     def _record_pending_answer(self, task, payload: dict) -> Optional[tuple[dict, dict]]:
         """Record one answer durably and report whether the batch is now fully answered and ready to resume."""
         record = TurnRecord.from_metadata(task.metadata)
@@ -605,10 +680,7 @@ class SessionExecutor(AgentExecutor):
         if state is None or not state.pending_reset:
             return
         review_running = state.goal_review_task is not None and not state.goal_review_task.done()
-        runtime_busy = state.runtime is not None and (
-            state.runtime.has_pending_jobs()
-            or state.runtime.has_pending_observational_memory()
-        )
+        runtime_busy = state.runtime is not None and state.runtime.has_pending_jobs()
         if state.running or review_running or runtime_busy:
             return
         state.runtime = None
@@ -738,6 +810,11 @@ class SessionExecutor(AgentExecutor):
         runtime.set_turn_reader(self._make_turn_reader())
         # Every goal change reaches the daemon, which is what makes a goal visible and callable-off.
         runtime.set_goal_listener(lambda goal: self._notify_goal_state(session_id, goal))
+        if self._observation_registry_metadata or self._observation_registry_error:
+            runtime.note_observation_registry(
+                self._observation_registry_metadata,
+                self._observation_registry_error,
+            )
         return runtime
 
     def _make_turn_reader(self):
@@ -771,7 +848,6 @@ class SessionExecutor(AgentExecutor):
                     self._conversations[session_id] = restored
             # Bound to the process-wide history for this context, so a turn picks up where the last left off.
             conversation = self._conversations.setdefault(session_id, [])
-            locations = None
             locations = self._locations
             runtime = self._build_runtime(
                 session_id,
@@ -896,6 +972,10 @@ class SessionExecutor(AgentExecutor):
         state = self._contexts.get(self._session_id)
         return bool(state is not None and state.running)
 
+    def serialized_send(self):
+        """The session-wide acceptance lock used by every external message send."""
+        return self._send_lock
+
     async def start(self) -> None:
         """Prepare the session before its socket opens, without building the runtime it may never need."""
         from langmesh.base.telemetry import configure as configure_telemetry
@@ -946,7 +1026,7 @@ class SessionExecutor(AgentExecutor):
         message = Message(
             role=Role.user,
             parts=parts,
-            message_id=uuid.uuid4().hex,
+            message_id=str(metadata.get("messageId") or uuid.uuid4().hex),
             context_id=self._session_id,
             metadata=turn_metadata_envelope(metadata) if metadata else None,
         )
@@ -1060,12 +1140,24 @@ class SessionExecutor(AgentExecutor):
                 "could not generate a title for session %s", self._session_id, exc_info=True
             )
 
-    def inject(self, text: str, message_id: str = "", peer_sender: str = "") -> bool:
-        """Deliver a message into the running turn at its next safe point, or answer False when it ended first."""
+    async def inject(self, text: str, message_id: str = "", peer_sender: str = "") -> bool:
+        """Wait until a running turn places this message at a safe point, or say it ended first."""
         state = self._contexts.get(self._session_id)
         if state is None or not state.running or state.runtime is None:
             return False
-        return state.runtime.enqueue_steering(text, message_id, peer_sender)
+        accepted = state.runtime.enqueue_steering(text, message_id, peer_sender)
+        return bool(accepted is not None and await accepted)
+
+    def note_observation_registry(self, metadata: dict[str, Any], error: str | None) -> None:
+        """Pass watcher metadata and feedback to the warm runtime without a synthetic turn."""
+        self._observation_registry_metadata = dict(metadata)
+        self._observation_registry_error = error.strip() if error else None
+        state = self._contexts.get(self._session_id)
+        if state is not None and state.runtime is not None:
+            state.runtime.note_observation_registry(
+                self._observation_registry_metadata,
+                self._observation_registry_error,
+            )
 
     async def resolve_pending_input(self, payload: dict) -> bool:
         """Record an answer to a parked gate and resume the turn once every gate in the batch has one."""
@@ -1101,8 +1193,8 @@ class SessionExecutor(AgentExecutor):
     def abort_tool_call(self, tool_call_identifier: str) -> bool:
         return self.abort_tool(self._session_id, tool_call_identifier)
 
-    async def pending_decision(self) -> str:
-        """What this session is parked on, as a sentence, or ``""`` when it is not parked."""
+    async def pending_decision(self) -> dict:
+        """What this session is parked on, as locale-independent data."""
         tasks = await self._turn_store.turns_for_session(self._session_id)
         for task in tasks:
             pending = TurnRecord.from_metadata(task.metadata).pending
@@ -1113,10 +1205,21 @@ class SessionExecutor(AgentExecutor):
                 continue
             gate = unanswered[0]
             if gate.is_question:
-                return "a question it asked the user"
+                return {"kind": "question"}
             command = (gate.command or "").strip()
-            return f"a permission decision for `{command}`" if command else "a permission decision"
-        return ""
+            return {"kind": "permission", **({"command": command} if command else {})}
+        return {}
+
+    async def compaction_failure(self) -> str | None:
+        """The durable fold failure that forbids accepting another user message."""
+        state = self._contexts.get(self._session_id)
+        if state is not None and state.runtime is not None:
+            return state.runtime.compaction_failure
+        snapshot = await self._turn_store.load_session_state(self._session_id)
+        compaction = (snapshot or {}).get("compaction")
+        if not isinstance(compaction, dict) or not compaction.get("failure"):
+            return None
+        return str(compaction["failure"])
 
     async def abort_pending_input(self) -> bool:
         """Deny every gate this session is parked on; the last denial resumes the turn and records each refusal."""
@@ -1197,9 +1300,7 @@ class SessionExecutor(AgentExecutor):
             )
             if task is not None and not task.done()
         ]
-        self.teardown_context(
-            self._session_id, preserve_background_jobs=preserve_background_jobs
-        )
+        self.teardown_context(self._session_id, preserve_background_jobs=preserve_background_jobs)
         if owned_tasks:
             completed, pending = await asyncio.wait(
                 owned_tasks,

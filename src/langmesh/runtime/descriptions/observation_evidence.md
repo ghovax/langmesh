@@ -1,3 +1,0 @@
-The smallest independently checkable basis for the claim: an exact path and symbol or line, a reproducible command plus its decisive result, a stable identifier, a measured value with its method, or an exact error tied to the action that produced it.
-
-Evidence answers “how can I verify this?” while `claim` answers “what is true?” and `detail` answers “why does it matter or work that way?” It must contribute verification information absent from both, not paraphrase either field or merely point back to the detail. Use `null` when there is no independently checkable basis; what was asked and answered, or which turn mentioned it, is not evidence.

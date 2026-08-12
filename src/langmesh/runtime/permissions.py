@@ -79,15 +79,12 @@ class _DecidesPermissions:
     async def _review(self, gate: _PreflightGate) -> PermissionDecision:
         """The reviewer's verdict on one gate. Takes a gate, so it cannot reach a call that raised none."""
         # The person's standing instructions, so the reviewer can judge a request against what they asked for.
-        snapshot = await self._memory_snapshot()
-        directives = self._readable(self._live(snapshot.get("directives") or []))
         context = compact(
             {
                 "tool": gate.tool_name,
                 "working_directory": self._working_directory,
                 "command": gate.command,
                 "arguments": gate.arguments,
-                "instructions": directives,
                 "requested_access": {
                     "reads": list(gate.escape.reads),
                     "writes": list(gate.escape.writes),
@@ -225,6 +222,10 @@ class _DecidesPermissions:
     ) -> _ToolPlan:
         """The verdict for one call. One path for every tool; only the rule table and the escape differ."""
         plan = _ToolPlan(tool_call_id=tool_call_identifier)
+        if self._compaction_control.phase == "waiting" and tool_name == "bash":
+            # A local, foreground Bash call is the fold protocol itself. The turn loop has
+            # already rejected every other shape; the ordinary sandbox remains the boundary.
+            return plan
         schema = self._tool_schemas.get(tool_name)
         if schema is not None:
             tool_arguments = _coerce_structured_arguments(schema, tool_arguments)

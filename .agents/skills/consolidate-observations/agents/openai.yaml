@@ -1,0 +1,6 @@
+interface:
+  display_name: "Consolidate observations"
+  short_description: "Maintain workspace observational memory"
+  default_prompt: "Use $consolidate-observations to consolidate this workspace's observational memory."
+policy:
+  allow_implicit_invocation: false

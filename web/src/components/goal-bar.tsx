@@ -24,35 +24,31 @@ export function GoalBar({ goal, onClear }: { goal: SessionGoal; onClear: () => v
   const tone =
     reviewPhase === "waiting_for_background"
       ? "cyan.fg"
-      : reviewPhase === "waiting_for_memory"
-        ? "orange.fg"
-        : reviewPhase === "checking"
-          ? "purple.fg"
-          : status === "blocked"
-            ? "red.fg"
-            : status === "parked"
-              ? "orange.fg"
-              : status === "satisfied"
-                ? "green.fg"
-                : status === "cleared"
-                  ? "fg.muted"
-                  : "blue.fg";
+      : reviewPhase === "checking"
+        ? "purple.fg"
+        : status === "blocked"
+          ? "red.fg"
+          : status === "parked"
+            ? "orange.fg"
+            : status === "satisfied"
+              ? "green.fg"
+              : status === "cleared"
+                ? "fg.muted"
+                : "blue.fg";
   const statusLabel =
     reviewPhase === "waiting_for_background"
       ? translation("waitingForBackground")
-      : reviewPhase === "waiting_for_memory"
-        ? translation("waitingForMemory")
-        : reviewPhase === "checking"
-          ? translation("checking")
-          : status === "blocked"
-            ? translation("blocked")
-            : status === "parked"
-              ? translation("waiting")
-              : status === "satisfied"
-                ? translation("satisfied")
-                : status === "cleared"
-                  ? translation("cleared")
-                  : translation("working");
+      : reviewPhase === "checking"
+        ? translation("checking")
+        : status === "blocked"
+          ? translation("blocked")
+          : status === "parked"
+            ? translation("waiting")
+            : status === "satisfied"
+              ? translation("satisfied")
+              : status === "cleared"
+                ? translation("cleared")
+                : translation("working");
 
   // The requirements are the goal's substance, but taller than the bar, so they live in the hover card.
   const detail = (

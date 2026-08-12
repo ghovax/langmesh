@@ -11,23 +11,17 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from langmesh.base.paths import background_database_path as _background_database_path
+from langmesh.base.paths import BACKGROUND_DATABASE_FILENAME, data_directory
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from langmesh.base.ports import JobStore
 
-
-BACKGROUND_DATABASE_FILENAME = "background.db"
 
 # Lifecycle of a persisted job.
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"  # finished; result stored; not yet delivered to the model
 STATUS_DELIVERED = "delivered"  # result has reached the model (in-turn or via an autonomous wake)
 STATUS_ABANDONED = "abandoned"  # could not be recovered after a restart (e.g. a bash command)
-
-
-def background_database_path() -> Path:
-    return _background_database_path()
 
 
 def reap_orphaned_process_groups(store: "JobStore | None" = None) -> int:
@@ -68,7 +62,7 @@ class BackgroundJobStore:
     """A SQLite mirror of every background job's lifecycle, which is not turn state."""
 
     def __init__(self, database_path: Path | None = None):
-        self.database_path = database_path or background_database_path()
+        self.database_path = database_path or data_directory() / BACKGROUND_DATABASE_FILENAME
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
@@ -81,6 +75,7 @@ class BackgroundJobStore:
 
     def _initialize(self) -> None:
         with self._connect() as connection:
+            # `process_group`: OS process-group id of a job's shell subtree, so a reaper can kill an orphan left by an unclean shutdown (SIGKILL / crash) on the next start.
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS background_jobs (
@@ -95,9 +90,6 @@ class BackgroundJobStore:
                     created_at TEXT NOT NULL,
                     completed_at TEXT,
                     delivered_at TEXT,
-                    -- OS process-group id of a job's shell subtree, so a reaper
-                    -- can kill an orphan left by an unclean shutdown (SIGKILL /
-                    -- crash) on the next start.
                     process_group INTEGER
                 )
                 """

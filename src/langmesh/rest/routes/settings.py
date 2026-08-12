@@ -35,7 +35,6 @@ from langmesh.commons import state
 from langmesh.commons.services.broadcast import _publish_broadcast
 from langmesh.commons.services.sessions import (
     _normalize_permission_mode,
-    _reset_work_habits_acknowledgements,
 )
 from langmesh.commons.services.agents import _recent_models
 from langmesh.commons.services.settings import (
@@ -505,12 +504,9 @@ async def update_user_context(request: UserContextUpdateRequest):
     """Persist and apply the user-context toggle, dropping cached runtimes since the snapshot is built into the prompt."""
     assert state.global_configuration is not None
     async with state.configuration_lock:
-        setting_changed = state.global_configuration.user_context.enabled != request.enabled
         await _persist_configuration(user_context_enabled=request.enabled)
         state.global_configuration.user_context.enabled = request.enabled
-        if setting_changed:
-            await asyncio.to_thread(_reset_work_habits_acknowledgements)
-            await state.reset_runtimes()
+        await state.reset_runtimes()
     _publish_broadcast({"type": "settings_changed"})
     return {
         "status": "saved",

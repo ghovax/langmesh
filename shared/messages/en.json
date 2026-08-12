@@ -42,12 +42,14 @@
     "answerFailedTitle": "Couldn't submit your answer",
     "cancelToolFailedBody": "The server did not confirm the cancellation. Check the connection and retry.",
     "cancelToolFailedTitle": "Couldn't stop that tool call",
-    "compactFailedBody": "The server did not start compaction. Check the connection and try again.",
+    "compactFailedBody": "Context compaction failed. Retry it before continuing.",
     "compactFailedTitle": "Couldn't compact the conversation",
     "decisionFailedTitle": "Couldn't submit your decision",
     "heldForDecisionBody": "The session is waiting on {waitingOn}. Your message is queued and goes out as soon as you decide.",
-    "heldForDecisionFallback": "a decision from you",
     "heldForDecisionTitle": "Message queued",
+    "waitingOnCommand": "a permission decision for `{command}`",
+    "waitingOnPermission": "a permission decision",
+    "waitingOnQuestion": "an answer to its question",
     "inactiveBody": "This request is no longer active — the turn may have already moved on.",
     "networkBody": "The server did not respond. Check the connection and try again.",
     "stopFailedBody": "The server did not confirm the stop. It may still be running — check the connection and retry.",
@@ -80,10 +82,10 @@
     "attachFiles": "Attach files",
     "cacheReads": "Cache reads",
     "compact": "Compact",
-    "compactBody": "This folds the older conversation into a dense summary and keeps the most recent work verbatim. It frees up the context window, but the summarized detail can no longer be recalled in full.",
+    "compactBody": "The agent first preserves durable workspace knowledge, then discards older conversation while keeping the most recent work verbatim. This frees context, but discarded dialogue can no longer be recalled.",
     "compactConfirm": "Compact now",
     "compactTitle": "Compact the conversation?",
-    "compactTooltip": "Fold the older history into a summary to free up context, keeping recent work verbatim",
+    "compactTooltip": "Preserve durable knowledge, then discard older history while keeping recent work verbatim",
     "compacting": "Compacting…",
     "compactingTooltip": "Compacting the conversation…",
     "dictationCouldNotOpen": "The microphone could not be opened: {reason}",
@@ -96,6 +98,7 @@
     "dictationStart": "Dictate",
     "dictationStop": "Stop dictating and transcribe",
     "dictationTranscribing": "Transcribing…",
+    "estimatedWindow": "Approximately {value}",
     "fileAttachments": "File attachments",
     "images": "Images",
     "imagesSupported": "Natively support",
@@ -123,20 +126,76 @@
     "window": "Window"
   },
   "ChatMessage": {
+    "compactionFailed": "Context compaction failed",
     "compactedTooltip": "{before, plural, =1 {Compacted # message down to {after}} other {Compacted # messages down to {after}}}",
     "compactingContext": "Compacting the conversation…",
     "contextCompacted": "Conversation compacted",
+    "compactionErrors": {
+      "compaction_failed": "The fold could not complete. Retry it before continuing.",
+      "compaction_no_reclaim": "The fold could not reclaim any conversation space.",
+      "compaction_preparation_failed": "The observational-memory checkpoint did not complete, so no history was removed.",
+      "compaction_strategy_failed": "The configured compaction strategy failed without changing the conversation."
+    },
+    "retry": "Retry",
     "copied": "Copied",
     "copy": "Copy",
     "deleteQueued": "Delete",
     "errorTitle": "Something went wrong",
+    "retrying": "Retrying…",
+    "errors": {
+      "authentication_failed": {
+        "title": "Provider credentials need attention",
+        "body": "The selected provider rejected the configured credentials. Check the API key or choose another model."
+      },
+      "connection_failed": {
+        "title": "Connection interrupted",
+        "body": "The model connection dropped before the turn finished. Check the connection and retry."
+      },
+      "context_window_exceeded": {
+        "title": "Conversation is too long for this model",
+        "body": "The request was larger than this model's context window. Compact the conversation, start a new one, or switch to a model with a larger window."
+      },
+      "image_unsupported": {
+        "title": "This model can't read images",
+        "body": "The selected model rejected the attached image. Choose a vision-capable model and retry."
+      },
+      "provider_unavailable": {
+        "title": "Model temporarily unavailable",
+        "body": "The provider is temporarily unavailable. Try again in a moment or choose another model."
+      },
+      "rate_limited": {
+        "title": "Model rate limit reached",
+        "body": "The provider is rate limiting requests. Wait a moment or choose another model."
+      },
+      "request_rejected": {
+        "title": "Model rejected the request",
+        "body": "The model could not accept this turn. Adjust the request or choose another model."
+      },
+      "server_error": {
+        "title": "Server request failed",
+        "body": "LangMesh could not start the turn. Check the daemon and retry."
+      },
+      "turn_failed": {
+        "title": "Turn could not complete",
+        "body": "The turn stopped unexpectedly. Details were written to the daemon log."
+      },
+      "turn_interrupted": {
+        "title": "Turn interrupted",
+        "body": "The daemon restarted before this turn finished. Retry the existing turn to continue from its saved state."
+      }
+    },
+    "warnings": {
+      "image_metadata_only": {
+        "title": "Images sent as file references",
+        "body": "{count, plural, =1 {One image was not inlined} other {# images were not inlined}} because {model, select, '' {the session model} other {{model}}} does not advertise image support. The agent can still inspect the file with its tools."
+      }
+    },
     "openReview": "Open review",
     "relayedFromGoalReviewAgent": "Relayed from the goal review agent",
     "relayedFromPeerSession": "Relayed from a peer session",
     "showLess": "Show less",
     "showMore": "Show more",
-    "tryAgain": "Try again",
-    "warningTitle": "Warning"
+    "tryAgain": "Try again"
   },
   "ChatPanel": {
     "buildPrompt": "What should we build in {folder}?",
@@ -162,13 +221,13 @@
     "loadConversationErrorDescription": "The transcript failed to load. Check the connection and try again.",
     "loadConversationErrorTitle": "Couldn’t load this conversation",
     "memory": "Memory",
-    "recordingMemory": "Recording memory",
     "newConversation": "New conversation",
     "openThisFolder": "Open this folder",
     "path": "Path",
     "permissionModeFailedTitle": "Couldn't change the permission mode",
     "queued": "Queued",
     "queuedForDecision": "Waiting for your decision",
+    "queuedForCompaction": "Waiting for compaction retry",
     "queuedRetry": "Retry",
     "queuedUnreachable": "Couldn't reach the session",
     "readOnly": "Read-only",
@@ -256,7 +315,6 @@
     "stopConfirm": "Stop the goal",
     "stopTitle": "Stop working toward this goal?",
     "waitingForBackground": "Waiting for background work",
-    "waitingForMemory": "Waiting for memories",
     "waiting": "Waiting for you",
     "working": "Working toward"
   },
@@ -288,7 +346,7 @@
       "open": "Open"
     },
     "collapsePanel": "Collapse panel",
-    "emptyDescription": "Recorded as each exchange finishes.",
+    "emptyDescription": "The agent has not maintained any current observations for this location.",
     "emptyTitle": "Nothing recorded yet",
     "findings": "Findings",
     "instructions": "Instructions",
@@ -296,14 +354,9 @@
       "preference": "Preference",
       "requirement": "Requirement"
     },
-    "lifted": "No longer binding",
     "loading": "Reading the record",
-    "revision": {
-      "correction": "Corrected",
-      "merge": "Merged",
-      "refinement": "Refined",
-      "retraction": "Retracted"
-    },
+    "loadError": "The observational-memory record could not be loaded. Live updates remain active.",
+    "registryError": "Observational memory needs repair",
     "standing": {
       "inferred": "Inferred",
       "reported": "Reported"
@@ -479,7 +532,6 @@
       "_": "Conversation compaction",
       "automatic": "Compact automatically",
       "reclaim_at_fraction": "Compact at (share of window)",
-      "observational_memory_limit_fraction": "Observational memory limit (share)",
       "output_reserve_fraction": "Reserved for the answer (share)",
       "recent_working_set_fraction": "Kept verbatim (share)"
     },
@@ -594,7 +646,6 @@
         "browser_authorization": "Browser authorization",
         "card_resolve": "Agent card fetch",
         "click_interval": "Click interval",
-        "compaction_attempts": "Compaction attempts",
         "connect_timeout": "Connect timeout",
         "control_plane_call": "Control plane call",
         "control_script": "Control script",
@@ -690,10 +741,10 @@
     "compaction": {
       "_": "How conversation history is folded as it grows.",
       "automatic": "Reclaim context on its own as it fills. Manual compaction works either way.",
-      "reclaim_at_fraction": "Fold once the conversation passes this share of the usable window. Late on purpose: a fold is the one thing that rewrites the prefix a provider had cached, so the fewer of them the better.",
-      "observational_memory_limit_fraction": "Maximum share of the usable window that live observational memories may occupy. A compaction that exceeds it consolidates related findings while preserving their revision history.",
-      "output_reserve_fraction": "Share of the window held back for the answer, so folding still has room to run. The rest is the usable window every other fraction here is measured against.",
-      "recent_working_set_fraction": "Share of the usable window kept verbatim rather than folded into the log. Sized in tokens rather than turns because an unattended run is one turn and hundreds of tool results."
+      "assumed_context_window": "Conservative scheduling capacity when a custom model reports no context window. It is shown as estimated and never used as a certain rejection limit.",
+      "reclaim_at_fraction": "Recommended preparation boundary within the usable window. The agent records durable knowledge before older history is discarded, so the reserved space remains available for that final segment.",
+      "output_reserve_fraction": "Safety buffer kept outside the usable window for the current answer and the pre-fold recording segment.",
+      "recent_working_set_fraction": "Share of the usable window kept verbatim after older history is discarded. It is measured in tokens because one turn may contain hundreds of tool results."
     },
     "composio": {
       "_": "Composio's hosted MCP gateway.",
@@ -804,7 +855,6 @@
         "browser_authorization": "How long attaching waits for the user to approve Chrome's prompt.",
         "card_resolve": "How long fetching a remote agent's card waits.",
         "click_interval": "Pause between successive synthesized clicks.",
-        "compaction_attempts": "How many times compaction asks the model to record its observations before folding without them.",
         "connect_timeout": "How long attaching to a browser waits.",
         "control_plane_call": "How long one call to the daemon waits.",
         "control_script": "How long one screen-control script may run.",

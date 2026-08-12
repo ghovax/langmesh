@@ -748,8 +748,8 @@ export interface AttachmentSettings {
 export interface CompactionSettings {
   // Reclaiming context on its own as it fills (manual compaction always works).
   automatic: boolean;
+  assumed_context_window: number;
   reclaim_at_fraction: number;
-  observational_memory_limit_fraction: number;
   output_reserve_fraction: number;
   recent_working_set_fraction: number;
 }
@@ -794,14 +794,14 @@ const DEFAULT_SANDBOX: SandboxSettings = {
 const DEFAULT_ATTACHMENTS: AttachmentSettings = { inline_image_megabytes: 20 };
 
 const DEFAULT_COMPACTION: CompactionSettings = {
-  automatic: false,
+  automatic: true,
+  assumed_context_window: 128000,
   reclaim_at_fraction: 0.85,
-  observational_memory_limit_fraction: 0.1,
   output_reserve_fraction: 0.1,
   recent_working_set_fraction: 0.25,
 };
 
-// Persist the context-reclaiming settings and observational-memory limit.
+// Persist the context-reclaiming settings.
 export async function updateCompactionSettings(
   changes: Partial<CompactionSettings>,
 ): Promise<void> {
@@ -1370,7 +1370,7 @@ export interface SessionGoal {
   blocker: string | null;
   evidence: string | null;
   // A transient phase before the next goal turn, absent while the working session itself is active.
-  review_phase?: "waiting_for_background" | "waiting_for_memory" | "checking";
+  review_phase?: "waiting_for_background" | "checking";
 }
 
 export interface SessionSummary {
@@ -1384,7 +1384,6 @@ export interface SessionSummary {
   // How an ended session finished: `exited` or `failed`. Empty while it is live.
   outcome: string;
   awaiting_input: boolean;
-  recording_memory: boolean;
   title: string;
   working_directory: string;
   workspace_id: string;
@@ -1496,12 +1495,14 @@ export interface SendOutcome {
   accepted: boolean;
   /** The session is parked on a human decision, which is why it took nothing. */
   awaitingInput: boolean;
-  /** What that decision is, as a sentence: "a permission decision for `cat …`". */
-  waitingOn: string;
+  /** What that decision is, localized by the client. */
+  waitingOn: { kind: "question" | "permission"; command?: string } | null;
   /** It reached a turn already in flight, at its next safe point, rather than starting one. */
   injected: boolean;
   /** The turn this started, when it started one. */
   taskId: string;
+  /** The session rejected input because its last context fold failed. */
+  compactionRequired: boolean;
 }
 
 // Drive a turn: an idle session starts one, a busy one takes it at the next safe point.
@@ -1517,14 +1518,19 @@ export async function sessionSend(
     waiting_on?: unknown;
     injected?: unknown;
     task_id?: string;
+    compaction_required?: unknown;
   }>("session.send", { id: sessionId, parts, metadata }, options);
   return {
     // Absent means accepted: only an explicit `false` is a refusal.
     accepted: data.accepted !== false,
     awaitingInput: data.awaiting_input === true,
-    waitingOn: typeof data.waiting_on === "string" ? data.waiting_on : "",
+    waitingOn:
+      data.waiting_on && typeof data.waiting_on === "object"
+        ? (data.waiting_on as SendOutcome["waitingOn"])
+        : null,
     injected: data.injected === true,
     taskId: data.task_id ?? "",
+    compactionRequired: data.compaction_required === true,
   };
 }
 
@@ -1605,26 +1611,42 @@ export interface RecordEntry {
   standing?: "verified" | "reported" | "inferred";
   kind?: string;
   summary?: string;
-  still_binding?: boolean;
-  supersedes?: string[];
-  revision?: "correction" | "refinement" | "merge" | "retraction" | null;
-  written_at?: string;
+  updated_at?: string;
 }
 
-/** A session's memory, live entries only unless the whole chain is asked for. */
+export interface SessionRecordSnapshot {
+  entries: {
+    observations: RecordEntry[];
+    directives: RecordEntry[];
+  };
+  revision: number;
+  metadata: {
+    path?: string;
+    exists?: boolean;
+    revision?: number;
+    counts?: { observations?: number; directives?: number };
+    updated_at?: { earliest?: string | null; latest?: string | null };
+  };
+  error: string;
+}
+
+/** The active workspace's complete, revision-consistent observational-memory snapshot. */
 export async function fetchSessionRecord(
   sessionId: string,
-  ledger: "observations" | "directives",
   signal?: AbortSignal,
-  liveOnly = true,
-): Promise<RecordEntry[]> {
-  const response = await apiFetch(
-    `/sessions/${encodeURIComponent(sessionId)}/record?ledger=${ledger}&live_only=${liveOnly}`,
-    { signal },
-  );
+): Promise<SessionRecordSnapshot> {
+  const response = await apiFetch(`/sessions/${encodeURIComponent(sessionId)}/record`, { signal });
   if (!response.ok) throw new Error(`record request failed: ${response.status}`);
-  const data = (await response.json()) as { entries?: RecordEntry[] };
-  return data.entries ?? [];
+  const data = (await response.json()) as Partial<SessionRecordSnapshot>;
+  return {
+    entries: {
+      observations: data.entries?.observations ?? [],
+      directives: data.entries?.directives ?? [],
+    },
+    revision: Number(data.revision ?? 0),
+    metadata: data.metadata ?? {},
+    error: String(data.error ?? ""),
+  };
 }
 
 export async function fetchSessionTurnsPage(
@@ -1728,14 +1750,29 @@ export interface CompactionResult {
   ok?: boolean;
   messages_before?: number;
   messages_after?: number;
+  error_code?:
+    | "compaction_failed"
+    | "compaction_no_reclaim"
+    | "compaction_preparation_failed"
+    | "compaction_strategy_failed";
 }
 
-export async function compactSession(sessionId: string): Promise<CompactionResult | null> {
+export async function compactSession(sessionId: string): Promise<CompactionResult> {
   try {
     return await rpc<CompactionResult>("session.compact", { id: sessionId });
   } catch (caught) {
     swallowed({ component: "api", operation: "compact a session" }, caught);
-    return null;
+    throw caught;
+  }
+}
+
+export async function retrySessionTurn(sessionId: string): Promise<boolean> {
+  try {
+    const result = await rpc<{ retried?: unknown }>("session.retry", { id: sessionId });
+    return result.retried === true;
+  } catch (caught) {
+    swallowed({ component: "api", operation: "retry a session turn" }, caught);
+    return false;
   }
 }
 

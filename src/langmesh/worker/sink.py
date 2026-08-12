@@ -190,7 +190,7 @@ class _TurnEventSink:
                         messages_after=event.messages_after,
                         tokens_before=event.tokens_before,
                         tokens_after=event.tokens_after,
-                        log_tokens=event.log_tokens,
+                        error_code=event.error_code,
                     )
                 )
             )
@@ -271,6 +271,7 @@ class _TurnEventSink:
                             input_tokens=event.input_tokens,
                             output_tokens=event.output_tokens,
                             context_window=event.context_window,
+                            context_window_estimated=event.context_window_estimated,
                             cache_read_tokens=event.cache_read_tokens,
                             reasoning_tokens=event.reasoning_tokens,
                             prefix_intact=event.prefix_intact,
@@ -328,9 +329,9 @@ class _TurnEventSink:
                 await self._emit(
                     _event_part(
                         ErrorEvent(
-                            message=event.message or "error",
                             tool_call_id=event.id,
                             tool_name=event.tool,
+                            code="tool_error",
                         )
                     )
                 )

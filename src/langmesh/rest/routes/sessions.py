@@ -6,7 +6,6 @@ from langmesh.commons.database import SessionRecord, WorkspaceRecord
 from langmesh.base.paths import uploads_directory
 import asyncio
 import re
-from typing import Literal
 from langmesh.protocol.dtos import (
     SessionDraftRequest,
 )
@@ -41,13 +40,43 @@ async def update_session_draft(session_id: str, request: SessionDraftRequest):
 @router.get("/sessions/{session_id}/record")
 async def session_record(
     session_id: str,
-    ledger: Literal["observations", "directives"] = "observations",
-    live_only: bool = True,
 ):
-    """A session's memory: what the work established, or what the person asked for, as the record holds it."""
-    assert state.turn_store is not None
-    entries = await state.turn_store.ledger_entries(session_id, ledger, live_only=live_only)
-    return {"entries": entries}
+    """The active workspace's current observational memory, addressed through its session."""
+    assert state.session_factory is not None
+    database_session = state.session_factory()
+    try:
+        record = (
+            database_session.query(SessionRecord).filter(SessionRecord.id == session_id).first()
+        )
+        working_directory = (
+            str(record.runtime_working_directory or record.working_directory or "")
+            if record is not None
+            else ""
+        )
+    finally:
+        database_session.close()
+    if not working_directory:
+        return {
+            "entries": {"observations": [], "directives": []},
+            "revision": 0,
+            "metadata": {},
+            "error": "",
+        }
+    watcher = state.observation_registry_watcher
+    if watcher is None:
+        return {
+            "entries": {"observations": [], "directives": []},
+            "revision": 0,
+            "metadata": {},
+            "error": "Registry watcher is unavailable.",
+        }
+    snapshot = await watcher.register(working_directory)
+    return {
+        "entries": snapshot.get("entries") or {"observations": [], "directives": []},
+        "revision": int(snapshot.get("revision") or 0),
+        "metadata": snapshot.get("metadata") or {},
+        "error": str(snapshot.get("error") or ""),
+    }
 
 
 @router.get("/sessions/{session_id}/goal-reviews")

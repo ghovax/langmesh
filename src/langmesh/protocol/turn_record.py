@@ -31,6 +31,7 @@ class TurnKind(StrEnum):
     GOAL = "goal"
     AUTONOMOUS = "autonomous"
     COMPACTION = "compaction"
+    RETRY = "retry"
 
 
 class ReconcileAction(StrEnum):

@@ -74,7 +74,7 @@ class Approvals(Protocol):
 
 @dataclass(frozen=True)
 class Observation:
-    """Something the harness did that is worth recording but is not a turn event."""
+    """One transient harness audit signal, unrelated to workspace observational memory."""
 
     session_id: str
     kind: str
@@ -84,7 +84,7 @@ class Observation:
 
 @runtime_checkable
 class Observer(Protocol):
-    """Receives the audit trail. May return an awaitable, which an async caller awaits."""
+    """Receives transient audit signals. May return an awaitable for asynchronous handling."""
 
     def observe(self, observation: Observation) -> Awaitable[None] | None: ...
 

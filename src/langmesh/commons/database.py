@@ -30,8 +30,6 @@ class SessionRecord(Base):
     exit_reason: Mapped[str] = mapped_column(Text, default="")
     # What its tool children may touch, resolved and clamped once at creation and stored as JSON.
     sandbox: Mapped[str] = mapped_column(Text, default="")
-    # The one-time work-habits acknowledgement, durable because a worker is per activation rather than per session.
-    work_habits_acknowledged_at: Mapped[str] = mapped_column(String, default="")
     updated_at: Mapped[str] = mapped_column(String, default="")
     # The workspace this session belongs to, any of whose locations the agent may address per call.
     workspace_id: Mapped[str] = mapped_column(String, default="")

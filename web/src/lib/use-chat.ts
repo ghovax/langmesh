@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelTurn,
   abortToolCall,
+  retrySessionTurn,
   attachSession,
   compactSession,
   messageParts,
@@ -21,6 +22,7 @@ import {
   type A2APart,
   type A2ATurn as A2ATurnWire,
   type PermissionMode,
+  type SendOutcome,
   type WorktreeStrategy,
 } from "./api";
 import {
@@ -35,7 +37,7 @@ import {
 import { toaster } from "@/components/ui/toaster";
 import { swallowed } from "@/lib/swallowed";
 import { useTranslations } from "next-intl";
-import { asArray, asRecord } from "@/lib/coerce";
+import { asRecord } from "@/lib/coerce";
 import type { PrefixDivergence, WireEvent } from "@shared/generated/events";
 import { clientIdentifier } from "@/lib/identifier";
 import { Outbox, type Delivery, type OutboxHold, type OutboxMessage } from "@/lib/outbox";
@@ -71,6 +73,8 @@ export interface MessageAttachment {
   size: number;
 }
 
+export type TranslationParameters = Record<string, string | number>;
+
 // The per-message side data reducers attach and views read. Every field optional and role-specific.
 export interface MessageMeta {
   arguments?: Record<string, unknown>;
@@ -82,10 +86,17 @@ export interface MessageMeta {
   permission?: ToolPermission;
   question?: ToolQuestion;
   error?: FriendlyError;
-  warning?: { code: string; title: string; message: string };
+  warning?: { code: "image_metadata_only"; parameters?: TranslationParameters };
   reason?: string;
   messagesBefore?: number;
   messagesAfter?: number;
+  compactionErrorCode?:
+    | "compaction_failed"
+    | "compaction_no_reclaim"
+    | "compaction_preparation_failed"
+    | "compaction_strategy_failed";
+  retrying?: boolean;
+  retryFailed?: boolean;
   durationMs?: number;
   attachments?: MessageAttachment[];
   // On a peer message: which session sent it, since a report comes from somewhere with an id.
@@ -135,6 +146,7 @@ export interface TokenUsage {
   contextInputTokens: number;
   contextOutputTokens: number;
   contextWindow: number;
+  contextWindowEstimated: boolean;
   // What the latest call's cache did and why, since a running total cannot say which call missed.
   contextCacheReadTokens: number;
   reachableTokens: number;
@@ -169,90 +181,64 @@ function requiredContentBlockIdentifier(metadata: Record<string, unknown> | unde
   return identifier;
 }
 
+type FriendlyErrorCode =
+  | "authentication_failed"
+  | "connection_failed"
+  | "context_window_exceeded"
+  | "image_unsupported"
+  | "provider_unavailable"
+  | "rate_limited"
+  | "request_rejected"
+  | "server_error"
+  | "turn_failed"
+  | "turn_interrupted";
+
 interface FriendlyError {
-  code: string;
-  title: string;
-  message: string;
+  code: FriendlyErrorCode;
+  parameters?: TranslationParameters;
   status?: number;
 }
 
-function friendlyErrorFromData(data: Record<string, unknown>): FriendlyError {
-  const code = String(data.code ?? "turn_failed");
-  const status = typeof data.status === "number" ? data.status : undefined;
-  const fallback = (() => {
-    switch (code) {
-      case "provider_unavailable":
-        return {
-          title: "Model temporarily unavailable",
-          message:
-            "The agent's model provider is temporarily unavailable. Try again in a moment or configure a different model for this agent.",
-        };
-      case "rate_limited":
-        return {
-          title: "Model rate limit reached",
-          message:
-            "The agent's provider is rate limiting requests. Wait a bit or configure another model for this agent.",
-        };
-      case "authentication_failed":
-        return {
-          title: "Provider credentials need attention",
-          message:
-            "The agent's provider rejected the configured credentials. Check the API key or configure another model for this agent.",
-        };
-      case "connection_failed":
-      case "network_error":
-        return {
-          title: "Connection interrupted",
-          message:
-            "The model connection dropped before the turn finished. Check the connection and retry.",
-        };
-      case "server_error":
-        return {
-          title: "Server request failed",
-          message: "LangMesh could not start the turn. Check the daemon log and try again.",
-        };
-      // The fallback for when the daemon could not name the window and the model. Its own case, since an overlong conversation is worth saying plainly.
-      case "context_window_exceeded":
-      case "request_too_large":
-        return {
-          title: "Conversation is too long for this model",
-          message:
-            "The request was larger than this model's context window. Compact the conversation, start a new one, or switch to a model with a larger window. A single tool result — a long file or a screen listing — is the usual cause.",
-        };
-      case "request_rejected":
-        return {
-          title: "Model rejected the request",
-          message:
-            "The agent's model could not accept this turn. Adjust the request or configure a different model for this agent.",
-        };
-      case "image_unsupported":
-        return {
-          title: "This model can't read images",
-          message:
-            "The agent's model rejected the attached image — it looks like a text-only model. Configure a vision-capable model for this agent and try again.",
-        };
-      default:
-        return {
-          title: "Turn could not complete",
-          message: "The turn stopped unexpectedly. The raw details were written to the server log.",
-        };
-    }
-  })();
+function translationParameters(value: unknown): TranslationParameters | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value).filter(
+    (entry): entry is [string, string | number] =>
+      typeof entry[1] === "string" || typeof entry[1] === "number",
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function structuredErrorFromData(data: Record<string, unknown>): FriendlyError {
+  const code = data.code;
+  if (
+    code !== "authentication_failed" &&
+    code !== "connection_failed" &&
+    code !== "context_window_exceeded" &&
+    code !== "image_unsupported" &&
+    code !== "provider_unavailable" &&
+    code !== "rate_limited" &&
+    code !== "request_rejected" &&
+    code !== "server_error" &&
+    code !== "turn_failed" &&
+    code !== "turn_interrupted"
+  ) {
+    throw new Error(`Invalid turn error code: ${String(code)}`);
+  }
+  const parameters = translationParameters(data.parameters);
   return {
     code,
-    status,
-    title: String(data.title ?? fallback.title),
-    message: String(data.message ?? fallback.message),
+    ...(typeof data.status === "number" ? { status: data.status } : {}),
+    ...(parameters ? { parameters } : {}),
   };
 }
 
 // A turn-level failure worth a toast. A tool-scoped error renders on its own card instead.
-function friendlyErrorFromPart(part: A2APart | undefined): FriendlyError | null {
+function structuredErrorFromPart(part: A2APart | undefined): FriendlyError | null {
   if (!part || part.kind !== "data") return null;
   const payload = partPayload(part.data);
   // A `tool_call_id` marks a failure belonging to one card, which renders in place.
   if (payload.kind !== "error" || payload.tool_call_id) return null;
-  return friendlyErrorFromData(payload);
+  return structuredErrorFromData(payload);
 }
 
 /** Take a row back out of the transcript, for a message that turned out never to have been delivered. */
@@ -266,7 +252,7 @@ function pushErrorMessage(state: ReduceState, error: FriendlyError, sourceId?: s
     {
       id: stableMessageId(state, "error", sourceId),
       role: "error",
-      content: `${error.title} — ${error.message}`,
+      content: "",
       timestamp: new Date().toISOString(),
       meta: { error },
     },
@@ -426,7 +412,6 @@ function finishRunningThinkingWithDuration(state: ReduceState, durationMs: numbe
   );
 }
 
-// Open the Thinking row when a turn is sent, so the create/attach round trip is not invisible.
 function finishActiveTools(state: ReduceState): void {
   state.messages = state.messages.map((message) =>
     message.role === "tool_call" && message.meta?.status === "running"
@@ -672,6 +657,10 @@ function reduceDataPart(
               message.id.startsWith(`${role}-${sourceId}-`),
           );
       if (alreadyShown) break;
+      if (role === "user") {
+        // Sending new work explicitly supersedes any still-retryable failed turn.
+        state.messages = state.messages.filter((message) => message.role !== "error");
+      }
       state.messages = [
         ...state.messages,
         {
@@ -694,13 +683,21 @@ function reduceDataPart(
     case "compaction": {
       // A compaction marker: a live indicator, then a separator, rendered as a divider rather than a bubble.
       if (event.status === "started") {
-        const runningIndex = state.messages.findLastIndex(
-          (message) => message.role === "compaction" && message.meta?.status === "running",
+        // Sends are blocked after a failure, so the next fold start is its explicit retry. Reuse
+        // that marker on both the live path and history replay; otherwise the stale failure would
+        // survive beside the successful retry and keep the composer disabled forever.
+        const activeIndex = state.messages.findLastIndex(
+          (message) =>
+            message.role === "compaction" &&
+            (message.meta?.status === "running" || message.meta?.status === "failed"),
         );
-        if (runningIndex >= 0) {
+        if (activeIndex >= 0) {
           state.messages = state.messages.map((message, index) =>
-            index === runningIndex
-              ? { ...message, meta: { ...message.meta, reason: event.reason ?? "" } }
+            index === activeIndex
+              ? {
+                  ...message,
+                  meta: { status: "running", reason: event.reason ?? "" },
+                }
               : message,
           );
         } else {
@@ -718,22 +715,24 @@ function reduceDataPart(
         break;
       }
       if (event.status === "done") {
+        const failed = event.ok === false;
         const changed =
           event.ok !== false && (event.messages_after ?? 0) < (event.messages_before ?? 0);
         const runningIndex = state.messages.findLastIndex(
           (message) => message.role === "compaction" && message.meta?.status === "running",
         );
-        if (!changed) {
+        if (!changed && !failed) {
           // Nothing was compacted — remove the running indicator so no separator lingers.
           if (runningIndex >= 0)
             state.messages = state.messages.filter((_, index) => index !== runningIndex);
           break;
         }
         const meta = {
-          status: "done",
+          status: failed ? "failed" : "done",
           reason: event.reason ?? "",
           messagesBefore: event.messages_before ?? 0,
           messagesAfter: event.messages_after ?? 0,
+          ...(failed && event.error_code ? { compactionErrorCode: event.error_code } : {}),
         };
         if (runningIndex >= 0) {
           state.messages = state.messages.map((message, index) =>
@@ -751,6 +750,26 @@ function reduceDataPart(
             },
           ];
         }
+      }
+      break;
+    }
+    case "retry": {
+      const errorIndex = state.messages.findLastIndex((message) => message.role === "error");
+      if (errorIndex < 0) break;
+      if (event.status === "started") {
+        state.messages = state.messages.map((message, index) =>
+          index === errorIndex
+            ? { ...message, meta: { ...message.meta, retrying: true } }
+            : message,
+        );
+      } else if (event.ok !== false) {
+        state.messages = state.messages.filter((_, index) => index !== errorIndex);
+      } else {
+        state.messages = state.messages.map((message, index) =>
+          index === errorIndex
+            ? { ...message, meta: { ...message.meta, retrying: false, retryFailed: true } }
+            : message,
+        );
       }
       break;
     }
@@ -772,6 +791,7 @@ function reduceDataPart(
         contextOutputTokens,
         contextTokens: contextInputTokens + contextOutputTokens,
         contextWindow: event.context_window ?? 0,
+        contextWindowEstimated: event.context_window_estimated ?? false,
         contextCacheReadTokens: event.cache_read_tokens ?? 0,
         reachableTokens: event.reachable_tokens ?? 0,
         prefixIntact: event.prefix_intact ?? false,
@@ -983,21 +1003,35 @@ function reduceDataPart(
         // A tool-scoped error with no card is still model-facing, so swallow it rather than raise a toast.
         break;
       }
-      pushErrorMessage(state, friendlyErrorFromData(data), sourceId);
+      const retryIndex = state.messages.findLastIndex(
+        (message) => message.role === "error" && message.meta?.retryFailed === true,
+      );
+      if (retryIndex >= 0) {
+        state.messages = state.messages.map((message, index) =>
+          index === retryIndex
+            ? {
+                ...message,
+                meta: { ...message.meta, error: structuredErrorFromData(data), retryFailed: false },
+              }
+            : message,
+        );
+      } else {
+        pushErrorMessage(state, structuredErrorFromData(data), sourceId);
+      }
       break;
     }
     case "warning": {
       finishRunningThinking(state);
-      const title = event.title ?? "Warning";
-      const message = event.message ?? "";
       state.messages = [
         ...state.messages,
         {
           id: stableMessageId(state, "warning", sourceId),
           role: "warning",
-          content: message ? `${title} — ${message}` : title,
+          content: "",
           timestamp: new Date().toISOString(),
-          meta: { warning: { code: event.code ?? "", title, message } },
+          meta: {
+            warning: { code: event.code, parameters: translationParameters(event.parameters) },
+          },
         },
       ];
       break;
@@ -1159,12 +1193,19 @@ export function useChat(
 
   // A message the session would not take. Not an error: it is queued, visible, and goes out on the decision.
   const notifyHeldForDecision = useCallback(
-    (waitingOn: string) => {
+    (waitingOn: SendOutcome["waitingOn"]) => {
+      if (!waitingOn) return;
+      const described =
+        waitingOn.kind === "question"
+          ? translation("waitingOnQuestion")
+          : waitingOn.command
+            ? translation("waitingOnCommand", { command: waitingOn.command })
+            : translation("waitingOnPermission");
       toaster.create({
         type: "info",
         title: translation("heldForDecisionTitle"),
         description: translation("heldForDecisionBody", {
-          waitingOn: waitingOn || translation("heldForDecisionFallback"),
+          waitingOn: described,
         }),
         closable: true,
       });
@@ -1209,19 +1250,23 @@ export function useChat(
     flushNow();
   }, [flushNow]);
 
-  const notifyTurnError = useCallback((part: A2APart | undefined) => {
-    const error = friendlyErrorFromPart(part);
-    if (!error) return;
-    const key = `${sessionIdRef.current || "turn"}:${error.code}:${error.status ?? ""}`;
-    if (errorToastKeysRef.current.has(key)) return;
-    errorToastKeysRef.current.add(key);
-    toaster.create({
-      type: "error",
-      title: error.title,
-      description: error.message,
-      closable: true,
-    });
-  }, []);
+  const messageTranslation = useTranslations("ChatMessage");
+  const notifyTurnError = useCallback(
+    (part: A2APart | undefined) => {
+      const error = structuredErrorFromPart(part);
+      if (!error) return;
+      const key = `${sessionIdRef.current || "turn"}:${error.code}:${error.status ?? ""}`;
+      if (errorToastKeysRef.current.has(key)) return;
+      errorToastKeysRef.current.add(key);
+      toaster.create({
+        type: "error",
+        title: messageTranslation(`errors.${error.code}.title`),
+        description: messageTranslation(`errors.${error.code}.body`, error.parameters),
+        closable: true,
+      });
+    },
+    [messageTranslation],
+  );
 
   // Close this hook's stream on unmount, or orphaned streams exhaust the browser's connection pool.
   useEffect(() => {
@@ -1554,6 +1599,11 @@ export function useChat(
             // Refused because the session is parked: nothing was delivered, and the message stays in the queue.
             if (!outcome.accepted) {
               withdrawOptimistic();
+              if (outcome.compactionRequired) {
+                finishTurn();
+                settleDelivery("compaction");
+                return;
+              }
               notifyHeldForDecision(outcome.waitingOn);
               finishTurn();
               settleDelivery("refused");
@@ -1565,7 +1615,7 @@ export function useChat(
             swallowed({ component: "chat", operation: "start the turn" }, caught);
             // Never delivered, so the row goes and the queued card is again the only place it is shown.
             withdrawOptimistic();
-            pushErrorMessage(stateRef.current, friendlyErrorFromData({ code: "server_error" }));
+            pushErrorMessage(stateRef.current, { code: "server_error" });
             // One wind-down for every ending. `finishTurn` closes the stream if one was opened.
             finishTurn();
             // It never reached the session, so the message keeps its place and nothing retries it.
@@ -1612,6 +1662,7 @@ export function useChat(
         if (!outcome.accepted) {
           dropMessage(stateRef.current, key);
           flushNow();
+          if (outcome.compactionRequired) return "compaction";
           notifyHeldForDecision(outcome.waitingOn);
           return "refused";
         }
@@ -1658,8 +1709,10 @@ export function useChat(
     const trimmed = text.trim();
     if (!trimmed) return Promise.resolve();
     // Every message goes in the same way, whatever the session is doing. No branch at the keystroke.
-    outboxRef.current?.add({ id: clientIdentifier(), text: trimmed, dataParts });
-    return Promise.resolve();
+    return (
+      outboxRef.current?.add({ id: clientIdentifier(), text: trimmed, dataParts }) ??
+      Promise.resolve<Delivery>("failed")
+    );
   }, []);
 
   // The held decision was answered, by anyone. The only retry trigger, and one a delivery cannot cause.
@@ -1694,7 +1747,7 @@ export function useChat(
         closable: true,
       });
     },
-    [flush],
+    [flush, translation],
   );
 
   const settleInactivePrompt = useCallback(
@@ -1840,7 +1893,7 @@ export function useChat(
         });
       }
     });
-  }, [flush]);
+  }, [flush, translation]);
 
   // Kick off a manual compaction; the local marker covers passes that finish between stream subscriptions.
   const compact = useCallback(() => {
@@ -1852,22 +1905,77 @@ export function useChat(
       )
     )
       return;
-    const markerId = `compaction-request-${clientIdentifier()}`;
-    stateRef.current.messages = [
-      ...stateRef.current.messages,
-      {
-        id: markerId,
-        role: "compaction",
-        content: "",
-        timestamp: new Date().toISOString(),
-        meta: { status: "running", reason: "manual" },
-      },
-    ];
+    const failed = stateRef.current.messages.findLast(
+      (message) => message.role === "compaction" && message.meta?.status === "failed",
+    );
+    const markerId = failed?.id ?? `compaction-request-${clientIdentifier()}`;
+    const nextMarker: ChatMessage = {
+      id: markerId,
+      role: "compaction",
+      content: "",
+      timestamp: new Date().toISOString(),
+      meta: { status: "running", reason: "manual" },
+    };
+    if (failed) upsertMessage(stateRef.current, nextMarker);
+    else stateRef.current.messages = [...stateRef.current.messages, nextMarker];
     flushNow();
-    void compactSession(context).then((result) => {
-      const marker = stateRef.current.messages.find((message) => message.id === markerId);
-      if (!result?.compacted || result.status !== "done") {
-        if (marker?.meta?.status === "running") dropMessage(stateRef.current, markerId);
+    void compactSession(context)
+      .then((result) => {
+        const marker = stateRef.current.messages.find((message) => message.id === markerId);
+        if (!result.compacted || result.status !== "done" || result.ok === false) {
+          if (!result.error_code) {
+            throw new Error("A failed compaction response is missing error_code.");
+          }
+          if (marker) {
+            upsertMessage(stateRef.current, {
+              ...marker,
+              meta: {
+                ...marker.meta,
+                status: "failed",
+                compactionErrorCode: result.error_code,
+              },
+            });
+          }
+          flushNow();
+          toaster.create({
+            type: "error",
+            title: translation("compactFailedTitle"),
+            description: translation("compactFailedBody"),
+            closable: true,
+          });
+          return;
+        }
+        outboxRef.current?.compactionRecovered();
+        if (marker?.meta?.status !== "running") return;
+        const changed = (result.messages_after ?? 0) < (result.messages_before ?? 0);
+        if (!changed) {
+          dropMessage(stateRef.current, markerId);
+        } else {
+          upsertMessage(stateRef.current, {
+            ...marker,
+            meta: {
+              status: "done",
+              reason: result.reason ?? "manual",
+              messagesBefore: result.messages_before ?? 0,
+              messagesAfter: result.messages_after ?? 0,
+            },
+          });
+        }
+        flushNow();
+      })
+      .catch((caught) => {
+        swallowed({ component: "chat", operation: "compact the conversation" }, caught);
+        const marker = stateRef.current.messages.find((message) => message.id === markerId);
+        if (marker) {
+          upsertMessage(stateRef.current, {
+            ...marker,
+            meta: {
+              ...marker.meta,
+              status: "failed",
+              compactionErrorCode: "compaction_failed",
+            },
+          });
+        }
         flushNow();
         toaster.create({
           type: "error",
@@ -1875,26 +1983,7 @@ export function useChat(
           description: translation("compactFailedBody"),
           closable: true,
         });
-        return;
-      }
-      if (marker?.meta?.status !== "running") return;
-      const changed =
-        result.ok !== false && (result.messages_after ?? 0) < (result.messages_before ?? 0);
-      if (!changed) {
-        dropMessage(stateRef.current, markerId);
-      } else {
-        upsertMessage(stateRef.current, {
-          ...marker,
-          meta: {
-            status: "done",
-            reason: result.reason ?? "manual",
-            messagesBefore: result.messages_before ?? 0,
-            messagesAfter: result.messages_after ?? 0,
-          },
-        });
-      }
-      flushNow();
-    });
+      });
   }, [flushNow, translation]);
 
   const abortTool = useCallback(
@@ -1918,7 +2007,7 @@ export function useChat(
       );
       flush();
     },
-    [flush],
+    [flush, translation],
   );
 
   const dequeueMessage = useCallback(
@@ -1931,6 +2020,59 @@ export function useChat(
 
   /** Ask again after a failure to reach the session. The person's own retry. */
   const retryOutbox = useCallback(() => outboxRef.current?.retry(), []);
+
+  const retryTurn = useCallback(async (): Promise<boolean> => {
+    const context = sessionIdRef.current;
+    if (!context || isStreamingRef.current) return false;
+    const errorIndex = stateRef.current.messages.findLastIndex(
+      (message) => message.role === "error",
+    );
+    if (errorIndex < 0) return false;
+    stateRef.current.messages = stateRef.current.messages.map((message, index) =>
+      index === errorIndex
+        ? { ...message, meta: { ...message.meta, retrying: true, retryFailed: false } }
+        : message,
+    );
+    flushNow();
+    isStreamingRef.current = true;
+    streamedLocallyRef.current = true;
+    setIsStreaming(true);
+    const observe = attachSession(
+      context,
+      (frame) => {
+        if (frame.kind === "turn" && !frame.running) {
+          observe.abort();
+          isStreamingRef.current = false;
+          streamedLocallyRef.current = false;
+          setIsStreaming(false);
+          return;
+        }
+        if (frame.kind === "live") {
+          reduceAgentPart(stateRef.current, frame.part);
+          flush();
+        }
+      },
+      () => {
+        isStreamingRef.current = false;
+        streamedLocallyRef.current = false;
+        setIsStreaming(false);
+      },
+    );
+    const accepted = await retrySessionTurn(context);
+    if (!accepted) {
+      observe.abort();
+      isStreamingRef.current = false;
+      streamedLocallyRef.current = false;
+      setIsStreaming(false);
+      stateRef.current.messages = stateRef.current.messages.map((message, index) =>
+        index === errorIndex
+          ? { ...message, meta: { ...message.meta, retrying: false, retryFailed: true } }
+          : message,
+      );
+      flushNow();
+    }
+    return accepted;
+  }, [flush, flushNow]);
 
   const reset = useCallback(() => {
     abort();
@@ -1968,6 +2110,7 @@ export function useChat(
     deliveringMessage,
     grantedPermissionMode,
     retryOutbox,
+    retryTurn,
     handlePermission,
     handleQuestion,
     declineQuestion,

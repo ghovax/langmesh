@@ -12,6 +12,9 @@ PART_KIND = "kind"
 
 # Opens an on-demand compaction turn, which runs no model turn and so is modelled like an autonomous wake.
 COMPACTION_KIND = "compaction_request"
+COMPACTION_RESUME_KIND = "compaction_resume"
+COMPACTION_PREPARE_KIND = "compaction_prepare"
+RETRY_TURN_KIND = "retry_turn"
 
 # Opens an autonomous wake turn, modelled as an agent message since A2A has no harness role.
 AUTONOMOUS_RESUME_KIND = "autonomous_resume"
@@ -38,6 +41,9 @@ class Metadata:
     # Marks a harness-initiated turn rather than user input.
     AUTONOMOUS_RESUME = "autonomousResume"
     COMPACTION = "compaction"
+    COMPACTION_RESUME = "compactionResume"
+    COMPACTION_PREPARE = "compactionPrepare"
+    RETRY_TURN = "retryTurn"
     REPORT_REMINDER = "reportReminder"
     GOAL_CONTINUATION = "goalContinuation"
     GOAL_REVIEW_ID = "goalReviewId"

@@ -6,6 +6,8 @@ export type Delivery =
   | "accepted"
   /** The session is parked on a decision and took nothing. It stays queued, and stays visible. */
   | "refused"
+  /** A failed context fold blocks the session until the user retries it. */
+  | "compaction"
   /** The attempt did not reach the session at all. It stays queued. */
   | "failed";
 
@@ -21,6 +23,8 @@ export type OutboxHold =
   | "decision"
   /** The last attempt never reached the session. It will go on the next attempt. */
   | "unreachable"
+  /** Context compaction failed; retrying compaction is the only release. */
+  | "compaction"
   /** Nothing is wrong: the queue is empty, or delivery is under way. */
   | null;
 
@@ -49,6 +53,7 @@ export class Outbox {
   private pumping = false;
   // The conversation these messages were typed into. Empty until one exists.
   private session = "";
+  private settlements = new Map<string, (delivery: Delivery) => void>();
 
   constructor(private readonly ports: OutboxPorts) {}
 
@@ -65,11 +70,22 @@ export class Outbox {
   }
 
   /** A person typed something. */
-  add(message: OutboxMessage): void {
+  add(message: OutboxMessage): Promise<Delivery> {
     this.messages = [...this.messages, message];
     this.announce();
-    // Not while a decision is outstanding, since the answer is known and asking again only refuses twice.
-    if (this.held !== "decision") void this.pump();
+    // A held queue moves only through its matching explicit release. Adding another message cannot
+    // implicitly retry a failed request, a refused decision, or a failed context fold. It was
+    // accepted by the local queue immediately, so the composer must not claim an API send is active.
+    if (this.held !== null) {
+      return Promise.resolve(
+        this.held === "decision" ? "refused" : this.held === "compaction" ? "compaction" : "failed",
+      );
+    }
+    const settlement = new Promise<Delivery>((resolve) =>
+      this.settlements.set(message.id, resolve),
+    );
+    void this.pump();
+    return settlement;
   }
 
   /** The decision that was blocking delivery has been answered, which is one of the two retry triggers. */
@@ -88,17 +104,27 @@ export class Outbox {
     void this.pump();
   }
 
+  /** A successful explicit compaction retry releases messages held by the failed fold. */
+  compactionRecovered(): void {
+    if (this.held !== "compaction") return;
+    this.held = null;
+    this.announce();
+    void this.pump();
+  }
+
   /** A person removed a queued message before it went. */
   remove(id: string): void {
     const remaining = this.messages.filter((message) => message.id !== id);
     if (remaining.length === this.messages.length) return;
     this.messages = remaining;
+    this.settle(id, "failed");
     this.announce();
   }
 
   /** Switching to another session: this queue belonged to the one being left. */
   clear(): void {
     if (this.messages.length === 0 && this.held === null) return;
+    for (const message of this.messages) this.settle(message.id, "failed");
     this.messages = [];
     this.held = null;
     this.handing = null;
@@ -110,7 +136,7 @@ export class Outbox {
   }
 
   private async pump(): Promise<void> {
-    if (this.pumping) return;
+    if (this.pumping || this.held !== null) return;
     this.pumping = true;
     try {
       while (this.messages.length > 0) {
@@ -131,16 +157,24 @@ export class Outbox {
         }
         this.handing = null;
         if (outcome === "refused") {
+          this.settle(head.id, outcome);
           this.hold("decision");
+          return;
+        }
+        if (outcome === "compaction") {
+          this.settle(head.id, outcome);
+          this.hold("compaction");
           return;
         }
         if (outcome === "failed") {
           // It never reached the session, so it keeps its place and says so.
+          this.settle(head.id, outcome);
           this.hold("unreachable");
           return;
         }
         // Delivered: it leaves the queue only now, on the session's own word.
         this.messages = this.messages.filter((message) => message.id !== head.id);
+        this.settle(head.id, outcome);
         this.held = null;
         this.announce();
       }
@@ -153,5 +187,10 @@ export class Outbox {
     // Always announced, even when the reason is unchanged, because the state around it is not.
     this.held = reason;
     this.announce();
+  }
+
+  private settle(id: string, delivery: Delivery): void {
+    this.settlements.get(id)?.(delivery);
+    this.settlements.delete(id);
   }
 }

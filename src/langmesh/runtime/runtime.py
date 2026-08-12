@@ -4,7 +4,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Awaitable, Callable, Optional, Sequence
 
 from langchain_core.messages import (
     AIMessage,
@@ -77,6 +77,7 @@ from langmesh.runtime.permissions import (
 )
 
 from langmesh.runtime.compaction import (
+    _CompactionControl,
     _CompactsContext,
 )
 from langmesh.base.serialization import compact
@@ -97,6 +98,14 @@ from langmesh.runtime.internals import (
 logger = logging.getLogger(__name__)
 
 
+async def _drain_observer(pending) -> None:
+    """Await a caller-supplied audit observer without making it part of turn control flow."""
+    try:
+        await pending
+    except Exception:  # noqa: BLE001 — an audit sink must never fail a turn
+        logger.debug("an asynchronous audit observer raised", exc_info=True)
+
+
 class _CataloguePrompts:
     """A `PromptLoader`-shaped view of a catalogue, so the template seam cost one adapter rather than a rewrite."""
 
@@ -105,14 +114,6 @@ class _CataloguePrompts:
 
     def load(self, template_name: str, variables: dict[str, str]) -> str:
         return self._catalogue.prompt(template_name, variables)
-
-
-async def _drain_observation(pending) -> None:
-    """Await an observer's awaitable and swallow it, since nothing else ever retrieves its exception."""
-    try:
-        await pending
-    except Exception:  # noqa: BLE001 — an audit sink must never fail a turn
-        logger.debug("an asynchronous observer raised", exc_info=True)
 
 
 def build_chat_model(
@@ -504,6 +505,7 @@ class AgentRuntime(
         compaction: Any = None,
         toolset: Sequence[BaseTool] | None = None,
         accepts_goal_review: bool = False,
+        resource_sync: Callable[[], Awaitable[None]] | None = None,
     ):
         from langmesh.runtime.hooks import HookRunner
         from langmesh.runtime.pipeline import ToolPipeline
@@ -512,6 +514,7 @@ class AgentRuntime(
         self._hooks = HookRunner(hooks)
         self._pipeline = ToolPipeline(pipeline)
         self._compaction = compaction
+        self._resource_sync = resource_sync
         self._session_id = session_id
         # The session that created this one, empty when a person did. Reporting back needs its id.
         self._parent_session = parent_session
@@ -600,9 +603,24 @@ class AgentRuntime(
         )
         # Where the audit trail goes, and who answers a gate. Both absent by default.
         self._observer = observer
+        from langmesh.base.observation_store import SQLiteObservationStore
+
+        self._observation_store = SQLiteObservationStore(
+            global_configuration.observation_database_for(self._working_directory)
+        )
+        try:
+            self._observation_registry_metadata = self._observation_store.describe_sync()
+            initial_observation_registry_error = None
+        except Exception as error:  # noqa: BLE001 — queued privately for repair at the next opening
+            self._observation_registry_metadata = {
+                "path": str(self._observation_store.path),
+                "exists": self._observation_store.path.exists(),
+                "status": "invalid",
+            }
+            initial_observation_registry_error = str(error) or type(error).__name__
         self._approvals = approvals
         self._transcript = transcript
-        # Where a fold's entries are appended. Absent in a library run, which keeps no ledger.
+        # The daemon's event publisher is optional; the registry reader is used only for fold verification.
         self._turn_store = turn_store
         self._accepts_goal_review = accepts_goal_review
         self._submitted_goal_review = None
@@ -640,23 +658,30 @@ class AgentRuntime(
         self._on_goal_change: Optional[Callable[[Optional[Goal]], None]] = None
         self._session_revision = 0
         self._persisted_session_revision = 0
-        # The serialized observation pipeline, whose tail keeps every earlier write alive.
-        self._observation_tail: asyncio.Task | None = None
-        self._observations_in_flight: set[str] = set()
-        # The exchange most recently queued for observation, so a closing exchange is never queued twice.
-        self._last_enqueued_exchange: str | None = None
         self._execution_history: list[dict] = []
         # The permission policy as one value, resolved by the daemon before this runtime is built.
         self._a2a_turn_id: str = ""
         # Reads another task by id from the shared store, so context-aware agents can coordinate.
         self._turn_reader: Optional[Callable] = None
-        self._steering_messages: asyncio.Queue[str] = asyncio.Queue()
+        self._steering_messages: asyncio.Queue[tuple[str, str, str, asyncio.Future[bool]]] = (
+            asyncio.Queue()
+        )
         self._steering_available = asyncio.Event()
         self._active_tool_tasks: dict[str, asyncio.Task] = {}
         # The latest call replaces this estimate once usage arrives; restored sessions need it immediately.
         self._latest_context_tokens = conversation_tokens(self._conversation)
         context_window = getattr(self._model, "context_window", None)
-        self._context_window = max(0, int(context_window())) if callable(context_window) else 0
+        reported_context_window = max(0, int(context_window())) if callable(context_window) else 0
+        self._context_window_estimated = reported_context_window == 0
+        self._context_window = (
+            reported_context_window or self._global_configuration.compaction.assumed_context_window
+        )
+        # Durable fold preparation: one state value prevents contradictory phase, reason,
+        # resumption, revision, and failure flags from surviving a restart.
+        self._compaction_control = _CompactionControl()
+        self._turn_recovery = "none"
+        self._observation_registry_error: str | None = initial_observation_registry_error
+        self._pending_observation_registry_feedback: str | None = initial_observation_registry_error
         # What the module-level tools read at call time, built from this runtime's own configuration and conversation.
         self._tool_context = _build_tool_context(
             global_configuration,
@@ -678,13 +703,37 @@ class AgentRuntime(
             if path and path not in self._attached_files:
                 self._attached_files.append(path)
 
+    def refresh_system_prompt(self) -> None:
+        """Rebuild catalogue-derived prompt material at the next model-call boundary."""
+        self._cached_system_prompt = None
+
+    def note_observation_registry(self, metadata: dict[str, Any], error: str | None = None) -> None:
+        """Adopt watcher metadata and queue a changed schema failure for the next model opening."""
+        normalized_error = error.strip() if error else None
+        metadata_changed = metadata != self._observation_registry_metadata
+        error_changed = normalized_error != self._observation_registry_error
+        if not metadata_changed and not error_changed:
+            return
+        if metadata_changed:
+            self._observation_registry_metadata = dict(metadata)
+            # The memory panel receives this revision immediately, while the model's static
+            # prefix adopts it only at an explicit prompt refresh such as successful folding.
+        self._observation_registry_error = normalized_error
+        if error_changed:
+            self._pending_observation_registry_feedback = normalized_error
+
+    def _take_observation_registry_feedback(self) -> str | None:
+        message = self._pending_observation_registry_feedback
+        self._pending_observation_registry_feedback = None
+        return message
+
     def set_locations(self, locations: list[dict] | None) -> None:
         """Adopt the workspace's environments as they are now, so one added later reaches an existing session."""
         carried = {uri: resolved.executor for uri, resolved in self._locations.items()}
         self._locations = {}
         self._locations_by_name = {}
         self._build_locations(locations, executors=carried)
-        # The system prompt is left alone: the environments are stated in the turn context, rebuilt every turn.
+        # A running prompt remains stable until its explicit refresh boundary (normally compaction).
 
     def _build_locations(
         self,
@@ -867,9 +916,14 @@ class AgentRuntime(
         self._token_usage["model_calls"] += 1
         # The latest call's input is the whole prompt, so it says how full the context is.
         model = getattr(self, "_model", None)
-        context_window = model.context_window() if model is not None else 0
+        reported_context_window = model.context_window() if model is not None else 0
+        # Some OpenAI-compatible gateways omit model metadata on a response. Never replace
+        # a catalogued non-zero window with that absence: doing so disables automatic folding.
+        if reported_context_window > 0:
+            self._context_window = reported_context_window
+            self._context_window_estimated = False
+        context_window = self._context_window
         self._latest_context_tokens = input_tokens + output_tokens
-        self._context_window = context_window
         return Usage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -877,6 +931,7 @@ class AgentRuntime(
             cache_read_tokens=cache_read,
             reasoning_tokens=reasoning,
             context_window=context_window,
+            context_window_estimated=self._context_window_estimated,
             cumulative=dict(self._token_usage),
             prefix_intact=bool(cache_trace.get("prefix_intact", False)),
             reachable_tokens=reachable,
@@ -940,18 +995,29 @@ class AgentRuntime(
         """Push a blocking command to the background on the user's behalf, as if the model had done it."""
         return self._background.request_background(tool_call_identifier)
 
-    def enqueue_steering(self, message: str, message_id: str = "", peer_sender: str = "") -> bool:
+    def enqueue_steering(
+        self, message: str, message_id: str = "", peer_sender: str = ""
+    ) -> asyncio.Future[bool] | None:
         text = message.strip()
         if not text:
-            return False
-        self._steering_messages.put_nowait((text, message_id, peer_sender))
+            return None
+        accepted = asyncio.get_running_loop().create_future()
+        self._steering_messages.put_nowait((text, message_id, peer_sender, accepted))
         self._steering_available.set()
-        return True
+        # Interrupt an active provider read at its next safe boundary. Any prefix already
+        # streamed is persisted before this user message is appended, so both surfaces agree.
+        # Preparation is an atomic private segment: steering waits at its boundary and is
+        # appended immediately before the fold, then reaches the resumed model call.
+        if self._compaction_control.phase not in {"waiting", "recorded"}:
+            self._abort_event.set()
+        return accepted
 
     def discard_pending_steering(self) -> None:
         """Drop steering accepted too late to be honoured, since the client re-delivers it as a fresh turn."""
         while not self._steering_messages.empty():
-            self._steering_messages.get_nowait()
+            _text, _message_id, _peer_sender, accepted = self._steering_messages.get_nowait()
+            if not accepted.done():
+                accepted.set_result(False)
         self._steering_available.clear()
 
     def _has_queued_steering(self) -> bool:
@@ -975,6 +1041,8 @@ class AgentRuntime(
         return {
             "goal": self._goal.model_dump() if self._goal is not None else None,
             "tasks": self._task_manager.snapshot(),
+            "compaction": self._compaction_control.snapshot(),
+            "turn_recovery": self._turn_recovery,
         }
 
     def restore_session(self, snapshot: dict) -> None:
@@ -988,6 +1056,93 @@ class AgentRuntime(
                 logger.warning("discarding a stored goal that no longer validates")
         self._goal = goal
         self._task_manager.restore(snapshot.get("tasks", {}) or {})
+        self._compaction_control = _CompactionControl.restore(snapshot.get("compaction"))
+        recovery = str(snapshot.get("turn_recovery") or "none")
+        # A process that died after claiming the retry still owes that retry after restart.
+        self._turn_recovery = "retryable" if recovery == "retrying" else recovery
+        if self._turn_recovery not in {"none", "retryable"}:
+            self._turn_recovery = "none"
+
+    @property
+    def retryable_turn(self) -> bool:
+        """Whether the last failed turn can continue from its durable conversation tail."""
+        return self._turn_recovery == "retryable"
+
+    def mark_turn_failed(self) -> None:
+        if self._turn_recovery != "retryable":
+            self._turn_recovery = "retryable"
+            self._mark_session_dirty()
+
+    def begin_turn_retry(self) -> bool:
+        if self._turn_recovery != "retryable" or self._compaction_control.failure:
+            return False
+        self._turn_recovery = "retrying"
+        self._mark_session_dirty()
+        return True
+
+    def abandon_turn_retry(self) -> None:
+        """Let newly accepted user work supersede a previously failed turn."""
+        if self._turn_recovery != "none":
+            self._turn_recovery = "none"
+            self._mark_session_dirty()
+
+    def mark_turn_succeeded(self) -> None:
+        if self._turn_recovery != "none":
+            self._turn_recovery = "none"
+            self._mark_session_dirty()
+
+    @property
+    def compaction_failure(self) -> str | None:
+        """The failure that blocks new input until an explicit compaction retry succeeds."""
+        return self._compaction_control.failure
+
+    def _fail_compaction(self, message: str) -> None:
+        self._compaction_control.fail_fold(message)
+        # Messages queued during the atomic preparation segment were never accepted into
+        # the conversation. Release their senders so they can remain visibly held outside it.
+        self.discard_pending_steering()
+        self._mark_session_dirty()
+
+    def _record_compaction_preparation(self) -> None:
+        self._compaction_control.record()
+        self._mark_session_dirty()
+
+    def retry_compaction(self) -> str | None:
+        """Reopen exactly the failed fold phase and return the operation to drive."""
+        if self._compaction_control.phase == "fold_failed":
+            self._compaction_control.retry_fold()
+            self._mark_session_dirty()
+            return "fold"
+        if self._compaction_control.phase != "preparation_failed":
+            return None
+        # A retry gets one unambiguous preparation notice. Retain any accepted user message
+        # that followed the failed private segment while removing that segment's discarded work.
+        self._conversation[:] = self._without_compaction_preparation(self._conversation)
+        self._begin_compaction_preparation(
+            reason=self._compaction_control.reason,
+            resume_after=self._compaction_control.resume_after,
+        )
+        return "prepare"
+
+    def begin_compaction_preparation(self) -> bool:
+        """Begin an explicit fold's recording handshake when no other fold state is active."""
+        if self._compaction_control.failure or self._compaction_control.phase != "none":
+            return False
+        self._begin_compaction_preparation(reason="manual", resume_after=False)
+        return True
+
+    @property
+    def resumes_after_compaction(self) -> bool:
+        return self._compaction_control.resume_after
+
+    @property
+    def pending_compaction_reason(self) -> str:
+        return self._compaction_control.reason
+
+    @property
+    def awaiting_compaction_recording(self) -> bool:
+        """Whether a persisted fold is waiting for its private recording segment to finish."""
+        return self._compaction_control.phase == "waiting"
 
     # The goal, and the four things anyone outside this class does with it.
 
@@ -1039,9 +1194,7 @@ class AgentRuntime(
         """Stop working the goal until a person speaks. The goal is kept: it is still what the session is for."""
         if self._goal is None or not self._goal.is_open:
             return
-        self.write_goal(
-            self._goal.updated(status=Goal.PARKED, review_message=None, review_id=None)
-        )
+        self.write_goal(self._goal.updated(status=Goal.PARKED, review_message=None, review_id=None))
 
     def dirty_session_snapshot(self) -> Optional[dict]:
         """Return state newer than the last persisted revision without acknowledging it."""
@@ -1062,9 +1215,7 @@ class AgentRuntime(
 
     def clear_session_dirty(self, persisted_revision: int) -> None:
         """Acknowledge exactly the revision whose write completed, without hiding newer mutations."""
-        self._persisted_session_revision = max(
-            self._persisted_session_revision, persisted_revision
-        )
+        self._persisted_session_revision = max(self._persisted_session_revision, persisted_revision)
 
     def _record_event(self, event_type: str, data: dict) -> None:
         record = {
@@ -1096,7 +1247,7 @@ class AgentRuntime(
         if pending is None:
             return
         try:
-            asyncio.get_running_loop().create_task(_drain_observation(pending))
+            asyncio.get_running_loop().create_task(_drain_observer(pending))
         except RuntimeError:
             # No loop: an observation outside a turn, with nothing to schedule it on.
             logger.debug("dropped an awaitable observation with no running loop")

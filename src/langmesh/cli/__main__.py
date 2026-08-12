@@ -60,7 +60,16 @@ def _command_send(arguments: argparse.Namespace) -> int:
     result = call("session.send", id=arguments.session, parts=[{"kind": "text", "text": text}])
     # A session parked on a decision takes nothing, so this exits non-zero and `--wait` does not follow a turn that never started.
     if result.get("accepted") is False:
-        waiting_on = str(result.get("waiting_on") or "a decision from the user")
+        waiting = result.get("waiting_on") if isinstance(result.get("waiting_on"), dict) else {}
+        kind = str(waiting.get("kind") or "permission")
+        command = str(waiting.get("command") or "")
+        waiting_on = (
+            "an answer to its question"
+            if kind == "question"
+            else f"a permission decision for `{command}`"
+            if command
+            else "a permission decision"
+        )
         _note(f"langmesh: not sent — the session is waiting on {waiting_on}")
         return 1
     if arguments.wait:

@@ -156,6 +156,7 @@ function RunningTaskRow({ task, sessionId }: { task: ShellJob; sessionId: string
     <ToolCall
       name={task.name}
       arguments={task.arguments}
+      argumentsComplete={task.argumentsComplete}
       result={task.result}
       status={task.status}
       toolCallId={task.toolCallId}
@@ -506,6 +507,7 @@ export function BackgroundJobsPanel({
                         key={task.toolCallId}
                         name={task.name}
                         arguments={task.arguments}
+                        argumentsComplete={task.argumentsComplete}
                         result={task.result}
                         status={task.status}
                         toolCallId={task.toolCallId}

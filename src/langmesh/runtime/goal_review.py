@@ -7,6 +7,7 @@ import logging
 from contextlib import suppress
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Awaitable, Callable, Literal, Optional
 
@@ -14,13 +15,12 @@ from a2a.types import Message, Part, Role, Task, TaskState, TaskStatus, TextPart
 from a2a.utils import new_task
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
-from langmesh.base.configuration import PermissionEvaluator
+from langmesh.base.configuration import PermissionEvaluator, PromptLoader
 from langmesh.base.identifiers import new_id
 from langmesh.base.serialization import compact
 from langmesh.base.tuning import Tunable, active_tuning
 from langmesh.protocol.events import ToolStatus
 from langmesh.runtime.goal import Goal, NonBlankText
-from langmesh.runtime.internals import says
 from langmesh.runtime.turn_events import (
     GoalReviewFinished,
     GoalReviewProgress,
@@ -32,6 +32,7 @@ from langmesh.worker.sink import _TurnEventSink
 
 
 logger = logging.getLogger(__name__)
+_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "descriptions")
 
 #: Where a goal stands after one reading of the work, which is not the same as what the session says about it.
 GOAL_STANDING = Literal["unmet", "satisfied", "blocked"]
@@ -55,13 +56,31 @@ class GoalReview(BaseModel):
     """One reading of an open goal: where it stands, and what the session is told to do about it."""
 
     # Evidence precedes the verdict so the decision follows from the review instead of leading it.
-    assessment: NonBlankText = Field(description=says("goal_review_assessment"))
-    unmet: list[NonBlankText] = Field(default_factory=list, description=says("goal_review_unmet"))
-    evidence: NonBlankText | None = Field(default=None, description=says("goal_review_evidence"))
-    blocker: NonBlankText | None = Field(default=None, description=says("goal_review_blocker"))
-    goal_contract: GOAL_CONTRACT = Field(description=says("goal_review_goal_contract"))
-    standing: GOAL_STANDING = Field(description=says("goal_review_standing"))
-    message: NonBlankText | None = Field(default=None, description=says("goal_review_message"))
+    assessment: NonBlankText = Field(
+        description=_DESCRIPTIONS.load("goal_review_assessment", {}).strip()
+    )
+    unmet: list[NonBlankText] = Field(
+        default_factory=list,
+        description=_DESCRIPTIONS.load("goal_review_unmet", {}).strip(),
+    )
+    evidence: NonBlankText | None = Field(
+        default=None,
+        description=_DESCRIPTIONS.load("goal_review_evidence", {}).strip(),
+    )
+    blocker: NonBlankText | None = Field(
+        default=None,
+        description=_DESCRIPTIONS.load("goal_review_blocker", {}).strip(),
+    )
+    goal_contract: GOAL_CONTRACT = Field(
+        description=_DESCRIPTIONS.load("goal_review_goal_contract", {}).strip()
+    )
+    standing: GOAL_STANDING = Field(
+        description=_DESCRIPTIONS.load("goal_review_standing", {}).strip()
+    )
+    message: NonBlankText | None = Field(
+        default=None,
+        description=_DESCRIPTIONS.load("goal_review_message", {}).strip(),
+    )
     _review_id: str = PrivateAttr("")
 
     @model_validator(mode="after")
@@ -349,8 +368,6 @@ class _ReviewsGoal:
         goal = self.goal
         if goal is None or not goal.is_open:
             return None
-        await self.wait_for_observational_memory()
-        await self._append_memory_update()
         goal = self.goal
         if goal is None or not goal.is_open:
             return None

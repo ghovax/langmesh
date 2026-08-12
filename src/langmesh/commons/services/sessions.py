@@ -12,19 +12,6 @@ from langmesh.commons.database import SessionRecord
 from langmesh.commons.services.broadcast import _publish_broadcast
 
 
-def claim_work_habits_acknowledgement(session_id: str) -> bool:
-    """Claim the one-time work-habits acknowledgement, durably because a worker is per activation."""
-    if state.session_store is None:
-        return False
-    return state.session_store.claim_work_habits_acknowledgement(session_id)
-
-
-def _reset_work_habits_acknowledgements() -> None:
-    """Allow one fresh acknowledgement after the work-habits setting changes."""
-    if state.session_store is not None:
-        state.session_store.reset_work_habits_acknowledgements()
-
-
 def _normalize_permission_mode(mode: str) -> str:
     """A validated permission mode at a persistence boundary."""
     from langmesh.base.permission_mode import PermissionMode
@@ -210,7 +197,6 @@ def _sessions_payload() -> dict[str, list[dict[str, Any]]]:
                     ),
                     "running": row.id in state._running_contexts,
                     "awaiting_input": row.id in state._awaiting_input_contexts,
-                    "recording_memory": bool(state._recording_memory_contexts.get(row.id)),
                     # What this session is working toward, read from the live map because a goal belongs to its process.
                     "goal": state._session_goals.get(row.id),
                     # What the session is doing, which its lifecycle deliberately does not say.

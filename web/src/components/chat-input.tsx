@@ -252,7 +252,13 @@ function ContextUsageChip({
         </InlineField>
         {hasContext && (
           <InlineField label={translation("window")}>
-            <Text>{tokenUsage.contextWindow.toLocaleString()}</Text>
+            <Text>
+              {tokenUsage.contextWindowEstimated
+                ? translation("estimatedWindow", {
+                    value: tokenUsage.contextWindow.toLocaleString(),
+                  })
+                : tokenUsage.contextWindow.toLocaleString()}
+            </Text>
           </InlineField>
         )}
       </Flex>
@@ -314,7 +320,9 @@ function ContextUsageChip({
           whiteSpace="nowrap"
         >
           {tokenUsage.contextTokens.toLocaleString()}
-          {hasContext ? ` / ${tokenUsage.contextWindow.toLocaleString()}` : ""}
+          {hasContext
+            ? ` / ${tokenUsage.contextWindowEstimated ? "~" : ""}${tokenUsage.contextWindow.toLocaleString()}`
+            : ""}
         </Text>
       </Flex>
     </Tooltip>
@@ -642,7 +650,6 @@ export function ChatInput({
     if (!trimmed) return;
     if (!directoryAvailable) return;
     if (uploadingCount > 0) return;
-    const startedAt = performance.now();
     setSendPending(true);
     const sendText = trimmed;
     const dataParts = attachments.length > 0 ? [{ kind: "attachments", attachments }] : [];
@@ -664,23 +671,16 @@ export function ChatInput({
         }
       }
     } finally {
-      window.setTimeout(
-        () => setSendPending(false),
-        Math.max(0, 450 - (performance.now() - startedAt)),
-      );
+      setSendPending(false);
     }
   }
 
   async function handleAbortClick() {
-    const startedAt = performance.now();
     setStopPending(true);
     try {
       await onAbort();
     } finally {
-      window.setTimeout(
-        () => setStopPending(false),
-        Math.max(0, 450 - (performance.now() - startedAt)),
-      );
+      setStopPending(false);
     }
   }
 
@@ -717,7 +717,21 @@ export function ChatInput({
   }
 
   return (
-    <Box position="relative" pb={2}>
+    <fieldset
+      disabled={composerClosed}
+      aria-disabled={composerClosed}
+      style={{
+        position: "relative",
+        padding: 0,
+        paddingBottom: "var(--chakra-spacing-2)",
+        margin: 0,
+        border: 0,
+        minWidth: 0,
+        opacity: composerClosed ? 0.55 : 1,
+        filter: composerClosed ? "grayscale(1)" : undefined,
+        transition: "opacity 120ms ease",
+      }}
+    >
       <ConfirmDialog
         open={compactConfirmOpen}
         onOpenChange={setCompactConfirmOpen}
@@ -731,6 +745,12 @@ export function ChatInput({
 
       {/* Message input */}
       <Box px={0} mt={2} pb={1.5}>
+        {sendPending ? (
+          <Flex align="center" gap={1.5} pb={1.5} color="fg.muted" aria-live="polite">
+            <Spinner boxSize="12px" borderWidth="1.5px" />
+            <Text fontSize="xs">{translation("sending")}</Text>
+          </Flex>
+        ) : null}
         {/* Pending attachments sit above the composer box, so the media cards have room and the input stays clear. */}
         {attachments.length > 0 || uploadingCount > 0 ? (
           <Flex gap={2} pb={2} flexWrap="wrap">
@@ -823,8 +843,8 @@ export function ChatInput({
               fieldSizing="content"
               maxH="44"
               overflowY="auto"
-              borderColor={dragActive ? "blue.muted" : directoryAvailable ? "border" : "red.muted"}
-              bg="bg.panel"
+              borderColor={dragActive ? "blue.muted" : "border"}
+              bg={composerClosed ? "bg.muted" : "bg.panel"}
               resize="none"
             />
           </Box>
@@ -1028,6 +1048,6 @@ export function ChatInput({
           />
         </Flex>
       </Flex>
-    </Box>
+    </fieldset>
   );
 }

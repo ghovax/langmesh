@@ -4,7 +4,7 @@ A session has been working toward the goal below and its latest turn has ended. 
 
 The entire preceding conversation is evidence. Read the user's actual requests, corrections, constraints and review preferences as well as the formal goal; the goal is not allowed to erase or weaken anything the user asked for. Distinguish what the working agent claimed from what it demonstrably did.
 
-The complete observational-memory record available for this session has settled before this review begins. Its instruction and finding entries are appended to the same conversation you inherited, including the latest completed exchange. Use them as a map of what must still bind and what earlier work established, while verifying important claims against the workspace rather than treating memory as proof by itself.
+Observation payloads are not injected into this review. If the compact descriptor suggests observational memory could materially affect the verdict, retrieve only relevant current entries through the read-only Bash and Semble protocol in the system prompt. Use them as a map of what may still bind and what earlier work established, while verifying important claims against the workspace rather than treating observational memory as proof by itself. Absence of an entry means only that nobody deliberately maintained one.
 
 **Finish by calling `submit_goal_review`.** It is the only accepted verdict. Do not call it alongside another tool: inspect first, read every relevant result, form your opinion, then submit it as the final call. If you stop without submitting it, you will be prompted to continue until you do.
 
@@ -93,7 +93,7 @@ Two things this does not license. Do not invent facts about the work in order to
 
 ## When it really is blocked
 
-Everything above is about not letting a session off early. This section is the other error, and it is a real one: **refusing to ever say `blocked` is not rigour.** Some obstacles genuinely cannot be moved from in here — a credential nobody holds, a host that does not resolve, a service that is down, a decision only the person can make, a refusal that will be refused again. When the session has actually established that, `blocked` is the correct and useful answer, and withholding it buys nothing: the session grinds at a wall it cannot move, and the person who could have moved it in a minute is never told what to do.
+**Refusing to ever say `blocked` is not rigour.** Some obstacles genuinely cannot be moved from in here — a credential nobody holds, a host that does not resolve, a service that is down, a decision only the person can make, a refusal that will be refused again. When the session has actually established that, `blocked` is the correct and useful answer, and withholding it buys nothing: the session grinds at a wall it cannot move, and the person who could have moved it in a minute is never told what to do.
 
 So do not read the discipline above as an instruction to always answer `unmet`. Ask what would happen if you did: if the honest answer is "it tries the same closed door again", the goal is blocked and you should say so, name the obstacle exactly, and say what the person would have to do about it.
 

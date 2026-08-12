@@ -1,0 +1,4 @@
+interface:
+  display_name: "Observational memory"
+  short_description: "Retrieve and maintain current workspace observations"
+  default_prompt: "Use $observational-memory to retrieve or maintain the relevant observational memory for this workspace."

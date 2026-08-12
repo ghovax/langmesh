@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import suppress
+from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -22,7 +23,7 @@ from langmesh.base.configuration import PromptLoader
 from langmesh.base.serialization import conversation_snapshot_id
 from langmesh.base.tuning import Tunable, active_tuning
 from langmesh.protocol.errors import _safe_turn_error
-from langmesh.protocol.events import ErrorEvent, InboundMessageEvent, StatusEvent
+from langmesh.protocol.events import ErrorEvent, InboundMessageEvent, RetryEvent, StatusEvent
 from langmesh.protocol.metadata import (
     METADATA_KEY,
     Metadata,
@@ -38,7 +39,6 @@ from langmesh.protocol.parts import (
     _structured_data_payloads,
     compose_turn_input,
     _text_part,
-    _work_habits_acknowledgement_parts,
 )
 from langmesh.protocol.turn_record import TurnKind, TurnRecord
 from langmesh.runtime.goal import GoalReviewPhase
@@ -82,17 +82,12 @@ class _ContextState:
 
 @dataclass(frozen=True)
 class _Ingested:
-    """The parsed request: the turn's inputs and mode flags, threaded into the phase that follows."""
+    """The parsed request, with one mutually exclusive execution mode."""
 
     message: Message
     user_text: str
     metadata: dict
-    autonomous: bool
-    compaction: bool
-    # Opened only to remind this session it has not answered the one that created it.
-    report_reminder: bool
-    # Opened for a goal the session has not finished.
-    goal_continuation: bool
+    mode: "_TurnMode"
     goal_review_id: str
     # The session that sent this message, empty for a person's and for a harness-initiated turn.
     peer_sender: str
@@ -104,9 +99,34 @@ class _Ingested:
     @property
     def from_outside(self) -> bool:
         """Whether somebody outside this session asked for this turn, rather than the session sending it to itself."""
-        return not (
-            self.autonomous or self.compaction or self.report_reminder or self.goal_continuation
-        )
+        return self.mode is _TurnMode.STANDARD
+
+
+class _TurnMode(StrEnum):
+    STANDARD = "standard"
+    AUTONOMOUS = "autonomous"
+    COMPACTION = "compaction"
+    COMPACTION_RESUME = "compaction_resume"
+    COMPACTION_PREPARE = "compaction_prepare"
+    RETRY = "retry"
+    REPORT_REMINDER = "report_reminder"
+    GOAL_CONTINUATION = "goal_continuation"
+
+
+def _turn_mode(metadata: dict) -> _TurnMode:
+    candidates = [
+        (_TurnMode.AUTONOMOUS, Metadata.AUTONOMOUS_RESUME),
+        (_TurnMode.COMPACTION, Metadata.COMPACTION),
+        (_TurnMode.COMPACTION_RESUME, Metadata.COMPACTION_RESUME),
+        (_TurnMode.COMPACTION_PREPARE, Metadata.COMPACTION_PREPARE),
+        (_TurnMode.RETRY, Metadata.RETRY_TURN),
+        (_TurnMode.REPORT_REMINDER, Metadata.REPORT_REMINDER),
+        (_TurnMode.GOAL_CONTINUATION, Metadata.GOAL_CONTINUATION),
+    ]
+    selected = [mode for mode, key in candidates if metadata.get(key)]
+    if len(selected) > 1:
+        raise ValueError("A turn cannot request multiple execution modes.")
+    return selected[0] if selected else _TurnMode.STANDARD
 
 
 @dataclass(frozen=True)
@@ -163,7 +183,9 @@ class _TurnRunner:
         self._turn_has_images = False
         # Set only when the turn closed as completed: a failed or parked turn never got there.
         self._completed = False
-        self._context_serialization_lock: asyncio.Lock | None = None
+        self._lifecycle = AsyncExitStack()
+        self._turn_span_context = None
+        self._turn_span = None
         self._on_turn_state = executor._on_turn_state
         # Filled in by _ingest / _resolve_task / _open_turn_span / _compose_turn_input.
         self._sink: _TurnEventSink | None = None
@@ -175,12 +197,15 @@ class _TurnRunner:
         if resolved is self._DONE:
             return
         assert isinstance(resolved, _Resolved)
-        if await self._acknowledge_work_habits(resolved) is self._DONE:
-            return
-        await self._acquire_serialization_lock(resolved)
-        # Runtime setup runs inside the try, so a missing credential is a clean `failed` rather than a torn stream.
-        self._open_turn_span(resolved)
+        # Count a queued turn before it waits on the context lock. Adjacent queued turns then
+        # present one continuous busy interval, so live clients never detach in a false idle gap.
+        self._track_context_activity = self._on_turn_state is not None
+        if self._track_context_activity and self._on_turn_state is not None:
+            self._on_turn_state(resolved.task.context_id, True)
         try:
+            await self._acquire_serialization_lock(resolved)
+            # Runtime setup runs inside the try, so a missing credential is a clean `failed` rather than a torn stream.
+            self._open_turn_span(resolved)
             prepared = await self._prepare_runtime(resolved)
             if prepared is self._DONE:
                 return
@@ -277,20 +302,14 @@ class _TurnRunner:
         self._requested_working_directory = str(self._metadata.get(Metadata.WORKING_DIRECTORY, ""))
         self._requested_worktree_strategy = str(self._metadata.get(Metadata.WORKSPACE_STRATEGY, ""))
         self._permission_mode = str(self._metadata.get(Metadata.PERMISSION_MODE, ""))
-        self._autonomous = bool(self._metadata.get(Metadata.AUTONOMOUS_RESUME))
-        self._compaction = bool(self._metadata.get(Metadata.COMPACTION))
-        self._report_reminder = bool(self._metadata.get(Metadata.REPORT_REMINDER))
-        self._goal_continuation = bool(self._metadata.get(Metadata.GOAL_CONTINUATION))
+        self._mode = _turn_mode(self._metadata)
         self._goal_review_id = str(self._metadata.get(Metadata.GOAL_REVIEW_ID, ""))
         self._peer_sender = str(self._metadata.get(Metadata.PEER_SENDER, ""))
         return _Ingested(
             message=message,
             user_text=self._user_text,
             metadata=self._metadata,
-            autonomous=self._autonomous,
-            compaction=self._compaction,
-            report_reminder=self._report_reminder,
-            goal_continuation=self._goal_continuation,
+            mode=self._mode,
             goal_review_id=self._goal_review_id,
             peer_sender=self._peer_sender,
             permission_mode=self._permission_mode,
@@ -350,34 +369,10 @@ class _TurnRunner:
             resume_answers=self._resume_answers,
         )
 
-    async def _acknowledge_work_habits(self, resolved: _Resolved) -> object | None:
-        """Emit the once-per-context work-habits acknowledgement, or report the turn failed."""
-        task, ingested = resolved.task, resolved.ingested
-        self._context_state = self._executor._context(task.context_id)
-        should_acknowledge = await self._executor._claim_work_habits_acknowledgement(
-            task.context_id,
-            autonomous=ingested.autonomous or ingested.goal_continuation,
-            compaction=ingested.compaction,
-        )
-        if should_acknowledge:
-            try:
-                for acknowledgement_part in _work_habits_acknowledgement_parts(task.id):
-                    await self._emit(acknowledgement_part)
-            except Exception as exception:
-                logger.exception("work-habits acknowledgement failed")
-                await self._updater.failed(
-                    self._updater.new_agent_message(
-                        [_event_part(ErrorEvent(**_safe_turn_error(exception)))]
-                    )
-                )
-                return self._DONE
-        return None
-
     async def _acquire_serialization_lock(self, resolved: _Resolved) -> None:
+        self._context_state = self._executor._context(resolved.task.context_id)
         # Serialize the session's turns, so a message and a background wake never drive the runtime at once.
-        self._context_serialization_lock = self._context_state.lock
-        if self._context_serialization_lock is not None:
-            await self._context_serialization_lock.acquire()
+        await self._lifecycle.enter_async_context(self._context_state.lock)
 
     def _open_turn_span(self, resolved: _Resolved) -> None:
         # One trace per turn, grouped by session, nesting under the peer that sent it when there is one.
@@ -385,12 +380,19 @@ class _TurnRunner:
         self._turn_kind = (
             # A goal turn carries prose somebody has to be able to read, so it is not folded in with the wakes.
             TurnKind.GOAL
-            if ingested.goal_continuation
+            if ingested.mode is _TurnMode.GOAL_CONTINUATION
             # The reminder is harness-initiated like a wake, and differs only in having nothing to deliver.
             else TurnKind.AUTONOMOUS
-            if ingested.autonomous or ingested.report_reminder
+            if ingested.mode in {_TurnMode.AUTONOMOUS, _TurnMode.REPORT_REMINDER}
             else TurnKind.COMPACTION
-            if ingested.compaction
+            if ingested.mode
+            in {
+                _TurnMode.COMPACTION,
+                _TurnMode.COMPACTION_RESUME,
+                _TurnMode.COMPACTION_PREPARE,
+            }
+            else TurnKind.RETRY
+            if ingested.mode is _TurnMode.RETRY
             # A peer's message is not the user speaking, or the model reads a report as an instruction.
             else TurnKind.PEER
             if ingested.peer_sender
@@ -420,10 +422,10 @@ class _TurnRunner:
     async def _prepare_runtime(self, resolved: _Resolved) -> _Prepared | object:
         """Build or warm-fetch the runtime, register it, and stand up the event sink."""
         task = resolved.task
-        if not resolved.ingested.goal_continuation:
+        if resolved.ingested.mode is not _TurnMode.GOAL_CONTINUATION:
             await self._executor._cancel_goal_review(task.context_id)
         # A wake with nothing left to deliver closes the task without a model call rather than an empty turn.
-        if self._autonomous:
+        if self._mode is _TurnMode.AUTONOMOUS:
             existing_state = self._executor._contexts.get(task.context_id)
             existing_runtime = existing_state.runtime if existing_state is not None else None
             has_live_result = (
@@ -436,15 +438,19 @@ class _TurnRunner:
                 await self._updater.complete()
                 return self._DONE
 
-        self._track_context_activity = self._on_turn_state is not None
         self._track_steerable_turn = (
-            self._on_turn_state is not None and not resolved.ingested.compaction
+            self._on_turn_state is not None
+            and resolved.ingested.mode
+            not in {
+                _TurnMode.COMPACTION,
+                _TurnMode.COMPACTION_RESUME,
+                _TurnMode.COMPACTION_PREPARE,
+                _TurnMode.RETRY,
+            }
         )
         # A turn opened from outside means the session is wanted working, so lift any prior Stop suppression.
         if resolved.ingested.from_outside:
             self._executor._context(task.context_id).aborted = False
-        if self._track_context_activity and self._on_turn_state is not None:
-            self._on_turn_state(task.context_id, True)
         if self._track_steerable_turn:
             self._executor._context(task.context_id).running = True
 
@@ -456,6 +462,8 @@ class _TurnRunner:
         runtime = await self._executor._runtime_for(task.context_id, workspace)
 
         self._runtime = runtime
+        if resolved.ingested.from_outside:
+            runtime.abandon_turn_retry()
         self._executor._aborts[task.id] = runtime
         runtime.set_a2a_turn_id(task.id)
 
@@ -469,7 +477,13 @@ class _TurnRunner:
             if self._runtime is not None
             else "",
         )
-        if resolved.ingested.goal_continuation or resolved.ingested.peer_sender:
+        if resolved.ingested.mode is _TurnMode.RETRY:
+            await self._emit(_event_part(RetryEvent(status="started")))
+        if (
+            resolved.ingested.from_outside
+            or resolved.ingested.mode is _TurnMode.GOAL_CONTINUATION
+            or resolved.ingested.peer_sender
+        ):
             await self._emit(
                 _event_part(
                     InboundMessageEvent(
@@ -485,7 +499,7 @@ class _TurnRunner:
     async def _reconcile_goal(self, prepared: _Prepared) -> object | None:
         """Settle the goal against what opened this turn, now the runtime is built and the goal restored."""
         runtime = prepared.runtime
-        if prepared.resolved.ingested.goal_continuation:
+        if prepared.resolved.ingested.mode is _TurnMode.GOAL_CONTINUATION:
             goal = runtime.goal
             if goal is None or not goal.is_open:
                 await self._updater.complete()
@@ -498,9 +512,11 @@ class _TurnRunner:
 
     async def _run_compaction_turn(self, prepared: _Prepared) -> object | None:
         """A manual compaction runs no model turn: it folds the older history and emits the compaction parts."""
-        if not prepared.resolved.ingested.compaction:
+        if prepared.resolved.ingested.mode is not _TurnMode.COMPACTION:
             return None
-        async for compaction_event in prepared.runtime.compact(reason="manual"):
+        async for compaction_event in prepared.runtime.compact(
+            reason=prepared.runtime.pending_compaction_reason
+        ):
             await prepared.sink.emit_compaction(compaction_event)
         await self._save_runtime_conversation()
         await self._updater.complete()
@@ -509,16 +525,25 @@ class _TurnRunner:
     async def _compose_turn_input(self, prepared: _Prepared) -> _ComposedTurn:
         """Build the model-facing input: a framing note, structured attachments, or plain user text."""
         runtime = prepared.runtime
-        self._as_system_note = self._autonomous or self._report_reminder or self._goal_continuation
-        if self._goal_continuation:
+        mode = prepared.resolved.ingested.mode
+        self._as_system_note = mode in {
+            _TurnMode.AUTONOMOUS,
+            _TurnMode.REPORT_REMINDER,
+            _TurnMode.GOAL_CONTINUATION,
+        }
+        if mode in {_TurnMode.COMPACTION_RESUME, _TurnMode.COMPACTION_PREPARE, _TurnMode.RETRY}:
+            # The accepted user message is already the conversation tail. This turn merely
+            # resumes the model call that the failed fold prevented.
+            self._turn_input = ""
+        elif mode is _TurnMode.GOAL_CONTINUATION:
             # The review wrote this and it rode in on the message; a reminder, so nothing reads it as the person.
             self._turn_input = self._user_text
-        elif self._report_reminder:
+        elif mode is _TurnMode.REPORT_REMINDER:
             # A reminder, never user prose: this is the harness speaking, not the person the session works for.
             self._turn_input = _PROMPTS.load(
                 "report_reminder_note", {"parent": self._executor._parent}
             )
-        elif self._autonomous:
+        elif mode is _TurnMode.AUTONOMOUS:
             # The wake carries no prose, so the framing note is supplied here and delivered as a reminder.
             self._turn_input = _PROMPTS.load("background_resume_note", {})
         elif self._structured_payloads:
@@ -550,8 +575,8 @@ class _TurnRunner:
             prepared=prepared,
             turn_input=self._turn_input,
             as_system_note=self._as_system_note,
-            # A goal turn is work, and work that recorded nothing would leave a long run with no memory at all.
-            opens_exchange=self._goal_continuation,
+            # A goal continuation is a real exchange even though its opening note came from review.
+            opens_exchange=mode is _TurnMode.GOAL_CONTINUATION,
         )
 
     async def _stream_and_finalize(self, composed: _ComposedTurn) -> None:
@@ -561,6 +586,12 @@ class _TurnRunner:
         event_source = (
             composed.prepared.runtime.resume_stream(resolved.resume_plans, resolved.resume_answers)
             if resolved.is_resume
+            else composed.prepared.runtime.continue_stream()
+            if resolved.ingested.mode is _TurnMode.COMPACTION_RESUME
+            else composed.prepared.runtime.prepare_compaction_stream()
+            if resolved.ingested.mode is _TurnMode.COMPACTION_PREPARE
+            else composed.prepared.runtime.continue_stream()
+            if resolved.ingested.mode is _TurnMode.RETRY
             else composed.prepared.runtime.stream(
                 composed.turn_input,
                 as_system_note=composed.as_system_note,
@@ -584,7 +615,11 @@ class _TurnRunner:
             # Stop ends the task as canceled, so the transcript reads it honestly as a stopped turn.
             await self._updater.cancel()
         else:
+            if resolved.ingested.mode is _TurnMode.RETRY:
+                await self._emit(_event_part(RetryEvent(status="done", ok=True)))
             await self._updater.complete()
+            if resolved.ingested.mode is _TurnMode.RETRY:
+                self._runtime.mark_turn_succeeded()
             self._completed = True
 
     async def _fail(self, exception: Exception) -> None:
@@ -592,6 +627,10 @@ class _TurnRunner:
         # Log the real exception, but show the user a safe category rather than raw exception text.
         # The one it was handed, not the one in flight, since this is reached by a call rather than by a raise.
         logger.error("agent turn failed", exc_info=exception)
+        if self._runtime is not None:
+            self._runtime.mark_turn_failed()
+        if self._mode is _TurnMode.RETRY:
+            await self._emit(_event_part(RetryEvent(status="done", ok=False)))
         await self._updater.failed(
             self._updater.new_agent_message(
                 [
@@ -604,8 +643,9 @@ class _TurnRunner:
 
     async def _teardown(self) -> None:
         task = self._task
-        with suppress(Exception):
-            self._turn_span_context.__exit__(None, None, None)
+        if self._turn_span_context is not None:
+            with suppress(Exception):
+                self._turn_span_context.__exit__(None, None, None)
         self._executor._aborts.pop(task.id, None)
         # None when the session was deleted mid-turn: a torn-down context must not be re-persisted or re-armed.
         state = self._executor._contexts.get(task.context_id)
@@ -644,8 +684,7 @@ class _TurnRunner:
             )
         if self._track_context_activity and self._on_turn_state is not None:
             self._on_turn_state(task.context_id, False)
-        if self._context_serialization_lock is not None:
-            self._context_serialization_lock.release()
+        await self._lifecycle.aclose()
         # Arm a pump for work still in flight, passing the runtime this turn used rather than a cache lookup.
         self._executor._arm_resume_pump(task.context_id, self._runtime)
         await self._maybe_continue_goal(carries_on)
@@ -654,7 +693,7 @@ class _TurnRunner:
 
     def _goal_carries_on(self) -> bool:
         """Whether this turn ending leads straight into a review rather than into a wait for the person."""
-        if not self._completed and not self._compaction:
+        if not self._completed and self._mode is not _TurnMode.COMPACTION:
             return False
         state = self._executor._contexts.get(self._task.context_id)
         if state is None or state.aborted:
@@ -666,7 +705,7 @@ class _TurnRunner:
         return goal.continuations < active_tuning().amount(Tunable.goal_continuation_turns)
 
     def _goal_waits_for_background(self) -> bool:
-        if not self._completed or self._compaction or self._runtime is None:
+        if not self._completed or self._mode is _TurnMode.COMPACTION or self._runtime is None:
             return False
         goal = self._runtime.goal
         return bool(goal is not None and goal.is_open and self._runtime.has_pending_jobs())
@@ -681,7 +720,7 @@ class _TurnRunner:
         if goal is None or not goal.is_open or runtime is None:
             return
         # A compaction turn runs no model and decides nothing about the goal, so it neither continues nor parks.
-        if self._compaction:
+        if self._mode is _TurnMode.COMPACTION:
             return
         # A stopped turn hands the work back, so the goal waits; read off the abort, which "not completed" is not.
         stopped = state is not None and state.aborted
@@ -695,7 +734,7 @@ class _TurnRunner:
     def _maybe_nudge_to_report(self) -> None:
         """Remind the session once if a completed turn left its creator with no answer. A nudge, not a gate."""
         peers = getattr(self._executor, "_peers", None)
-        if peers is None or not self._completed or self._report_reminder:
+        if peers is None or not self._completed or self._mode is _TurnMode.REPORT_REMINDER:
             return
         if self._turn_kind == TurnKind.USER:
             return

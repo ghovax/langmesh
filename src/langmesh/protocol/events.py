@@ -9,6 +9,27 @@ from typing import Annotated, Any, Literal, Optional, Union
 from pydantic import BaseModel, Field
 
 
+TurnErrorCode = Literal[
+    "authentication_failed",
+    "connection_failed",
+    "context_window_exceeded",
+    "image_unsupported",
+    "provider_unavailable",
+    "rate_limited",
+    "request_rejected",
+    "server_error",
+    "turn_failed",
+    "turn_interrupted",
+    "tool_error",
+]
+CompactionErrorCode = Literal[
+    "compaction_failed",
+    "compaction_no_reclaim",
+    "compaction_preparation_failed",
+    "compaction_strategy_failed",
+]
+
+
 # Shared building blocks
 
 
@@ -147,7 +168,7 @@ class CompactionEvent(_EventBase):
     messages_after: int = 0
     tokens_before: int = 0
     tokens_after: int = 0
-    log_tokens: int = 0
+    error_code: CompactionErrorCode | None = None
 
 
 class InboundMessageEvent(_EventBase):
@@ -160,12 +181,20 @@ class InboundMessageEvent(_EventBase):
     message_id: str = ""
 
 
+class RetryEvent(_EventBase):
+    kind: Literal["retry"] = "retry"
+    status: Literal["started", "done"]
+    ok: bool = True
+
+
 class TokenUsageEvent(_EventBase):
     kind: Literal["token_usage"] = "token_usage"
     # Per-call (latest model call) figures — the current context, not a sum.
     input_tokens: int = 0
     output_tokens: int = 0
     context_window: int = 0
+    # True only when the model/provider supplied no capacity and configuration provided the safety estimate.
+    context_window_estimated: bool = False
     # Per-call cache and reasoning, because a running total cannot say which call missed.
     cache_read_tokens: int = 0
     reasoning_tokens: int = 0
@@ -210,10 +239,9 @@ class QuestionEvent(_EventBase):
 
 class WarningEvent(_EventBase):
     kind: Literal["warning"] = "warning"
-    # A non-fatal notice surfaced to the user, as a machine code plus a human title and message.
-    code: str = ""
-    title: str = ""
-    message: str = ""
+    # A non-fatal notice surfaced to the user through the client's locale catalogue.
+    code: Literal["image_metadata_only"]
+    parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 class ErrorEvent(_EventBase):
@@ -221,9 +249,9 @@ class ErrorEvent(_EventBase):
     # A tool-scoped error carries the call id so that card flips to failed; a turn error leaves it empty.
     tool_call_id: str = ""
     tool_name: str = ""
-    code: str = "turn_failed"
-    title: str = ""
-    message: str = ""
+    code: TurnErrorCode = "turn_failed"
+    # Values interpolated by the client's locale catalogue. Provider text never crosses this boundary.
+    parameters: dict[str, Any] = Field(default_factory=dict)
     status: int | None = None
 
 
@@ -240,6 +268,7 @@ WireEvent = Annotated[
         DoneEvent,
         CompactionEvent,
         InboundMessageEvent,
+        RetryEvent,
         TokenUsageEvent,
         PermissionRequestEvent,
         QuestionEvent,
@@ -261,6 +290,7 @@ WIRE_EVENT_MODELS: tuple[type[_EventBase], ...] = (
     DoneEvent,
     CompactionEvent,
     InboundMessageEvent,
+    RetryEvent,
     TokenUsageEvent,
     PermissionRequestEvent,
     QuestionEvent,
@@ -287,7 +317,7 @@ class ModelToolResult(BaseModel):
 
 
 class TurnContext(BaseModel):
-    """The per-turn context injected at the end of the message list: the time, the place, the goal, the tasks, the work."""
+    """Session context in the static system prompt, refreshed when a context fold rebuilds it."""
 
     now: str = ""
     pwd: str = ""

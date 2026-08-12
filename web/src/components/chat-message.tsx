@@ -29,6 +29,7 @@ interface ChatMessageProps {
   message: ChatMessage;
   // Re-run the turn that produced a server error, wired only for error rows.
   onRetry?: () => void;
+  retrying?: boolean;
   // This is the last row of a live turn, which drives the newly-arrived-token animation.
   streaming?: boolean;
   // The review whose transcript this row opens, when it is not the row's own meta.
@@ -36,26 +37,21 @@ interface ChatMessageProps {
   onOpenReview?: (reviewId: string) => void;
 }
 
-// The structured error category the server hands the interface, never the raw provider text.
-interface FriendlyError {
-  code: string;
-  title: string;
-  message: string;
-  status?: number;
-}
-
-interface FriendlyWarning {
-  code: string;
-  title: string;
-  message: string;
-}
-
 // A server or turn error rendered as its own block rather than disguised as an assistant message.
-function ErrorMessageCard({ message, onRetry }: { message: ChatMessage; onRetry?: () => void }) {
+function ErrorMessageCard({
+  message,
+  onRetry,
+  retrying = false,
+}: {
+  message: ChatMessage;
+  onRetry?: () => void;
+  retrying?: boolean;
+}) {
   const translation = useTranslations("ChatMessage");
-  const error = message.meta?.error as FriendlyError | undefined;
-  const title = error?.title?.trim() || translation("errorTitle");
-  const body = error?.message?.trim() || message.content;
+  const error = message.meta?.error;
+  if (!error) return null;
+  const title = translation(`errors.${error.code}.title`);
+  const body = translation(`errors.${error.code}.body`, error.parameters);
   return (
     <Box
       w="100%"
@@ -65,7 +61,7 @@ function ErrorMessageCard({ message, onRetry }: { message: ChatMessage; onRetry?
       bg="red.subtle"
       borderRadius="md"
       px={2.5}
-      py={2}
+      py={2.5}
     >
       <Flex align="center" gap={2} color="red.fg">
         <Box display="flex" alignItems="center" flexShrink={0}>
@@ -80,9 +76,15 @@ function ErrorMessageCard({ message, onRetry }: { message: ChatMessage; onRetry?
       </Box>
       {onRetry && (
         <Flex mt={2.5}>
-          <Button variant="solid" colorPalette="red" fontWeight="medium" onClick={onRetry}>
-            <LuRotateCw size={13} />
-            {translation("tryAgain")}
+          <Button
+            variant="solid"
+            colorPalette="red"
+            fontWeight="medium"
+            onClick={onRetry}
+            disabled={retrying}
+          >
+            {retrying ? <ActivitySpinner /> : <LuRotateCw size={13} />}
+            {translation(retrying ? "retrying" : "tryAgain")}
           </Button>
         </Flex>
       )}
@@ -92,9 +94,10 @@ function ErrorMessageCard({ message, onRetry }: { message: ChatMessage; onRetry?
 
 function WarningMessageCard({ message }: { message: ChatMessage }) {
   const translation = useTranslations("ChatMessage");
-  const warning = message.meta?.warning as FriendlyWarning | undefined;
-  const title = warning?.title?.trim() || translation("warningTitle");
-  const body = warning?.message?.trim() || message.content;
+  const warning = message.meta?.warning;
+  if (!warning) return null;
+  const title = translation(`warnings.${warning.code}.title`, warning.parameters);
+  const body = translation(`warnings.${warning.code}.body`, warning.parameters);
   return (
     <Box
       w="100%"
@@ -343,6 +346,7 @@ export function UserMessageCard({
 export const ChatMessageItem = memo(function ChatMessageItem({
   message,
   onRetry,
+  retrying = false,
   streaming = false,
   reviewId,
   onOpenReview,
@@ -350,9 +354,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
   const translation = useTranslations("ChatMessage");
   switch (message.role) {
     case "user": {
-      return (
-        <UserMessageCard message={message} reviewId={reviewId} onOpenReview={onOpenReview} />
-      );
+      return <UserMessageCard message={message} reviewId={reviewId} onOpenReview={onOpenReview} />;
     }
 
     case "peer": {
@@ -408,7 +410,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
       // A turn failure is a system event rather than the model's words, so it renders as its own error box.
       return (
         <Box alignSelf="flex-start" w="100%">
-          <ErrorMessageCard message={message} onRetry={onRetry} />
+          <ErrorMessageCard message={message} onRetry={onRetry} retrying={retrying} />
         </Box>
       );
 
@@ -422,28 +424,54 @@ export const ChatMessageItem = memo(function ChatMessageItem({
     case "compaction": {
       // A full-width divider marking where earlier context was summarized away.
       const running = message.meta?.status === "running";
+      const failed = message.meta?.status === "failed";
       const before = Number(message.meta?.messagesBefore ?? 0);
       const after = Number(message.meta?.messagesAfter ?? 0);
       return (
         <Box alignSelf="stretch" w="100%">
-          <Flex align="center" gap={3} py={1} color="fg.subtle">
+          <Flex align="center" gap={3} py={failed ? 2 : 1} color={failed ? "red.fg" : "fg.subtle"}>
             <Separator flex={1} />
             <Flex
               align="center"
               gap={1.5}
               flexShrink={0}
-              color={running ? "blue.fg" : undefined}
+              color={running ? "blue.fg" : failed ? "red.fg" : undefined}
               title={
                 running || !before ? undefined : translation("compactedTooltip", { before, after })
               }
             >
-              <ActivityIcon>{running ? <ActivitySpinner /> : <LuFoldVertical />}</ActivityIcon>
-              <Text
-                textStyle="fieldLabel"
-                className={running ? "running-title-shimmer" : undefined}
-              >
-                {running ? translation("compactingContext") : translation("contextCompacted")}
-              </Text>
+              <ActivityIcon>
+                {running ? <ActivitySpinner /> : failed ? <LuTriangleAlert /> : <LuFoldVertical />}
+              </ActivityIcon>
+              <Box>
+                <Text
+                  textStyle="fieldLabel"
+                  className={running ? "running-title-shimmer" : undefined}
+                >
+                  {running
+                    ? translation("compactingContext")
+                    : failed
+                      ? translation("compactionFailed")
+                      : translation("contextCompacted")}
+                </Text>
+                {failed && message.meta?.compactionErrorCode ? (
+                  <Text textStyle="2xs" color="red.fg" maxW="36rem">
+                    {translation(`compactionErrors.${message.meta.compactionErrorCode}`)}
+                  </Text>
+                ) : null}
+              </Box>
+              {failed && onRetry ? (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  colorPalette="red"
+                  onClick={onRetry}
+                  disabled={retrying}
+                >
+                  {retrying ? <ActivitySpinner /> : <LuRotateCw />}
+                  {translation(retrying ? "retrying" : "retry")}
+                </Button>
+              ) : null}
             </Flex>
             <Separator flex={1} />
           </Flex>

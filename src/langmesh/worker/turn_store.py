@@ -122,29 +122,6 @@ class DaemonTurnStore(TaskStore):
         raw = await self._call("turn.list_for_session", session_id=session_id) or []
         return [Task.model_validate(entry) for entry in raw]
 
-    async def claim_work_habits(self, session_id: str) -> bool:
-        """Claim the once-per-session work-habits acknowledgement through the daemon, since a worker is per activation."""
-        result = await self._call("session.claim_work_habits", session_id=session_id)
-        return bool((result or {}).get("claimed"))
-
-    async def append_memory(
-        self, session_id: str, observations: list, directives: list
-    ) -> None:
-        """Commit one observer's two ledgers atomically through the daemon."""
-        await self._call(
-            "session.append_memory",
-            session_id=session_id,
-            observations=observations,
-            directives=directives,
-        )
-
-    async def memory_entries(self, session_id: str) -> dict[str, list]:
-        """Read both live memory ledgers from one database snapshot."""
-        return (
-            await self._call("session.memory", session_id=session_id)
-            or {"observations": [], "directives": []}
-        )
-
     async def publish_event(self, event: dict) -> None:
         """Hand a live turn event to the daemon, so whoever is attached sees it now."""
         await self._call("session.event", event=event)

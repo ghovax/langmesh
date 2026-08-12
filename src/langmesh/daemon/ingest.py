@@ -83,9 +83,7 @@ async def _goal_review_create(params: dict) -> dict:
     )
     review_id = str(params.get("review_id") or "")
     _SEQUENCE[review_id] = _SEQUENCE.get(review_id, 0) + 1
-    state.event_bus.publish(
-        review_id, {"seq": _SEQUENCE[review_id], "turn": {"running": True}}
-    )
+    state.event_bus.publish(review_id, {"seq": _SEQUENCE[review_id], "turn": {"running": True}})
     return {"created": True}
 
 
@@ -122,9 +120,7 @@ async def _goal_review_finish(params: dict) -> dict:
     )
     review_id = str(params.get("review_id") or "")
     _SEQUENCE[review_id] = _SEQUENCE.get(review_id, 0) + 1
-    state.event_bus.publish(
-        review_id, {"seq": _SEQUENCE[review_id], "turn": {"running": False}}
-    )
+    state.event_bus.publish(review_id, {"seq": _SEQUENCE[review_id], "turn": {"running": False}})
     return {"finished": True}
 
 
@@ -176,7 +172,12 @@ async def _sleep_after_idle(session_id: str, delay: float) -> None:
     if state.lifecycle is None or state.registry is None:
         return
     record = state.registry.get(session_id)
-    if record is None or not record.is_live or not record.hosted or record.busy:
+    if (
+        record is None
+        or not record.is_live
+        or not record.hosted
+        or session_id in state._running_contexts
+    ):
         return
     logger.info("session %s idle for %.0fs; sleeping it", session_id, delay)
     await state.lifecycle.sleep(session_id)
@@ -194,43 +195,10 @@ def _sleep_when_idle(session_id: str) -> None:
     _IDLE_TIMERS[session_id] = asyncio.create_task(_sleep_after_idle(session_id, delay))
 
 
-async def _session_claim_work_habits(params: dict) -> dict:
-    """The once-per-session work-habits acknowledgement, claimed atomically because a worker is per activation."""
-    from langmesh.commons.services.sessions import claim_work_habits_acknowledgement
-
-    session_id = str(params.get("session_id") or "")
-    claimed = await asyncio.to_thread(claim_work_habits_acknowledgement, session_id)
-    return {"claimed": claimed}
-
-
 async def _session_event(params: dict) -> dict:
     """A live turn event, or a change in whether the session is waiting on a human."""
     event = params.get("event") or {}
     session_id = str(event.get("session_id") or params.get("session_id") or "")
-    if "recording_memory" in event:
-        recording = event.get("recording_memory") or {}
-        identifier = str(recording.get("id") or "")
-        active = bool(recording.get("active"))
-        recordings = state._recording_memory_contexts.setdefault(session_id, set())
-        was_active = bool(recordings)
-        if active and identifier:
-            recordings.add(identifier)
-        else:
-            recordings.discard(identifier)
-        if not recordings:
-            state._recording_memory_contexts.pop(session_id, None)
-        is_active = bool(recordings)
-        state.broadcaster.publish(
-            {
-                "type": "recording_memory_changed",
-                "session": session_id,
-                "active": is_active,
-                "count": len(recordings),
-            }
-        )
-        if was_active != is_active:
-            state.broadcaster.publish({"type": "sessions_changed"})
-        return {"noted": True}
     if "running" in event:
         # Whether a turn is in flight, which the registry cannot infer from a process that is alive either way.
         _set_turn_state(session_id, bool(event.get("running")), bool(event.get("retains")))
@@ -238,7 +206,7 @@ async def _session_event(params: dict) -> dict:
     if "awaiting_input" in event:
         awaiting = bool(event.get("awaiting_input"))
         if state.registry is not None:
-            state.registry.mark(session_id, awaiting_input=awaiting)
+            state.registry.set_awaiting_input(session_id, awaiting)
         # And the set the workspace reads, which the daemon pushes into because the two layers cannot reach across.
         if awaiting:
             state._awaiting_input_contexts.add(session_id)
@@ -296,43 +264,12 @@ async def _session_title(params: dict) -> dict:
     return {"saved": changed}
 
 
-async def _session_append_memory(params: dict) -> dict:
-    """Commit memory entries and publish each inserted row immediately."""
-    if state.turn_store is None:
-        return {"appended": 0}
-    session_id = str(params.get("session_id") or "")
-    appended_entries = await state.turn_store.append_memory(
-        session_id,
-        list(params.get("observations") or []),
-        list(params.get("directives") or []),
-    )
-    for ledger, entries in appended_entries.items():
-        for entry in entries:
-            state.broadcaster.publish(
-                {
-                    "type": "record_entry_added",
-                    "session": session_id,
-                    "ledger": ledger,
-                    "entry": entry,
-                }
-            )
-    return {"appended": sum(len(entries) for entries in appended_entries.values())}
-
-
-async def _session_memory(params: dict) -> dict[str, list]:
-    """Read both live memory ledgers from one database snapshot."""
-    if state.turn_store is None:
-        return {"observations": [], "directives": []}
-    return await state.turn_store.memory_entries(str(params.get("session_id") or ""))
-
-
 _METHODS = {
     "turn.save": _turn_save,
     "turn.get": _turn_get,
     "turn.delete": _turn_delete,
     "turn.save_state": _turn_save_state,
     "turn.save_session_state": _turn_save_session_state,
-    "session.claim_work_habits": _session_claim_work_habits,
     "turn.load_checkpoint": _turn_load_checkpoint,
     "turn.load_session_state": _turn_load_session_state,
     "goal_review.create": _goal_review_create,
@@ -342,8 +279,6 @@ _METHODS = {
     "session.event": _session_event,
     "session.title": _session_title,
     "session.usage": _session_usage,
-    "session.append_memory": _session_append_memory,
-    "session.memory": _session_memory,
 }
 
 

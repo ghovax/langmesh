@@ -34,7 +34,7 @@ from langmesh.runtime.background import (
 from langmesh.protocol.events import ToolStatus
 from langmesh.runtime.goal import Goal
 from langmesh.base.file_leases import FileLeaseConflict
-from langmesh.base.skills import enabled_skills, load_skills
+from langmesh.base.skills import enabled_skills
 from langmesh.runtime.locations import (
     _LOCATION_TOOLS,
     CallExecutionPolicy,
@@ -279,7 +279,11 @@ class _DispatchesTools:
         tool_name: str,
         arguments: dict,
     ) -> tuple[str, str] | None:
-        tool_schemas = self._tool_schemas
+        tool_schemas = (
+            {**self._tool_schemas, "bash": bash_tool.args_schema}
+            if self._compaction_control.phase == "waiting"
+            else self._tool_schemas
+        )
         if not isinstance(arguments, dict):
             return ("invalid_tool_arguments", f"{tool_name} arguments must be an object.")
         if tool_name not in tool_schemas:
@@ -485,13 +489,19 @@ class _DispatchesTools:
         )
 
         # Coerce JSON-string arguments up front, so validation and dispatch see the real container.
-        schema = self._tool_schemas.get(tool_name)
+        schema = (
+            bash_tool.args_schema
+            if self._compaction_control.phase == "waiting" and tool_name == "bash"
+            else self._tool_schemas.get(tool_name)
+        )
         if schema is not None:
             tool_arguments = _coerce_structured_arguments(schema, tool_arguments)
             # And fill the schema's defaults, so a documented default is the one that applies.
             tool_arguments = _with_schema_defaults(schema, tool_arguments)
 
-        if tool_name != "submit_goal_review":
+        if tool_name != "submit_goal_review" and not (
+            self._compaction_control.phase == "waiting" and tool_name == "bash"
+        ):
             try:
                 self._permissions.check_tool(tool_name, **tool_arguments)
             except PermissionDenied as exception:
@@ -941,9 +951,7 @@ class _DispatchesTools:
         resolved_location: ResolvedLocation | None,
     ) -> AsyncIterator[TurnEvent]:
         skill_name = str(tool_arguments.get("name", ""))
-        all_skills = enabled_skills(
-            load_skills(self._global_configuration.skill_directories_for(self._project_directory))
-        )
+        all_skills = enabled_skills(list(self._catalogue.skills()))
         match = next((skill for skill in all_skills if skill.identifier == skill_name), None)
         if match is None:
             yield Error(

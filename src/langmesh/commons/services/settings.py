@@ -11,7 +11,6 @@ from typing import Optional
 import asyncio
 import hashlib
 from langmesh.commons import state
-from langmesh.commons.services.sessions import _reset_work_habits_acknowledgements
 
 
 async def _apply_live_credentials() -> None:
@@ -66,11 +65,8 @@ async def _reload_configuration_from_disk() -> None:
     assert state.global_configuration is not None
     fresh = await asyncio.to_thread(Configuration.load)
     configuration = state.global_configuration
-    user_context_setting_changed = configuration.user_context.enabled != fresh.user_context.enabled
     # Every section, from the model rather than from a hand-kept list that fell behind the schema.
     for name in type(fresh).model_fields:
         setattr(configuration, name, getattr(fresh, name))
     await _apply_live_credentials()
-    if user_context_setting_changed:
-        await asyncio.to_thread(_reset_work_habits_acknowledgements)
     state.broadcaster.publish({"type": "settings_changed"})

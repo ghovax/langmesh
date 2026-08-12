@@ -25,6 +25,7 @@ export type WireEvent =
   | DoneEvent
   | CompactionEvent
   | InboundMessageEvent
+  | RetryEvent
   | TokenUsageEvent
   | PermissionRequestEvent
   | QuestionEvent
@@ -37,8 +38,10 @@ export interface LangMeshEvents {}
  * via the `definition` "CompactionEvent".
  */
 export interface CompactionEvent {
+  error_code?:
+    | ("compaction_failed" | "compaction_no_reclaim" | "compaction_preparation_failed" | "compaction_strategy_failed")
+    | null;
   kind: "compaction";
-  log_tokens?: number;
   messages_after?: number;
   messages_before?: number;
   ok?: boolean;
@@ -77,12 +80,22 @@ export interface DoneEvent {
  * via the `definition` "ErrorEvent".
  */
 export interface ErrorEvent {
-  code?: string;
+  code?:
+    | "authentication_failed"
+    | "connection_failed"
+    | "context_window_exceeded"
+    | "image_unsupported"
+    | "provider_unavailable"
+    | "rate_limited"
+    | "request_rejected"
+    | "server_error"
+    | "turn_failed"
+    | "turn_interrupted"
+    | "tool_error";
   kind: "error";
-  message?: string;
+  parameters?: Record<string, unknown>;
   status?: number | null;
   timestamp?: string;
-  title?: string;
   tool_call_id?: string;
   tool_name?: string;
 }
@@ -188,6 +201,16 @@ export interface QuestionEvent {
 }
 /**
  * This interface was referenced by `LangMeshEvents`'s JSON-Schema
+ * via the `definition` "RetryEvent".
+ */
+export interface RetryEvent {
+  kind: "retry";
+  ok?: boolean;
+  status: "started" | "done";
+  timestamp?: string;
+}
+/**
+ * This interface was referenced by `LangMeshEvents`'s JSON-Schema
  * via the `definition` "StatusEvent".
  */
 export interface StatusEvent {
@@ -230,6 +253,7 @@ export interface ThinkingEvent {
 export interface TokenUsageEvent {
   cache_read_tokens?: number;
   context_window?: number;
+  context_window_estimated?: boolean;
   cumulative?: CumulativeUsage;
   divergence?: PrefixDivergence | null;
   input_tokens?: number;
@@ -283,7 +307,7 @@ export interface ToolResultEvent {
   tool_name: string;
 }
 /**
- * The per-turn context injected at the end of the message list: the time, the place, the goal, the tasks, the work.
+ * Session context in the static system prompt, refreshed when a context fold rebuilds it.
  *
  * This interface was referenced by `LangMeshEvents`'s JSON-Schema
  * via the `definition` "TurnContext".
@@ -303,9 +327,8 @@ export interface TurnContext {
  * via the `definition` "WarningEvent".
  */
 export interface WarningEvent {
-  code?: string;
+  code: "image_metadata_only";
   kind: "warning";
-  message?: string;
+  parameters?: Record<string, unknown>;
   timestamp?: string;
-  title?: string;
 }

@@ -71,7 +71,6 @@ const NEVER_MUTATES: ReadonlySet<string> = new Set([
   "submit_goal_review",
   "load_skill",
   "ask_user",
-  "work_habits",
 ]);
 
 const ALWAYS_MUTATES: ReadonlySet<string> = new Set(["download_file"]);
@@ -151,7 +150,6 @@ const TOOL_GLYPHS: Record<string, { glyph: GlyphName; tint: string }> = {
   // A wait is the one call doing nothing on purpose, so it reads that way in the muted tint.
   wait_for: { glyph: "clock", tint: "fg.muted" },
   read_turn: { glyph: "history", tint: "blue.fg" },
-  work_habits: { glyph: "user-search", tint: "blue.fg" },
   call_mcp_tool: { glyph: "plug", tint: "purple.fg" },
   list_mcp_tools: { glyph: "plug-zap", tint: "purple.fg" },
   list_mcp_resources: { glyph: "boxes", tint: "purple.fg" },

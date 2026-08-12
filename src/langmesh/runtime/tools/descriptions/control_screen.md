@@ -14,7 +14,7 @@ Finding and acting:
 - `limit` defaults to 8 and small is right; raise it only to harvest a set you will filter yourself.
 - On a page, finds also search the page's network traffic, and `evaluate` runs a script in the page's own session.
 
-Read the detailed find, query and workflow guidance in the screen section of your system context; the primitives and signatures in context are the authority.
+Use the exposed find, query, and workflow guidance. The available primitives and their signatures are authoritative.
 
 This call takes these arguments:
 

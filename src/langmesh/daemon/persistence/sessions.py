@@ -100,43 +100,5 @@ class SqliteSessionStore:
         finally:
             database_session.close()
 
-    def claim_work_habits_acknowledgement(self, session_id: str) -> bool:
-        """Claim the one-time work-habits acknowledgement atomically, durably because a worker is per activation."""
-        from datetime import datetime, timezone
-
-        if not session_id:
-            return False
-        database_session = self._session_factory()
-        try:
-            row = database_session.get(SessionRow, session_id)
-            if row is None or row.work_habits_acknowledged_at:
-                return False
-            row.work_habits_acknowledged_at = datetime.now(timezone.utc).isoformat()
-            database_session.commit()
-            return True
-        except Exception:  # noqa: BLE001
-            database_session.rollback()
-            logger.exception(
-                "could not claim the work-habits acknowledgement for %s", session_id
-            )
-            return False
-        finally:
-            database_session.close()
-
-    def reset_work_habits_acknowledgements(self) -> None:
-        """Allow one fresh acknowledgement everywhere, after the setting changes."""
-        database_session = self._session_factory()
-        try:
-            database_session.query(SessionRow).update(
-                {SessionRow.work_habits_acknowledged_at: ""},
-                synchronize_session=False,
-            )
-            database_session.commit()
-        except Exception:  # noqa: BLE001
-            database_session.rollback()
-            logger.exception("could not reset the work-habits acknowledgements")
-        finally:
-            database_session.close()
-
 
 __all__ = ["SqliteSessionStore"]

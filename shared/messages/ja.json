@@ -42,12 +42,14 @@
     "answerFailedTitle": "回答を送信できませんでした",
     "cancelToolFailedBody": "サーバーは取り消しを確認しませんでした。接続を確認して、再試行してください。",
     "cancelToolFailedTitle": "そのツール呼び出しを停止できませんでした",
-    "compactFailedBody": "サーバーは圧縮を開始しませんでした。接続を確認して、もう一度試してください。",
+    "compactFailedBody": "コンテキストの圧縮に失敗しました。続行する前に再試行してください。",
     "compactFailedTitle": "会話を圧縮できませんでした",
     "decisionFailedTitle": "決定を送信できませんでした",
     "heldForDecisionBody": "セッションは{waitingOn}を待っています。メッセージはキューに入っており、判断が済み次第送信されます。",
-    "heldForDecisionFallback": "あなたの判断",
     "heldForDecisionTitle": "メッセージをキューに入れました",
+    "waitingOnCommand": "`{command}` の権限判断",
+    "waitingOnPermission": "権限判断",
+    "waitingOnQuestion": "質問への回答",
     "inactiveBody": "この要求はすでに有効ではありません。ターンが次に進んだ可能性があります。",
     "networkBody": "サーバーが応答しませんでした。接続を確認して、もう一度試してください。",
     "stopFailedBody": "サーバーは停止を確認しませんでした。まだ実行中の可能性があります。接続を確認して、再試行してください。",
@@ -80,10 +82,10 @@
     "attachFiles": "ファイルを添付",
     "cacheReads": "キャッシュ読み取り",
     "compact": "コンパクト",
-    "compactBody": "古い会話を要約にまとめ、直近の作業はそのまま保持します。コンテキストウィンドウに空きができますが、要約された詳細は完全には復元できなくなります。",
+    "compactBody": "エージェントが永続的なワークスペース知識を先に保存し、その後で直近の作業をそのまま残して古い会話を破棄します。コンテキストに空きができますが、破棄された会話は復元できません。",
     "compactConfirm": "今すぐコンパクト",
     "compactTitle": "会話を圧縮しますか？",
-    "compactTooltip": "直近の作業はそのまま保持しつつ、古い履歴を要約してコンテキストを解放します",
+    "compactTooltip": "永続的な知識を保存し、直近の作業を残して古い履歴を破棄します",
     "compacting": "コンパクト化中…",
     "compactingTooltip": "会話を圧縮中…",
     "dictationCouldNotOpen": "マイクを開けませんでした: {reason}",
@@ -96,6 +98,7 @@
     "dictationStart": "音声入力",
     "dictationStop": "音声入力を停止して文字起こし",
     "dictationTranscribing": "文字起こし中…",
+    "estimatedWindow": "約 {value}",
     "fileAttachments": "ファイル添付",
     "images": "画像",
     "imagesSupported": "ネイティブ対応",
@@ -123,20 +126,76 @@
     "window": "ウィンドウ"
   },
   "ChatMessage": {
-    "compactedTooltip": "{before, plural, other {# 件のメッセージを {after} 件に要約しました}}",
+    "compactionFailed": "コンテキストの圧縮に失敗しました",
+    "compactedTooltip": "{before, plural, other {# 件のメッセージから古い履歴を破棄し、{after} 件を保持しました}}",
     "compactingContext": "会話を圧縮中…",
     "contextCompacted": "会話を圧縮しました",
+    "compactionErrors": {
+      "compaction_failed": "圧縮を完了できませんでした。続行する前に再試行してください。",
+      "compaction_no_reclaim": "圧縮で会話領域を解放できませんでした。",
+      "compaction_preparation_failed": "観察メモリのチェックポイントが完了しなかったため、履歴は削除されませんでした。",
+      "compaction_strategy_failed": "設定された圧縮戦略が失敗し、会話は変更されませんでした。"
+    },
+    "retry": "再試行",
     "copied": "コピーしました",
     "copy": "コピー",
     "deleteQueued": "削除",
     "errorTitle": "問題が発生しました",
+    "retrying": "再試行中…",
+    "errors": {
+      "authentication_failed": {
+        "title": "プロバイダーの認証情報を確認してください",
+        "body": "設定された認証情報が拒否されました。API キーを確認するか、別のモデルを選択してください。"
+      },
+      "connection_failed": {
+        "title": "接続が中断されました",
+        "body": "モデルへの接続がターンの完了前に切れました。接続を確認して再試行してください。"
+      },
+      "context_window_exceeded": {
+        "title": "このモデルには会話が長すぎます",
+        "body": "リクエストがモデルのコンテキスト上限を超えました。会話を圧縮するか、新しい会話またはより大きなモデルを使用してください。"
+      },
+      "image_unsupported": {
+        "title": "このモデルは画像を読めません",
+        "body": "選択したモデルが添付画像を拒否しました。画像対応モデルを選び、再試行してください。"
+      },
+      "provider_unavailable": {
+        "title": "モデルは一時的に利用できません",
+        "body": "プロバイダーは一時的に利用できません。少し待つか、別のモデルを選択してください。"
+      },
+      "rate_limited": {
+        "title": "モデルのレート上限に達しました",
+        "body": "プロバイダーがリクエストを制限しています。少し待つか、別のモデルを選択してください。"
+      },
+      "request_rejected": {
+        "title": "モデルがリクエストを拒否しました",
+        "body": "モデルはこのターンを受け付けられませんでした。依頼を調整するか、別のモデルを選択してください。"
+      },
+      "server_error": {
+        "title": "サーバーへのリクエストに失敗しました",
+        "body": "LangMesh はターンを開始できませんでした。デーモンを確認して再試行してください。"
+      },
+      "turn_failed": {
+        "title": "ターンを完了できませんでした",
+        "body": "ターンが予期せず停止しました。詳細はデーモンログに記録されています。"
+      },
+      "turn_interrupted": {
+        "title": "ターンが中断されました",
+        "body": "ターンの完了前にデーモンが再起動しました。保存された状態から既存のターンを再試行してください。"
+      }
+    },
+    "warnings": {
+      "image_metadata_only": {
+        "title": "画像をファイル参照として送信しました",
+        "body": "{model, select, '' {セッションモデル} other {{model}}} が画像対応を通知していないため、{count} 件の画像を埋め込みませんでした。エージェントはツールでファイルを確認できます。"
+      }
+    },
     "openReview": "レビューを開く",
     "relayedFromGoalReviewAgent": "目標レビューエージェントから転送",
     "relayedFromPeerSession": "ピアセッションから転送",
     "showLess": "折りたたむ",
     "showMore": "もっと見る",
-    "tryAgain": "再試行",
-    "warningTitle": "警告"
+    "tryAgain": "再試行"
   },
   "ChatPanel": {
     "buildPrompt": "{folder} で何を作りましょうか？",
@@ -162,13 +221,13 @@
     "loadConversationErrorDescription": "トランスクリプトの読み込みに失敗しました。接続を確認して、もう一度お試しください。",
     "loadConversationErrorTitle": "この会話を読み込めませんでした",
     "memory": "メモリ",
-    "recordingMemory": "メモリを記録中",
     "newConversation": "新しい会話",
     "openThisFolder": "このフォルダを開く",
     "path": "パス",
     "permissionModeFailedTitle": "権限モードを変更できませんでした",
     "queued": "キュー待ち",
     "queuedForDecision": "あなたの判断を待っています",
+    "queuedForCompaction": "圧縮の再試行を待っています",
     "queuedRetry": "再試行",
     "queuedUnreachable": "セッションに接続できませんでした",
     "readOnly": "読み取り専用",
@@ -256,7 +315,6 @@
     "stopConfirm": "目標を中止",
     "stopTitle": "この目標に向けた作業を中止しますか？",
     "waitingForBackground": "バックグラウンド処理の完了待ち",
-    "waitingForMemory": "メモリの完了待ち",
     "waiting": "確認待ち",
     "working": "取り組み中"
   },
@@ -288,7 +346,7 @@
       "open": "未解決"
     },
     "collapsePanel": "パネルを閉じる",
-    "emptyDescription": "各やり取りの完了時に記録されます。",
+    "emptyDescription": "この場所には、エージェントが管理する現在の観察情報がありません。",
     "emptyTitle": "まだ記録はありません",
     "findings": "判明したこと",
     "instructions": "指示",
@@ -296,14 +354,9 @@
       "preference": "希望",
       "requirement": "要件"
     },
-    "lifted": "解除済み",
     "loading": "記録を読み込み中",
-    "revision": {
-      "correction": "訂正",
-      "merge": "統合",
-      "refinement": "詳細化",
-      "retraction": "撤回"
-    },
+    "loadError": "観察メモリの記録を読み込めませんでした。ライブ更新は引き続き有効です。",
+    "registryError": "観察メモリの修復が必要です",
     "standing": {
       "inferred": "推論",
       "reported": "報告"
@@ -479,7 +532,6 @@
       "_": "会話の圧縮",
       "automatic": "自動で圧縮",
       "reclaim_at_fraction": "圧縮を始める割合",
-      "observational_memory_limit_fraction": "観察メモリの上限割合",
       "output_reserve_fraction": "回答用に確保する割合",
       "recent_working_set_fraction": "そのまま残す割合"
     },
@@ -594,7 +646,6 @@
         "browser_authorization": "ブラウザ承認の待ち時間",
         "card_resolve": "エージェントカードの取得",
         "click_interval": "クリックの間隔",
-        "compaction_attempts": "圧縮の試行回数",
         "connect_timeout": "ブラウザ接続のタイムアウト",
         "control_plane_call": "デーモン呼び出しの待ち時間",
         "control_script": "画面操作スクリプトの実行上限",
@@ -690,10 +741,10 @@
     "compaction": {
       "_": "会話が長くなったときの畳み方。",
       "automatic": "コンテキストが埋まってきたら自動で圧縮します。手動の圧縮はどちらの設定でも使えます。",
-      "reclaim_at_fraction": "使用可能なウィンドウのこの割合を超えたら圧縮します。あえて遅めです。圧縮は情報を捨てる唯一の操作だからです。",
-      "observational_memory_limit_fraction": "使用可能なウィンドウ内で観察メモリが占められる最大割合です。超過した場合、圧縮時に関連する知見を統合し、改訂履歴は保持します。",
-      "output_reserve_fraction": "回答のために残しておくウィンドウの割合。残りが使用可能なウィンドウです。",
-      "recent_working_set_fraction": "圧縮せずそのまま残す割合。ターン数ではなくトークン量で決めます。"
+      "assumed_context_window": "カスタムモデルがコンテキスト上限を報告しない場合の控えめなスケジュール容量です。推定値として表示し、確実な拒否上限には使用しません。",
+      "reclaim_at_fraction": "使用可能なウィンドウ内で準備を始める目安です。古い履歴を破棄する前にエージェントが永続的な知識を記録できるよう、予約領域は最後のセグメントのために残されます。",
+      "output_reserve_fraction": "現在の回答と圧縮前の記録セグメントのために、使用可能領域の外側へ確保する安全バッファです。",
+      "recent_working_set_fraction": "古い履歴を破棄した後もそのまま残す、使用可能ウィンドウの割合です。1 ターンに多数のツール結果が含まれることがあるため、トークン量で測ります。"
     },
     "composio": {
       "_": "Composio のホスト型 MCP ゲートウェイ。",
@@ -804,7 +855,6 @@
         "browser_authorization": "Chrome の承認ダイアログにユーザーが応じるのを待つ時間。",
         "card_resolve": "リモートエージェントのカード取得の待ち時間。",
         "click_interval": "連続したクリックの間隔。",
-        "compaction_attempts": "圧縮がモデルに観察の記録を何回求めるか。これを超えると観察なしで畳み込みます。",
         "connect_timeout": "ブラウザへの接続を待つ時間。",
         "control_plane_call": "デーモンへの 1 回の呼び出しの待ち時間。",
         "control_script": "画面操作スクリプト 1 本の実行時間の上限。",

@@ -1,6 +1,6 @@
 # The file LangMesh creates at ~/.config/langmesh/configuration.yaml on first run.
 #
-# Deliberately small. Credentials and the conversation-memory policy are explicit; other settings
+# Deliberately small. Credentials and the conversation-compaction policy are explicit; other settings
 # stay at their schema defaults so they can still improve without being pinned here.
 #
 # To see what there is to change:   langmesh configure --all
@@ -31,7 +31,7 @@ exa:
 
 compaction:
   automatic: true
+  assumed_context_window: 128000
   reclaim_at_fraction: 0.85
-  observational_memory_limit_fraction: 0.1
   output_reserve_fraction: 0.1
   recent_working_set_fraction: 0.25
