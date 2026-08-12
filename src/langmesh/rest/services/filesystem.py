@@ -38,6 +38,8 @@ def _validate_directory_payload(directory: str) -> dict[str, object]:
             "git_unstaged_count": 0,
             "git_untracked_count": 0,
             "git_conflicted_count": 0,
+            "git_insertions": 0,
+            "git_deletions": 0,
             "path": "",
         }
     path = Path(directory).expanduser()
@@ -61,6 +63,8 @@ def _validate_directory_payload(directory: str) -> dict[str, object]:
     git_unstaged_count = 0
     git_untracked_count = 0
     git_conflicted_count = 0
+    git_insertions = 0
+    git_deletions = 0
     if valid:
         try:
             inside = _run_git_probe(path, "rev-parse", "--is-inside-work-tree")
@@ -109,6 +113,14 @@ def _validate_directory_payload(directory: str) -> dict[str, object]:
                 git_conflicted_count = (
                     len(conflicted.stdout.splitlines()) if conflicted.returncode == 0 else 0
                 )
+                numstat = _run_git_probe(path, "diff", "--numstat")
+                if numstat.returncode == 0:
+                    for line in numstat.stdout.splitlines():
+                        left, right, _ = line.split("\t", 2)
+                        if left == "-" or right == "-":
+                            continue
+                        git_insertions += int(left)
+                        git_deletions += int(right)
                 git_dirty = any(
                     count > 0
                     for count in (
@@ -146,6 +158,8 @@ def _validate_directory_payload(directory: str) -> dict[str, object]:
         "git_unstaged_count": git_unstaged_count,
         "git_untracked_count": git_untracked_count,
         "git_conflicted_count": git_conflicted_count,
+        "git_insertions": git_insertions,
+        "git_deletions": git_deletions,
         "path": str(path),
     }
 
@@ -221,6 +235,8 @@ def _git_status_key(payload: dict[str, object]) -> tuple[object, ...]:
         payload.get("git_unstaged_count"),
         payload.get("git_untracked_count"),
         payload.get("git_conflicted_count"),
+        payload.get("git_insertions"),
+        payload.get("git_deletions"),
     )
 
 

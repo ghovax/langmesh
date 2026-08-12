@@ -196,16 +196,12 @@ class SQLiteObservationStore:
         with self._connect_read_only() as connection:
             connection.execute("BEGIN")
             revision = self._validate_schema(connection)
-            aggregates = {
-                str(ledger): (int(count), earliest, latest)
-                for ledger, count, earliest, latest in connection.execute(
-                    """
-                    SELECT ledger, COUNT(*), MIN(updated_at), MAX(updated_at)
-                    FROM entries
-                    GROUP BY ledger
-                    """
-                ).fetchall()
-            }
+            aggregates: dict[str, tuple[int, object, object]] = {}
+            for ledger in _LEDGERS:
+                count, earliest, latest = connection.execute(
+                    f"SELECT COUNT(*), MIN(updated_at), MAX(updated_at) FROM {ledger}"
+                ).fetchone()
+                aggregates[ledger] = (int(count), earliest, latest)
         earliest_values = [
             str(values[1]) for values in aggregates.values() if values[1] is not None
         ]
@@ -283,36 +279,44 @@ class SQLiteObservationStore:
         with self._connect_read_only() as connection:
             connection.execute("BEGIN")
             revision = self._validate_schema(connection)
-            rows = connection.execute(
-                "SELECT ledger, entry_id, payload, updated_at FROM entries ORDER BY updated_at, entry_id"
-            ).fetchall()
+            rows_by_ledger: dict[str, list[tuple[str, object, str]]] = {}
+            for ledger in _LEDGERS:
+                rows_by_ledger[ledger] = [
+                    (str(entry_id), payload, str(updated_at))
+                    for entry_id, payload, updated_at in connection.execute(
+                        f"SELECT entry_id, payload, updated_at FROM {ledger} "
+                        "ORDER BY updated_at, entry_id"
+                    ).fetchall()
+                ]
         entries: dict[str, list[dict[str, Any]]] = {ledger: [] for ledger in _LEDGERS}
-        for ledger, entry_id, payload, updated_at in rows:
-            if not _nonempty(entry_id):
-                raise ObservationRegistryError(f"{ledger}/<empty>: entry_id must be non-empty")
-            if not _nonempty(updated_at):
-                raise ObservationRegistryError(f"{ledger}/{entry_id}: updated_at must be non-empty")
-            try:
-                parsed_timestamp = datetime.fromisoformat(str(updated_at).replace("Z", "+00:00"))
-            except ValueError as error:
-                raise ObservationRegistryError(
-                    f"{ledger}/{entry_id}: updated_at must be an ISO 8601 timestamp"
-                ) from error
-            if parsed_timestamp.tzinfo is None:
-                raise ObservationRegistryError(
-                    f"{ledger}/{entry_id}: updated_at must include a UTC offset"
-                )
-            try:
-                entry = json.loads(str(payload))
-            except (json.JSONDecodeError, TypeError) as error:
-                raise ObservationRegistryError(
-                    f"{ledger}/{entry_id}: payload is not valid JSON"
-                ) from error
-            if str(ledger) not in entries:
-                raise ObservationRegistryError(f"{ledger}/{entry_id}: invalid ledger")
-            _validate_payload(str(ledger), str(entry_id), entry)
-            entry.update(id=str(entry_id), updated_at=str(updated_at))
-            entries[str(ledger)].append(entry)
+        for ledger, rows in rows_by_ledger.items():
+            for entry_id, payload, updated_at in rows:
+                if not _nonempty(entry_id):
+                    raise ObservationRegistryError(f"{ledger}/<empty>: entry_id must be non-empty")
+                if not _nonempty(updated_at):
+                    raise ObservationRegistryError(
+                        f"{ledger}/{entry_id}: updated_at must be non-empty"
+                    )
+                try:
+                    parsed_timestamp = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+                except ValueError as error:
+                    raise ObservationRegistryError(
+                        f"{ledger}/{entry_id}: updated_at must be an ISO 8601 timestamp"
+                    ) from error
+                if parsed_timestamp.tzinfo is None:
+                    raise ObservationRegistryError(
+                        f"{ledger}/{entry_id}: updated_at must include a UTC offset"
+                    )
+                try:
+                    # Payloads are stored as BLOBs of UTF-8 JSON, which json.loads accepts directly.
+                    entry = json.loads(payload)
+                except (json.JSONDecodeError, TypeError) as error:
+                    raise ObservationRegistryError(
+                        f"{ledger}/{entry_id}: payload is not valid JSON"
+                    ) from error
+                _validate_payload(ledger, entry_id, entry)
+                entry.update(id=entry_id, updated_at=updated_at)
+                entries[ledger].append(entry)
         return {"revision": revision, "entries": entries}
 
     @staticmethod
@@ -322,17 +326,18 @@ class SQLiteObservationStore:
             raise ObservationRegistryError(
                 f"SQLite integrity check failed: {integrity[0] if integrity else 'no result'}"
             )
+        entry_columns = [
+            ("entry_id", "TEXT", 1, 1),
+            ("payload", "BLOB", 1, 0),
+            ("updated_at", "TEXT", 1, 0),
+        ]
         expected = {
             "registry_meta": [
                 ("id", "INTEGER", 0, 1),
                 ("revision", "INTEGER", 1, 0),
             ],
-            "entries": [
-                ("ledger", "TEXT", 1, 1),
-                ("entry_id", "TEXT", 1, 2),
-                ("payload", "TEXT", 1, 0),
-                ("updated_at", "TEXT", 1, 0),
-            ],
+            "observations": entry_columns,
+            "directives": entry_columns,
         }
         user_objects = {
             (str(name), str(kind))
@@ -340,7 +345,13 @@ class SQLiteObservationStore:
                 "SELECT name, type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
             ).fetchall()
         }
-        expected_objects = {("registry_meta", "table"), ("entries", "table")}
+        expected_objects = {
+            ("registry_meta", "table"),
+            ("observations", "table"),
+            ("directives", "table"),
+            ("idx_observations_updated_at", "index"),
+            ("idx_directives_updated_at", "index"),
+        }
         if user_objects != expected_objects:
             raise ObservationRegistryError(
                 f"registry objects must be {sorted(expected_objects)}; found {sorted(user_objects)}"
@@ -354,20 +365,39 @@ class SQLiteObservationStore:
                 raise ObservationRegistryError(
                     f"{table} columns must be {columns}; found {found or 'no table'}"
                 )
-        entries_sql = str(
-            connection.execute(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name='entries'"
-            ).fetchone()[0]
-        ).upper()
-        if "WITHOUT ROWID" not in entries_sql:
-            raise ObservationRegistryError("entries must be declared WITHOUT ROWID")
-        compact_entries_sql = "".join(entries_sql.split())
-        for constraint in (
-            "CHECK(LEDGERIN('OBSERVATIONS','DIRECTIVES'))",
-            "CHECK(JSON_VALID(PAYLOAD))",
+        for table in ("observations", "directives"):
+            table_sql = str(
+                connection.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()[0]
+            ).upper()
+            compact_table_sql = "".join(table_sql.split())
+            if "WITHOUT ROWID" not in table_sql:
+                raise ObservationRegistryError(f"{table} must be declared WITHOUT ROWID")
+            if "CHECK(JSON_VALID(PAYLOAD))" not in compact_table_sql:
+                raise ObservationRegistryError(f"{table} is missing CHECK(json_valid(payload))")
+        index_sql = {
+            str(name): str(definition).upper()
+            for name, definition in connection.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type='index' "
+                "AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
+        if "idx_observations_updated_at" not in index_sql or (
+            "ONOBSERVATIONS" not in "".join(index_sql["idx_observations_updated_at"].split())
+            or "UPDATED_AT" not in "".join(index_sql["idx_observations_updated_at"].split())
         ):
-            if constraint not in compact_entries_sql:
-                raise ObservationRegistryError(f"entries is missing {constraint}")
+            raise ObservationRegistryError(
+                "idx_observations_updated_at must index observations(updated_at)"
+            )
+        if "idx_directives_updated_at" not in index_sql or (
+            "ONDIRECTIVES" not in "".join(index_sql["idx_directives_updated_at"].split())
+            or "UPDATED_AT" not in "".join(index_sql["idx_directives_updated_at"].split())
+        ):
+            raise ObservationRegistryError(
+                "idx_directives_updated_at must index directives(updated_at)"
+            )
         meta_sql = str(
             connection.execute(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name='registry_meta'"

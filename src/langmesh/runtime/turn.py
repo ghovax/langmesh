@@ -39,6 +39,7 @@ from langmesh.base.skills import enabled_skills, skills_for_agent, skills_payloa
 from langmesh.base.confinement import Denial
 from langmesh.runtime.turn_events import (
     Checkpoint,
+    CompactionStarted,
     Done,
     Error,
     RetryRequested,
@@ -546,6 +547,18 @@ class _RunsTurns:
                     # was persisted. Its revision is the durable acknowledgement; do not ask the
                     # model to repeat a side effect merely because the in-memory state was lost.
                     self._record_compaction_preparation()
+            if self._compaction_control.phase == "waiting" and not self._compaction_control.started:
+                # The indicator opens when the recording handoff begins, not when the fold finally
+                # runs: preparation is the long phase, and a session restart must not drop it.
+                self._compaction_control.started = True
+                self._mark_session_dirty()
+                yield CompactionStarted(
+                    reason=self._compaction_control.reason,
+                    messages_before=len(
+                        self._without_compaction_preparation(self._conversation)
+                    ),
+                    tokens_before=conversation_tokens(self._conversation),
+                )
             if self._compaction_control.phase == "recorded":
                 fold_reason = self._compaction_control.reason
                 try:

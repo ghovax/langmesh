@@ -246,6 +246,88 @@ function dropMessage(state: ReduceState, id: string): void {
   state.messages = state.messages.filter((message) => message.id !== id);
 }
 
+// A local compaction marker is not part of the persisted transcript until the backend announces
+// its started event. A snapshot replay must therefore keep the running row, or the indicator
+// vanishes mid-preparation and reappears only when the fold lands.
+function preserveRunningCompaction(previous: ChatMessage[], next: ChatMessage[]): ChatMessage[] {
+  const local = previous.findLast(
+    (message) => message.role === "compaction" && message.meta?.status === "running",
+  );
+  if (!local) return next;
+  // The pass already settled on the backend: the transcript owns its done/failed row, so the
+  // local running marker must not reappear beside it.
+  if (
+    next.some(
+      (message) =>
+        message.role === "compaction" &&
+        (message.meta?.status === "done" || message.meta?.status === "failed"),
+    )
+  )
+    return next;
+  const replayIndex = next.findLastIndex(
+    (message) => message.role === "compaction" && message.meta?.status === "running",
+  );
+  if (replayIndex >= 0) {
+    // Keep the local row's identity, so the live fold's done event settles the same marker.
+    return next.map((message, index) =>
+      index === replayIndex
+        ? { ...message, id: local.id, meta: { ...message.meta, status: "running" } }
+        : message,
+    );
+  }
+  return [...next, local];
+}
+
+function settleCompactionMarker(
+  state: ReduceState,
+  fallbackId: string,
+  meta: MessageMeta,
+): void {
+  const runningIndex = state.messages.findLastIndex(
+    (message) => message.role === "compaction" && message.meta?.status === "running",
+  );
+  if (runningIndex >= 0) {
+    state.messages = state.messages.map((message, index) =>
+      index === runningIndex ? { ...message, meta: { ...message.meta, ...meta } } : message,
+    );
+    return;
+  }
+  // The persisted row may already have settled this same pass under a different id; do not
+  // draw a second separator beside the one the transcript owns.
+  if (meta.status === "done" || meta.status === "failed") {
+    const alreadySettled = state.messages.some(
+      (message) => message.role === "compaction" && message.meta?.status === meta.status,
+    );
+    if (alreadySettled) return;
+  }
+  const existing = state.messages.find((message) => message.id === fallbackId);
+  if (existing) {
+    upsertMessage(state, { ...existing, meta: { ...existing.meta, ...meta } });
+    return;
+  }
+  state.messages = [
+    ...state.messages,
+    {
+      id: fallbackId,
+      role: "compaction",
+      content: "",
+      timestamp: new Date().toISOString(),
+      meta,
+    },
+  ];
+}
+
+function dropCompactionMarker(state: ReduceState, fallbackId: string): void {
+  const runningIndex = state.messages.findLastIndex(
+    (message) => message.role === "compaction" && message.meta?.status === "running",
+  );
+  if (runningIndex >= 0) {
+    state.messages = state.messages.filter((_, index) => index !== runningIndex);
+    return;
+  }
+  dropMessage(state, fallbackId);
+}
+
 function pushErrorMessage(state: ReduceState, error: FriendlyError, sourceId?: string): void {
   state.messages = [
     ...state.messages,
@@ -1406,8 +1488,11 @@ export function useChat(
 
     const applySnapshot = (turns: A2ATurn[]) => {
       const replayed = replayTurns(turns);
+      // A manual compaction owns a local running marker before the backend's started event
+      // exists; the replay keeps that row so the indicator never blinks out mid-preparation.
+      const messages = preserveRunningCompaction(stateRef.current.messages, replayed.messages);
       // Already showing this: keeping the array reference means `setMessages` bails and nothing re-renders.
-      if (rendersIdentically(stateRef.current.messages, replayed.messages)) {
+      if (rendersIdentically(stateRef.current.messages, messages)) {
         stateRef.current.tasks = replayed.tasks;
         stateRef.current.tokenUsage = replayed.tokenUsage;
         sessionIdRef.current = initialSessionId;
@@ -1416,7 +1501,7 @@ export function useChat(
         return;
       }
       stateRef.current = {
-        messages: replayed.messages,
+        messages,
         tasks: replayed.tasks,
         tokenUsage: replayed.tokenUsage,
         keyCounts: replayed.keyCounts,
@@ -1920,62 +2005,77 @@ export function useChat(
     else stateRef.current.messages = [...stateRef.current.messages, nextMarker];
     flushNow();
     void compactSession(context)
-      .then((result) => {
-        const marker = stateRef.current.messages.find((message) => message.id === markerId);
-        if (!result.compacted || result.status !== "done" || result.ok === false) {
-          if (!result.error_code) {
-            throw new Error("A failed compaction response is missing error_code.");
-          }
-          if (marker) {
-            upsertMessage(stateRef.current, {
-              ...marker,
-              meta: {
-                ...marker.meta,
-                status: "failed",
-                compactionErrorCode: result.error_code,
-              },
+      .then(async (result) => {
+        const failed = result.compacted === false || result.status !== "done" || result.ok === false;
+        // The persisted transcript is authoritative: it carries the compaction events the
+        // backend wrote, with the exact reason, counts and error code, and removes whatever
+        // history the fold actually reclaimed. Replaying it also settles the local marker
+        // under the transcript's own identity instead of drawing a duplicate separator.
+        try {
+          const turns = await fetchSessionTurns(context);
+          const replayed = replayTurns(turns);
+          const settled = replayed.messages.some(
+            (message) =>
+              message.role === "compaction" &&
+              (message.meta?.status === "done" || message.meta?.status === "failed"),
+          );
+          if (failed && !settled) {
+            // The failure never reached the backend, so replaying would erase the marker
+            // rather than settle it. Keep the local row and mark it failed.
+            settleCompactionMarker(stateRef.current, markerId, {
+              status: "failed",
+              compactionErrorCode: result.error_code ?? "compaction_failed",
             });
+          } else {
+            stateRef.current = {
+              ...stateRef.current,
+              messages: replayed.messages,
+              tasks: replayed.tasks,
+              tokenUsage: replayed.tokenUsage,
+              keyCounts: replayed.keyCounts,
+            };
           }
           flushNow();
+        } catch (caught) {
+          swallowed({ component: "chat", operation: "read the compacted transcript" }, caught);
+          if (failed) {
+            settleCompactionMarker(stateRef.current, markerId, {
+              status: "failed",
+              compactionErrorCode: result.error_code ?? "compaction_failed",
+            });
+          } else {
+            const changed = (result.messages_after ?? 0) < (result.messages_before ?? 0);
+            if (changed) {
+              settleCompactionMarker(stateRef.current, markerId, {
+                status: "done",
+                reason: result.reason ?? "manual",
+                messagesBefore: result.messages_before ?? 0,
+                messagesAfter: result.messages_after ?? 0,
+              });
+            } else {
+              dropCompactionMarker(stateRef.current, markerId);
+            }
+          }
+          flushNow();
+        }
+        if (failed) {
           toaster.create({
             type: "error",
             title: translation("compactFailedTitle"),
             description: translation("compactFailedBody"),
             closable: true,
           });
-          return;
-        }
-        outboxRef.current?.compactionRecovered();
-        if (marker?.meta?.status !== "running") return;
-        const changed = (result.messages_after ?? 0) < (result.messages_before ?? 0);
-        if (!changed) {
-          dropMessage(stateRef.current, markerId);
         } else {
-          upsertMessage(stateRef.current, {
-            ...marker,
-            meta: {
-              status: "done",
-              reason: result.reason ?? "manual",
-              messagesBefore: result.messages_before ?? 0,
-              messagesAfter: result.messages_after ?? 0,
-            },
-          });
+          // Only a successful fold releases the queue that the failed one held.
+          outboxRef.current?.compactionRecovered();
         }
-        flushNow();
       })
       .catch((caught) => {
         swallowed({ component: "chat", operation: "compact the conversation" }, caught);
-        const marker = stateRef.current.messages.find((message) => message.id === markerId);
-        if (marker) {
-          upsertMessage(stateRef.current, {
-            ...marker,
-            meta: {
-              ...marker.meta,
-              status: "failed",
-              compactionErrorCode: "compaction_failed",
-            },
-          });
-        }
+        settleCompactionMarker(stateRef.current, markerId, {
+          status: "failed",
+          compactionErrorCode: "compaction_failed",
+        });
         flushNow();
         toaster.create({
           type: "error",

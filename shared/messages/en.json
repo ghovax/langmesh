@@ -299,6 +299,7 @@
     "untracked": "Untracked",
     "conflicted": "Conflicted",
     "uncommittedChanges": "Uncommitted changes",
+    "linesChanged": "Lines added and removed in working-tree changes",
     "aheadOfUpstream": "{count} ahead of upstream",
     "behindUpstream": "{count} behind upstream"
   },

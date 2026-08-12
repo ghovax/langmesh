@@ -299,6 +299,7 @@
     "untracked": "未追跡",
     "conflicted": "競合",
     "uncommittedChanges": "コミットされていない変更",
+    "linesChanged": "作業ツリーの変更で追加・削除された行",
     "aheadOfUpstream": "アップストリームより {count} コミット先行",
     "behindUpstream": "アップストリームより {count} コミット遅延"
   },

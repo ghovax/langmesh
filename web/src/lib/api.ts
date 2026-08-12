@@ -1865,6 +1865,8 @@ export interface DirectoryValidation {
   git_unstaged_count: number;
   git_untracked_count: number;
   git_conflicted_count: number;
+  git_insertions: number;
+  git_deletions: number;
   path: string;
 }
 

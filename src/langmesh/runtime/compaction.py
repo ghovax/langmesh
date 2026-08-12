@@ -30,6 +30,8 @@ class _CompactionControl:
     resume_after: bool = False
     registry_revision: int | None = None
     failure: str | None = None
+    # Whether the running compaction indicator has already been announced for this preparation.
+    started: bool = False
 
     def begin(self, *, reason: str, resume_after: bool) -> None:
         if reason not in {"auto", "manual", "overflow"}:
@@ -39,6 +41,7 @@ class _CompactionControl:
         self.resume_after = resume_after
         self.registry_revision = None
         self.failure = None
+        self.started = False
 
     def record(self) -> None:
         if self.phase != "waiting":
@@ -65,6 +68,7 @@ class _CompactionControl:
         self.resume_after = False
         self.registry_revision = None
         self.failure = None
+        self.started = False
 
     def snapshot(self) -> dict:
         return {
@@ -73,6 +77,7 @@ class _CompactionControl:
             "resume_after": self.resume_after,
             "registry_revision": self.registry_revision,
             "failure": self.failure,
+            "started": self.started,
         }
 
     @classmethod
@@ -93,6 +98,7 @@ class _CompactionControl:
                 else None
             ),
             failure=(str(value["failure"]) if value.get("failure") else None),
+            started=bool(value.get("started", False)),
         )
 
 
@@ -212,8 +218,15 @@ class _CompactsContext:
         self._compaction_control.fail_preparation(error)
         self.discard_pending_steering()
         self._mark_session_dirty()
-        return [
-            CompactionStarted(reason="preparation", messages_before=messages, tokens_before=tokens),
+        events: list[TurnEvent] = []
+        if not self._compaction_control.started:
+            # A failure that never reached the model call still gets a running start, so the
+            # interface never jumps straight from nothing to a failure without a visible phase.
+            self._compaction_control.started = True
+            events.append(
+                CompactionStarted(reason="preparation", messages_before=messages, tokens_before=tokens)
+            )
+        events.append(
             CompactionDone(
                 reason="preparation",
                 ok=False,
@@ -222,8 +235,9 @@ class _CompactsContext:
                 tokens_before=tokens,
                 tokens_after=tokens,
                 error_code=error_code,
-            ),
-        ]
+            )
+        )
+        return events
 
     def _bounded_tail(self, recent: list, reason: str = "automatic") -> list:
         """The newest turns that fit the budget, taken whole: recency is not smallness, and none is cut in half."""

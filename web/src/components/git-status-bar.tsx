@@ -111,6 +111,20 @@ export function GitStatusBar({ status }: { status: DirectoryStatus }) {
             {changedCount > 0 && <Text textStyle="fieldLabel">{changedCount}</Text>}
           </Flex>
         )}
+        {status.gitDirty && (status.gitInsertions > 0 || status.gitDeletions > 0) && (
+          <Flex
+            align="center"
+            gap={1}
+            flexShrink={0}
+            color="fg.muted"
+            title={translation("linesChanged")}
+          >
+            <LuArrowUp size={12} />
+            <Text textStyle="fieldLabel">{status.gitInsertions}</Text>
+            <LuArrowDown size={12} />
+            <Text textStyle="fieldLabel">{status.gitDeletions}</Text>
+          </Flex>
+        )}
         {status.gitAhead > 0 && (
           <Flex
             align="center"
