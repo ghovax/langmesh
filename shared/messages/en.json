@@ -531,6 +531,7 @@
     "compaction": {
       "_": "Conversation compaction",
       "automatic": "Compact automatically",
+      "assumed_context_window": "Assumed context window",
       "reclaim_at_fraction": "Compact at (share of window)",
       "output_reserve_fraction": "Reserved for the answer (share)",
       "recent_working_set_fraction": "Kept verbatim (share)"

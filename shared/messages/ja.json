@@ -531,6 +531,7 @@
     "compaction": {
       "_": "会話の圧縮",
       "automatic": "自動で圧縮",
+      "assumed_context_window": "想定コンテキストウィンドウ",
       "reclaim_at_fraction": "圧縮を始める割合",
       "output_reserve_fraction": "回答用に確保する割合",
       "recent_working_set_fraction": "そのまま残す割合"

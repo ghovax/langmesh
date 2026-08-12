@@ -25,6 +25,7 @@ import {
   fetchHomeDirectory,
   fetchModels,
   fetchRecentModels,
+  fetchSession,
   fetchSessionDraft,
   fetchSessions,
   fetchSettings,
@@ -86,6 +87,8 @@ function Workspace() {
     updatePreferences({ last_workspace_id: workspaceId });
   // The app opens straight into a workspace addressed by `?workspace=`, resolving the last used or the first available.
   const workspaceId = searchParams.get("workspace") ?? "";
+  const requestedSessionId = searchParams.get("session") ?? "";
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(requestedSessionId || null);
 
   // After the user grants Accessibility and the app relaunches, turn computer control on once, since macOS only tells the fresh server.
   useEffect(() => {
@@ -106,53 +109,54 @@ function Workspace() {
   const [rememberedSession, setRememberedSession] = useState<string | null>(null);
 
   useEffect(() => {
-    if (workspaceId) {
-      writeLastWorkspace(workspaceId);
-      return;
-    }
     let cancelled = false;
-    listWorkspaces()
-      .then((workspaces) => {
+    const resolveWorkspace = async () => {
+      try {
+        const [workspaces, requestedSession] = await Promise.all([
+          listWorkspaces(),
+          requestedSessionId ? fetchSession(requestedSessionId) : Promise.resolve(null),
+        ]);
         if (cancelled) return;
-        const last = readLastWorkspace();
+        const requestedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
+        const sessionWorkspace = workspaces.find(
+          (workspace) => workspace.id === requestedSession?.workspace_id,
+        );
+        const lastWorkspace = readLastWorkspace();
+        // A session deep link is the most specific address. Otherwise honor a valid workspace, preference, or first entry.
         const target =
-          last && workspaces.some((workspace) => workspace.id === last) ? last : workspaces[0]?.id;
-        // Nothing to open into, so release the restore below to settle on the empty composer.
+          sessionWorkspace ??
+          requestedWorkspace ??
+          workspaces.find((workspace) => workspace.id === lastWorkspace) ??
+          workspaces[0];
+        // Nothing to open into, so release the conversation restore to settle on the empty composer.
         if (!target) {
+          setActiveSessionId(null);
           setRememberedSession("");
           return;
         }
+        const keepRequestedSession = requestedSession?.workspace_id === target.id;
+        writeLastWorkspace(target.id);
+        setActiveSessionId(keepRequestedSession ? requestedSession.id : null);
+        setRememberedSession(target.last_session_id ?? "");
         const params = new URLSearchParams(window.location.search);
-        params.set("workspace", target);
-        router.replace(`?${params.toString()}`, { scroll: false });
-      })
-      .catch((caught) =>
-        swallowed({ component: "workspace-page", operation: "read the home directory" }, caught),
-      );
-    return () => {
-      cancelled = true;
-    };
-    // The workspace readers close over preferences, so naming them here would re-run this constantly.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, router]);
-
-  useEffect(() => {
-    // No workspace yet means the effect above is still choosing one, and will set this itself if there is none.
-    if (!workspaceId) return;
-    let cancelled = false;
-    getWorkspace(workspaceId)
-      .then((workspace) => {
-        if (!cancelled) setRememberedSession(workspace?.last_session_id ?? "");
-      })
-      .catch((caught) => {
-        // A workspace that would not load is no reason to hang on the loading screen.
+        params.set("workspace", target.id);
+        if (requestedSessionId && !keepRequestedSession) params.delete("session");
+        if (workspaceId !== target.id || (requestedSessionId && !keepRequestedSession)) {
+          router.replace(`?${params.toString()}`, { scroll: false });
+        }
+      } catch (caught) {
+        // A workspace read failure is no reason to leave conversation restoration pending forever.
         if (!cancelled) setRememberedSession("");
-        swallowed({ component: "workspace-page", operation: "read the last conversation" }, caught);
-      });
+        swallowed({ component: "workspace-page", operation: "resolve the workspace" }, caught);
+      }
+    };
+    void resolveWorkspace();
     return () => {
       cancelled = true;
     };
-  }, [workspaceId]);
+    // The workspace readers close over preferences, so naming them here would re-run this after writing the selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, requestedSessionId, router]);
 
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [agentCards, setAgentCards] = useState<AgentCard[]>([]);
@@ -163,9 +167,6 @@ function Workspace() {
 
   const [sessions, setSessions] = useState<SessionEntry[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(() =>
-    searchParams.get("session"),
-  );
   // Sessions that finished a run while you were not viewing them, detected by comparing snapshots and cleared when you open one.
   const [unseenCompletions, setUnseenCompletions] = useState<Set<string>>(new Set());
   const sessionsRef = useRef<SessionEntry[]>([]);
@@ -272,7 +273,8 @@ function Workspace() {
     // One daemon, one fetch, since a folder now says where its work runs.
     let merged: SessionEntry[];
     try {
-      merged = mapSessions(await fetchSessions());
+      // History means every durable session, including ones whose process has already ended.
+      merged = mapSessions(await fetchSessions({ all: true }));
     } catch (caught) {
       // A transient failure keeps what we already have rather than blanking the list.
       swallowed({ component: "workspace-page", operation: "list the sessions" }, caught);
