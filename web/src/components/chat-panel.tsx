@@ -845,7 +845,6 @@ export function ChatPanel({
         onActivate: () => markSidePanelActive("memory"),
         content: (
           <MemoryPanel
-            key={sessionId}
             sessionId={sessionId}
             workingDirectory={workingDirectory || homeDirectory || ""}
             onClose={() => setSidePanelOpen("memory", false)}

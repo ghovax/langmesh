@@ -185,12 +185,23 @@ export function MemoryPanel({
   const latestRevision = useRef(-1);
   const latestSnapshotWasEvent = useRef(false);
   const registryPath = useRef("");
+  const directoryRef = useRef("");
 
   useEffect(() => {
     let cancelled = false;
-    latestRevision.current = -1;
-    latestSnapshotWasEvent.current = false;
-    registryPath.current = "";
+    const directory = workingDirectory ?? "";
+    const directoryChanged = directory !== directoryRef.current;
+    directoryRef.current = directory;
+    if (directoryChanged) {
+      latestRevision.current = -1;
+      latestSnapshotWasEvent.current = false;
+      registryPath.current = "";
+      setFindingEntries([]);
+      setInstructionEntries([]);
+      setRegistryError("");
+      setLoadError(false);
+      setRead(false);
+    }
     function applySnapshot(
       snapshot: {
         entries?: { observations?: RecordEntry[]; directives?: RecordEntry[] };
@@ -218,7 +229,7 @@ export function MemoryPanel({
       setRead(true);
     }
     async function readRecord() {
-      if (!sessionId && !workingDirectory) {
+      if (!sessionId && !directory) {
         setFindingEntries([]);
         setInstructionEntries([]);
         setRegistryError("");
@@ -226,8 +237,10 @@ export function MemoryPanel({
         setRead(true);
         return;
       }
+      // A session handle appearing for the same folder must not blank or refetch the
+      // registry the panel is already showing.
+      if (sessionId && registryPath.current && !directoryChanged) return;
       try {
-        const directory = workingDirectory ?? "";
         const snapshot = sessionId
           ? await fetchSessionRecord(sessionId)
           : await fetchObservationRecord(directory);
