@@ -212,6 +212,15 @@ async def _session_create(params: dict) -> dict:
         title=str(params.get("title") or ""),
         created_at=_now(),
     )
+    try:
+        await state.registry.persist_off_loop(record)
+    except Exception as exception:  # noqa: BLE001 — creation has not succeeded until it is durable
+        state.registry.forget(record.id)
+        raise RpcError(
+            "The session could not be persisted.",
+            status_code=503,
+            code="session_persistence_failed",
+        ) from exception
 
     if inherited_conversation:
         try:

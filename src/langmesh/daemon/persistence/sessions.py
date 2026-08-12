@@ -81,9 +81,10 @@ class SqliteSessionStore:
             if record.title:
                 row.title = record.title
             database_session.commit()
-        except Exception:  # noqa: BLE001 — a failed registry write must not fail the call
+        except Exception:  # noqa: BLE001 — creation propagates this; later write-throughs log it too
             database_session.rollback()
             logger.exception("could not persist session %s", record.id)
+            raise
         finally:
             database_session.close()
 
