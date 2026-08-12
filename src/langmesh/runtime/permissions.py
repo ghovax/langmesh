@@ -95,6 +95,8 @@ class _DecidesPermissions:
                 "model_explanation": gate.arguments.get("explanation", "") or gate.explanation,
                 # The person's standing instructions, so the reviewer can tell user-requested reach from invention.
                 "user_instructions": instructions_payload(self._catalogue.instructions()),
+                # The ledger's continuing instructions, which the evaluator must weigh when allowing or denying.
+                "ledger_instructions": await self._ledger_directives(),
                 "confinement": self._sandbox.describe(workspace=self._working_directory),
                 # Only on a second run, so the reviewer knows the command hit a wall rather than merely failed.
                 **(
@@ -162,6 +164,22 @@ class _DecidesPermissions:
             explanation="The safety check could not run, so this request was refused.",
             risk="medium",
         )
+
+    async def _ledger_directives(self) -> list[dict[str, str]]:
+        """The ledger's continuing instructions, as the evaluator weighs a request against them."""
+        try:
+            snapshot = await self._observation_store.snapshot()
+        except Exception:  # noqa: BLE001 — a broken registry must not take the review down
+            return []
+        return [
+            {
+                "id": str(entry.get("id", "")),
+                "kind": str(entry.get("kind", "")),
+                "summary": str(entry.get("summary", "")),
+                "detail": str(entry.get("detail", "")),
+            }
+            for entry in snapshot["entries"]["directives"]
+        ]
 
     def _record_grant(self, grant: Grant) -> None:
         """Remember an approved widening for the session, so one grant is not re-asked on every command."""

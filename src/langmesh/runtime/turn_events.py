@@ -25,7 +25,6 @@ class EventType(str, Enum):
     ERROR = "error"
     DENIED_INJECTION = "denied_injection"
     RETRY_REQUESTED = "retry_requested"
-    SANDBOX_REFUSAL_NOTE = "sandbox_refusal_note"
     GROUP_STARTED = "group_started"
     RELAYED = "relayed"
     STEERING = "steering"
@@ -167,15 +166,6 @@ class DeniedInjection(TurnEvent):
     TYPE = EventType.DENIED_INJECTION
     command: str = ""
     id: str = ""
-
-
-@dataclass(frozen=True)
-class SandboxRefusalNote(TurnEvent):
-    """Guidance attached to a sandbox-refused command; internal to the turn loop, never on the wire."""
-
-    TYPE = EventType.SANDBOX_REFUSAL_NOTE
-    id: str = ""
-    note: str = ""
 
 
 @dataclass(frozen=True)
