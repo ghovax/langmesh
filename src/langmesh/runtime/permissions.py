@@ -19,6 +19,7 @@ from langmesh.runtime.locations import (
     ToolLocationError,
 )
 from langchain_core.messages import HumanMessage, SystemMessage
+from langmesh.base.instructions import instructions_payload
 from typing import Any, Optional
 import ast
 import logging
@@ -92,6 +93,8 @@ class _DecidesPermissions:
                     "whole_disk": gate.whole_disk,
                 },
                 "model_explanation": gate.arguments.get("explanation", "") or gate.explanation,
+                # The person's standing instructions, so the reviewer can tell user-requested reach from invention.
+                "user_instructions": instructions_payload(self._catalogue.instructions()),
                 "confinement": self._sandbox.describe(workspace=self._working_directory),
                 # Only on a second run, so the reviewer knows the command hit a wall rather than merely failed.
                 **(

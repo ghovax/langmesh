@@ -16,8 +16,8 @@ from watchdog.observers import Observer
 
 OBSERVATIONS_FILENAME = "observations.sqlite"
 _LEDGERS = ("observations", "directives")
-_OBSERVATION_FIELDS = {"category", "claim", "detail", "evidence", "standing"}
-_DIRECTIVE_FIELDS = {"kind", "summary", "detail", "occasion"}
+_OBSERVATION_FIELDS = {"category", "claim", "detail", "evidence", "standing", "files"}
+_DIRECTIVE_FIELDS = {"kind", "summary", "detail", "occasion", "files"}
 
 
 class ObservationRegistryError(ValueError):
@@ -156,6 +156,17 @@ def _validate_payload(ledger: str, entry_id: str, payload: Any) -> None:
         if field in payload and not _nonempty(payload[field]):
             raise ObservationRegistryError(
                 f"{ledger}/{entry_id}: {field} must be non-empty when present"
+            )
+
+    if "files" in payload:
+        files = payload["files"]
+        if (
+            not isinstance(files, list)
+            or not files
+            or any(not _nonempty(path) for path in files)
+        ):
+            raise ObservationRegistryError(
+                f"{ledger}/{entry_id}: files must be a non-empty list of non-empty paths"
             )
 
 

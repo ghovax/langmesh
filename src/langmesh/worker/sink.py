@@ -28,6 +28,7 @@ from langmesh.runtime.turn_events import (
     CompactionDone,
     CompactionStarted,
     DeniedInjection,
+    SandboxRefusalNote,
     Done,
     Error,
     Mcp,
@@ -353,8 +354,8 @@ class _TurnEventSink:
                 await self.flush()
                 self.final_text = event.text or self.final_text
                 self.stop_reason = event.stop_reason or self.stop_reason
-            case DeniedInjection():
-                # A denied-command marker the runtime tracks for itself, which the executor does not surface.
+            case DeniedInjection() | SandboxRefusalNote():
+                # Internal markers the runtime tracks for itself; the executor does not surface them.
                 pass
             case _:
                 assert_never(event)

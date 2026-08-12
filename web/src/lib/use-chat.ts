@@ -1482,6 +1482,12 @@ export function useChat(
   useEffect(() => {
     if (!initialSessionId) return;
 
+    // A turn we drove locally is complete and the backend has gone idle, so the durable transcript
+    // is settled. Only now may the viewer path re-attach and replay it without racing final chunks.
+    if (!sessionRunning && streamedLocallyRef.current && !isStreamingRef.current) {
+      streamedLocallyRef.current = false;
+    }
+
     let cancelled = false;
     let subscription: { abort: () => void } | null = null;
     const controller = new AbortController();
@@ -1630,8 +1636,10 @@ export function useChat(
           abortedByUserRef.current = false;
           isStreamingRef.current = false;
           setIsStreaming(false);
-          // Back to viewer mode, so an autonomous wake is picked up live rather than on a reload.
-          streamedLocallyRef.current = false;
+          // Stay authoritative until the backend confirms the turn settled. Dropping into viewer
+          // mode here re-attaches and replays a snapshot that can race the final durable writes,
+          // briefly replacing the finished transcript with a shorter one. The idle transition
+          // below is the safe moment to return to viewer mode.
         };
 
         const observe = (sessionIdentifier: string) => {

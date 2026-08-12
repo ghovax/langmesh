@@ -47,6 +47,7 @@ from langmesh.runtime.turn_events import (
     Error,
     Mcp,
     RetryRequested,
+    SandboxRefusalNote,
     ToolCall,
     ToolResult,
     TurnEvent,
@@ -135,6 +136,7 @@ class _DispatchesTools:
         result_content: str = ""
         background_job_id: str | None = None
         denied_commands: list[str] = []
+        refusal_notes: list[str] = []
         tool_failed = False
 
         tool_span = _telemetry.start_span("tool.execute", {"tool.name": tool_name})
@@ -172,6 +174,9 @@ class _DispatchesTools:
                     turn_tool_results_log.append({"name": tool_name, "result": result_content})
                 elif isinstance(event, DeniedInjection):
                     denied_commands.append(event.command)
+                elif isinstance(event, SandboxRefusalNote):
+                    if event.note:
+                        refusal_notes.append(event.note)
         except asyncio.CancelledError:
             result_content = "Tool call aborted."
             yield Error(
@@ -207,6 +212,7 @@ class _DispatchesTools:
             "ok": not tool_failed,
             "background_job_id": background_job_id,
             "denied_commands": denied_commands,
+            "refusal_notes": refusal_notes,
             "metadata": timing_metadata,
         }
 
@@ -414,6 +420,9 @@ class _DispatchesTools:
             self._conversation.append(
                 ToolMessage(content=model_visible_content, tool_call_id=tool_call_identifier)
             )
+            # The sandbox-refusal guidance goes right after the result it explains, never inside it.
+            for note in outcome.get("refusal_notes", []):
+                self._conversation.append(self._reminder_message(note))
             background_job_id = outcome.get("background_job_id")
             if background_job_id:
                 self._background.bind_tool_call(
@@ -715,6 +724,13 @@ class _DispatchesTools:
                         result=result_data,
                     )
                     return
+                else:
+                    # The reviewer refused the widening: the model sees the sandbox refusal, and the
+                    # guidance is injected as its own message after the result rather than into it.
+                    yield SandboxRefusalNote(
+                        id=tool_call_identifier,
+                        note=self._prompt_loader.load("sandbox_refusal_note", {}),
+                    )
             yield ToolResult(id=tool_call_identifier, name=tool_name, result=result_data)
             if isinstance(result_data, dict) and result_data.get("code") == "bash_started":
                 job_id = result_data.get("job_id", "")
@@ -757,7 +773,7 @@ class _DispatchesTools:
             return None
         if result_data.get("code") == "bash_started":
             return None
-        exit_code = result_data.get("exit_code")
+        exit_code = result_data.get("returncode")
         if not isinstance(exit_code, int):
             return None
         output = " ".join(

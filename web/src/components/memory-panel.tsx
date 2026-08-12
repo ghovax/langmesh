@@ -2,7 +2,7 @@
 
 // The active workspace's current observational memory: findings and continuing instructions.
 
-import { Badge, Box, Flex, Text, VStack } from "@chakra-ui/react";
+import { Alert, Badge, Box, Flex, Text, VStack } from "@chakra-ui/react";
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
@@ -27,6 +27,7 @@ import {
 } from "@/lib/api";
 import { swallowed } from "@/lib/swallowed";
 import { InlineMarkdown } from "./markdown-content";
+import { MonoList } from "./ui/display";
 import { Tooltip } from "./ui/tooltip";
 
 const ENTRY_MARK: Record<string, { icon: typeof LuInfo; tone: string }> = {
@@ -89,6 +90,11 @@ function Body({ entry, expanded = false }: { entry: RecordEntry; expanded?: bool
         <Text textStyle="2xs" color="fg.muted" mt={1} truncate={expanded ? undefined : true}>
           <InlineMarkdown content={entry.detail} />
         </Text>
+      ) : null}
+      {expanded && entry.files?.length ? (
+        <Box mt={1}>
+          <MonoList items={entry.files} fontSize="2xs" />
+        </Box>
       ) : null}
       {cited ? (
         <Text textStyle="2xs" color="fg.subtle" mt={1} truncate={expanded ? undefined : true}>
@@ -266,8 +272,8 @@ export function MemoryPanel({
       };
       if (
         change.type !== "observation_registry_changed" ||
-        !(sessionId && change.sessions?.includes(sessionId)) &&
-          change.metadata?.path !== registryPath.current
+        (!(sessionId && change.sessions?.includes(sessionId)) &&
+          change.metadata?.path !== registryPath.current)
       )
         return;
       applySnapshot(change, "event");
@@ -313,6 +319,9 @@ export function MemoryPanel({
         closeLabel={translation("collapsePanel")}
       />
       <PanelBody pt={1}>
+        <Text textStyle="2xs" color="fg.subtle" mb={2}>
+          {translation("description")}
+        </Text>
         {loadError ? (
           <Box
             borderWidth="1px"
@@ -329,22 +338,12 @@ export function MemoryPanel({
           </Box>
         ) : null}
         {registryError ? (
-          <Box
-            borderWidth="1px"
-            borderColor="red.subtle"
-            borderRadius="md"
-            px={2}
-            py={1.5}
-            mb={2}
-            bg="red.subtle"
-          >
-            <Text textStyle="xs" color="red.fg" fontWeight="medium">
-              {translation("registryError")}
-            </Text>
-            <Text textStyle="2xs" color="red.fg" mt={1}>
-              {registryError}
-            </Text>
-          </Box>
+          <Alert.Root status="error" size="sm" borderRadius="md" alignItems="center" mb={2}>
+            <Alert.Indicator />
+            <Alert.Content flex={1} minW={0}>
+              <Alert.Description fontSize="xs">{translation("registryError")}</Alert.Description>
+            </Alert.Content>
+          </Alert.Root>
         ) : null}
         {findingEntries.length === 0 && instructionEntries.length === 0 ? (
           <PanelEmptyState

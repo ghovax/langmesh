@@ -9,6 +9,7 @@ import {
   IconButton,
   Menu,
   Separator,
+  Spinner,
   Text,
   VStack,
 } from "@chakra-ui/react";
@@ -1264,8 +1265,8 @@ export function ChatPanel({
                 px={2}
                 onClick={scrollToBottom}
               >
-                <LuArrowDown />
-                {translation("jumpToLatest")}
+                {isStreaming ? <Spinner boxSize="14px" borderWidth="1.5px" /> : <LuArrowDown />}
+                {translation(isStreaming ? "jumpToProgress" : "jumpToLatest")}
               </Button>
             )}
           </Box>

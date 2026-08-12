@@ -219,6 +219,7 @@
     "inheritedContextChildStarts": "child conversation starts here",
     "inheritedContextInherited": "Earlier context inherited",
     "jumpToLatest": "Jump to latest",
+    "jumpToProgress": "Scroll down to see progress",
     "loadConversationErrorDescription": "The transcript failed to load. Check the connection and try again.",
     "loadConversationErrorTitle": "Couldn’t load this conversation",
     "memory": "Memory",
@@ -363,7 +364,8 @@
       "inferred": "Inferred",
       "reported": "Reported"
     },
-    "title": "Memory"
+    "title": "Memory",
+    "description": "The agent's working memory for this workspace: the findings it established and the instructions it follows."
   },
   "ModelSelect": {
     "visionBadge": "Vision — accepts image input",

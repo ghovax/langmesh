@@ -653,23 +653,27 @@ export function ChatInput({
     setSendPending(true);
     const sendText = trimmed;
     const dataParts = attachments.length > 0 ? [{ kind: "attachments", attachments }] : [];
-    try {
-      // While the agent is busy this enqueues for the next turn (handled upstream).
-      await onSend(sendText, dataParts);
-      setHistoryIndex(-1);
-      setInputValue("");
-      latestInputValueRef.current = "";
-      onDraftChange?.("");
-      setAttachments([]);
-      // Persist to backend and prepend to local list for immediate recall.
-      if (trimmed) {
-        setMessageHistory((previous) => [trimmed, ...previous]);
-        if (workingDirectory) {
-          saveMessageHistory(workingDirectory, trimmed).catch((caught) =>
-            swallowed({ component: "chat-input", operation: "save the message history" }, caught),
-          );
-        }
+    // The message is committed the moment Enter is pressed: the optimistic transcript row and the
+    // outbox card both show it, so the composer must not hold the same text until the daemon accepts
+    // the send, or the message appears in two places at once.
+    setHistoryIndex(-1);
+    setInputValue("");
+    latestInputValueRef.current = "";
+    onDraftChange?.("");
+    setAttachments([]);
+    // Persist to backend and prepend to local list for immediate recall.
+    if (trimmed) {
+      setMessageHistory((previous) => [trimmed, ...previous]);
+      if (workingDirectory) {
+        saveMessageHistory(workingDirectory, trimmed).catch((caught) =>
+          swallowed({ component: "chat-input", operation: "save the message history" }, caught),
+        );
       }
+    }
+    try {
+      // While the agent is busy this enqueues for the next turn (handled upstream). Still awaited so
+      // a refusal or failure settles through the queue and keeps the send gated.
+      await onSend(sendText, dataParts);
     } finally {
       setSendPending(false);
     }
@@ -745,12 +749,6 @@ export function ChatInput({
 
       {/* Message input */}
       <Box px={0} mt={2} pb={1.5}>
-        {sendPending ? (
-          <Flex align="center" gap={1.5} pb={1.5} color="fg.muted" aria-live="polite">
-            <Spinner boxSize="12px" borderWidth="1.5px" />
-            <Text fontSize="xs">{translation("sending")}</Text>
-          </Flex>
-        ) : null}
         {/* Pending attachments sit above the composer box, so the media cards have room and the input stays clear. */}
         {attachments.length > 0 || uploadingCount > 0 ? (
           <Flex gap={2} pb={2} flexWrap="wrap">

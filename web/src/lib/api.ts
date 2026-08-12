@@ -1608,6 +1608,7 @@ export interface RecordEntry {
   detail?: string;
   evidence?: string;
   occasion?: string;
+  files?: string[];
   standing?: "verified" | "reported" | "inferred";
   kind?: string;
   summary?: string;

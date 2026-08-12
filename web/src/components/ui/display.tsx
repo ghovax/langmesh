@@ -122,9 +122,9 @@ export function MonoBlock({
 }
 
 /** Several monospace values as a real bullet list, for a field that holds a set rather than one thing. */
-export function MonoList({ items }: { items: string[] }) {
+export function MonoList({ items, fontSize = "xs" }: { items: string[]; fontSize?: string }) {
   return (
-    <List.Root pl={4} fontSize="xs" listStyleType="disc">
+    <List.Root pl={4} fontSize={fontSize} listStyleType="disc">
       {items.map((item) => (
         <List.Item key={item} mb={0.5} _last={{ mb: 0 }}>
           <Span fontFamily="var(--app-font-mono)" wordBreak="break-all">

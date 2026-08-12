@@ -2,7 +2,7 @@
 
 import { Box, Flex, Separator, Text } from "@chakra-ui/react";
 import { useTranslations } from "next-intl";
-import { LuArrowDown, LuArrowUp, LuFileDiff, LuGitBranch } from "react-icons/lu";
+import { LuArrowDown, LuArrowUp, LuFileDiff, LuGitBranch, LuMinus, LuPlus } from "react-icons/lu";
 import { Tooltip } from "./ui/tooltip";
 import { InlineField } from "./ui/display";
 import { RelativeTime } from "./ui/relative-time";
@@ -112,17 +112,15 @@ export function GitStatusBar({ status }: { status: DirectoryStatus }) {
           </Flex>
         )}
         {status.gitDirty && (status.gitInsertions > 0 || status.gitDeletions > 0) && (
-          <Flex
-            align="center"
-            gap={1}
-            flexShrink={0}
-            color="fg.muted"
-            title={translation("linesChanged")}
-          >
-            <LuArrowUp size={12} />
-            <Text textStyle="fieldLabel">{status.gitInsertions}</Text>
-            <LuArrowDown size={12} />
-            <Text textStyle="fieldLabel">{status.gitDeletions}</Text>
+          <Flex align="center" gap={1} flexShrink={0} title={translation("linesChanged")}>
+            <Flex align="center" gap={1} color="green.fg">
+              <LuPlus size={12} />
+              <Text textStyle="fieldLabel">{status.gitInsertions}</Text>
+            </Flex>
+            <Flex align="center" gap={1} color="red.fg">
+              <LuMinus size={12} />
+              <Text textStyle="fieldLabel">{status.gitDeletions}</Text>
+            </Flex>
           </Flex>
         )}
         {status.gitAhead > 0 && (
