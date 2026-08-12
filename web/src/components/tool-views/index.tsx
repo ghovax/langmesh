@@ -43,18 +43,14 @@ function BashCallView({ args }: { args: Record<string, unknown> }) {
   const command = asString(args.command);
   const mutation = mutationClaim("bash", args);
   const readOnly =
-    mutation === "reads"
-      ? translation("yes")
-      : mutation === "writes"
-        ? translation("no")
-        : translation("mutationUndeclared");
+    mutation === "reads" ? translation("yes") : mutation === "writes" ? translation("no") : null;
   const access = requestedAccess(args);
   return (
     <FieldList>
       <Field label={translation("command")}>
         <MonoBlock>{command}</MonoBlock>
       </Field>
-      <InlineField label={translation("readOnly")}>{readOnly}</InlineField>
+      {readOnly !== null && <InlineField label={translation("readOnly")}>{readOnly}</InlineField>}
       {access.writes.length > 0 && (
         <Field label={translation("accessWrite")}>
           <MonoList items={access.writes} />

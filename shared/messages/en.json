@@ -1087,7 +1087,6 @@
     "failed": "Failed",
     "running": "Running",
     "modifying": "Modifying",
-    "mutationUndeclared": "Mutation undeclared",
     "requestingAccess": "Requesting access"
   },
   "ToolDisplay": {
@@ -1183,7 +1182,6 @@
     "matches": "Matches",
     "mcpToolError": "The MCP tool returned an error.",
     "message": "Message",
-    "mutationUndeclared": "Not declared",
     "multiSelect": "multi-select",
     "newLines": "New lines",
     "no": "No",

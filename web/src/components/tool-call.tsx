@@ -31,7 +31,7 @@ function ToolLocationBadge({ arguments: args }: { arguments?: Record<string, unk
 function hasToolAccessBadges(name: string, toolArguments?: Record<string, unknown>): boolean {
   if (!toolArguments) return false;
   const mutation = mutationClaim(name, toolArguments);
-  return mutation === "writes" || mutation === "undeclared" || requestedAccess(toolArguments).any;
+  return mutation === "writes" || requestedAccess(toolArguments).any;
 }
 
 // A tool call's live status as a pill; a completed call carries none because its settled line speaks for itself.
@@ -62,8 +62,6 @@ export function ToolAccessBadges({
         {translation("modifying")}
       </Pill>,
     );
-  if (mutation === "undeclared")
-    badges.push(<Pill key="mutation-undeclared">{translation("mutationUndeclared")}</Pill>);
   if (access.any)
     badges.push(
       <Pill key="requesting-access" colorPalette="purple">

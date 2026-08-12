@@ -1087,7 +1087,6 @@
     "failed": "失敗",
     "running": "実行中",
     "modifying": "変更中",
-    "mutationUndeclared": "変更の宣言なし",
     "requestingAccess": "アクセスをリクエスト中"
   },
   "ToolDisplay": {
@@ -1183,7 +1182,6 @@
     "matches": "一致",
     "mcpToolError": "MCP ツールがエラーを返しました。",
     "message": "メッセージ",
-    "mutationUndeclared": "宣言なし",
     "multiSelect": "複数選択",
     "newLines": "新しい行",
     "no": "いいえ",
