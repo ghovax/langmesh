@@ -6,7 +6,7 @@ role: primary
 enabled: true
 connection-type: internal
 model: deepseek-v4-flash
-provider: opencode_go
+provider: opencode-go
 reasoning_effort: high
 permission_mode: automatic
 tools_enabled: []

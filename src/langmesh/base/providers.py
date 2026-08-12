@@ -35,42 +35,12 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             uses_custom_base_url=True,
         ),
         ProviderDefinition(
-            identifier="opencode_go",
-            name="OpenCode Go",
-            litellm_prefix="openai",
-            env_vars=("OPENCODE_API_KEY",),
-            default_base_url="https://opencode.ai/zen/go/v1",
-            uses_custom_base_url=True,
-            credential_identifier="opencode",
-        ),
-        ProviderDefinition(
             identifier="anthropic",
             name="Anthropic",
             litellm_prefix="anthropic",
             env_vars=("ANTHROPIC_API_KEY",),
         ),
         # The three big clouds' own resale of the frontier models, billed through an existing cloud account.
-        ProviderDefinition(
-            identifier="amazon_bedrock",
-            name="Amazon Bedrock",
-            litellm_prefix="bedrock",
-            # Bedrock's own keys first, then the classic pair; only presence is read, since LiteLLM reads the rest.
-            env_vars=("AWS_BEARER_TOKEN_BEDROCK", "AWS_ACCESS_KEY_ID"),
-        ),
-        ProviderDefinition(
-            identifier="google_vertex",
-            name="Google Vertex AI",
-            litellm_prefix="vertex_ai",
-            env_vars=("GOOGLE_APPLICATION_CREDENTIALS", "VERTEXAI_PROJECT"),
-        ),
-        ProviderDefinition(
-            identifier="google_vertex_anthropic",
-            name="Claude on Vertex AI",
-            # The same LiteLLM route, kept as its own entry because the catalogue lists it as one.
-            litellm_prefix="vertex_ai",
-            env_vars=("GOOGLE_APPLICATION_CREDENTIALS", "VERTEXAI_PROJECT"),
-            credential_identifier="google_vertex",
-        ),
         ProviderDefinition(
             identifier="azure",
             name="Azure OpenAI",
@@ -138,14 +108,6 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             env_vars=("ZAI_API_KEY",),
         ),
         ProviderDefinition(
-            identifier="zai_code",
-            name="Zhipu AI Coding Plan",
-            litellm_prefix="openai",
-            env_vars=("ZAI_API_KEY",),
-            default_base_url="https://api.z.ai/api/coding/paas/v4",
-            openai_compatible=True,
-        ),
-        ProviderDefinition(
             identifier="deepseek",
             name="DeepSeek",
             litellm_prefix="deepseek",
@@ -200,12 +162,6 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             env_vars=("DEEPINFRA_API_KEY",),
         ),
         ProviderDefinition(
-            identifier="fireworks_ai",
-            name="Fireworks AI",
-            litellm_prefix="fireworks_ai",
-            env_vars=("FIREWORKS_AI_API_KEY", "FIREWORKS_API_KEY"),
-        ),
-        ProviderDefinition(
             identifier="hyperbolic",
             name="Hyperbolic",
             litellm_prefix="hyperbolic",
@@ -224,12 +180,6 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             env_vars=("MINIMAX_API_KEY",),
         ),
         ProviderDefinition(
-            identifier="novita",
-            name="Novita AI",
-            litellm_prefix="novita",
-            env_vars=("NOVITA_API_KEY",),
-        ),
-        ProviderDefinition(
             identifier="perplexity",
             name="Perplexity AI",
             litellm_prefix="perplexity",
@@ -242,34 +192,10 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             env_vars=("SAMBA_NOVA_API_KEY",),
         ),
         ProviderDefinition(
-            identifier="together_ai",
-            name="Together AI",
-            litellm_prefix="together_ai",
-            env_vars=("TOGETHERAI_API_KEY",),
-        ),
-        ProviderDefinition(
             identifier="oci",
             name="OCI",
             litellm_prefix="oci",
             env_vars=("OCI_API_KEY",),
-        ),
-        ProviderDefinition(
-            identifier="friendliai",
-            name="FriendliAI",
-            litellm_prefix="friendliai",
-            env_vars=("FRIENDLI_TOKEN",),
-        ),
-        ProviderDefinition(
-            identifier="github_copilot",
-            name="GitHub Copilot",
-            litellm_prefix="github_copilot",
-            env_vars=("GITHUB_TOKEN",),
-        ),
-        ProviderDefinition(
-            identifier="moonshot",
-            name="Moonshot AI",
-            litellm_prefix="moonshot",
-            env_vars=("MOONSHOT_API_KEY",),
         ),
         ProviderDefinition(
             identifier="nebius",
@@ -290,6 +216,14 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             env_vars=("OVHCLOUD_API_KEY",),
         ),
         ProviderDefinition(
+            identifier="hetzner",
+            name="Hetzner Inference",
+            litellm_prefix="openai",
+            env_vars=("HETZNER_API_KEY",),
+            default_base_url="https://inference.hetzner.com/api/v1",
+            openai_compatible=True,
+        ),
+        ProviderDefinition(
             identifier="scaleway",
             name="Scaleway",
             litellm_prefix="openai",
@@ -302,12 +236,6 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             name="Volcengine",
             litellm_prefix="volcengine",
             env_vars=("VOLCENGINE_API_KEY",),
-        ),
-        ProviderDefinition(
-            identifier="cloudflare",
-            name="Cloudflare Workers AI",
-            litellm_prefix="cloudflare",
-            env_vars=("CLOUDFLARE_API_KEY", "CLOUDFLARE_ACCOUNT_ID"),
         ),
         ProviderDefinition(
             identifier="featherless_ai",
@@ -352,6 +280,55 @@ PROVIDERS: dict[str, ProviderDefinition] = {
 
 def get_provider_definition(provider_identifier: str) -> ProviderDefinition | None:
     return PROVIDERS.get(provider_identifier)
+
+
+def register_models_dev_provider(
+    identifier: str,
+    *,
+    name: str,
+    litellm_prefix: str,
+    env_vars: tuple[str, ...],
+    default_base_url: str = "",
+    openai_compatible: bool = False,
+    uses_custom_base_url: bool = False,
+) -> ProviderDefinition:
+    """Register a provider discovered from models.dev that has no curated definition. Idempotent."""
+    existing = PROVIDERS.get(identifier)
+    if existing is not None:
+        return existing
+    definition = ProviderDefinition(
+        identifier=identifier,
+        name=name,
+        litellm_prefix=litellm_prefix,
+        env_vars=env_vars,
+        default_base_url=default_base_url,
+        openai_compatible=openai_compatible,
+        uses_custom_base_url=uses_custom_base_url,
+    )
+    PROVIDERS[identifier] = definition
+    return definition
+
+
+def extend_provider_env_vars(provider_identifier: str, additional: tuple[str, ...]) -> None:
+    """Accept a provider's additional key names without replacing the curated ones."""
+    definition = PROVIDERS.get(provider_identifier)
+    if definition is None or not additional:
+        return
+    merged = tuple(dict.fromkeys((*definition.env_vars, *additional)))
+    if merged == definition.env_vars:
+        return
+    PROVIDERS[provider_identifier] = ProviderDefinition(
+        identifier=definition.identifier,
+        name=definition.name,
+        litellm_prefix=definition.litellm_prefix,
+        env_vars=merged,
+        default_base_url=definition.default_base_url,
+        openai_compatible=definition.openai_compatible,
+        uses_custom_base_url=definition.uses_custom_base_url,
+        credential_identifier=definition.credential_identifier,
+        selectable=definition.selectable,
+        native=definition.native,
+    )
 
 
 def resolve_api_key(

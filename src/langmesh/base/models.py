@@ -10,7 +10,9 @@ import httpx
 from langmesh.base.providers import (
     PROVIDERS,
     ProviderDefinition,
+    extend_provider_env_vars,
     get_provider_definition,
+    register_models_dev_provider,
     resolve_api_key,
     resolve_base_url,
 )
@@ -35,66 +37,35 @@ class ModelDefinition:
     litellm_prefix: str = ""
 
 
-# Map catalog provider ids to our local ones, which differ in case convention.
+# Wire-protocol names from models.dev, mapped to the LiteLLM prefix that speaks them.
 _GATEWAY_LITELLM_PREFIXES = {
     "@ai-sdk/openai-compatible": "openai",
     "@ai-sdk/openai": "openai/responses",
     "@ai-sdk/anthropic": "anthropic",
     "@ai-sdk/google": "gemini",
+    "@ai-sdk/azure": "azure",
+    "@ai-sdk/cohere": "cohere",
+    "@ai-sdk/togetherai": "together_ai",
+    "@ai-sdk/google-vertex": "vertex_ai",
+    "@ai-sdk/google-vertex/anthropic": "vertex_ai",
+    "@ai-sdk/xai": "xai",
+    "@ai-sdk/mistral": "mistral",
+    "@ai-sdk/amazon-bedrock": "bedrock",
+    "@ai-sdk/groq": "groq",
+    "@ai-sdk/deepinfra": "deepinfra",
+    "@ai-sdk/cerebras": "cerebras",
+    "@ai-sdk/perplexity": "perplexity",
+    "@openrouter/ai-sdk-provider": "openrouter",
 }
 
-
-_MODELS_DEV_PROVIDER_MAP: dict[str, str] = {
-    # Direct matches: models.dev kebab-case = our snake_case
-    "anthropic": "anthropic",
-    "openai": "openai",
-    "google": "google",
-    "deepseek": "deepseek",
-    "xai": "xai",
-    "groq": "groq",
-    "mistral": "mistral",
-    "openrouter": "openrouter",
-    "cohere": "cohere",
-    "perplexity": "perplexity",
-    "deepinfra": "deepinfra",
-    "hyperbolic": "hyperbolic",
-    "cerebras": "cerebras",
-    "minimax": "minimax",
-    "nebius": "nebius",
-    "ovhcloud": "ovhcloud",
-    "wandb": "wandb",
-    "inception": "inception",
-    "morph": "morph",
-    "oci": "oci",
-    "databricks": "databricks",
-    "zai": "zai",
-    "azure": "azure",
-    "alibaba": "alibaba",
-    "vercel": "vercel",
-    # Mismatched names
-    "amazon-bedrock": "amazon_bedrock",
-    "google-vertex": "google_vertex",
-    "google-vertex-anthropic": "google_vertex_anthropic",
-    "fireworks-ai": "fireworks_ai",
-    "novita-ai": "novita",
-    "moonshotai": "moonshot",
-    "togetherai": "together_ai",
-    "cloudflare-workers-ai": "cloudflare",
-    "github-copilot": "github_copilot",
-    "zhipuai": "zai",
-    "zhipuai-coding-plan": "zai_code",
-    "zai-coding-plan": "zai_code",
-    "friendli": "friendliai",
-    "opencode": "opencode",
-    "opencode-go": "opencode_go",
-    "kimi-for-coding": "moonshot",
-    "minimax-cn": "minimax",
-    "minimax-coding-plan": "minimax",
-    "minimax-cn-coding-plan": "minimax",
-    "moonshotai-cn": "moonshot",
-    "scaleway": "scaleway",
+# The prefix for an auto-registered provider: the SDK's own protocol, with everything
+# unknown falling back to the OpenAI-compatible wire since that is what most expose.
+_AUTO_PROVIDER_PREFIXES = {
+    **_GATEWAY_LITELLM_PREFIXES,
+    # The Responses protocol is openai's own; third-party endpoints almost always serve
+    # the chat-completions wire instead, so auto providers use the plain openai prefix.
+    "@ai-sdk/openai": "openai",
 }
-
 
 def _catalog() -> list[ModelDefinition]:
     """The model catalog from models.dev, best effort so the harness still starts without one."""
@@ -112,12 +83,29 @@ def _catalog() -> list[ModelDefinition]:
 
     models: dict[str, ModelDefinition] = {}
     for models_dev_id, provider_info in raw.items():
-        local_id = _MODELS_DEV_PROVIDER_MAP.get(models_dev_id)
-        if local_id is None:
-            continue
-        # Skip providers not registered in this version of LangMesh
-        if get_provider_definition(local_id) is None:
-            continue
+        local_id = models_dev_id
+        definition = get_provider_definition(local_id)
+        env_vars = tuple(str(value) for value in (provider_info.get("env") or ()) if value)
+        if definition is None:
+            # Every models.dev provider is routable: register it from the catalogue's own
+            # metadata (declared env var, endpoint, wire protocol) when nothing is curated.
+            npm = str(provider_info.get("npm") or "")
+            litellm_prefix = _AUTO_PROVIDER_PREFIXES.get(npm, "openai")
+            api = str(provider_info.get("api") or "")
+            definition = register_models_dev_provider(
+                local_id,
+                name=str(provider_info.get("name") or models_dev_id).strip(),
+                litellm_prefix=litellm_prefix,
+                env_vars=env_vars,
+                default_base_url=api,
+                openai_compatible=litellm_prefix == "openai",
+                # The base URL is resolved from the catalogue or configuration and passed through the
+                # gateway suffix logic, since a model can override the provider's own protocol.
+                uses_custom_base_url=True,
+            )
+        else:
+            # The curated key names stay authoritative; models.dev's own names join as aliases.
+            extend_provider_env_vars(local_id, env_vars)
         for model_id, model_info in provider_info.get("models", {}).items():
             # Stripped, because the catalogue is community-maintained and some names carry stray whitespace.
             name = (model_info.get("name", "") or model_id).strip() or model_id
@@ -127,7 +115,7 @@ def _catalog() -> list[ModelDefinition]:
                 str(modality) for modality in (modalities.get("input") or []) if modality
             )
             litellm_prefix = ""
-            if local_id in {"opencode", "opencode_go"}:
+            if local_id in {"opencode", "opencode-go"}:
                 model_provider = model_info.get("provider") or {}
                 sdk_package = model_provider.get("npm") or provider_info.get("npm") or ""
                 litellm_prefix = _GATEWAY_LITELLM_PREFIXES.get(str(sdk_package), "")
