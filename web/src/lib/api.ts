@@ -1637,7 +1637,21 @@ export async function fetchSessionRecord(
 ): Promise<SessionRecordSnapshot> {
   const response = await apiFetch(`/sessions/${encodeURIComponent(sessionId)}/record`, { signal });
   if (!response.ok) throw new Error(`record request failed: ${response.status}`);
-  const data = (await response.json()) as Partial<SessionRecordSnapshot>;
+  return decodeSessionRecord(await response.json());
+}
+
+/** The same registry snapshot resolved from a folder, before any session exists in it. */
+export async function fetchObservationRecord(
+  workingDirectory: string,
+  signal?: AbortSignal,
+): Promise<SessionRecordSnapshot> {
+  const query = new URLSearchParams({ working_directory: workingDirectory }).toString();
+  const response = await apiFetch(`/observations/record?${query}`, { signal });
+  if (!response.ok) throw new Error(`record request failed: ${response.status}`);
+  return decodeSessionRecord(await response.json());
+}
+
+function decodeSessionRecord(data: Partial<SessionRecordSnapshot>): SessionRecordSnapshot {
   return {
     entries: {
       observations: data.entries?.observations ?? [],

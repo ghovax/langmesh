@@ -6,6 +6,7 @@ from langmesh.commons.database import SessionRecord, WorkspaceRecord
 from langmesh.base.paths import uploads_directory
 import asyncio
 import re
+from langmesh.rest.routes.observations import registry_snapshot
 from langmesh.protocol.dtos import (
     SessionDraftRequest,
 )
@@ -62,21 +63,7 @@ async def session_record(
             "metadata": {},
             "error": "",
         }
-    watcher = state.observation_registry_watcher
-    if watcher is None:
-        return {
-            "entries": {"observations": [], "directives": []},
-            "revision": 0,
-            "metadata": {},
-            "error": "Registry watcher is unavailable.",
-        }
-    snapshot = await watcher.register(working_directory)
-    return {
-        "entries": snapshot.get("entries") or {"observations": [], "directives": []},
-        "revision": int(snapshot.get("revision") or 0),
-        "metadata": snapshot.get("metadata") or {},
-        "error": str(snapshot.get("error") or ""),
-    }
+    return await registry_snapshot(working_directory)
 
 
 @router.get("/sessions/{session_id}/goal-reviews")

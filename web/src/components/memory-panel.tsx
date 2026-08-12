@@ -19,7 +19,12 @@ import {
 } from "react-icons/lu";
 import { PanelBody, PanelCard, PanelEmptyState, PanelHeader } from "@/components/ui/panel";
 import { RelativeTime } from "@/components/ui/relative-time";
-import { fetchSessionRecord, subscribeEvents, type RecordEntry } from "@/lib/api";
+import {
+  fetchObservationRecord,
+  fetchSessionRecord,
+  subscribeEvents,
+  type RecordEntry,
+} from "@/lib/api";
 import { swallowed } from "@/lib/swallowed";
 import { InlineMarkdown } from "./markdown-content";
 import { Tooltip } from "./ui/tooltip";
@@ -164,9 +169,11 @@ function newestFirst(entries: RecordEntry[]): RecordEntry[] {
 
 export function MemoryPanel({
   sessionId,
+  workingDirectory,
   onClose,
 }: {
   sessionId: string | null;
+  workingDirectory?: string;
   onClose?: () => void;
 }) {
   const translation = useTranslations("MemoryPanel");
@@ -177,16 +184,19 @@ export function MemoryPanel({
   const [loadError, setLoadError] = useState(false);
   const latestRevision = useRef(-1);
   const latestSnapshotWasEvent = useRef(false);
+  const registryPath = useRef("");
 
   useEffect(() => {
     let cancelled = false;
     latestRevision.current = -1;
     latestSnapshotWasEvent.current = false;
+    registryPath.current = "";
     function applySnapshot(
       snapshot: {
         entries?: { observations?: RecordEntry[]; directives?: RecordEntry[] };
         revision?: number;
         error?: string;
+        metadata?: { path?: string };
       },
       source: "fetch" | "event",
     ) {
@@ -200,6 +210,7 @@ export function MemoryPanel({
         return;
       latestRevision.current = revision;
       latestSnapshotWasEvent.current = source === "event";
+      if (snapshot.metadata?.path) registryPath.current = String(snapshot.metadata.path);
       setFindingEntries(newestFirst(snapshot.entries?.observations ?? []));
       setInstructionEntries(newestFirst(snapshot.entries?.directives ?? []));
       setRegistryError(snapshot.error ?? "");
@@ -207,7 +218,7 @@ export function MemoryPanel({
       setRead(true);
     }
     async function readRecord() {
-      if (!sessionId) {
+      if (!sessionId && !workingDirectory) {
         setFindingEntries([]);
         setInstructionEntries([]);
         setRegistryError("");
@@ -216,7 +227,10 @@ export function MemoryPanel({
         return;
       }
       try {
-        const snapshot = await fetchSessionRecord(sessionId);
+        const directory = workingDirectory ?? "";
+        const snapshot = sessionId
+          ? await fetchSessionRecord(sessionId)
+          : await fetchObservationRecord(directory);
         if (cancelled) return;
         applySnapshot(snapshot, "fetch");
       } catch (caught) {
@@ -235,11 +249,12 @@ export function MemoryPanel({
         entries?: { observations?: RecordEntry[]; directives?: RecordEntry[] };
         revision?: number;
         error?: string;
+        metadata?: { path?: string };
       };
       if (
-        !sessionId ||
         change.type !== "observation_registry_changed" ||
-        !change.sessions?.includes(sessionId)
+        !(sessionId && change.sessions?.includes(sessionId)) &&
+          change.metadata?.path !== registryPath.current
       )
         return;
       applySnapshot(change, "event");
@@ -248,7 +263,7 @@ export function MemoryPanel({
       cancelled = true;
       unsubscribe();
     };
-  }, [sessionId]);
+  }, [sessionId, workingDirectory]);
 
   const labels: EntryLabels = useMemo(
     () => ({

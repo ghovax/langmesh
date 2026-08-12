@@ -7,6 +7,7 @@ import {
   LuCheck,
   LuClock,
   LuCopy,
+  LuDot,
   LuFoldVertical,
   LuMessagesSquare,
   LuRotateCw,
@@ -461,16 +462,23 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                 ) : null}
               </Box>
               {failed && onRetry ? (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  colorPalette="red"
-                  onClick={onRetry}
-                  disabled={retrying}
-                >
-                  {retrying ? <ActivitySpinner /> : <LuRotateCw />}
-                  {translation(retrying ? "retrying" : "retry")}
-                </Button>
+                <>
+                  <LuDot size={18} style={{ flexShrink: 0, opacity: 0.7 }} />
+                  <Button
+                    size="2xs"
+                    variant="plain"
+                    px={1}
+                    gap={1}
+                    colorPalette="red"
+                    color="red.fg"
+                    flexShrink={0}
+                    onClick={onRetry}
+                    disabled={retrying}
+                  >
+                    {retrying ? <ActivitySpinner /> : <LuRotateCw size={13} />}
+                    {translation(retrying ? "retrying" : "retry")}
+                  </Button>
+                </>
               ) : null}
             </Flex>
             <Separator flex={1} />

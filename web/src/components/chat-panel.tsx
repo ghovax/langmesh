@@ -16,6 +16,7 @@ import {
   LuArrowDown,
   LuBookMarked,
   LuClipboardCheck,
+  LuDot,
   LuEllipsis,
   LuFolderOpen,
   LuGitBranch,
@@ -846,6 +847,7 @@ export function ChatPanel({
           <MemoryPanel
             key={sessionId}
             sessionId={sessionId}
+            workingDirectory={workingDirectory || homeDirectory || ""}
             onClose={() => setSidePanelOpen("memory", false)}
           />
         ),
@@ -1140,9 +1142,15 @@ export function ChatPanel({
                         {hasInheritedContext ? (
                           <Flex align="center" gap={3} py={2} color="fg.muted">
                             <Separator flex={1} />
-                            <Text fontSize="xs" whiteSpace="nowrap">
-                              {translation("inheritedContextBoundary")}
-                            </Text>
+                            <Flex align="center" gap={1.5} flexShrink={0}>
+                              <Text fontSize="xs" whiteSpace="nowrap">
+                                {translation("inheritedContextInherited")}
+                              </Text>
+                              <LuDot size={18} style={{ opacity: 0.7 }} />
+                              <Text fontSize="xs" whiteSpace="nowrap">
+                                {translation("inheritedContextChildStarts")}
+                              </Text>
+                            </Flex>
                             <Separator flex={1} />
                           </Flex>
                         ) : null}
