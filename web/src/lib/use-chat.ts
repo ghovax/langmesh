@@ -278,11 +278,7 @@ function preserveRunningCompaction(previous: ChatMessage[], next: ChatMessage[])
   return [...next, local];
 }
 
-function settleCompactionMarker(
-  state: ReduceState,
-  fallbackId: string,
-  meta: MessageMeta,
-): void {
+function settleCompactionMarker(state: ReduceState, fallbackId: string, meta: MessageMeta): void {
   const runningIndex = state.messages.findLastIndex(
     (message) => message.role === "compaction" && message.meta?.status === "running",
   );
@@ -1492,8 +1488,16 @@ export function useChat(
     let subscription: { abort: () => void } | null = null;
     const controller = new AbortController();
 
-    const applySnapshot = (turns: A2ATurn[]) => {
+    const applySnapshot = (turns: A2ATurn[], hasMore = false, nextCursor: number | null = null) => {
       const replayed = replayTurns(turns);
+      // The attach snapshot is the newest page, not the whole conversation, so the pager the
+      // backend sends must feed the history machinery. Without it the transcript shows only
+      // that page while the session streams, and scroll-up can never load the rest until a
+      // turn ends and the full fetch replaces it.
+      historyFragmentsRef.current = turns;
+      historyPageCursorRef.current = nextCursor;
+      hasOlderHistoryRef.current = hasMore;
+      setHasOlderHistory(hasMore);
       // A manual compaction owns a local running marker before the backend's started event
       // exists; the replay keeps that row so the indicator never blinks out mid-preparation.
       const messages = preserveRunningCompaction(stateRef.current.messages, replayed.messages);
@@ -1524,7 +1528,7 @@ export function useChat(
         (frame) => {
           if (cancelled) return;
           if (frame.kind === "snapshot") {
-            applySnapshot(frame.turns);
+            applySnapshot(frame.turns, !!frame.has_more, frame.next_before_row_id ?? null);
             setHistoryError(false);
             setIsHistoryLoading(false);
           } else if (frame.kind === "live") {
@@ -2014,7 +2018,8 @@ export function useChat(
     flushNow();
     void compactSession(context)
       .then(async (result) => {
-        const failed = result.compacted === false || result.status !== "done" || result.ok === false;
+        const failed =
+          result.compacted === false || result.status !== "done" || result.ok === false;
         // The persisted transcript is authoritative: it carries the compaction events the
         // backend wrote, with the exact reason, counts and error code, and removes whatever
         // history the fold actually reclaimed. Replaying it also settles the local marker

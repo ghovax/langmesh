@@ -2098,7 +2098,7 @@ function openEventStream(
 
 // A live view of a session: a snapshot, then a part-granular tail, then `done` when the turn ends.
 export type SessionStreamFrame =
-  | { kind: "snapshot"; turns: A2ATurn[] }
+  | { kind: "snapshot"; turns: A2ATurn[]; has_more?: boolean; next_before_row_id?: number | null }
   // A single part as the session emitted it, so prose arrives as a run rather than an assembled message.
   | { kind: "live"; seq: number; part: A2APart }
   | { kind: "turn"; seq: number; running: boolean }
