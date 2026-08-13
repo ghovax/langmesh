@@ -555,9 +555,7 @@ class _RunsTurns:
                 self._mark_session_dirty()
                 yield CompactionStarted(
                     reason=self._compaction_control.reason,
-                    messages_before=len(
-                        self._without_compaction_preparation(self._conversation)
-                    ),
+                    messages_before=len(self._without_compaction_preparation(self._conversation)),
                     tokens_before=conversation_tokens(self._conversation),
                 )
             if self._compaction_control.phase == "recorded":
@@ -644,6 +642,21 @@ class _RunsTurns:
                 # asking the user to resend would duplicate it in frontend and backend state.
                 continue
             if call.cancelled:
+                # The user's message was already appended before the provider call. Close the
+                # exchange explicitly so the next request cannot inherit a dangling instruction
+                # and finish the work that Stop just canceled.
+                self._conversation.append(
+                    AIMessage(content="", additional_kwargs={"langmesh_cancelled": True})
+                )
+                self._record_turn(
+                    recorded_user_message, turn_tool_calls_log, turn_tool_results_log, ""
+                )
+                await self._record_transcript_turn(
+                    recorded_user_message,
+                    "",
+                    "canceled",
+                    turn_tool_calls_log,
+                )
                 return
             if call.aborted_for_steering:
                 for steering_event in await self._drain_steering_messages():

@@ -22,6 +22,7 @@ import {
   type A2APart,
   type A2ATurn as A2ATurnWire,
   type PermissionMode,
+  type SessionStreamFrame,
   type SendOutcome,
   type WorktreeStrategy,
 } from "./api";
@@ -381,6 +382,8 @@ interface ReduceState {
   tokenUsage: TokenUsage | null; // latest cumulative token totals, if any reported
   // Per-source occurrence counter, so a key comes from the server messageId rather than array position.
   keyCounts: Map<string, number>;
+  liveTurnId: string;
+  liveCursors: Map<string, number>;
 }
 
 export type TranscriptState = ReduceState;
@@ -411,6 +414,8 @@ function newReduceState(): ReduceState {
     tasks: [],
     tokenUsage: null,
     keyCounts: new Map(),
+    liveTurnId: "",
+    liveCursors: new Map(),
   };
 }
 
@@ -695,6 +700,29 @@ function reduceAgentPart(state: ReduceState, part: A2APart, sourceId?: string): 
   }
   if (part.kind !== "data" || !part.data) return;
   reduceDataPart(state, partPayload(part.data), sourceId);
+}
+
+function reduceLiveDelta(
+  state: ReduceState,
+  frame: Extract<SessionStreamFrame, { kind: "delta" }>,
+): void {
+  // A provider may reuse a block id (and thinking may have none), but a turn id is unique.
+  if (frame.turn_id !== state.liveTurnId) {
+    state.liveTurnId = frame.turn_id;
+    state.liveCursors.clear();
+  }
+  const cursorKey = `${frame.turn_id}:${frame.channel}:${frame.block_id}`;
+  const expectedCursor = state.liveCursors.get(cursorKey) ?? 0;
+  if (frame.cursor > expectedCursor) throw new Error("Live transcript stream has a gap.");
+  const consumed = Math.max(0, expectedCursor - frame.cursor);
+  if (consumed >= frame.chunks.length) return;
+  const text = frame.chunks.slice(consumed).join("");
+  state.liveCursors.set(cursorKey, frame.cursor + frame.chunks.length);
+  if (frame.channel === "thinking") {
+    applyThinking(state, text);
+    return;
+  }
+  pushAssistantText(state, text, frame.block_id);
 }
 
 export function appendTranscriptPart(
@@ -1163,6 +1191,8 @@ export function replayTurns(turns: A2ATurn[]): {
   tasks: ChatTask[];
   tokenUsage: TokenUsage | null;
   keyCounts: Map<string, number>;
+  liveTurnId: string;
+  liveCursors: Map<string, number>;
 } {
   // Left in the order the server sent them, with a turn's pages joined before anything judges it.
   const mainTurns = coalesceTurnPages(
@@ -1206,6 +1236,8 @@ export function replayTurns(turns: A2ATurn[]): {
     tasks: state.tasks,
     tokenUsage: state.tokenUsage,
     keyCounts: state.keyCounts,
+    liveTurnId: state.liveTurnId,
+    liveCursors: state.liveCursors,
   };
 }
 
@@ -1241,7 +1273,7 @@ export function useChat(
   const [deliveringMessage, setDeliveringMessage] = useState<string | null>(null);
 
   // This hook's attach subscription while it drives a turn. Closing it only drops the client end.
-  const attachRef = useRef<{ abort: () => void } | null>(null);
+  const attachRef = useRef<{ abort: () => void; ready: Promise<boolean> } | null>(null);
   const stateRef = useRef<ReduceState>(newReduceState());
   const sessionIdRef = useRef<string | null>(initialSessionId);
   const historyLoadedForRef = useRef<string | null>(null);
@@ -1324,6 +1356,8 @@ export function useChat(
       tasks: replayed.tasks,
       tokenUsage: replayed.tokenUsage,
       keyCounts: replayed.keyCounts,
+      liveTurnId: "",
+      liveCursors: new Map(),
     };
     flushNow();
   }, [flushNow]);
@@ -1515,6 +1549,8 @@ export function useChat(
         tasks: replayed.tasks,
         tokenUsage: replayed.tokenUsage,
         keyCounts: replayed.keyCounts,
+        liveTurnId: "",
+        liveCursors: new Map(),
       };
       sessionIdRef.current = initialSessionId;
       setSessionId(initialSessionId);
@@ -1533,6 +1569,9 @@ export function useChat(
             setIsHistoryLoading(false);
           } else if (frame.kind === "live") {
             reduceAgentPart(stateRef.current, frame.part);
+            flush();
+          } else if (frame.kind === "delta") {
+            reduceLiveDelta(stateRef.current, frame);
             flush();
           } else if (frame.kind === "turn" && !frame.running) {
             // The turn ended, said by the session on the stream we already hold, before the polled listing learns it.
@@ -1646,16 +1685,28 @@ export function useChat(
           // below is the safe moment to return to viewer mode.
         };
 
+        let sendAccepted = false;
+        let idleSnapshotSeen = false;
         const observe = (sessionIdentifier: string) => {
           attachRef.current = attachSession(
             sessionIdentifier,
             (frame) => {
               // The one frame that says the turn ended. The stream does not close: it belongs to the session.
+              if (frame.kind === "snapshot") {
+                idleSnapshotSeen = frame.reconnected && !frame.running;
+                if (sendAccepted && idleSnapshotSeen) finishTurn();
+                return;
+              }
               if (frame.kind === "turn") {
                 if (!frame.running) finishTurn();
                 return;
               }
               // A snapshot is catch-up for a viewer. We are driving, so replacing state would drop the sent message.
+              if (frame.kind === "delta") {
+                reduceLiveDelta(stateRef.current, frame);
+                flush();
+                return;
+              }
               if (frame.kind !== "live") return;
               notifyTurnError(frame.part);
               reduceAgentPart(stateRef.current, frame.part);
@@ -1690,6 +1741,10 @@ export function useChat(
             }
             // Attach before sending, or the opening frames are missed.
             observe(sessionIdentifier);
+            // The server acknowledges the installed subscription before a send may create any event.
+            if (!(await attachRef.current?.ready)) {
+              throw new Error("The live transcript could not be attached.");
+            }
             const outcome = await sessionSend(sessionIdentifier, messageParts(text, dataParts), {
               messageId: userMessageId,
             });
@@ -1706,6 +1761,8 @@ export function useChat(
               settleDelivery("refused");
               return;
             }
+            sendAccepted = true;
+            if (idleSnapshotSeen) finishTurn();
             settleDelivery("accepted");
           } catch (caught) {
             // What was thrown goes to telemetry as its own fields, where a name and a stack stay searchable.
@@ -2046,6 +2103,8 @@ export function useChat(
               tasks: replayed.tasks,
               tokenUsage: replayed.tokenUsage,
               keyCounts: replayed.keyCounts,
+              liveTurnId: "",
+              liveCursors: new Map(),
             };
           }
           flushNow();
@@ -2150,9 +2209,21 @@ export function useChat(
     isStreamingRef.current = true;
     streamedLocallyRef.current = true;
     setIsStreaming(true);
+    let retryAccepted = false;
+    let idleSnapshotSeen = false;
     const observe = attachSession(
       context,
       (frame) => {
+        if (frame.kind === "snapshot") {
+          idleSnapshotSeen = frame.reconnected && !frame.running;
+          if (retryAccepted && idleSnapshotSeen) {
+            observe.abort();
+            isStreamingRef.current = false;
+            streamedLocallyRef.current = false;
+            setIsStreaming(false);
+          }
+          return;
+        }
         if (frame.kind === "turn" && !frame.running) {
           observe.abort();
           isStreamingRef.current = false;
@@ -2163,6 +2234,9 @@ export function useChat(
         if (frame.kind === "live") {
           reduceAgentPart(stateRef.current, frame.part);
           flush();
+        } else if (frame.kind === "delta") {
+          reduceLiveDelta(stateRef.current, frame);
+          flush();
         }
       },
       () => {
@@ -2171,7 +2245,20 @@ export function useChat(
         setIsStreaming(false);
       },
     );
+    if (!(await observe.ready)) {
+      isStreamingRef.current = false;
+      streamedLocallyRef.current = false;
+      setIsStreaming(false);
+      return false;
+    }
     const accepted = await retrySessionTurn(context);
+    retryAccepted = accepted;
+    if (retryAccepted && idleSnapshotSeen) {
+      observe.abort();
+      isStreamingRef.current = false;
+      streamedLocallyRef.current = false;
+      setIsStreaming(false);
+    }
     if (!accepted) {
       observe.abort();
       isStreamingRef.current = false;

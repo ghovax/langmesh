@@ -2098,20 +2098,46 @@ function openEventStream(
 
 // A live view of a session: a snapshot, then a part-granular tail, then `done` when the turn ends.
 export type SessionStreamFrame =
-  | { kind: "snapshot"; turns: A2ATurn[]; has_more?: boolean; next_before_row_id?: number | null }
+  | { kind: "ready" }
+  | {
+      kind: "snapshot";
+      turns: A2ATurn[];
+      has_more?: boolean;
+      next_before_row_id?: number | null;
+      through_seq?: number;
+      running: boolean;
+      /** True after transport recovery, when activity state replaces a possibly missed edge. */
+      reconnected: boolean;
+    }
   // A single part as the session emitted it, so prose arrives as a run rather than an assembled message.
   | { kind: "live"; seq: number; part: A2APart }
+  | {
+      kind: "delta";
+      seq: number;
+      channel: "text" | "thinking";
+      block_id: string;
+      turn_id: string;
+      cursor: number;
+      chunks: string[];
+    }
   | { kind: "turn"; seq: number; running: boolean }
+  | { kind: "resync" }
   | { kind: "done" };
 
 function attachTranscript(
   path: string,
   onFrame: (frame: SessionStreamFrame) => void,
   onDone: () => void,
-): { abort: () => void } {
+): { abort: () => void; ready: Promise<boolean> } {
   let closed = false;
   let terminated = false;
+  let reconnectImmediately = false;
+  let snapshotSeen = false;
   let requestController: AbortController | null = null;
+  let markReady: (installed: boolean) => void = () => undefined;
+  const ready = new Promise<boolean>((resolve) => {
+    markReady = resolve;
+  });
   const connect = async () => {
     while (!closed && !terminated) {
       requestController = new AbortController();
@@ -2135,6 +2161,20 @@ function attachTranscript(
             } catch {
               return;
             }
+            if (frame.kind === "resync") {
+              reconnectImmediately = true;
+              return "stop";
+            }
+            if (frame.kind === "ready") {
+              markReady(true);
+              return;
+            }
+            if (frame.kind === "snapshot") {
+              const reconnected = snapshotSeen;
+              snapshotSeen = true;
+              onFrame({ ...frame, reconnected });
+              return;
+            }
             onFrame(frame);
             if (frame.kind === "done") {
               terminated = true;
@@ -2147,16 +2187,22 @@ function attachTranscript(
       }
       if (!closed && !terminated) {
         forgetDaemonEndpoint();
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (!reconnectImmediately) await new Promise((resolve) => setTimeout(resolve, 1000));
+        reconnectImmediately = false;
       }
     }
-    if (terminated) onDone();
+    if (terminated) {
+      markReady(false);
+      onDone();
+    }
   };
   void connect();
 
   return {
+    ready,
     abort: () => {
       closed = true;
+      markReady(false);
       requestController?.abort();
     },
   };
@@ -2166,7 +2212,7 @@ export function attachSession(
   sessionId: string,
   onFrame: (frame: SessionStreamFrame) => void,
   onDone: () => void,
-): { abort: () => void } {
+): { abort: () => void; ready: Promise<boolean> } {
   return attachTranscript(`/sessions/${encodeURIComponent(sessionId)}/attach`, onFrame, onDone);
 }
 
@@ -2174,7 +2220,7 @@ export function attachGoalReview(
   reviewId: string,
   onFrame: (frame: SessionStreamFrame) => void,
   onDone: () => void,
-): { abort: () => void } {
+): { abort: () => void; ready: Promise<boolean> } {
   return attachTranscript(`/goal-reviews/${encodeURIComponent(reviewId)}/attach`, onFrame, onDone);
 }
 

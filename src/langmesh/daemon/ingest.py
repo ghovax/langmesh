@@ -17,9 +17,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Per-session frame counter for the live stream.
-_SEQUENCE: dict[str, int] = {}
-
 
 async def _turn_save(params: dict) -> dict:
     # The task arrives as itself, since the session that built it runs here; only a stranger would need JSON.
@@ -27,6 +24,9 @@ async def _turn_save(params: dict) -> dict:
     if not isinstance(task, Task):
         task = Task.model_validate(task or {})
     await state.turn_store.save(task)
+    task_state = getattr(task.status.state, "value", task.status.state)
+    if str(task_state) in {"completed", "canceled", "failed", "rejected"}:
+        state.event_bus.commit_turn(str(task.context_id or ""), task.id)
     return {"saved": task.id}
 
 
@@ -82,8 +82,8 @@ async def _goal_review_create(params: dict) -> dict:
         }
     )
     review_id = str(params.get("review_id") or "")
-    _SEQUENCE[review_id] = _SEQUENCE.get(review_id, 0) + 1
-    state.event_bus.publish(review_id, {"seq": _SEQUENCE[review_id], "turn": {"running": True}})
+    state.event_bus.begin_turn(review_id, review_id)
+    state.event_bus.publish_activity(review_id, True)
     return {"created": True}
 
 
@@ -96,11 +96,7 @@ async def _goal_review_save(params: dict) -> dict:
     part = params.get("part")
     if hasattr(part, "model_dump"):
         part = part.model_dump(by_alias=True, exclude_none=True, mode="json")
-    _SEQUENCE[review_id] = _SEQUENCE.get(review_id, 0) + 1
-    state.event_bus.publish(
-        review_id,
-        {"seq": _SEQUENCE[review_id], "part": part},
-    )
+    state.event_bus.publish_part(review_id, part)
     return {"saved": task.id}
 
 
@@ -119,8 +115,9 @@ async def _goal_review_finish(params: dict) -> dict:
         }
     )
     review_id = str(params.get("review_id") or "")
-    _SEQUENCE[review_id] = _SEQUENCE.get(review_id, 0) + 1
-    state.event_bus.publish(review_id, {"seq": _SEQUENCE[review_id], "turn": {"running": False}})
+    state.event_bus.commit_turn(review_id, review_id)
+    state.event_bus.end_turn(review_id, review_id)
+    state.event_bus.publish_activity(review_id, False)
     return {"finished": True}
 
 
@@ -129,7 +126,7 @@ async def _turn_list_for_session(params: dict) -> Any:
     return [task.model_dump(by_alias=True, exclude_none=True, mode="json") for task in tasks]
 
 
-def _set_turn_state(session_id: str, running: bool, retains: bool = False) -> None:
+def set_turn_state(session_id: str, running: bool, retains: bool = False) -> None:
     """Count the turns a session has in flight, and act on the idle and busy edge."""
     if running:
         # Used again, so any pending idle timer is stale.
@@ -143,10 +140,7 @@ def _set_turn_state(session_id: str, running: bool, retains: bool = False) -> No
     if (previous == 0) != (updated == 0):
         state.broadcaster.publish({"type": "sessions_changed"})
         # The same edge on the session's own stream, so a watcher learns the turn ended without polling.
-        _SEQUENCE[session_id] = _SEQUENCE.get(session_id, 0) + 1
-        state.event_bus.publish(
-            session_id, {"seq": _SEQUENCE[session_id], "turn": {"running": bool(updated)}}
-        )
+        state.event_bus.publish_activity(session_id, bool(updated))
         if not updated and not retains:
             _sleep_when_idle(session_id)
 
@@ -201,7 +195,7 @@ async def _session_event(params: dict) -> dict:
     session_id = str(event.get("session_id") or params.get("session_id") or "")
     if "running" in event:
         # Whether a turn is in flight, which the registry cannot infer from a process that is alive either way.
-        _set_turn_state(session_id, bool(event.get("running")), bool(event.get("retains")))
+        set_turn_state(session_id, bool(event.get("running")), bool(event.get("retains")))
         return {"noted": True}
     if "awaiting_input" in event:
         awaiting = bool(event.get("awaiting_input"))
@@ -228,9 +222,7 @@ async def _session_event(params: dict) -> dict:
         return {"noted": True}
     part = event.get("part")
     if part is not None:
-        # A monotonic sequence per session lets a client order frames and notice a gap.
-        _SEQUENCE[session_id] = _SEQUENCE.get(session_id, 0) + 1
-        state.event_bus.publish(session_id, {"seq": _SEQUENCE[session_id], "part": part})
+        state.event_bus.publish_part(session_id, part)
     return {"published": True}
 
 

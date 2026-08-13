@@ -883,11 +883,30 @@ def _attach_transcript(context_id: str, request: Request) -> EventSourceResponse
         assert state.turn_store is not None
         subscription = state.event_bus.subscribe(context_id)
         try:
+            # A sender waits for this frame, making subscribe-before-send a transport guarantee.
+            yield {"data": compact({"kind": "ready"})}
             # The newest page, not the whole conversation: a long one costs most of a second to read,
             # revalidate and re-encode, and the client asks for what came before it when somebody scrolls.
-            page = await state.turn_store.turn_page_for_session(
-                context_id, limit=active_tuning().amount(Tunable.attach_snapshot_rows)
-            )
+            # If a terminal save retires replay while the database read is in flight, repeat the
+            # read. This turns the durable snapshot + live suffix cut into a seqlock: the client
+            # can neither miss the terminal row nor receive the active row twice.
+            while True:
+                before_version = state.event_bus.snapshot(context_id).version
+                page = await state.turn_store.turn_page_for_session(
+                    context_id, limit=active_tuning().amount(Tunable.attach_snapshot_rows)
+                )
+                live_snapshot = state.event_bus.snapshot(context_id)
+                if live_snapshot.turn_id or before_version == live_snapshot.version:
+                    break
+            replay = live_snapshot.events
+            replay_turn_id = live_snapshot.turn_id
+            snapshot_sequence = live_snapshot.sequence
+            turns = page.get("turns") or []
+            replay_live_turn = bool(replay_turn_id)
+            if replay_turn_id:
+                # The bus is the source of truth for the current turn. Excluding its partial
+                # durable projection makes snapshot + replay disjoint by construction.
+                turns = [turn for turn in turns if str(getattr(turn, "id", "")) != replay_turn_id]
             yield {
                 "data": compact(
                     {
@@ -896,18 +915,24 @@ def _attach_transcript(context_id: str, request: Request) -> EventSourceResponse
                             turn.model_dump(by_alias=True, exclude_none=True, mode="json")
                             if hasattr(turn, "model_dump")
                             else turn
-                            for turn in (page.get("turns") or [])
+                            for turn in turns
                         ],
                         "has_more": bool(page.get("has_more")),
                         "next_before_row_id": page.get("next_before_row_id"),
+                        "through_seq": snapshot_sequence,
+                        "running": live_snapshot.running,
                     }
                 )
             }
+            # Subscription precedes the durable read; replay closes that race without requiring a sender handshake.
+            if replay_live_turn:
+                for event in replay:
+                    yield {"data": compact(event)}
             while True:
                 if await request.is_disconnected():
                     break
                 try:
-                    event = await asyncio.wait_for(subscription.get(), timeout=15)
+                    event = await asyncio.wait_for(subscription.queue.get(), timeout=15)
                 except asyncio.TimeoutError:
                     # A comment keeps the connection warm through proxies without inventing an event to ignore.
                     yield {"comment": "keepalive"}
@@ -915,24 +940,12 @@ def _attach_transcript(context_id: str, request: Request) -> EventSourceResponse
                 if event is None:
                     yield {"data": compact({"kind": "done"})}
                     break
-                if "turn" in event:
-                    # A turn started or ended — distinct from `done`, which is the session itself ending.
-                    yield {
-                        "data": compact(
-                            {
-                                "kind": "turn",
-                                "seq": event.get("seq", 0),
-                                "running": bool((event.get("turn") or {}).get("running")),
-                            }
-                        )
-                    }
+                if event.get("kind") == "resync":
+                    yield {"data": compact(event)}
+                    break
+                if int(event.get("seq", 0)) <= snapshot_sequence:
                     continue
-                # One part, not one message: the bus carries parts as the model emits them.
-                yield {
-                    "data": compact(
-                        {"kind": "live", "seq": event.get("seq", 0), "part": event.get("part")}
-                    )
-                }
+                yield {"data": compact(event)}
         finally:
             state.event_bus.unsubscribe(context_id, subscription)
 

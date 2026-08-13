@@ -303,7 +303,7 @@ class _ReviewsGoal:
             )
             await self._turn_store.save(task)
 
-        async def emit(part: Part) -> None:
+        async def emit(part: Part, *, publish_stream_event: bool = True) -> None:
             task.history = [
                 *(task.history or []),
                 Message(
@@ -314,8 +314,16 @@ class _ReviewsGoal:
                     context_id=review_id,
                 ),
             ]
-            if self._turn_store is not None:
+            if self._turn_store is not None and publish_stream_event:
                 await self._turn_store.save_goal_review(self._session_id, review_id, task, part)
+            elif self._turn_store is not None:
+                await self._turn_store.save(task)
+
+        def emit_delta(channel: str, block_id: str, text: str) -> None:
+            # Review transcripts share the same bus, so their model deltas take the same direct lane.
+            from langmesh.daemon import state
+
+            state.event_bus.publish_delta(review_id, channel, block_id, text)
 
         async def save_conversation() -> None:
             return None
@@ -325,6 +333,7 @@ class _ReviewsGoal:
 
         sink = _TurnEventSink(
             emit=emit,
+            emit_delta=emit_delta,
             save_conversation=save_conversation,
             suspend=suspend,
             telemetry_span=None,

@@ -201,9 +201,10 @@ class _TurnRunner:
         # present one continuous busy interval, so live clients never detach in a false idle gap.
         self._track_context_activity = self._on_turn_state is not None
         if self._track_context_activity and self._on_turn_state is not None:
-            self._on_turn_state(resolved.task.context_id, True)
+            self._on_turn_state(resolved.task.context_id, True, resolved.task.id)
         try:
             await self._acquire_serialization_lock(resolved)
+            self._executor._begin_live_turn(resolved.task.context_id, resolved.task.id)
             # Runtime setup runs inside the try, so a missing credential is a clean `failed` rather than a torn stream.
             self._open_turn_span(resolved)
             prepared = await self._prepare_runtime(resolved)
@@ -470,6 +471,9 @@ class _TurnRunner:
         # The consuming half of the turn-event catalog: it owns the text buffer, the span, and the wire translation.
         self._sink = _TurnEventSink(
             emit=self._emit,
+            emit_delta=lambda channel, block_id, text: self._executor._on_stream_delta(
+                task.context_id, channel, block_id, text
+            ),
             save_conversation=self._save_runtime_conversation,
             suspend=self._suspend_turn,
             telemetry_span=self._turn_span,
@@ -683,7 +687,8 @@ class _TurnRunner:
                 review_phase=GoalReviewPhase.WAITING_FOR_BACKGROUND,
             )
         if self._track_context_activity and self._on_turn_state is not None:
-            self._on_turn_state(task.context_id, False)
+            self._executor._end_live_turn(task.context_id, task.id)
+            self._on_turn_state(task.context_id, False, task.id)
         await self._lifecycle.aclose()
         # Arm a pump for work still in flight, passing the runtime this turn used rather than a cache lookup.
         self._executor._arm_resume_pump(task.context_id, self._runtime)

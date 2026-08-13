@@ -114,8 +114,9 @@ class SessionExecutor(AgentExecutor):
         self._locations = locations
         self._on_turn_state = self._notify_turn_state
         self._on_permission_state = self._notify_permission_state
-        # Turn parts go to the daemon as they persist, so an attached client sees the turn as it happens.
+        # Structural parts take the ordinary event path; model deltas have a zero-await direct lane below.
         self._on_stream_event = self._publish_stream_event
+        self._on_stream_delta = self._publish_stream_delta
         # Advisory locks so two sessions editing the same file notice each other.
         self._file_lease_manager = FileLeaseManager()
 
@@ -135,7 +136,6 @@ class SessionExecutor(AgentExecutor):
         # Held so the screen warm-up is not collected mid-flight; nothing ever awaits it.
         self._screen_warm: Optional[asyncio.Task] = None
         self._goal_state_tail: Optional[asyncio.Task] = None
-        self._turn_state_tail: Optional[asyncio.Task] = None
         self._session_state_lock = asyncio.Lock()
         # Linearizes external send decisions. Without this, two concurrent callers can both
         # observe "idle" and start separate turns before either marks the context running.
@@ -144,47 +144,39 @@ class SessionExecutor(AgentExecutor):
         self._observation_registry_error: str | None = None
 
     def _publish_stream_event(self, session_id: str, part) -> None:
-        """Forward a turn part to the daemon for fan-out. Fire-and-forget: the turn must not wait on a watcher."""
+        """Publish one structural part directly to the in-process live bus."""
+        from langmesh.daemon import state
+
         payload = part.model_dump(by_alias=True, exclude_none=True, mode="json")
-        asyncio.create_task(
-            self._turn_store.publish_event({"session_id": session_id, "part": payload})
-        )
+        state.event_bus.publish_part(session_id, payload)
 
-    def _notify_turn_state(self, session_id: str, running: bool) -> None:
-        """Tell the daemon whether a turn is in flight, and whether anything still holds this process."""
-        previous = self._turn_state_tail
+    def _publish_stream_delta(
+        self, session_id: str, channel: str, block_id: str, text: str
+    ) -> None:
+        """Publish a model delta synchronously: no task allocation, await or persistence in the hot lane."""
+        from langmesh.daemon import state
 
-        async def publish() -> None:
-            if previous is not None:
-                await asyncio.gather(previous, return_exceptions=True)
-            await self._turn_store.publish_event(
-                {
-                    "session_id": session_id,
-                    "running": running,
-                    "retains": self._has_live_background_work(),
-                }
-            )
+        state.event_bus.publish_delta(session_id, channel, block_id, text)
 
-        task = asyncio.create_task(publish())
-        self._turn_state_tail = task
-        task.add_done_callback(self._finish_turn_state_publish)
+    def _notify_turn_state(self, session_id: str, running: bool, turn_id: str = "") -> None:
+        """Advance activity and the live bus in the calling turn, before any later delta can race it."""
+        from langmesh.daemon.ingest import set_turn_state
 
-    def _finish_turn_state_publish(self, task: asyncio.Task) -> None:
-        """Retire the ordered activity publisher and report its last failure."""
-        if self._turn_state_tail is task:
-            self._turn_state_tail = None
-        error = None if task.cancelled() else task.exception()
-        if error is not None:
-            logger.error(
-                "could not publish turn state",
-                exc_info=(type(error), error, error.__traceback__),
-            )
+        set_turn_state(session_id, running, self._has_live_background_work())
+
+    def _begin_live_turn(self, session_id: str, turn_id: str) -> None:
+        from langmesh.daemon import state
+
+        state.event_bus.begin_turn(session_id, turn_id)
+
+    def _end_live_turn(self, session_id: str, turn_id: str) -> None:
+        from langmesh.daemon import state
+
+        state.event_bus.end_turn(session_id, turn_id)
 
     async def _settle_turn_state(self) -> None:
-        """Make a completed control operation observable as idle before answering its caller."""
-        pending = self._turn_state_tail
-        if pending is not None:
-            await asyncio.gather(pending, return_exceptions=True)
+        """Turn state publication is synchronous, so it is already settled."""
+        return None
 
     def _has_live_background_work(self) -> bool:
         """Whether any runtime still has background work, including results that finished but never reached the model."""
@@ -837,15 +829,21 @@ class SessionExecutor(AgentExecutor):
         state = self._context(session_id)
         runtime = state.runtime
         if runtime is None:
+            session_state = {}
             # Restore a persisted conversation the first time a context is seen, so the agent resumes with its history.
             if session_id not in self._conversations:
-                # The model-facing conversation is the store's per-context checkpoint, the one durable turn surface.
-                checkpoint = await self._turn_store.load_checkpoint(session_id)
+                # The two independent rows are read together, so a cold turn pays one database round trip.
+                checkpoint, session_state = await asyncio.gather(
+                    self._turn_store.load_checkpoint(session_id),
+                    self._turn_store.load_session_state(session_id),
+                )
                 state.inherited_snapshot_id = str(checkpoint.get("inherited_snapshot_id") or "")
                 state.inherited_message_count = int(checkpoint.get("inherited_message_count") or 0)
                 restored = messages_from_dict(checkpoint.get("messages") or [])
                 if restored:
                     self._conversations[session_id] = restored
+            else:
+                session_state = await self._turn_store.load_session_state(session_id)
             # Bound to the process-wide history for this context, so a turn picks up where the last left off.
             conversation = self._conversations.setdefault(session_id, [])
             locations = self._locations
@@ -857,7 +855,6 @@ class SessionExecutor(AgentExecutor):
                 locations=locations,
             )
             # Restore the durable objective alongside the conversation, so a marathon run never loses what it was for.
-            session_state = await self._turn_store.load_session_state(session_id)
             if session_state:
                 runtime.restore_session(session_state)
                 # Announce the restored goal here: `restore_session` deliberately does not, being the write that changes nothing.
@@ -1315,9 +1312,7 @@ class SessionExecutor(AgentExecutor):
                     len(pending),
                 )
         state_publishers = [
-            task
-            for task in (self._goal_state_tail, self._turn_state_tail)
-            if task is not None and not task.done()
+            task for task in (self._goal_state_tail,) if task is not None and not task.done()
         ]
         if state_publishers:
             await asyncio.gather(*state_publishers, return_exceptions=True)
