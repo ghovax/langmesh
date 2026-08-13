@@ -34,6 +34,7 @@ from langmesh.runtime.turn_events import (
     Status,
     Steering,
     Suspended,
+    PermissionReviewing,
     SuspensionGate,
     TextChunk,
     Thinking,
@@ -324,6 +325,23 @@ class _TurnEventSink:
                             )
                         )
                 return await self._suspend(interactions, plans)
+            case PermissionReviewing():
+                # The reviewer is weighing automatic-mode gates: surface each one so the call is
+                # visible while the decision is pending, exactly as a suspended gate would be.
+                for gate in event.interactions:
+                    await self._emit(
+                        _event_part(
+                            PermissionRequestEvent(
+                                request_id=gate.request_id,
+                                tool_call_id=gate.tool_call_id,
+                                tool_name=gate.tool_name,
+                                arguments=gate.arguments,
+                                command=gate.command,
+                                explanation=gate.explanation,
+                                reason=gate.reason,
+                            )
+                        )
+                    )
             case Error():
                 await self.flush()
                 await self._emit(

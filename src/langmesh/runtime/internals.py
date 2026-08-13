@@ -349,6 +349,8 @@ class _PreflightGate:
     refused_result: Any = None
     # Whether approving this lets a screen script call the primitives that change something.
     grants_screen_mutations: bool = False
+    # Whether the reviewer decides this one without a person; announced before the review.
+    automatic_review: bool = False
 
     def to_dict(self) -> dict:
         """Every field as plain data: this dict crosses to a client and into the durable plan, so an omission disappears."""
@@ -372,6 +374,7 @@ class _PreflightGate:
             "denial_evidence": self.denial_evidence,
             "refused_result": self.refused_result,
             "grants_screen_mutations": self.grants_screen_mutations,
+            "automatic_review": self.automatic_review,
         }
 
     @classmethod
@@ -395,6 +398,7 @@ class _PreflightGate:
             denial_evidence=str(data.get("denial_evidence", "")),
             refused_result=data.get("refused_result"),
             grants_screen_mutations=bool(data.get("grants_screen_mutations", False)),
+            automatic_review=bool(data.get("automatic_review", False)),
         )
 
 

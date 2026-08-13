@@ -49,6 +49,8 @@ class SuspensionGate:
     denial_evidence: str = ""
     refused_result: Any = None
     grants_screen_mutations: bool = False
+    # Whether the reviewer decides this one without a person; announced before the review.
+    automatic_review: bool = False
 
 
 @dataclass(frozen=True)

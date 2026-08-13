@@ -45,6 +45,7 @@ from langmesh.runtime.turn_events import (
     RetryRequested,
     Steering,
     Suspended,
+    PermissionReviewing,
     SuspensionGate,
     Status,
     TextChunk,
@@ -1053,6 +1054,15 @@ class _RunsTurns:
         if not self._abort_event.is_set():
             plans, pending = await self._preflight_permissions(tool_calls)
             gates = [SuspensionGate(**gate.to_dict()) for gate in pending]
+            # Automatic-mode gates are announced first, then weighed by the reviewer, so the call
+            # is visible while the decision is pending instead of appearing only once it is made.
+            auto_gates = [gate for gate in gates if gate.automatic_review]
+            if auto_gates:
+                yield PermissionReviewing(interactions=auto_gates)
+                for gate in auto_gates:
+                    plan = plans[gate.tool_call_id]
+                    await self._review_auto_gate(plan.gates[0], plan)
+                gates = [gate for gate in gates if not gate.automatic_review]
             answered = await self._answer_gates(gates)
             if gates and len(answered) < len(gates):
                 # One suspend event per turn, and a durable pause, so a session waiting on a person survives a restart.

@@ -724,7 +724,9 @@ export function ChatPanel({
         break;
       }
       const permission = message.meta?.permission as ToolPermission | undefined;
-      if (permission) {
+      // Under `automatic` the reviewer answers the gate, so there is no person to ask: the card
+      // itself shows the call is being weighed and the overlay stays away.
+      if (permission && effectivePermissionMode !== "automatic") {
         const name = message.content;
         const args = message.meta?.arguments as Record<string, unknown> | undefined;
         const command = name === "bash" && args?.command ? String(args.command) : "";

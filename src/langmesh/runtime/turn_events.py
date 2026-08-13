@@ -21,6 +21,7 @@ class EventType(str, Enum):
     USAGE = "usage"
     DONE = "done"
     SUSPENDED = "suspended"
+    PERMISSION_REVIEWING = "permission_reviewing"
     CHECKPOINT = "checkpoint"
     ERROR = "error"
     DENIED_INJECTION = "denied_injection"
@@ -147,6 +148,13 @@ class Suspended(TurnEvent):
 
 
 @dataclass(frozen=True)
+class PermissionReviewing(TurnEvent):
+    TYPE = EventType.PERMISSION_REVIEWING
+    # Automatic-mode gates the reviewer is weighing, announced before the verdict so the call is visible.
+    interactions: list[SuspensionGate] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class Checkpoint(TurnEvent):
     TYPE = EventType.CHECKPOINT
 
@@ -261,6 +269,7 @@ TurnEventUnion = Union[
     Usage,
     Done,
     Suspended,
+    PermissionReviewing,
     Checkpoint,
     Error,
     DeniedInjection,

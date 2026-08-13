@@ -338,40 +338,44 @@ class _DecidesPermissions:
             is_bash=(tool_name == "bash"),
             deny_message=self._deny_message(tool_name),
         )
-        # Under `automatic` every gate goes to the reviewer; one that skipped it would park the session.
+        # Under `automatic` the reviewer decides, but the gate is still announced so the call is
+        # visible while it is weighed; the review itself runs in the turn batch, after the event.
         if not policy.asks:
-            decision = await self._review(gate)
-            if decision.action == "allow":
-                self._approve(gate, by=confinement.APPROVED_BY_REVIEWER, plan=plan)
-                self._record_event(
-                    "access_allowed",
-                    {
-                        "tool": tool_name,
-                        "reason": decision.explanation,
-                        "risk": decision.risk,
-                    },
-                )
-                return plan
-            plan.refusal = self._refusal(
-                self._prompt_loader.load(
-                    "reviewer_denied",
-                    {
-                        "reason": decision.explanation
-                        or "the safety check would not vouch for this",
-                    },
-                ),
-            )
+            gate.automatic_review = True
+        plan.gates.append(gate)
+        return plan
+
+    async def _review_auto_gate(self, gate: _PreflightGate, plan: _ToolPlan) -> None:
+        """The reviewer's verdict on one automatic-mode gate, applied after the gate is announced."""
+        decision = await self._review(gate)
+        if decision.action == "allow":
+            self._approve(gate, by=confinement.APPROVED_BY_REVIEWER, plan=plan)
             self._record_event(
-                "access_refused",
+                "access_allowed",
                 {
-                    "tool": tool_name,
+                    "tool": gate.tool_name,
                     "reason": decision.explanation,
                     "risk": decision.risk,
                 },
             )
-            return plan
-        plan.gates.append(gate)
-        return plan
+            return
+        plan.refusal = self._refusal(
+            self._prompt_loader.load(
+                "reviewer_denied",
+                {
+                    "reason": decision.explanation
+                    or "The permission reviewer did not approve this request.",
+                },
+            ),
+        )
+        self._record_event(
+            "access_refused",
+            {
+                "tool": gate.tool_name,
+                "reason": decision.explanation,
+                "risk": decision.risk,
+            },
+        )
 
     def _rule_for(self, tool_name: str, tool_arguments: dict) -> tuple[str, str]:
         """What the configuration says about this call. The subject differs by tool, because the calls do."""
