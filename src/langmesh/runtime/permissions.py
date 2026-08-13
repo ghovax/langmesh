@@ -18,7 +18,7 @@ from langmesh.runtime.locations import (
     ResolvedLocation,
     ToolLocationError,
 )
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langmesh.base.model_errors import ContextWindowExceeded
 from langmesh.base.instructions import instructions_payload
 from typing import Any, Optional
@@ -120,7 +120,7 @@ class _DecidesPermissions:
         # instructions apart from the request JSON. The reviewer judges against the whole conversation.
         request = [
             SystemMessage(content=self._build_static_system_prompt()),
-            *self._conversation,
+            *self._conversation_for_review(),
             SystemMessage(content=prompt),
             HumanMessage(content=context),
         ]
@@ -181,6 +181,21 @@ class _DecidesPermissions:
             explanation="The safety check could not run, so this request was refused.",
             risk="medium",
         )
+
+    def _conversation_for_review(self) -> list[Any]:
+        """The conversation as the reviewer may see it: the pending tool call closed by a
+        placeholder, since a proposal with no response is invalid to the provider."""
+        conversation = list(self._conversation)
+        last = conversation[-1] if conversation else None
+        if isinstance(last, AIMessage) and getattr(last, "tool_calls", None):
+            for tool_call in last.tool_calls:
+                conversation.append(
+                    ToolMessage(
+                        content=compact({"status": "pending_review"}),
+                        tool_call_id=tool_call["id"],
+                    )
+                )
+        return conversation
 
     def _record_grant(self, grant: Grant) -> None:
         """Remember an approved widening for the session, so one grant is not re-asked on every command."""
