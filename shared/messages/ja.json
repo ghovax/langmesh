@@ -1084,7 +1084,7 @@
   },
   "ToolCard": {
     "inputRequired": "入力が必要",
-    "failed": "失敗",
+    "failed": "エラーが返されました",
     "running": "実行中",
     "modifying": "変更中",
     "requestingAccess": "アクセスをリクエスト中"
@@ -1096,7 +1096,8 @@
   "ToolGroup": {
     "thinking": "思考中",
     "inputRequired": "入力が必要",
-    "failedCount": "{count, plural, other {# 件失敗}}",
+    "failed": "エラーが返されました",
+    "failedCount": "{count, plural, other {# 件エラー}}",
     "backgroundCount": "{count, plural, other {バックグラウンド #}}"
   },
   "ToolViews": {

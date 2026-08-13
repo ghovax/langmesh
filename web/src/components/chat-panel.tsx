@@ -1265,7 +1265,7 @@ export function ChatPanel({
                 px={2}
                 onClick={scrollToBottom}
               >
-                {isStreaming ? <Spinner boxSize="14px" borderWidth="1.5px" /> : <LuArrowDown />}
+                {isStreaming ? <Spinner boxSize="1em" borderWidth="2px" /> : <LuArrowDown />}
                 {translation(isStreaming ? "jumpToProgress" : "jumpToLatest")}
               </Button>
             )}

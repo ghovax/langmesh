@@ -392,6 +392,11 @@ export function ChatInput({
   const latestInputValueRef = useRef("");
   const [sendPending, setSendPending] = useState(false);
   const [stopPending, setStopPending] = useState(false);
+
+  // "Stopping" holds until the stream actually ends: the cancel request resolving only means it was sent.
+  useEffect(() => {
+    if (!isStreaming) setStopPending(false);
+  }, [isStreaming]);
   const [compactConfirmOpen, setCompactConfirmOpen] = useState(false);
   const { rowRef: selectorsRowRef, hidden: hiddenLabels } = useFittedRow(COMPOSER_FIT_ORDER);
   // Dictation is absent rather than disabled until it is turned on, and `recording` holds the take a toggle can stop.
@@ -680,12 +685,17 @@ export function ChatInput({
   }
 
   async function handleAbortClick() {
+    // The cancel request resolving only means it was sent; "Stopping" holds until the stream
+    // actually ends (the isStreaming effect clears it), so it never flashes away mid-stop.
     setStopPending(true);
     try {
       await onAbort();
-    } finally {
+    } catch {
+      // The cancel call itself failed; the turn is untouched, so the control releases at once.
       setStopPending(false);
     }
+    // Last resort: a stop that never reaches the stream must not wedge the button forever.
+    window.setTimeout(() => setStopPending(false), 15_000);
   }
 
   function handleKeyDown(event: KeyboardEvent) {

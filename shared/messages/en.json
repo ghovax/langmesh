@@ -1084,7 +1084,7 @@
   },
   "ToolCard": {
     "inputRequired": "Input required",
-    "failed": "Failed",
+    "failed": "Error returned",
     "running": "Running",
     "modifying": "Modifying",
     "requestingAccess": "Requesting access"
@@ -1096,7 +1096,8 @@
   "ToolGroup": {
     "thinking": "Thinking",
     "inputRequired": "Input required",
-    "failedCount": "{count, plural, other {# failed}}",
+    "failed": "Error returned",
+    "failedCount": "{count, plural, other {# errors returned}}",
     "backgroundCount": "{count, plural, other {# in background}}"
   },
   "ToolViews": {
