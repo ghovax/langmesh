@@ -438,7 +438,9 @@ class ChatCodexModel(BaseChatModel):
     def _cache_diagnosis(self, current: RequestTrace) -> dict[str, object]:
         """What this request kept from the last one, and remember it for the next."""
         if not tracks_conversation_cache():
-            return diagnose(current, None)
+            # A probe shares the conversation's prefix: report its real reach, but never become
+            # the head the next request is measured against.
+            return diagnose(current, self._previous_trace)
         diagnosis = diagnose(current, self._previous_trace)
         self._previous_trace = current
         return diagnosis

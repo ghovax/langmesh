@@ -19,7 +19,15 @@ _TRACKS_CONVERSATION_CACHE = ContextVar("tracks_conversation_cache", default=Tru
 
 
 @contextmanager
-def auxiliary_model_call() -> Generator[None, None, None]:
+def without_advancing_conversation_cache() -> Generator[None, None, None]:
+    """Run a call that is measured against the conversation's cache chain but does not advance it.
+
+    A probe shares the conversation's cached prefix, so it may be diagnosed against the last request
+    (a real prefix hit) and may resume cursor's checkpoint — yet it never becomes the chain head:
+    the diagnosis is not remembered, and cursor records no resumption from it. The next conversation
+    request is therefore still measured against the conversation, not the probe. The provider's own
+    caching is unaffected; only LangMesh's chain accounting is.
+    """
     token = _TRACKS_CONVERSATION_CACHE.set(False)
     try:
         yield
@@ -127,7 +135,7 @@ __all__ = [
     "Piece",
     "RequestTrace",
     "Segment",
-    "auxiliary_model_call",
+    "without_advancing_conversation_cache",
     "diagnose",
     "trace",
     "tracks_conversation_cache",

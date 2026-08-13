@@ -19,6 +19,7 @@ from langmesh.runtime.locations import (
     ToolLocationError,
 )
 from langchain_core.messages import HumanMessage, SystemMessage
+from langmesh.base.model_errors import ContextWindowExceeded
 from langmesh.base.instructions import instructions_payload
 from typing import Any, Optional
 import ast
@@ -26,7 +27,7 @@ import logging
 import uuid
 from langmesh.base.serialization import compact
 from langmesh.base.tuning import Tunable, active_tuning
-from langmesh.runtime.cache_trace import auxiliary_model_call
+from langmesh.runtime.cache_trace import without_advancing_conversation_cache
 
 logger = logging.getLogger(__name__)
 
@@ -95,12 +96,10 @@ class _DecidesPermissions:
                 "model_explanation": gate.arguments.get("explanation", "") or gate.explanation,
                 # The person's standing instructions, so the reviewer can tell user-requested reach from invention.
                 "user_instructions": instructions_payload(self._catalogue.instructions()),
-                # The ledger's continuing instructions, which the evaluator must weigh when allowing or denying.
-                "ledger_instructions": await self._ledger_directives(),
                 "confinement": self._sandbox.describe(workspace=self._working_directory),
                 # Only on a second run, so the reviewer knows the command hit a wall rather than merely failed.
                 **(
-                    {"refused_by_the_sandbox": gate.denial_evidence} if gate.denial_evidence else {}
+                    {"denial_evidence": gate.denial_evidence} if gate.denial_evidence else {}
                 ),
                 "allowed_actions": ["allow", "deny"],
             }
@@ -116,11 +115,29 @@ class _DecidesPermissions:
                 ),
             },
         )
-        # Instructions and subject as separate messages: some providers reject a request with no input.
+        # The session's own cached prefix, then the reviewer instruction and its subject as separate
+        # messages: the prefix rides the provider's conversation cache, and role separation keeps the
+        # instructions apart from the request JSON. The reviewer judges against the whole conversation.
+        request = [
+            SystemMessage(content=self._build_static_system_prompt()),
+            *self._conversation,
+            SystemMessage(content=prompt),
+            HumanMessage(content=context),
+        ]
+        try:
+            self._refuse_if_over_window(request)
+        except ContextWindowExceeded:
+            logger.warning(
+                "the permission reviewer could not fit the session in the window; denying"
+            )
+            return PermissionDecision(
+                action="deny",
+                explanation="The conversation is too large to review safely, so this request was refused.",
+                risk="medium",
+            )
         model = self._model.bind_tools([PermissionDecision], tool_choice="auto")
-        request = [SystemMessage(content=prompt), HumanMessage(content=context)]
         attempts = active_tuning().amount(Tunable.permission_reviewer_attempts)
-        with auxiliary_model_call():
+        with without_advancing_conversation_cache():
             for attempt in range(1, attempts + 1):
                 try:
                     response = await model.ainvoke(request)
@@ -164,22 +181,6 @@ class _DecidesPermissions:
             explanation="The safety check could not run, so this request was refused.",
             risk="medium",
         )
-
-    async def _ledger_directives(self) -> list[dict[str, str]]:
-        """The ledger's continuing instructions, as the evaluator weighs a request against them."""
-        try:
-            snapshot = await self._observation_store.snapshot()
-        except Exception:  # noqa: BLE001 — a broken registry must not take the review down
-            return []
-        return [
-            {
-                "id": str(entry.get("id", "")),
-                "kind": str(entry.get("kind", "")),
-                "summary": str(entry.get("summary", "")),
-                "detail": str(entry.get("detail", "")),
-            }
-            for entry in snapshot["entries"]["directives"]
-        ]
 
     def _record_grant(self, grant: Grant) -> None:
         """Remember an approved widening for the session, so one grant is not re-asked on every command."""

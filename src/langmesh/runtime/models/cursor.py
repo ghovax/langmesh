@@ -222,9 +222,13 @@ class ChatCursorModel(BaseChatModel):
 
     @staticmethod
     def _system_prompt(messages: Sequence[BaseMessage]) -> str:
-        content = _join_markdown_blocks(
-            message_text(message) for message in messages if isinstance(message, SystemMessage)
+        # Only the first system message is the session prompt; later ones stay in place as
+        # transcript blocks, as codex treats them, so an appended instruction (the permission
+        # review) never rewrites the cached system prefix.
+        first = next(
+            (message for message in messages if isinstance(message, SystemMessage)), None
         )
+        content = message_text(first) if first is not None else ""
         return _PROMPTS.load("cursor_system_prompt", {"content": content}).strip()
 
     @staticmethod
@@ -235,11 +239,20 @@ class ChatCursorModel(BaseChatModel):
 
     def _render(self, messages: Sequence[BaseMessage]) -> str:
         """The conversation rendered through the Cursor transcript templates."""
-        conversation = [message for message in messages if not isinstance(message, SystemMessage)]
+        first_system_seen = False
+        conversation: list[BaseMessage] = []
+        for message in messages:
+            if isinstance(message, SystemMessage) and not first_system_seen:
+                first_system_seen = True  # the system prompt owns the first one
+                continue
+            conversation.append(message)
         if len(conversation) == 1 and not isinstance(conversation[0], (AIMessage, ToolMessage)):
             return message_text(conversation[0])
         blocks: list[str] = []
         for message in conversation:
+            if isinstance(message, SystemMessage):
+                blocks.append(self._transcript_block("Instruction", message_text(message)))
+                continue
             if isinstance(message, ToolMessage):
                 blocks.append(
                     self._transcript_block(
@@ -294,9 +307,11 @@ class ChatCursorModel(BaseChatModel):
         return _digest_messages(conversation[:1])
 
     def _resumption_for(self, messages: Sequence[BaseMessage]) -> Optional[_Resumption]:
-        """A checkpoint worth resuming from, or `None` when the transcript no longer begins with what it was made from."""
-        if not tracks_conversation_cache():
-            return None
+        """A checkpoint worth resuming from, or `None` when the transcript no longer begins with what it was made from.
+
+        A probe may resume too: it shares the conversation's prefix, so the checkpoint applies.
+        It just must never record one (`_remember_resumption` stays gated on the flag).
+        """
         _prune_resumptions()
         entry = _resumptions.get(self._conversation_key(messages))
         if entry is None or entry.prefix_length >= len(messages):
