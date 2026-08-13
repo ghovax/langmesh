@@ -374,7 +374,6 @@ class TaskManager:
             )
             self._tasks.append(task)
             created.append(identifier)
-        self._recalculate_statuses()
         return created
 
     # What an update may say. A key outside this set is reported rather than silently matching nothing.
@@ -409,21 +408,7 @@ class TaskManager:
                     task.status = status
                     updated_ids.append(task_id)
                     break
-        if updated_ids:
-            self._recalculate_statuses()
         return updated_ids, complaints
-
-    def _recalculate_statuses(self) -> None:
-        for task in self._tasks:
-            if task.status == "blocked":
-                if all(self._is_dependency_met(dep) for dep in task.dependencies):
-                    task.status = "pending"
-
-    def _is_dependency_met(self, dependency_id: str) -> bool:
-        for task in self._tasks:
-            if task.identifier == dependency_id:
-                return task.status == "completed"
-        return True
 
     def render_json(self) -> str:
         if not self._tasks:
@@ -432,6 +417,20 @@ class TaskManager:
 
     def to_dict_list(self) -> list[dict]:
         return [task.model_dump() for task in self._tasks]
+
+    def unfinished(self) -> list[dict]:
+        """Tracked work that still needs action; blocked items remain visible but do not spin a turn."""
+        return [task.model_dump() for task in self._tasks if task.status != "completed"]
+
+    def actionable(self) -> list[dict]:
+        """Unfinished work that is neither explicitly blocked nor waiting on unfinished work."""
+        completed = {task.identifier for task in self._tasks if task.status == "completed"}
+        return [
+            task.model_dump()
+            for task in self._tasks
+            if task.status not in {"completed", "blocked"}
+            and all(dependency in completed for dependency in task.dependencies)
+        ]
 
     def snapshot(self) -> dict:
         """The manager's durable state, so a rebuilt runtime restores the tasks and keeps minting fresh ids."""
@@ -653,6 +652,8 @@ class AgentRuntime(
         self._prompt_loader = _CataloguePrompts(catalogue)
         self._cached_system_prompt: str | None = None
         self._task_manager = TaskManager()
+        # Independent from goal continuations: one may share a turn with the other, but neither consumes its allowance.
+        self._task_continuations = 0
         self._goal: Optional[Goal] = None
         # Called when the goal changes, so the layer above can tell the daemon and the interface.
         self._on_goal_change: Optional[Callable[[Optional[Goal]], None]] = None
@@ -1036,11 +1037,32 @@ class AgentRuntime(
         """Install the reader `read_turn` uses to fetch related turns from the store."""
         self._turn_reader = task_reader
 
+    def unfinished_tasks(self) -> list[dict]:
+        return self._task_manager.unfinished()
+
+    def has_actionable_tasks(self) -> bool:
+        return bool(self._task_manager.actionable())
+
+    @property
+    def task_continuations(self) -> int:
+        return self._task_continuations
+
+    def note_task_continuation(self) -> None:
+        self._task_continuations += 1
+        self._mark_session_dirty()
+
+    def restore_task_allowance(self) -> None:
+        if self._task_continuations == 0:
+            return
+        self._task_continuations = 0
+        self._mark_session_dirty()
+
     def session_snapshot(self) -> dict:
         """The durable non-conversation state — the goal and the tasks — persisted beside the checkpoint."""
         return {
             "goal": self._goal.model_dump() if self._goal is not None else None,
             "tasks": self._task_manager.snapshot(),
+            "task_continuations": self._task_continuations,
             "compaction": self._compaction_control.snapshot(),
             "turn_recovery": self._turn_recovery,
         }
@@ -1056,6 +1078,7 @@ class AgentRuntime(
                 logger.warning("discarding a stored goal that no longer validates")
         self._goal = goal
         self._task_manager.restore(snapshot.get("tasks", {}) or {})
+        self._task_continuations = max(0, int(snapshot.get("task_continuations", 0) or 0))
         self._compaction_control = _CompactionControl.restore(snapshot.get("compaction"))
         recovery = str(snapshot.get("turn_recovery") or "none")
         # A process that died after claiming the retry still owes that retry after restart.

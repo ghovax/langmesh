@@ -119,6 +119,7 @@ class Tunable(Enum):
     accessibility_messaging = Default(2.0, Scaling.TIME)
 
     goal_continuation_turns = Default(12, Scaling.NONE)
+    task_continuation_turns = Default(12, Scaling.NONE)
 
     goal_blocked_turns = Default(3, Scaling.NONE)
 

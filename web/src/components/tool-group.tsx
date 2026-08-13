@@ -83,10 +83,9 @@ export const ToolGroup = memo(function ToolGroup({
   ).length;
   const runningCount =
     tools.filter((tool) => toolStatus(tool.status) === "running").length - backgroundCount;
-  const inputRequiredCount = tools.filter(
+  const inputRequired = tools.some(
     (tool) => toolStatus(tool.status) === "input_required",
-  ).length;
-  const inputRequired = inputRequiredCount > 0;
+  );
   const active = runningCount > 0 || backgroundCount > 0 || inputRequired || keepOpen;
   const showActivitySpinner = runningCount > 0 || (keepOpen && !inputRequired);
   // Tri-state, so the group can be toggled either way from its default: null follows the default.
@@ -117,11 +116,6 @@ export const ToolGroup = memo(function ToolGroup({
 
   // Status chips surface only the states needing attention; running and completed calls speak for themselves.
   const statusChips = [
-    inputRequiredCount > 0 && {
-      kind: "input_required" as StatusKind,
-      count: inputRequiredCount,
-      title: translation("inputRequired"),
-    },
     backgroundCount > 0 && {
       kind: "background" as StatusKind,
       count: backgroundCount,

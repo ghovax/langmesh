@@ -20,7 +20,7 @@ from langchain_core.messages import messages_to_dict
 
 from langmesh.base import telemetry as _telemetry
 from langmesh.base.configuration import PromptLoader
-from langmesh.base.serialization import conversation_snapshot_id
+from langmesh.base.serialization import compact, conversation_snapshot_id
 from langmesh.base.tuning import Tunable, active_tuning
 from langmesh.protocol.errors import _safe_turn_error
 from langmesh.protocol.events import ErrorEvent, InboundMessageEvent, RetryEvent, StatusEvent
@@ -56,6 +56,75 @@ logger = logging.getLogger(__name__)
 _PROMPTS = PromptLoader(Path(__file__).resolve().parent.parent / "runtime" / "prompts")
 
 
+@dataclass(frozen=True)
+class _ContinuationPlan:
+    """Independent reasons for one serialized follow-through workflow to keep the session busy."""
+
+    goal: bool = False
+    tasks: bool = False
+
+    def merged(self, other: "_ContinuationPlan") -> "_ContinuationPlan":
+        return _ContinuationPlan(goal=self.goal or other.goal, tasks=self.tasks or other.tasks)
+
+    @property
+    def any(self) -> bool:
+        return self.goal or self.tasks
+
+
+@dataclass
+class _ContinuationCoordinator:
+    """Own the sole continuation workflow and the at-most-one plan waiting behind it."""
+
+    workflow: Optional[asyncio.Task] = None
+    review: Optional[asyncio.Task] = None
+    queued: _ContinuationPlan = field(default_factory=_ContinuationPlan)
+
+    @property
+    def running(self) -> bool:
+        return self.workflow is not None and not self.workflow.done()
+
+    def enqueue(self, plan: _ContinuationPlan) -> bool:
+        """Merge obligations and report whether the new queue needs an activity hold."""
+        acquires_hold = not self.queued.any
+        self.queued = self.queued.merged(plan)
+        return acquires_hold and self.queued.any
+
+    def take(self) -> _ContinuationPlan:
+        plan = self.queued
+        self.queued = _ContinuationPlan()
+        return plan
+
+    def clear(self) -> bool:
+        """Drop queued obligations and report whether their activity hold must be released."""
+        releases_hold = self.queued.any
+        self.queued = _ContinuationPlan()
+        return releases_hold
+
+    def attach(self, workflow: asyncio.Task) -> None:
+        self.workflow = workflow
+
+    def detach(self, workflow: asyncio.Task) -> bool:
+        """Detach only the workflow still owned here, protecting a newer one from an old callback."""
+        if self.workflow is not workflow:
+            return False
+        self.workflow = None
+        return True
+
+    def attach_review(self, review: asyncio.Task) -> None:
+        self.review = review
+
+    def detach_review(self, review: asyncio.Task) -> None:
+        if self.review is review:
+            self.review = None
+
+    def cancel_review(self) -> bool:
+        """Cancel only goal assessment, leaving task continuation owned by the workflow intact."""
+        if self.review is None or self.review.done():
+            return False
+        self.review.cancel()
+        return True
+
+
 @dataclass
 class _ContextState:
     """The session's live execution state, created on its first turn and dropped whole when it ends."""
@@ -66,8 +135,7 @@ class _ContextState:
     runtime: Optional[Any] = None
     # After a turn ends with work in flight, this waits for each result and drives a turn to deliver it.
     resume_pump: Optional[asyncio.Task] = None
-    goal_review_task: Optional[asyncio.Task] = None
-    goal_review_pending: bool = False
+    continuation: _ContinuationCoordinator = field(default_factory=_ContinuationCoordinator)
     # A turn is in flight, so a message can be injected into it rather than starting another.
     running: bool = False
     # The user stopped the session: no pump is armed, so a late job cannot wake a fresh turn.
@@ -111,6 +179,7 @@ class _TurnMode(StrEnum):
     RETRY = "retry"
     REPORT_REMINDER = "report_reminder"
     GOAL_CONTINUATION = "goal_continuation"
+    TASK_CONTINUATION = "task_continuation"
 
 
 def _turn_mode(metadata: dict) -> _TurnMode:
@@ -122,8 +191,12 @@ def _turn_mode(metadata: dict) -> _TurnMode:
         (_TurnMode.RETRY, Metadata.RETRY_TURN),
         (_TurnMode.REPORT_REMINDER, Metadata.REPORT_REMINDER),
         (_TurnMode.GOAL_CONTINUATION, Metadata.GOAL_CONTINUATION),
+        (_TurnMode.TASK_CONTINUATION, Metadata.TASK_CONTINUATION),
     ]
     selected = [mode for mode, key in candidates if metadata.get(key)]
+    # A goal-review instruction may carry the independent task reminder in the same serialized turn.
+    if set(selected) == {_TurnMode.GOAL_CONTINUATION, _TurnMode.TASK_CONTINUATION}:
+        return _TurnMode.GOAL_CONTINUATION
     if len(selected) > 1:
         raise ValueError("A turn cannot request multiple execution modes.")
     return selected[0] if selected else _TurnMode.STANDARD
@@ -384,7 +457,8 @@ class _TurnRunner:
             if ingested.mode is _TurnMode.GOAL_CONTINUATION
             # The reminder is harness-initiated like a wake, and differs only in having nothing to deliver.
             else TurnKind.AUTONOMOUS
-            if ingested.mode in {_TurnMode.AUTONOMOUS, _TurnMode.REPORT_REMINDER}
+            if ingested.mode
+            in {_TurnMode.AUTONOMOUS, _TurnMode.REPORT_REMINDER, _TurnMode.TASK_CONTINUATION}
             else TurnKind.COMPACTION
             if ingested.mode
             in {
@@ -423,8 +497,8 @@ class _TurnRunner:
     async def _prepare_runtime(self, resolved: _Resolved) -> _Prepared | object:
         """Build or warm-fetch the runtime, register it, and stand up the event sink."""
         task = resolved.task
-        if resolved.ingested.mode is not _TurnMode.GOAL_CONTINUATION:
-            await self._executor._cancel_goal_review(task.context_id)
+        if resolved.ingested.from_outside:
+            await self._executor._cancel_continuation(task.context_id)
         # A wake with nothing left to deliver closes the task without a model call rather than an empty turn.
         if self._mode is _TurnMode.AUTONOMOUS:
             existing_state = self._executor._contexts.get(task.context_id)
@@ -506,12 +580,19 @@ class _TurnRunner:
         if prepared.resolved.ingested.mode is _TurnMode.GOAL_CONTINUATION:
             goal = runtime.goal
             if goal is None or not goal.is_open:
+                if not prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
+                    await self._updater.complete()
+                    return self._DONE
+            else:
+                runtime.note_goal_continuation()
+        if prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
+            if not runtime.has_actionable_tasks():
                 await self._updater.complete()
                 return self._DONE
-            runtime.note_goal_continuation()
-            return None
+            runtime.note_task_continuation()
         if prepared.resolved.ingested.from_outside:
             runtime.restore_goal_allowance()
+            runtime.restore_task_allowance()
         return None
 
     async def _run_compaction_turn(self, prepared: _Prepared) -> object | None:
@@ -534,14 +615,19 @@ class _TurnRunner:
             _TurnMode.AUTONOMOUS,
             _TurnMode.REPORT_REMINDER,
             _TurnMode.GOAL_CONTINUATION,
+            _TurnMode.TASK_CONTINUATION,
         }
         if mode in {_TurnMode.COMPACTION_RESUME, _TurnMode.COMPACTION_PREPARE, _TurnMode.RETRY}:
             # The accepted user message is already the conversation tail. This turn merely
             # resumes the model call that the failed fold prevented.
             self._turn_input = ""
         elif mode is _TurnMode.GOAL_CONTINUATION:
-            # The review wrote this and it rode in on the message; a reminder, so nothing reads it as the person.
+            # Goal review prose stays visible, while an independent task obligation rides inside its reminder.
             self._turn_input = self._user_text
+            if prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
+                self._turn_input = f"{self._turn_input}\n\n{self._task_continuation_note(runtime)}"
+        elif mode is _TurnMode.TASK_CONTINUATION:
+            self._turn_input = self._task_continuation_note(runtime)
         elif mode is _TurnMode.REPORT_REMINDER:
             # A reminder, never user prose: this is the harness speaking, not the person the session works for.
             self._turn_input = _PROMPTS.load(
@@ -581,6 +667,13 @@ class _TurnRunner:
             as_system_note=self._as_system_note,
             # A goal continuation is a real exchange even though its opening note came from review.
             opens_exchange=mode is _TurnMode.GOAL_CONTINUATION,
+        )
+
+    @staticmethod
+    def _task_continuation_note(runtime: AgentRuntime) -> str:
+        return _PROMPTS.load(
+            "task_continuation_note",
+            {"tasks": compact(runtime.unfinished_tasks())},
         )
 
     async def _stream_and_finalize(self, composed: _ComposedTurn) -> None:
@@ -677,9 +770,9 @@ class _TurnRunner:
             state.running = False
         if state is not None and state.runtime is not None:
             state.runtime.discard_pending_steering()
-        carries_on = self._goal_carries_on()
-        if carries_on:
-            self._executor._arm_goal_review(task.context_id)
+        continuation = self._continuation_plan()
+        if continuation.any:
+            self._executor._arm_continuation(task.context_id, continuation)
         elif self._goal_waits_for_background():
             self._executor._notify_goal_state(
                 task.context_id,
@@ -692,22 +785,34 @@ class _TurnRunner:
         await self._lifecycle.aclose()
         # Arm a pump for work still in flight, passing the runtime this turn used rather than a cache lookup.
         self._executor._arm_resume_pump(task.context_id, self._runtime)
-        await self._maybe_continue_goal(carries_on)
+        await self._settle_uncontinued_goal(continuation.goal)
         self._executor._maybe_evict(task.context_id)
         self._maybe_nudge_to_report()
 
-    def _goal_carries_on(self) -> bool:
-        """Whether this turn ending leads straight into a review rather than into a wait for the person."""
-        if not self._completed and self._mode is not _TurnMode.COMPACTION:
-            return False
+    def _continuation_plan(self) -> _ContinuationPlan:
+        """What remains actionable after a genuinely completed turn, decided once at the idle edge."""
+        if not self._completed or self._mode is _TurnMode.COMPACTION:
+            return _ContinuationPlan()
         state = self._executor._contexts.get(self._task.context_id)
         if state is None or state.aborted:
-            return False
+            return _ContinuationPlan()
         runtime = self._runtime
-        goal = runtime.goal if runtime is not None else None
-        if goal is None or not goal.is_open or runtime.has_pending_jobs():
-            return False
-        return goal.continuations < active_tuning().amount(Tunable.goal_continuation_turns)
+        if runtime is None or runtime.has_pending_jobs():
+            return _ContinuationPlan()
+        goal = runtime.goal
+        return _ContinuationPlan(
+            goal=bool(
+                goal is not None
+                and goal.is_open
+                and goal.continuations
+                < active_tuning().amount(Tunable.goal_continuation_turns)
+            ),
+            tasks=bool(
+                runtime.has_actionable_tasks()
+                and runtime.task_continuations
+                < active_tuning().amount(Tunable.task_continuation_turns)
+            ),
+        )
 
     def _goal_waits_for_background(self) -> bool:
         if not self._completed or self._mode is _TurnMode.COMPACTION or self._runtime is None:
@@ -715,9 +820,9 @@ class _TurnRunner:
         goal = self._runtime.goal
         return bool(goal is not None and goal.is_open and self._runtime.has_pending_jobs())
 
-    async def _maybe_continue_goal(self, carries_on: bool) -> None:
-        """Open another turn when this one ended with the goal unfinished, which is what makes a goal outlive a turn."""
-        if carries_on:
+    async def _settle_uncontinued_goal(self, continues: bool) -> None:
+        """Park an open goal only when continuation is stopped or its allowance is spent."""
+        if continues:
             return
         runtime = self._runtime
         goal = runtime.goal if runtime is not None else None

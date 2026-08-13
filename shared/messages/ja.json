@@ -674,6 +674,7 @@
         "glob_results": "glob が返すパス数",
         "goal_blocked_turns": "ゴールを行き詰まりと報告できるまでの回数",
         "goal_continuation_turns": "無人で続けられるターン数",
+        "task_continuation_turns": "未完了タスクを自動継続するターン数",
         "grep_per_file": "1 ファイルあたりの検索一致数",
         "grep_results": "検索一致数の合計",
         "maximum_line_chars": "1 行あたりの保持文字数",
@@ -882,6 +883,7 @@
         "glob_results": "1 回の glob が返すパス数。",
         "goal_blocked_turns": "レビューが「行き詰まり」という判定を送信できるようになるまでに、目標を何ターン推し進める必要があるか。それまでは、次に行うべき有用な内容を添えて「未達」と判定する必要があります。一度の失敗は行き詰まりではなく、最初の拒否で目標を放棄することはできません。",
         "goal_continuation_turns": "セッションが人を待たずに自らの目標のために連続して開けるターン数。目標レビューはこれより早く実行を終えられますが、これを超えて続けることはできません。",
+        "task_continuation_turns": "未完了の追跡タスクが人を待たずに自動で再開できる連続ターン数。新しいユーザーメッセージで上限はリセットされます。",
         "grep_per_file": "1 つのファイルから返す一致数。",
         "grep_results": "1 回の検索が返す一致数の合計。",
         "maximum_line_chars": "長すぎる 1 行から残す文字数。圧縮された 1 行が結果全体を埋めないようにします。",
@@ -1093,7 +1095,6 @@
   },
   "ToolGroup": {
     "thinking": "思考中",
-    "inputRequired": "入力が必要",
     "failed": "エラーが返されました",
     "failedCount": "{count, plural, other {# 件エラー}}",
     "backgroundCount": "{count, plural, other {バックグラウンド #}}"

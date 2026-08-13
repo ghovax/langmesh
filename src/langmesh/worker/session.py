@@ -31,6 +31,7 @@ from langmesh.protocol.metadata import (
     COMPACTION_PREPARE_KIND,
     COMPACTION_RESUME_KIND,
     GOAL_CONTINUATION_KIND,
+    TASK_CONTINUATION_KIND,
     REPORT_REMINDER_KIND,
     RETRY_TURN_KIND,
     INPUT_RESPONSE_KIND,
@@ -46,7 +47,7 @@ from langmesh.protocol.turn_record import PendingInteraction, ToolGate, TurnReco
 from langmesh.runtime.goal import Goal, GoalReviewPhase
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import SuspensionGate
-from langmesh.worker.turn import _ContextState, _TurnRunner
+from langmesh.worker.turn import _ContextState, _ContinuationPlan, _TurnRunner
 from langmesh.base.serialization import compact
 
 logger = logging.getLogger(__name__)
@@ -332,87 +333,91 @@ class SessionExecutor(AgentExecutor):
             metadata_flags={Metadata.REPORT_REMINDER: True},
         )
 
-    def _arm_goal_review(self, session_id: str) -> None:
-        """Queue one review and keep a single workflow draining the queue."""
+    def _arm_continuation(self, session_id: str, plan: _ContinuationPlan) -> None:
+        """Queue independent obligations behind one serialized continuation workflow."""
         state = self._contexts.get(session_id)
-        if state is None or state.aborted:
+        if state is None or state.aborted or not plan.any:
             return
-        if state.goal_review_pending:
+        if state.continuation.enqueue(plan):
+            self._notify_turn_state(session_id, True)
+        if state.continuation.running:
             return
-        state.goal_review_pending = True
-        self._notify_turn_state(session_id, True)
-        active_review = state.goal_review_task
-        if active_review is not None and not active_review.done():
-            return
-        review_task = asyncio.create_task(self._run_goal_reviews(session_id))
-        state.goal_review_task = review_task
-        review_task.add_done_callback(
-            lambda completed: self._finish_goal_review(session_id, completed)
+        workflow = asyncio.create_task(self._run_continuations(session_id))
+        state.continuation.attach(workflow)
+        workflow.add_done_callback(
+            lambda completed: self._finish_continuation(session_id, completed)
         )
 
-    async def _run_goal_reviews(self, session_id: str) -> None:
-        """Drain reviews requested by completed turns, including turns opened by the current review."""
+    async def _run_continuations(self, session_id: str) -> None:
+        """Drain plans produced by completed turns; each plan opens at most one next turn."""
         while True:
             state = self._contexts.get(session_id)
-            if state is None or state.aborted or not state.goal_review_pending:
+            if state is None or state.aborted or not state.continuation.queued.any:
                 return
-            state.goal_review_pending = False
-            await self.continue_goal(session_id)
+            plan = state.continuation.take()
+            await self._continue(session_id, plan)
 
-    async def _cancel_goal_review(self, session_id: str) -> bool:
-        """Cancel and join the owned review before another turn uses the same runtime."""
+    async def _cancel_continuation(self, session_id: str) -> bool:
+        """A new outside turn supersedes queued automatic work and joins its owned workflow."""
         state = self._contexts.get(session_id)
-        review_task = state.goal_review_task if state is not None else None
-        if state is not None and state.goal_review_pending:
-            state.goal_review_pending = False
+        workflow = state.continuation.workflow if state is not None else None
+        if state is not None and state.continuation.clear():
             self._notify_turn_state(session_id, False)
-        if review_task is None or review_task.done() or review_task is asyncio.current_task():
+        if workflow is None or workflow.done() or workflow is asyncio.current_task():
             return False
-        review_task.cancel()
+        workflow.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await review_task
-        if state is not None and state.goal_review_task is review_task:
-            state.goal_review_task = None
-        if state is not None and state.goal_review_pending:
-            state.goal_review_pending = False
+            await workflow
+        if state is not None:
+            state.continuation.detach(workflow)
+        if state is not None and state.continuation.clear():
             self._notify_turn_state(session_id, False)
         return True
 
-    def _finish_goal_review(self, session_id: str, review_task: asyncio.Task) -> None:
-        """Retire the owned review workflow and report an unexpected failure."""
+    def _finish_continuation(self, session_id: str, workflow: asyncio.Task) -> None:
+        """Retire the owned workflow and report an unexpected failure."""
         state = self._contexts.get(session_id)
-        if state is not None and state.goal_review_task is review_task:
-            state.goal_review_task = None
-        if state is not None and state.goal_review_pending:
-            state.goal_review_pending = False
+        owns_workflow = state is not None and state.continuation.detach(workflow)
+        if owns_workflow and state.continuation.clear():
             self._notify_turn_state(session_id, False)
-        error = None if review_task.cancelled() else review_task.exception()
+        error = None if workflow.cancelled() else workflow.exception()
         if error is not None:
             logger.error(
-                "goal review workflow failed",
+                "continuation workflow failed",
                 exc_info=(type(error), error, error.__traceback__),
             )
         self._maybe_evict(session_id)
 
-    async def continue_goal(self, session_id: str) -> None:
-        """Read the goal against the session, then open a turn on what the review wrote, if it wrote one."""
+    async def _continue(self, session_id: str, plan: _ContinuationPlan) -> None:
+        """Review a goal first, then carry either or both obligations in one next turn."""
         state = self._contexts.get(session_id)
         runtime = state.runtime if state is not None else None
         if runtime is None:
+            # The plan acquired an activity hold when it was queued, even if teardown won the race.
+            self._notify_turn_state(session_id, False)
             return
         review_phase_active = False
         try:
-            if runtime.goal is None or not runtime.goal.is_open:
-                return
-            self._notify_goal_state(session_id, runtime.goal, review_phase=GoalReviewPhase.CHECKING)
-            review_phase_active = True
-            try:
-                goal = runtime.apply_goal_review(await runtime.review_goal())
-            finally:
-                self._notify_goal_state(session_id, runtime.goal)
-                review_phase_active = False
-            # Written before the turn opens: a verdict held only in memory is one a restart would lose.
-            await self._persist_session_state(session_id, runtime)
+            goal = runtime.goal
+            if plan.goal and goal is not None and goal.is_open:
+                self._notify_goal_state(session_id, goal, review_phase=GoalReviewPhase.CHECKING)
+                review_phase_active = True
+                review = asyncio.create_task(runtime.review_goal())
+                state.continuation.attach_review(review)
+                try:
+                    runtime.apply_goal_review(await review)
+                except asyncio.CancelledError:
+                    # Clearing the goal cancels only its review; stopping cancels the owning workflow too.
+                    if runtime.goal is not None and runtime.goal.status == Goal.CLEARED:
+                        pass
+                    else:
+                        raise
+                finally:
+                    state.continuation.detach_review(review)
+                    self._notify_goal_state(session_id, runtime.goal)
+                    review_phase_active = False
+                # Written before the turn opens: a verdict held only in memory is one a restart would lose.
+                await self._persist_session_state(session_id, runtime)
             goal = runtime.goal
             if goal is not None and goal.is_open and goal.review_message:
                 await self._drive_self_sent_turn(
@@ -421,13 +426,20 @@ class SessionExecutor(AgentExecutor):
                     metadata_flags={
                         Metadata.GOAL_CONTINUATION: True,
                         Metadata.GOAL_REVIEW_ID: goal.review_id,
+                        **({Metadata.TASK_CONTINUATION: True} if plan.tasks else {}),
                     },
                     text=goal.review_message,
+                )
+            elif plan.tasks:
+                await self._drive_self_sent_turn(
+                    session_id,
+                    TASK_CONTINUATION_KIND,
+                    metadata_flags={Metadata.TASK_CONTINUATION: True},
                 )
         finally:
             if review_phase_active:
                 self._notify_goal_state(session_id, runtime.goal)
-            # Exactly one release for the hold the turn took on our behalf, whichever way the review went.
+            # Exactly one release for the plan hold, whichever obligation opened the next turn.
             self._notify_turn_state(session_id, False)
 
     def clear_goal(self, session_id: str) -> bool:
@@ -437,11 +449,7 @@ class SessionExecutor(AgentExecutor):
         goal = runtime.goal if runtime is not None else None
         if runtime is None or goal is None:
             return False
-        if state.goal_review_task is not None and not state.goal_review_task.done():
-            state.goal_review_task.cancel()
-        if state.goal_review_pending:
-            state.goal_review_pending = False
-            self._notify_turn_state(session_id, False)
+        state.continuation.cancel_review()
         runtime.write_goal(
             goal.updated(status=Goal.CLEARED, review_message=None, review_id=None)
             if goal.is_open
@@ -542,12 +550,11 @@ class SessionExecutor(AgentExecutor):
         # Mark Stopped first, so no later completion can re-arm a pump that would wake the agent again.
         state.aborted = True
         handled = False
-        if state.goal_review_task is not None:
-            if not state.goal_review_task.done():
-                state.goal_review_task.cancel()
+        if state.continuation.workflow is not None:
+            if not state.continuation.workflow.done():
+                state.continuation.workflow.cancel()
             handled = True
-        if state.goal_review_pending:
-            state.goal_review_pending = False
+        if state.continuation.clear():
             self._notify_turn_state(session_id, False)
             handled = True
         if state.resume_pump is not None:
@@ -672,9 +679,9 @@ class SessionExecutor(AgentExecutor):
         state = self._contexts.get(session_id)
         if state is None or not state.pending_reset:
             return
-        review_running = state.goal_review_task is not None and not state.goal_review_task.done()
+        continuation_running = state.continuation.running
         runtime_busy = state.runtime is not None and state.runtime.has_pending_jobs()
-        if state.running or review_running or runtime_busy:
+        if state.running or continuation_running or runtime_busy:
             return
         state.runtime = None
         state.pending_reset = False
@@ -693,9 +700,9 @@ class SessionExecutor(AgentExecutor):
         if state is not None:
             if state.resume_pump is not None and not state.resume_pump.done():
                 state.resume_pump.cancel()
-            if state.goal_review_task is not None and not state.goal_review_task.done():
-                state.goal_review_task.cancel()
-            if state.goal_review_pending:
+            if state.continuation.running:
+                state.continuation.workflow.cancel()
+            if state.continuation.clear():
                 self._notify_turn_state(session_id, False)
             if state.runtime is not None:
                 if preserve_background_jobs:
@@ -1294,7 +1301,7 @@ class SessionExecutor(AgentExecutor):
             task
             for task in (
                 state.resume_pump if state is not None else None,
-                state.goal_review_task if state is not None else None,
+                state.continuation.workflow if state is not None else None,
             )
             if task is not None and not task.done()
         ]

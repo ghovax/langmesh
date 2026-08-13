@@ -24,6 +24,8 @@ INPUT_RESPONSE_KIND = "input_response"
 
 # Opens a turn for a goal that is still unfinished, kept distinct because it carries the goal itself.
 GOAL_CONTINUATION_KIND = "goal_continuation"
+# Opens a hidden turn because the agent left tracked work unfinished.
+TASK_CONTINUATION_KIND = "task_continuation"
 
 # Opens a turn that exists only to remind a session it has not reported back to its creator.
 REPORT_REMINDER_KIND = "report_reminder"
@@ -46,6 +48,8 @@ class Metadata:
     RETRY_TURN = "retryTurn"
     REPORT_REMINDER = "reportReminder"
     GOAL_CONTINUATION = "goalContinuation"
+    # Also decorates a goal continuation when one turn carries both independent obligations.
+    TASK_CONTINUATION = "taskContinuation"
     GOAL_REVIEW_ID = "goalReviewId"
     # Set by a session sending another session a message, whose presence is what makes the turn a peer turn.
     PEER_SENDER = "peerSender"
