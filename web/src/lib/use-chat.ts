@@ -11,7 +11,6 @@ import {
   resolvePermission,
   resolveQuestion,
   fetchSessionTurns,
-  fetchSessionTurnsPage,
   sessionCreate,
   sessionSend,
   CONTENT_BLOCK_METADATA_KEY,
@@ -63,8 +62,6 @@ const TERMINAL_STATES: ReadonlySet<TaskState> = new Set([
   "failed",
   "rejected",
 ]);
-
-const HISTORY_PAGE_LIMIT = 500;
 
 // A file attached to a turn, as the metadata a chip renders from. Carried on the user message's meta.
 export interface MessageAttachment {
@@ -247,38 +244,6 @@ function dropMessage(state: ReduceState, id: string): void {
   state.messages = state.messages.filter((message) => message.id !== id);
 }
 
-// A local compaction marker is not part of the persisted transcript until the backend announces
-// its started event. A snapshot replay must therefore keep the running row, or the indicator
-// vanishes mid-preparation and reappears only when the fold lands.
-function preserveRunningCompaction(previous: ChatMessage[], next: ChatMessage[]): ChatMessage[] {
-  const local = previous.findLast(
-    (message) => message.role === "compaction" && message.meta?.status === "running",
-  );
-  if (!local) return next;
-  // The pass already settled on the backend: the transcript owns its done/failed row, so the
-  // local running marker must not reappear beside it.
-  if (
-    next.some(
-      (message) =>
-        message.role === "compaction" &&
-        (message.meta?.status === "done" || message.meta?.status === "failed"),
-    )
-  )
-    return next;
-  const replayIndex = next.findLastIndex(
-    (message) => message.role === "compaction" && message.meta?.status === "running",
-  );
-  if (replayIndex >= 0) {
-    // Keep the local row's identity, so the live fold's done event settles the same marker.
-    return next.map((message, index) =>
-      index === replayIndex
-        ? { ...message, id: local.id, meta: { ...message.meta, status: "running" } }
-        : message,
-    );
-  }
-  return [...next, local];
-}
-
 function settleCompactionMarker(state: ReduceState, fallbackId: string, meta: MessageMeta): void {
   const runningIndex = state.messages.findLastIndex(
     (message) => message.role === "compaction" && message.meta?.status === "running",
@@ -302,16 +267,13 @@ function settleCompactionMarker(state: ReduceState, fallbackId: string, meta: Me
     upsertMessage(state, { ...existing, meta: { ...existing.meta, ...meta } });
     return;
   }
-  state.messages = [
-    ...state.messages,
-    {
-      id: fallbackId,
-      role: "compaction",
-      content: "",
-      timestamp: new Date().toISOString(),
-      meta,
-    },
-  ];
+  state.appendMessage({
+    id: fallbackId,
+    role: "compaction",
+    content: "",
+    timestamp: new Date().toISOString(),
+    meta,
+  });
 }
 
 function dropCompactionMarker(state: ReduceState, fallbackId: string): void {
@@ -326,16 +288,13 @@ function dropCompactionMarker(state: ReduceState, fallbackId: string): void {
 }
 
 function pushErrorMessage(state: ReduceState, error: FriendlyError, sourceId?: string): void {
-  state.messages = [
-    ...state.messages,
-    {
-      id: stableMessageId(state, "error", sourceId),
-      role: "error",
-      content: "",
-      timestamp: new Date().toISOString(),
-      meta: { error },
-    },
-  ];
+  state.appendMessage({
+    id: stableMessageId(state, "error", sourceId),
+    role: "error",
+    content: "",
+    timestamp: new Date().toISOString(),
+    meta: { error },
+  });
 }
 
 function streamedMcpResult(data: Record<string, unknown>): Record<string, unknown> {
@@ -376,14 +335,120 @@ function mergeMcpFinalResult(existing: unknown, finalResult: unknown): unknown {
 
 // Turning A2A stream parts into chat state. Shared by attach and replay, so both render identically.
 
-interface ReduceState {
-  messages: ChatMessage[];
-  tasks: ChatTask[];
-  tokenUsage: TokenUsage | null; // latest cumulative token totals, if any reported
+type BufferedDelta = {
+  key: string;
+  channel: "text" | "thinking";
+  blockIdentifier: string;
+  chunks: string[];
+};
+
+class TranscriptIndex {
+  private runningThinking = -1;
+  private readonly blockOwners = new Map<string, number>();
+
+  private observe(message: ChatMessage, messageIndex: number): void {
+    if (isRunningThinkingMessage(message)) this.runningThinking = messageIndex;
+    for (const block of message.contentBlocks ?? []) {
+      this.blockOwners.set(block.identifier, messageIndex);
+    }
+  }
+
+  update(previous: ChatMessage[], messages: ChatMessage[]): void {
+    // Replacing rows cannot move an owner. Appending observes only the suffix; filters and prepends
+    // take the one safe rebuild path. Thus streaming rows stay O(1), while structural edits converge.
+    if (messages.length === previous.length) return;
+    if (
+      messages.length > previous.length &&
+      previous.every((message, messageIndex) => message === messages[messageIndex])
+    ) {
+      for (let messageIndex = previous.length; messageIndex < messages.length; messageIndex += 1) {
+        this.observe(messages[messageIndex], messageIndex);
+      }
+      return;
+    }
+    this.runningThinking = -1;
+    this.blockOwners.clear();
+    messages.forEach((message, messageIndex) => this.observe(message, messageIndex));
+  }
+
+  thinking(): number {
+    return this.runningThinking;
+  }
+
+  finishThinking(): void {
+    this.runningThinking = -1;
+  }
+
+  blockOwner(identifier: string): number | undefined {
+    return this.blockOwners.get(identifier);
+  }
+
+  observeAppended(message: ChatMessage, messageIndex: number): void {
+    this.observe(message, messageIndex);
+  }
+}
+
+class LiveDeltaBuffer {
+  private turnId = "";
+  private readonly cursors = new Map<string, number>();
+  private deltas: BufferedDelta[] = [];
+
+  append(frame: Extract<SessionStreamFrame, { kind: "delta" }>): void {
+    if (frame.turn_id !== this.turnId) {
+      this.turnId = frame.turn_id;
+      this.cursors.clear();
+    }
+    const key = `${frame.turn_id}:${frame.channel}:${frame.block_id}`;
+    const expectedCursor = this.cursors.get(key) ?? 0;
+    if (frame.cursor > expectedCursor) throw new Error("Live transcript stream has a gap.");
+    const consumed = Math.max(0, expectedCursor - frame.cursor);
+    if (consumed >= frame.chunks.length) return;
+    const chunks = frame.chunks.slice(consumed);
+    this.cursors.set(key, frame.cursor + frame.chunks.length);
+    const previous = this.deltas.at(-1);
+    if (previous?.key === key) previous.chunks.push(...chunks);
+    else
+      this.deltas.push({
+        key,
+        channel: frame.channel,
+        blockIdentifier: frame.block_id,
+        chunks,
+      });
+  }
+
+  take(): BufferedDelta[] {
+    const buffered = this.deltas;
+    this.deltas = [];
+    return buffered;
+  }
+}
+
+class ReduceState {
+  private transcript: ChatMessage[] = [];
+  tasks: ChatTask[] = [];
+  tokenUsage: TokenUsage | null = null; // latest cumulative token totals, if any reported
   // Per-source occurrence counter, so a key comes from the server messageId rather than array position.
-  keyCounts: Map<string, number>;
-  liveTurnId: string;
-  liveCursors: Map<string, number>;
+  keyCounts = new Map<string, number>();
+  live = new LiveDeltaBuffer();
+  // Namespaces generated fallback ids while complete turns arrive independently newest-to-oldest.
+  keyNamespace = "";
+  // One owner for every derived location; it is rebuilt after structural edits and history merges.
+  readonly index = new TranscriptIndex();
+
+  get messages(): ChatMessage[] {
+    return this.transcript;
+  }
+
+  set messages(messages: ChatMessage[]) {
+    const previous = this.transcript;
+    this.transcript = messages;
+    this.index.update(previous, messages);
+  }
+
+  appendMessage(message: ChatMessage): void {
+    this.transcript.push(message);
+    this.index.observeAppended(message, this.transcript.length - 1);
+  }
 }
 
 export type TranscriptState = ReduceState;
@@ -392,31 +457,8 @@ export function createTranscriptState(): TranscriptState {
   return newReduceState();
 }
 
-// Whether a replayed transcript would render exactly what is on screen, which is the end-of-stream flash.
-function rendersIdentically(current: ChatMessage[], replayed: ChatMessage[]): boolean {
-  if (current.length !== replayed.length) return false;
-  for (let index = 0; index < current.length; index += 1) {
-    if (current[index].role !== replayed[index].role) return false;
-    if (current[index].content !== replayed[index].content) return false;
-  }
-  for (let index = 0; index < current.length; index += 1) {
-    if (
-      JSON.stringify(current[index].meta ?? null) !== JSON.stringify(replayed[index].meta ?? null)
-    )
-      return false;
-  }
-  return true;
-}
-
 function newReduceState(): ReduceState {
-  return {
-    messages: [],
-    tasks: [],
-    tokenUsage: null,
-    keyCounts: new Map(),
-    liveTurnId: "",
-    liveCursors: new Map(),
-  };
+  return new ReduceState();
 }
 
 // A position-independent id: the A2A messageId plus an occurrence counter, so replay converges.
@@ -429,7 +471,7 @@ function stableMessageId(state: ReduceState, prefix: string, sourceId: string | 
     // A monotonic counter, not the array length, or inserting a row earlier renumbers every row after it.
     const issued = state.keyCounts.get("") ?? 0;
     state.keyCounts.set("", issued + 1);
-    return `${prefix}-anon-${issued}`;
+    return `${prefix}-${state.keyNamespace || "live"}-anon-${issued}`;
   }
   // A message that has an id is that id, so the optimistic copy and the echo are one row.
   return `${prefix}-${sourceId}`;
@@ -439,7 +481,7 @@ function upsertMessage(state: ReduceState, message: ChatMessage): void {
   // Replace in place when the row exists, append when it does not, so a message arriving twice converges.
   const index = state.messages.findIndex((existing) => existing.id === message.id);
   if (index === -1) {
-    state.messages = [...state.messages, message];
+    state.appendMessage(message);
     return;
   }
   state.messages = state.messages.map((existing, position) =>
@@ -479,20 +521,27 @@ function isRunningThinkingMessage(message: ChatMessage): boolean {
 }
 
 function finishRunningThinking(state: ReduceState): void {
-  state.messages = state.messages.map((message) =>
-    isRunningThinkingMessage(message)
-      ? { ...message, meta: { ...message.meta, status: "done" } }
-      : message,
-  );
+  const index = state.index.thinking();
+  if (index < 0) return;
+  const message = state.messages[index];
+  if (message && isRunningThinkingMessage(message)) {
+    state.messages[index] = { ...message, meta: { ...message.meta, status: "done" } };
+  }
+  state.index.finishThinking();
 }
 
 // Close the in-flight thinking row with its measured duration, so it reads "Thought for Ns".
 function finishRunningThinkingWithDuration(state: ReduceState, durationMs: number): void {
-  state.messages = state.messages.map((message) =>
-    isRunningThinkingMessage(message)
-      ? { ...message, meta: { ...message.meta, status: "done", durationMs } }
-      : message,
-  );
+  const index = state.index.thinking();
+  if (index < 0) return;
+  const message = state.messages[index];
+  if (message && isRunningThinkingMessage(message)) {
+    state.messages[index] = {
+      ...message,
+      meta: { ...message.meta, status: "done", durationMs },
+    };
+  }
+  state.index.finishThinking();
 }
 
 function finishActiveTools(state: ReduceState): void {
@@ -505,28 +554,25 @@ function finishActiveTools(state: ReduceState): void {
 
 // The one path for the thinking signal: ensure a running row exists, then append the reasoning.
 function applyThinking(state: ReduceState, text: string): void {
-  let index = state.messages.findLastIndex(isRunningThinkingMessage);
+  let index = state.index.thinking();
   if (index === -1) {
     // Counted in its own right, not by the array's length nor by the shared anonymous counter: both advance
     // differently on a live turn and on its replay, and any drift re-keys every reasoning row after it.
     const issued = state.keyCounts.get("thinking") ?? 0;
     state.keyCounts.set("thinking", issued + 1);
-    state.messages = [
-      ...state.messages,
-      {
-        id: `status-${issued}`,
-        role: "thinking",
-        content: "",
-        timestamp: new Date().toISOString(),
-        meta: { status: "running" },
-      },
-    ];
+    const message: ChatMessage = {
+      id: `status-${state.keyNamespace || "live"}-${issued}`,
+      role: "thinking",
+      content: "",
+      timestamp: new Date().toISOString(),
+      meta: { status: "running" },
+    };
+    state.appendMessage(message);
     index = state.messages.length - 1;
   }
   // The session is reasoning, so a row opened optimistically stops being provisional.
-  state.messages = state.messages.map((message, messageIndex) =>
-    messageIndex === index ? { ...message, content: message.content + text } : message,
-  );
+  const message = state.messages[index];
+  state.messages[index] = { ...message, content: message.content + text };
 }
 
 function hasAssistantTextAfterLastUser(state: ReduceState): boolean {
@@ -575,50 +621,42 @@ function appendAssistantContentBlock(
   const existingIndex = existingContentBlocks.findIndex(
     (contentBlock) => contentBlock.identifier === blockIdentifier,
   );
-  const contentBlocks =
-    existingIndex >= 0
-      ? existingContentBlocks.map((contentBlock, contentBlockIndex) =>
-          contentBlockIndex === existingIndex
-            ? { ...contentBlock, content: contentBlock.content + text }
-            : contentBlock,
-        )
-      : [...existingContentBlocks, { identifier: blockIdentifier, content: text }];
+  let contentBlocks: Array<{ identifier: string; content: string }>;
+  if (existingIndex >= 0) {
+    existingContentBlocks[existingIndex] = {
+      ...existingContentBlocks[existingIndex],
+      content: existingContentBlocks[existingIndex].content + text,
+    };
+    contentBlocks = existingContentBlocks;
+  } else {
+    contentBlocks = [...existingContentBlocks, { identifier: blockIdentifier, content: text }];
+  }
   return { ...message, content: message.content + text, contentBlocks };
-}
-
-/** The message already holding this block of prose, grouped by the identity the model gives it. */
-function messageHoldingBlock(state: ReduceState, blockIdentifier: string): string | null {
-  const owner = state.messages.findLast(
-    (message) =>
-      message.role === "assistant" &&
-      message.contentBlocks?.some((block) => block.identifier === blockIdentifier),
-  );
-  return owner?.id ?? null;
 }
 
 function pushAssistantText(state: ReduceState, text: string, blockIdentifier: string): void {
   if (!text) return;
   if (!blockIdentifier) throw new Error("Assistant text requires a content-block identity.");
   finishRunningThinking(state);
-  const owner = messageHoldingBlock(state, blockIdentifier);
-  if (owner !== null) {
-    state.messages = state.messages.map((message) =>
-      message.id === owner ? appendAssistantContentBlock(message, text, blockIdentifier) : message,
+  const ownerIndex = state.index.blockOwner(blockIdentifier);
+  if (ownerIndex !== undefined) {
+    state.messages[ownerIndex] = appendAssistantContentBlock(
+      state.messages[ownerIndex],
+      text,
+      blockIdentifier,
     );
     return;
   }
-  state.messages = [
-    ...state.messages,
-    {
-      // The block it opened with, which the live stream and a replay both carry, so a settled turn is
-      // re-rendered rather than rebuilt: a new key here unmounts the prose, its highlighting and its diagrams.
-      id: `asst-${blockIdentifier}`,
-      role: "assistant",
-      content: text,
-      contentBlocks: [{ identifier: blockIdentifier, content: text }],
-      timestamp: new Date().toISOString(),
-    },
-  ];
+  const message: ChatMessage = {
+    // The block it opened with, which the live stream and a replay both carry, so a settled turn is
+    // re-rendered rather than rebuilt: a new key here unmounts the prose, its highlighting and its diagrams.
+    id: `asst-${blockIdentifier}`,
+    role: "assistant",
+    content: text,
+    contentBlocks: [{ identifier: blockIdentifier, content: text }],
+    timestamp: new Date().toISOString(),
+  };
+  state.appendMessage(message);
 }
 
 // Attachments into the lean shape the UI renders, shared by the live send and replay so chips match.
@@ -694,6 +732,7 @@ function reduceInboundMessage(
 
 // The one reduction of a part, walked by replay and by the live tail alike.
 function reduceAgentPart(state: ReduceState, part: A2APart, sourceId?: string): void {
+  drainLiveDeltas(state);
   if (part.kind === "text") {
     pushAssistantText(state, part.text ?? "", requiredContentBlockIdentifier(part.metadata));
     return;
@@ -706,23 +745,15 @@ function reduceLiveDelta(
   state: ReduceState,
   frame: Extract<SessionStreamFrame, { kind: "delta" }>,
 ): void {
-  // A provider may reuse a block id (and thinking may have none), but a turn id is unique.
-  if (frame.turn_id !== state.liveTurnId) {
-    state.liveTurnId = frame.turn_id;
-    state.liveCursors.clear();
+  state.live.append(frame);
+}
+
+function drainLiveDeltas(state: ReduceState): void {
+  for (const delta of state.live.take()) {
+    const text = delta.chunks.join("");
+    if (delta.channel === "thinking") applyThinking(state, text);
+    else pushAssistantText(state, text, delta.blockIdentifier);
   }
-  const cursorKey = `${frame.turn_id}:${frame.channel}:${frame.block_id}`;
-  const expectedCursor = state.liveCursors.get(cursorKey) ?? 0;
-  if (frame.cursor > expectedCursor) throw new Error("Live transcript stream has a gap.");
-  const consumed = Math.max(0, expectedCursor - frame.cursor);
-  if (consumed >= frame.chunks.length) return;
-  const text = frame.chunks.slice(consumed).join("");
-  state.liveCursors.set(cursorKey, frame.cursor + frame.chunks.length);
-  if (frame.channel === "thinking") {
-    applyThinking(state, text);
-    return;
-  }
-  pushAssistantText(state, text, frame.block_id);
 }
 
 export function appendTranscriptPart(
@@ -731,6 +762,14 @@ export function appendTranscriptPart(
   sourceId?: string,
 ): void {
   reduceAgentPart(state, part, sourceId);
+}
+
+export function appendTranscriptDelta(
+  state: TranscriptState,
+  frame: Extract<SessionStreamFrame, { kind: "delta" }>,
+): void {
+  reduceLiveDelta(state, frame);
+  drainLiveDeltas(state);
 }
 
 function reduceAgentMessage(state: ReduceState, message: A2AMessage): void {
@@ -767,23 +806,20 @@ function reduceDataPart(
         // Sending new work explicitly supersedes any still-retryable failed turn.
         state.messages = state.messages.filter((message) => message.role !== "error");
       }
-      state.messages = [
-        ...state.messages,
-        {
-          id: identifier ? `${role}-${identifier}` : stableMessageId(state, role, sourceId),
-          role,
-          content: text,
-          timestamp: new Date().toISOString(),
-          ...(steeringSender || goalReviewId
-            ? {
-                meta: {
-                  ...(steeringSender ? { peerSender: steeringSender } : {}),
-                  ...(goalReviewId ? { goalReviewId } : {}),
-                },
-              }
-            : {}),
-        },
-      ];
+      state.appendMessage({
+        id: identifier ? `${role}-${identifier}` : stableMessageId(state, role, sourceId),
+        role,
+        content: text,
+        timestamp: new Date().toISOString(),
+        ...(steeringSender || goalReviewId
+          ? {
+              meta: {
+                ...(steeringSender ? { peerSender: steeringSender } : {}),
+                ...(goalReviewId ? { goalReviewId } : {}),
+              },
+            }
+          : {}),
+      });
       break;
     }
     case "compaction": {
@@ -807,16 +843,13 @@ function reduceDataPart(
               : message,
           );
         } else {
-          state.messages = [
-            ...state.messages,
-            {
-              id: stableMessageId(state, "compaction", sourceId),
-              role: "compaction",
-              content: "",
-              timestamp: new Date().toISOString(),
-              meta: { status: "running", reason: event.reason ?? "" },
-            },
-          ];
+          state.appendMessage({
+            id: stableMessageId(state, "compaction", sourceId),
+            role: "compaction",
+            content: "",
+            timestamp: new Date().toISOString(),
+            meta: { status: "running", reason: event.reason ?? "" },
+          });
         }
         break;
       }
@@ -845,16 +878,13 @@ function reduceDataPart(
             index === runningIndex ? { ...message, meta } : message,
           );
         } else {
-          state.messages = [
-            ...state.messages,
-            {
-              id: stableMessageId(state, "compaction", sourceId),
-              role: "compaction",
-              content: "",
-              timestamp: new Date().toISOString(),
-              meta,
-            },
-          ];
+          state.appendMessage({
+            id: stableMessageId(state, "compaction", sourceId),
+            role: "compaction",
+            content: "",
+            timestamp: new Date().toISOString(),
+            meta,
+          });
         }
       }
       break;
@@ -947,21 +977,18 @@ function reduceDataPart(
         );
         break;
       }
-      state.messages = [
-        ...state.messages,
-        {
-          id: toolCallMessageId(toolCallId),
-          role: "tool_call",
-          content: event.tool_name || "unknown",
-          timestamp: new Date().toISOString(),
-          meta: {
-            arguments: event.arguments,
-            argumentsComplete: event.arguments_complete === true,
-            toolCallId,
-            status: "running",
-          },
+      state.appendMessage({
+        id: toolCallMessageId(toolCallId),
+        role: "tool_call",
+        content: event.tool_name || "unknown",
+        timestamp: new Date().toISOString(),
+        meta: {
+          arguments: event.arguments,
+          argumentsComplete: event.arguments_complete === true,
+          toolCallId,
+          status: "running",
         },
-      ];
+      });
       break;
     }
     case "tool_result": {
@@ -995,21 +1022,18 @@ function reduceDataPart(
           : message,
       );
       if (!matched) {
-        state.messages = [
-          ...state.messages,
-          {
-            id: toolCallMessageId(toolCallId),
-            role: "tool_call",
-            content: toolName || "unknown",
-            timestamp: new Date().toISOString(),
-            meta: {
-              argumentsComplete: true,
-              toolCallId,
-              status: resultStatus,
-              result: mergedResult,
-            },
+        state.appendMessage({
+          id: toolCallMessageId(toolCallId),
+          role: "tool_call",
+          content: toolName || "unknown",
+          timestamp: new Date().toISOString(),
+          meta: {
+            argumentsComplete: true,
+            toolCallId,
+            status: resultStatus,
+            result: mergedResult,
           },
-        ];
+        });
       }
       break;
     }
@@ -1070,7 +1094,7 @@ function reduceDataPart(
             arguments: event.arguments ?? {},
           },
         };
-        state.messages = [...state.messages, raised];
+        state.appendMessage(raised);
       }
       break;
     }
@@ -1128,18 +1152,15 @@ function reduceDataPart(
     }
     case "warning": {
       finishRunningThinking(state);
-      state.messages = [
-        ...state.messages,
-        {
-          id: stableMessageId(state, "warning", sourceId),
-          role: "warning",
-          content: "",
-          timestamp: new Date().toISOString(),
-          meta: {
-            warning: { code: event.code, parameters: translationParameters(event.parameters) },
-          },
+      state.appendMessage({
+        id: stableMessageId(state, "warning", sourceId),
+        role: "warning",
+        content: "",
+        timestamp: new Date().toISOString(),
+        meta: {
+          warning: { code: event.code, parameters: translationParameters(event.parameters) },
         },
-      ];
+      });
       break;
     }
     case "text":
@@ -1155,50 +1176,10 @@ function reduceDataPart(
   }
 }
 
-// Rebuild messages from persisted tasks, already compacted server-side, so no client pass is needed.
-/** The pages of a turn, joined back into it: history in the order given, and each artifact kept once. */
-function coalesceTurnPages(turns: A2ATurn[]): A2ATurn[] {
-  const byIdentifier = new Map<string, A2ATurn>();
-  const ordered: A2ATurn[] = [];
-  for (const turn of turns) {
-    const identifier = String(turn.id ?? "");
-    const held = identifier ? byIdentifier.get(identifier) : undefined;
-    if (!held) {
-      const copy = {
-        ...turn,
-        history: [...(turn.history ?? [])],
-        artifacts: [...(turn.artifacts ?? [])],
-      };
-      if (identifier) byIdentifier.set(identifier, copy);
-      ordered.push(copy);
-      continue;
-    }
-    held.history = [...(held.history ?? []), ...(turn.history ?? [])];
-    const seen = new Set((held.artifacts ?? []).map((artifact) => artifact.artifactId));
-    for (const artifact of turn.artifacts ?? []) {
-      if (seen.has(artifact.artifactId)) continue;
-      seen.add(artifact.artifactId);
-      held.artifacts = [...(held.artifacts ?? []), artifact];
-    }
-    // The later page is the newer one, so its status carries the turn's real ending.
-    if (turn.status) held.status = turn.status;
-  }
-  return ordered;
-}
-
-export function replayTurns(turns: A2ATurn[]): {
-  messages: ChatMessage[];
-  tasks: ChatTask[];
-  tokenUsage: TokenUsage | null;
-  keyCounts: Map<string, number>;
-  liveTurnId: string;
-  liveCursors: Map<string, number>;
-} {
-  // Left in the order the server sent them, with a turn's pages joined before anything judges it.
-  const mainTurns = coalesceTurnPages(
-    turns.filter((turn) => !(turnState(turn).referenceTurnIds ?? []).length),
-  );
+export function replayTurns(turns: A2ATurn[], keyNamespace = ""): TranscriptState {
+  const mainTurns = turns.filter((turn) => !(turnState(turn).referenceTurnIds ?? []).length);
   const state: ReduceState = newReduceState();
+  state.keyNamespace = keyNamespace;
   for (const turn of mainTurns) {
     // A turn's stream is its history plus its trailing status message, which A2A folds in only on the next update.
     const replayMessages = [...(turn.history ?? [])];
@@ -1231,14 +1212,68 @@ export function replayTurns(turns: A2ATurn[]): {
     }
     if (TERMINAL_STATES.has(turn.status?.state as TaskState)) finishActiveTools(state);
   }
-  return {
-    messages: state.messages,
-    tasks: state.tasks,
-    tokenUsage: state.tokenUsage,
-    keyCounts: state.keyCounts,
-    liveTurnId: state.liveTurnId,
-    liveCursors: state.liveCursors,
-  };
+  return state;
+}
+
+/** Complete newest-to-oldest turns, accumulated cheaply and prepended once at the next paint. */
+export class TranscriptHistoryBuffer {
+  private segments: ChatMessage[][] = [];
+  private readonly tasks = new Map<string, ChatTask>();
+  private newestTokenUsage: TokenUsage | null | undefined;
+  private bufferedMessages = 0;
+  private paintedMessages = 0;
+
+  append(turn: A2ATurn, keyNamespace = String(turn.id ?? "history")): boolean {
+    const replayed = replayTurns([turn], keyNamespace);
+    this.segments.push(replayed.messages);
+    this.bufferedMessages += replayed.messages.length;
+    for (const task of replayed.tasks) {
+      if (!this.tasks.has(task.identifier)) this.tasks.set(task.identifier, task);
+    }
+    if (this.newestTokenUsage === undefined) this.newestTokenUsage = replayed.tokenUsage;
+    // Paint the newest turn immediately, then double the visible history each time. Consequently
+    // all flattening across an arbitrarily long history copies fewer than twice its final rows.
+    return this.bufferedMessages >= Math.max(1, this.paintedMessages);
+  }
+
+  drainInto(state: TranscriptState): boolean {
+    if (this.segments.length === 0) return false;
+    const seen = new Set(state.messages.map((message) => message.id));
+    const acceptedNewestFirst: ChatMessage[][] = [];
+    for (const segment of this.segments) {
+      const accepted: ChatMessage[] = [];
+      for (const message of segment) {
+        if (seen.has(message.id)) continue;
+        seen.add(message.id);
+        accepted.push(message);
+      }
+      if (accepted.length > 0) acceptedNewestFirst.push(accepted);
+    }
+    const olderMessages = acceptedNewestFirst.reverse().flat();
+    const transcriptWasEmpty = state.messages.length === 0;
+    state.messages = [...olderMessages, ...state.messages];
+    const mergedTasks = new Map(this.tasks);
+    state.tasks.forEach((task) => mergedTasks.set(task.identifier, task));
+    state.tasks = [...mergedTasks.values()];
+    if (state.tokenUsage === null && transcriptWasEmpty) {
+      state.tokenUsage = this.newestTokenUsage ?? null;
+    }
+    this.paintedMessages += olderMessages.length;
+    this.clearBuffered();
+    return true;
+  }
+
+  private clearBuffered(): void {
+    this.segments = [];
+    this.tasks.clear();
+    this.newestTokenUsage = undefined;
+    this.bufferedMessages = 0;
+  }
+
+  reset(): void {
+    this.clearBuffered();
+    this.paintedMessages = 0;
+  }
 }
 
 export function useChat(
@@ -1262,8 +1297,7 @@ export function useChat(
   const [isHistoryLoading, setIsHistoryLoading] = useState(!!initialSessionId);
   // Set when every attempt to load the transcript failed, so the panel can offer a retry.
   const [historyError, setHistoryError] = useState(false);
-  const [hasOlderHistory, setHasOlderHistory] = useState(false);
-  const [isOlderHistoryLoading, setIsOlderHistoryLoading] = useState(false);
+  const [isHistoryStreaming, setIsHistoryStreaming] = useState(!!initialSessionId);
   // Bumped to force the history-load effect to re-run (a manual retry).
   const [historyReloadNonce, setHistoryReloadNonce] = useState(0);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
@@ -1274,23 +1308,20 @@ export function useChat(
 
   // This hook's attach subscription while it drives a turn. Closing it only drops the client end.
   const attachRef = useRef<{ abort: () => void; ready: Promise<boolean> } | null>(null);
+  const viewerAttachRef = useRef<{ abort: () => void; ready: Promise<boolean> } | null>(null);
+  const viewerContextRef = useRef<string | null>(null);
+  const historyReloadAppliedRef = useRef(0);
   const stateRef = useRef<ReduceState>(newReduceState());
   const sessionIdRef = useRef<string | null>(initialSessionId);
-  const historyLoadedForRef = useRef<string | null>(null);
-  const historyFragmentsRef = useRef<A2ATurn[]>([]);
-  const historyPageCursorRef = useRef<number | null>(null);
-  const hasOlderHistoryRef = useRef(false);
-  const isOlderHistoryLoadingRef = useRef(false);
   const isStreamingRef = useRef(false);
   // Set by a Stop so the stream close does not drain the queue into a fresh turn. One-shot.
   const abortedByUserRef = useRef(false);
   const errorToastKeysRef = useRef<Set<string>>(new Set());
-  // Whether this session was running, so a final refresh happens once its turn finishes.
-  const wasRunningRef = useRef(false);
   // True once we have driven a turn: the live stream is then authoritative, so never subscribe as well.
   const streamedLocallyRef = useRef(false);
   const startTurnRef = useRef<(message: OutboxMessage) => Promise<Delivery>>(async () => "failed");
   const flushFrameRef = useRef<number | null>(null);
+  const historyBufferRef = useRef(new TranscriptHistoryBuffer());
 
   // Whether the transcript holds a decision nobody has made: a parked session has stopped, not paused.
   const hasPendingDecision = useCallback(
@@ -1328,14 +1359,19 @@ export function useChat(
       window.cancelAnimationFrame(flushFrameRef.current);
       flushFrameRef.current = null;
     }
-    setMessages(stateRef.current.messages);
+    drainLiveDeltas(stateRef.current);
+    historyBufferRef.current.drainInto(stateRef.current);
+    // Reducers mutate indexed rows in place between paints; one shallow snapshot per paint makes
+    // React observe the batch without copying the entire transcript for every provider chunk.
+    setMessages([...stateRef.current.messages]);
     setTasks(stateRef.current.tasks);
     setTokenUsage(stateRef.current.tokenUsage);
   }, []);
 
   const flush = useCallback(() => {
     if (typeof window === "undefined") {
-      setMessages(stateRef.current.messages);
+      drainLiveDeltas(stateRef.current);
+      setMessages([...stateRef.current.messages]);
       setTasks(stateRef.current.tasks);
       setTokenUsage(stateRef.current.tokenUsage);
       return;
@@ -1343,23 +1379,8 @@ export function useChat(
     if (flushFrameRef.current != null) return;
     flushFrameRef.current = window.requestAnimationFrame(() => {
       flushFrameRef.current = null;
-      setMessages(stateRef.current.messages);
-      setTasks(stateRef.current.tasks);
-      setTokenUsage(stateRef.current.tokenUsage);
+      flushNow();
     });
-  }, []);
-
-  const applyHistoryFragments = useCallback(() => {
-    const replayed = replayTurns(historyFragmentsRef.current);
-    stateRef.current = {
-      messages: replayed.messages,
-      tasks: replayed.tasks,
-      tokenUsage: replayed.tokenUsage,
-      keyCounts: replayed.keyCounts,
-      liveTurnId: "",
-      liveCursors: new Map(),
-    };
-    flushNow();
   }, [flushNow]);
 
   const messageTranslation = useTranslations("ChatMessage");
@@ -1388,245 +1409,87 @@ export function useChat(
         flushFrameRef.current = null;
       }
       attachRef.current?.abort();
+      viewerAttachRef.current?.abort();
     };
   }, []);
 
+  const prependHistoryTurn = useCallback(
+    (turn: A2ATurn) => {
+      if (historyBufferRef.current.append(turn)) flush();
+    },
+    [flush],
+  );
+
   useEffect(() => {
     if (!initialSessionId) return;
-    if (initialSessionId === sessionIdRef.current && stateRef.current.messages.length > 0) {
-      setIsHistoryLoading(false);
-      return;
-    }
-    if (initialSessionId === sessionIdRef.current && isStreamingRef.current) {
-      setIsHistoryLoading(false);
-      return;
-    }
-    if (historyLoadedForRef.current === initialSessionId) return;
-    // A running session we are not driving loads over the live stream, so skip REST and avoid the race.
-    if (sessionRunning && !streamedLocallyRef.current) {
-      historyLoadedForRef.current = initialSessionId;
-      return;
-    }
-    historyLoadedForRef.current = initialSessionId;
+    // The turn-driving attachment owns a newly created session until its terminal edge. The
+    // session-list update will re-run this effect afterward and install the durable viewer.
+    if (streamedLocallyRef.current) return;
     let cancelled = false;
-    // Abort the fetch when the session switches, or it holds a connection and writes a stale transcript.
-    const controller = new AbortController();
+    let attached = false;
+    const resetTranscript =
+      viewerContextRef.current !== initialSessionId ||
+      historyReloadAppliedRef.current !== historyReloadNonce;
+    viewerContextRef.current = initialSessionId;
+    historyReloadAppliedRef.current = historyReloadNonce;
+    if (resetTranscript) {
+      stateRef.current = newReduceState();
+      historyBufferRef.current.reset();
+    }
+    sessionIdRef.current = initialSessionId;
+    setSessionId(initialSessionId);
+    if (resetTranscript) flushNow();
     setHistoryError(false);
-    setHasOlderHistory(false);
-    setIsHistoryLoading(true);
-
-    // Retry a few times with a short backoff, so a transient failure heals rather than leaving a blank panel.
-    const MAX_ATTEMPTS = 6;
-    const loadHistory = async () => {
-      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-        try {
-          const page = await fetchSessionTurnsPage(
-            initialSessionId,
-            null,
-            controller.signal,
-            HISTORY_PAGE_LIMIT,
-          );
-          if (cancelled) return;
-          historyFragmentsRef.current = page.turns;
-          historyPageCursorRef.current = page.next_before_row_id;
-          hasOlderHistoryRef.current = page.has_more;
-          setHasOlderHistory(page.has_more);
-          setSessionId(initialSessionId);
-          sessionIdRef.current = initialSessionId;
-          applyHistoryFragments();
+    if (resetTranscript) setIsHistoryLoading(true);
+    setIsHistoryStreaming(true);
+    const subscription = attachSession(
+      initialSessionId,
+      (frame) => {
+        if (cancelled || streamedLocallyRef.current) return;
+        if (frame.kind === "snapshot") {
+          attached = true;
+          setHistoryError(false);
+          if (frame.reconnected) setIsHistoryStreaming(true);
+        } else if (frame.kind === "history") {
+          prependHistoryTurn(frame.turn);
           setIsHistoryLoading(false);
-          return;
-        } catch (caught) {
-          if (cancelled || controller.signal.aborted) return;
-          if (attempt === MAX_ATTEMPTS - 1) {
-            swallowed(
-              { component: "transcript", operation: "load the transcript after retrying" },
-              caught,
-            );
-            setHistoryError(true);
-            setIsHistoryLoading(false);
-            return;
-          }
-          await new Promise((resolve) => setTimeout(resolve, Math.min(4000, 300 * 2 ** attempt)));
-          if (cancelled) return;
+        } else if (frame.kind === "history_done") {
+          flushNow();
+          setIsHistoryLoading(false);
+          setIsHistoryStreaming(false);
+        } else if (frame.kind === "live") {
+          reduceAgentPart(stateRef.current, frame.part);
+          flush();
+          setIsHistoryLoading(false);
+        } else if (frame.kind === "delta") {
+          reduceLiveDelta(stateRef.current, frame);
+          flush();
+          setIsHistoryLoading(false);
         }
-      }
-    };
-    loadHistory();
-    return () => {
-      cancelled = true;
-      controller.abort();
-      historyLoadedForRef.current = null;
-    };
-  }, [initialSessionId, applyHistoryFragments, historyReloadNonce, sessionRunning]);
-
-  // Pull every older page back-to-back into a ref, then prepend once, so the scroll never jumps.
-  const drainOlderHistory = useCallback(async () => {
-    const context = sessionIdRef.current;
-    if (!context || isOlderHistoryLoadingRef.current) return;
-    if (historyPageCursorRef.current == null || !hasOlderHistoryRef.current) return;
-    // Never fill history over a live turn: replay would drop the just-sent turn from view.
-    if (streamedLocallyRef.current || isStreamingRef.current) return;
-    isOlderHistoryLoadingRef.current = true;
-    setIsOlderHistoryLoading(true);
-    let fetchedAny = false;
-    try {
-      let cursor: number | null = historyPageCursorRef.current;
-      while (cursor != null && hasOlderHistoryRef.current) {
-        if (streamedLocallyRef.current || isStreamingRef.current) return;
-        const page = await fetchSessionTurnsPage(context, cursor, undefined, HISTORY_PAGE_LIMIT);
-        if (sessionIdRef.current !== context) return;
-        historyFragmentsRef.current = [...page.turns, ...historyFragmentsRef.current];
-        historyPageCursorRef.current = page.next_before_row_id;
-        hasOlderHistoryRef.current = page.has_more;
-        cursor = page.next_before_row_id;
-        fetchedAny = true;
-      }
-    } catch (caught) {
-      // Leave what loaded and resume from the last cursor. Still reported: a permanent failure looks the same otherwise.
-      swallowed({ component: "transcript", operation: "load older history" }, caught);
-    } finally {
-      // Skip the apply if a local turn began mid-drain: the fragments stay unused rather than clobbering it.
-      if (
-        fetchedAny &&
-        sessionIdRef.current === context &&
-        !streamedLocallyRef.current &&
-        !isStreamingRef.current
-      ) {
-        setHasOlderHistory(hasOlderHistoryRef.current);
-        // One replay + render for the whole accumulated transcript.
-        applyHistoryFragments();
-      }
-      isOlderHistoryLoadingRef.current = false;
-      setIsOlderHistoryLoading(false);
-    }
-  }, [applyHistoryFragments]);
-
-  // Kick the drain once the newest page has settled, and not while a turn is streaming.
-  useEffect(() => {
-    if (isHistoryLoading || isOlderHistoryLoading || isStreaming || !hasOlderHistory) return;
-    void drainOlderHistory();
-  }, [isHistoryLoading, isOlderHistoryLoading, isStreaming, hasOlderHistory, drainOlderHistory]);
-
-  // Live updates for a running session this hook is not driving: a snapshot, then a tail, through one reducer.
-  useEffect(() => {
-    if (!initialSessionId) return;
-
-    // A turn we drove locally is complete and the backend has gone idle, so the durable transcript
-    // is settled. Only now may the viewer path re-attach and replay it without racing final chunks.
-    if (!sessionRunning && streamedLocallyRef.current && !isStreamingRef.current) {
-      streamedLocallyRef.current = false;
-    }
-
-    let cancelled = false;
-    let subscription: { abort: () => void } | null = null;
-    const controller = new AbortController();
-
-    const applySnapshot = (turns: A2ATurn[], hasMore = false, nextCursor: number | null = null) => {
-      const replayed = replayTurns(turns);
-      // The attach snapshot is the newest page, not the whole conversation, so the pager the
-      // backend sends must feed the history machinery. Without it the transcript shows only
-      // that page while the session streams, and scroll-up can never load the rest until a
-      // turn ends and the full fetch replaces it.
-      historyFragmentsRef.current = turns;
-      historyPageCursorRef.current = nextCursor;
-      hasOlderHistoryRef.current = hasMore;
-      setHasOlderHistory(hasMore);
-      // A manual compaction owns a local running marker before the backend's started event
-      // exists; the replay keeps that row so the indicator never blinks out mid-preparation.
-      const messages = preserveRunningCompaction(stateRef.current.messages, replayed.messages);
-      // Already showing this: keeping the array reference means `setMessages` bails and nothing re-renders.
-      if (rendersIdentically(stateRef.current.messages, messages)) {
-        stateRef.current.tasks = replayed.tasks;
-        stateRef.current.tokenUsage = replayed.tokenUsage;
-        sessionIdRef.current = initialSessionId;
-        setSessionId(initialSessionId);
-        flushNow();
-        return;
-      }
-      stateRef.current = {
-        messages,
-        tasks: replayed.tasks,
-        tokenUsage: replayed.tokenUsage,
-        keyCounts: replayed.keyCounts,
-        liveTurnId: "",
-        liveCursors: new Map(),
-      };
-      sessionIdRef.current = initialSessionId;
-      setSessionId(initialSessionId);
-      flushNow();
-    };
-
-    if (sessionRunning && !isStreamingRef.current && !streamedLocallyRef.current) {
-      wasRunningRef.current = true;
-      subscription = attachSession(
-        initialSessionId,
-        (frame) => {
-          if (cancelled) return;
-          if (frame.kind === "snapshot") {
-            applySnapshot(frame.turns, !!frame.has_more, frame.next_before_row_id ?? null);
-            setHistoryError(false);
-            setIsHistoryLoading(false);
-          } else if (frame.kind === "live") {
-            reduceAgentPart(stateRef.current, frame.part);
-            flush();
-          } else if (frame.kind === "delta") {
-            reduceLiveDelta(stateRef.current, frame);
-            flush();
-          } else if (frame.kind === "turn" && !frame.running) {
-            // The turn ended, said by the session on the stream we already hold, before the polled listing learns it.
-            void (async () => {
-              try {
-                const tasks = await fetchSessionTurns(initialSessionId, controller.signal);
-                if (!cancelled && !isStreamingRef.current && !streamedLocallyRef.current)
-                  applySnapshot(tasks);
-              } catch (caught) {
-                // Recoverable, since the `sessionRunning` path captures the same state, but not silent.
-                swallowed({ component: "transcript", operation: "read the finished turn" }, caught);
-              }
-            })();
-          }
-        },
-        () => {
-          // Stream closed. The `sessionRunning` flip re-runs this effect and captures the final state.
-        },
-      );
-    } else if (!sessionRunning && wasRunningRef.current) {
-      // The turn just finished: capture its terminal state once, which the live tail misses.
-      wasRunningRef.current = false;
-      void (async () => {
-        try {
-          const tasks = await fetchSessionTurns(initialSessionId, controller.signal);
-          if (!cancelled && !isStreamingRef.current && !streamedLocallyRef.current)
-            applySnapshot(tasks);
-        } catch (caught) {
-          // Leave the last live state in place; it is very nearly the terminal state.
-          swallowed(
-            { component: "transcript", operation: "read the session's final state" },
-            caught,
-          );
-        }
-      })();
-    }
+      },
+      () => {
+        if (cancelled) return;
+        setIsHistoryLoading(false);
+        setIsHistoryStreaming(false);
+        if (!attached) setHistoryError(true);
+      },
+    );
+    viewerAttachRef.current = subscription;
 
     return () => {
       cancelled = true;
-      controller.abort();
-      subscription?.abort();
+      subscription.abort();
+      if (viewerAttachRef.current === subscription) viewerAttachRef.current = null;
     };
-  }, [sessionRunning, initialSessionId, isStreaming, flushNow, flush]);
+  }, [initialSessionId, historyReloadNonce, sessionRunning, flushNow, flush, prependHistoryTurn]);
 
   // Deliberately no drain here or at a turn's end: both read state that delivery itself changed.
 
   // Manual retry after a failed load, clearing the per-session guard so it actually re-fetches.
   const reloadHistory = useCallback(() => {
-    historyLoadedForRef.current = null;
-    historyFragmentsRef.current = [];
-    historyPageCursorRef.current = null;
-    hasOlderHistoryRef.current = false;
-    setHasOlderHistory(false);
     setHistoryError(false);
     setIsHistoryLoading(true);
+    setIsHistoryStreaming(true);
     setHistoryReloadNonce((nonce) => nonce + 1);
   }, []);
 
@@ -1671,6 +1534,7 @@ export function useChat(
           attachRef.current?.abort();
           attachRef.current = null;
           // A Stop or a dropped connection ends a turn with no terminal event, leaving cards spinning.
+          drainLiveDeltas(stateRef.current);
           finishRunningThinking(stateRef.current);
           finishActiveTools(stateRef.current);
           // Commit the terminal transcript and streaming flag together, so no stale intermediate layout can paint.
@@ -1678,6 +1542,7 @@ export function useChat(
           // The queue is not touched here: a turn ending must not be both a trigger and a deletion.
           abortedByUserRef.current = false;
           isStreamingRef.current = false;
+          streamedLocallyRef.current = false;
           setIsStreaming(false);
           // Stay authoritative until the backend confirms the turn settled. Dropping into viewer
           // mode here re-attaches and replays a snapshot that can race the final durable writes,
@@ -1733,6 +1598,7 @@ export function useChat(
               });
               sessionIdentifier = created.id;
               sessionIdRef.current = created.id;
+              viewerContextRef.current = created.id;
               setSessionId(created.id);
               // The mode the session actually got, which a parent session may have constrained.
               if (created.permission_mode && created.permission_mode !== permissionMode) {
@@ -2071,7 +1937,7 @@ export function useChat(
       meta: { status: "running", reason: "manual" },
     };
     if (failed) upsertMessage(stateRef.current, nextMarker);
-    else stateRef.current.messages = [...stateRef.current.messages, nextMarker];
+    else stateRef.current.appendMessage(nextMarker);
     flushNow();
     void compactSession(context)
       .then(async (result) => {
@@ -2097,15 +1963,7 @@ export function useChat(
               compactionErrorCode: result.error_code ?? "compaction_failed",
             });
           } else {
-            stateRef.current = {
-              ...stateRef.current,
-              messages: replayed.messages,
-              tasks: replayed.tasks,
-              tokenUsage: replayed.tokenUsage,
-              keyCounts: replayed.keyCounts,
-              liveTurnId: "",
-              liveCursors: new Map(),
-            };
+            stateRef.current = replayed;
           }
           flushNow();
         } catch (caught) {
@@ -2282,10 +2140,7 @@ export function useChat(
     setTokenUsage(null);
     setSessionId(null);
     sessionIdRef.current = null;
-    historyFragmentsRef.current = [];
-    historyPageCursorRef.current = null;
-    hasOlderHistoryRef.current = false;
-    setHasOlderHistory(false);
+    setIsHistoryStreaming(false);
   }, [abort]);
 
   return {
@@ -2296,9 +2151,8 @@ export function useChat(
     sessionId,
     isStreaming: isStreaming || sessionRunning,
     isHistoryLoading,
+    isHistoryStreaming,
     historyError,
-    hasOlderHistory,
-    isOlderHistoryLoading,
     reloadHistory,
     send,
     abort,

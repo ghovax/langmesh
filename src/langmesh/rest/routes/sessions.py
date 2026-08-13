@@ -83,22 +83,6 @@ async def session_turns(session_id: str):
     }
 
 
-@router.get("/sessions/{session_id}/turns/page")
-async def session_turn_page(session_id: str, before_row_id: int | None = None, limit: int = 400):
-    """A bounded replay page for fast switching, newest first, paging back through `before_row_id`."""
-    assert state.turn_store is not None
-    page = await state.turn_store.turn_page_for_session(
-        session_id, before_row_id=before_row_id, limit=limit
-    )
-    return {
-        "turns": [
-            turn.model_dump(by_alias=True, exclude_none=True, mode="json") for turn in page["turns"]
-        ],
-        "next_before_row_id": page["next_before_row_id"],
-        "has_more": page["has_more"],
-    }
-
-
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str):
     """Permanently delete a session and all its tasks. Aborts the context first."""

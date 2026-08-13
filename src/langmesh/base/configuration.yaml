@@ -29,6 +29,7 @@ providers:
 exa:
   api_key: ""
 
+# Conversation history always streams continuously from newest to oldest; there is no paging or row-limit setting.
 compaction:
   automatic: true
   assumed_context_window: 128000

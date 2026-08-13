@@ -244,6 +244,7 @@ export function ChatPanel({
     sessionId,
     isStreaming,
     isHistoryLoading,
+    isHistoryStreaming,
     historyError,
     reloadHistory,
     send,
@@ -1154,6 +1155,12 @@ export function ChatPanel({
                               </Text>
                             </Flex>
                             <Separator flex={1} />
+                          </Flex>
+                        ) : null}
+
+                        {isHistoryStreaming ? (
+                          <Flex justify="center" py={2} aria-label="Loading older messages">
+                            <Spinner boxSize="1em" borderWidth="2px" />
                           </Flex>
                         ) : null}
 

@@ -108,6 +108,7 @@ def _still_working(turn: dict) -> bool:
 def _follow(session_id: str, *, until_idle: bool, frames: bool, turn_id: str = "") -> int:
     """Watch a session's stream: `attach` prints every frame, and `wait` prints its last turn once the session goes idle."""
     try:
+        newest_turn: dict | None = None
         for frame in stream(f"/sessions/{session_id}/attach"):
             if frames:
                 _emit_line(frame)
@@ -115,11 +116,13 @@ def _follow(session_id: str, *, until_idle: bool, frames: bool, turn_id: str = "
                 continue
             kind = frame.get("kind")
             if kind == "snapshot":
-                turns = frame.get("turns") or []
-                if turn_id and not any(turn.get("id") == turn_id for turn in turns):
-                    # Our own turn has not been persisted yet, so keep waiting rather than reading its absence as an idle session.
-                    continue
-                if not any(_still_working(turn) for turn in turns):
+                if not frame.get("running") and not turn_id:
+                    break
+            elif kind == "history":
+                candidate = frame.get("turn") or {}
+                if newest_turn is None:
+                    newest_turn = candidate
+                if (not turn_id or candidate.get("id") == turn_id) and not _still_working(candidate):
                     break
             elif kind == "turn" and not frame.get("running"):
                 break
@@ -128,8 +131,14 @@ def _follow(session_id: str, *, until_idle: bool, frames: bool, turn_id: str = "
     except KeyboardInterrupt:
         return 130
     if until_idle:
-        result = call("session.history", id=session_id, limit=1)
-        _emit(result.get("turns") or [])
+        if turn_id or newest_turn is None:
+            result = call("session.history", id=session_id)
+            turns = result.get("turns") or []
+            newest_turn = next(
+                (turn for turn in reversed(turns) if not turn_id or turn.get("id") == turn_id),
+                turns[-1] if turns else None,
+            )
+        _emit([newest_turn] if newest_turn else [])
     return 0
 
 
@@ -179,7 +188,10 @@ def _command_kill(arguments: argparse.Namespace) -> int:
 
 
 def _command_history(arguments: argparse.Namespace) -> int:
-    _emit(call("session.history", id=arguments.session, limit=arguments.limit or 0)["turns"])
+    turns = call("session.history", id=arguments.session)["turns"]
+    if arguments.limit:
+        turns = turns[-arguments.limit :]
+    _emit(turns)
     return 0
 
 

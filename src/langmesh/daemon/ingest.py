@@ -126,6 +126,16 @@ async def _turn_list_for_session(params: dict) -> Any:
     return [task.model_dump(by_alias=True, exclude_none=True, mode="json") for task in tasks]
 
 
+async def _turn_list_control_records(params: dict) -> list[dict]:
+    records = await state.turn_store.control_records_for_session(
+        str(params.get("session_id") or "")
+    )
+    return [
+        {"id": turn_id, "record": record.model_dump(mode="json")}
+        for turn_id, record in records
+    ]
+
+
 def set_turn_state(session_id: str, running: bool, retains: bool = False) -> None:
     """Count the turns a session has in flight, and act on the idle and busy edge."""
     if running:
@@ -268,6 +278,7 @@ _METHODS = {
     "goal_review.save": _goal_review_save,
     "goal_review.finish": _goal_review_finish,
     "turn.list_for_session": _turn_list_for_session,
+    "turn.list_control_records": _turn_list_control_records,
     "session.event": _session_event,
     "session.title": _session_title,
     "session.usage": _session_usage,

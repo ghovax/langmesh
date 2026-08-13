@@ -9,6 +9,7 @@ from langmesh.base.cursor_credentials import is_signed_in as cursor_is_signed_in
 from langmesh.base.configuration import Configuration, PromptLoader
 from langmesh.protocol.events import tool_status_from_result, ToolStatus
 from langmesh.base.providers import resolve_api_key
+from langmesh.base.models import find_model
 from langmesh.base.tuning import active_tuning, clip_to_tokens, count_tokens, Tunable
 from langchain_core.messages import AIMessageChunk
 from pathlib import Path
@@ -50,6 +51,9 @@ def model_is_authorized(
         return cursor_is_signed_in()
     if provider_identifier == "custom":
         return True
+    # models.dev providers are registered while the catalogue is resolved. Authorization must
+    # trigger the same ordered discovery as model construction on a cold worker.
+    find_model(model_identifier)
     return bool(
         resolve_api_key(provider_identifier, global_configuration.configured_provider_keys())
     )

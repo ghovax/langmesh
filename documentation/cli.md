@@ -99,15 +99,18 @@ langmesh ps | jq -r '.[] | select(.awaiting_input) | .id'
 
 | `kind` | What it is |
 |--------|------------|
-| `snapshot` | The session's turns so far, sent first, so a watcher that attaches mid-turn is not guessing about what it missed. |
-| `live` | One part of a turn as it is persisted — text, a tool call, a tool result, a permission request. |
+| `snapshot` | The atomic live/durable cut and current activity, sent immediately. |
+| `history` | One complete compacted turn. These stream continuously from newest to oldest; there is no paging or history-size setting. |
+| `history_done` | Durable history has reached the beginning. The attachment remains open for live events. |
+| `delta` | A model text or reasoning chunk, sent directly from the in-process event bus without waiting for persistence. |
+| `live` | One semantic part of a turn — a tool call, tool result, permission request, status, or other structured event. |
 | `turn` | A turn started or ended (`running`). This is what `wait` waits for: parts alone just stop arriving, which is indistinguishable from a model still thinking. |
 | `done` | The session itself ended. Distinct from a turn ending — a session goes idle many times over its life. |
 
 It ends when the session does; interrupt it with Ctrl-C to stop watching without affecting the session. Because each frame is a complete line, `jq` and friends consume it incrementally:
 
 ```shell
-langmesh attach "$id" | jq -r 'select(.kind == "live") | .part.text // empty'
+langmesh attach "$id" | jq -r 'select(.kind == "delta") | .chunks[]'
 ```
 
 ## Answering a session

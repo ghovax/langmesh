@@ -1578,12 +1578,6 @@ export async function fetchSessionTurns(
   return data.turns ?? [];
 }
 
-export interface SessionTurnsPage {
-  turns: A2ATurn[];
-  next_before_row_id: number | null;
-  has_more: boolean;
-}
-
 export async function fetchSessionDraft(sessionId: string): Promise<string> {
   const response = await apiFetch(`/sessions/${sessionId}/draft`);
   if (!response.ok) return "";
@@ -1661,28 +1655,6 @@ function decodeSessionRecord(data: Partial<SessionRecordSnapshot>): SessionRecor
     revision: Number(data.revision ?? 0),
     metadata: data.metadata ?? {},
     error: String(data.error ?? ""),
-  };
-}
-
-export async function fetchSessionTurnsPage(
-  sessionId: string,
-  beforeRowId?: number | null,
-  signal?: AbortSignal,
-  limit = 400,
-): Promise<SessionTurnsPage> {
-  const data = await rpc<{
-    turns?: A2ATurn[];
-    next_before_row_id?: number | null;
-    has_more?: boolean;
-  }>(
-    "session.history",
-    { id: sessionId, limit, ...(beforeRowId != null ? { before_row_id: beforeRowId } : {}) },
-    { signal },
-  );
-  return {
-    turns: data.turns ?? [],
-    next_before_row_id: data.next_before_row_id ?? null,
-    has_more: !!data.has_more,
   };
 }
 
@@ -2101,14 +2073,14 @@ export type SessionStreamFrame =
   | { kind: "ready" }
   | {
       kind: "snapshot";
-      turns: A2ATurn[];
-      has_more?: boolean;
-      next_before_row_id?: number | null;
       through_seq?: number;
       running: boolean;
       /** True after transport recovery, when activity state replaces a possibly missed edge. */
       reconnected: boolean;
     }
+  // Complete compacted turns arrive newest-to-oldest, independently of the latency-critical live lane.
+  | { kind: "history"; turn: A2ATurn }
+  | { kind: "history_done" }
   // A single part as the session emitted it, so prose arrives as a run rather than an assembled message.
   | { kind: "live"; seq: number; part: A2APart }
   | {

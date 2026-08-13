@@ -128,6 +128,7 @@ class SessionExecutor(AgentExecutor):
         self._startup_resume_tasks: set[asyncio.Task] = set()
         # A session is named after its first message, once.
         self._titled = False
+        self._title_task: Optional[asyncio.Task] = None
         # The report reminder fires at most once for a session's whole life.
         self._nudged_to_report = False
         # This session's own MCP connections, and the task connecting them.
@@ -604,12 +605,12 @@ class SessionExecutor(AgentExecutor):
 
     async def _reconsider_parked_gates(self) -> None:
         """Re-decide the approvals this session is already stopped on, since changing the mode does not unask them."""
-        tasks = await self._turn_store.turns_for_session(self._session_id)
-        for task in tasks:
-            pending = TurnRecord.from_metadata(task.metadata).pending
+        records = await self._turn_store.control_records_for_session(self._session_id)
+        for _turn_id, record in records:
+            pending = record.pending
             if pending is None or not pending.gates:
                 continue
-            state = self._contexts.get(task.context_id)
+            state = self._contexts.get(self._session_id)
             runtime = state.runtime if state is not None else None
             if runtime is None:
                 # No live runtime: the record carries the new mode, so the gate is re-decided on resume.
@@ -1060,7 +1061,7 @@ class SessionExecutor(AgentExecutor):
         ).strip()
         if not prose:
             return
-        asyncio.create_task(self._generate_title(prose))
+        self._title_task = asyncio.create_task(self._generate_title(prose))
 
     async def _generate_title(self, first_message: str) -> None:
         """Ask the model for a short title and hand it to the daemon, with the schema bound as a tool."""
@@ -1161,16 +1162,16 @@ class SessionExecutor(AgentExecutor):
         handler = self._agent_handler()
         if handler is None:
             return False
-        tasks = await self._turn_store.turns_for_session(self._session_id)
-        for task in tasks:
-            pending = TurnRecord.from_metadata(task.metadata).pending
+        records = await self._turn_store.control_records_for_session(self._session_id)
+        for turn_id, record in records:
+            pending = record.pending
             if pending is None or pending.gate_for(str(payload.get("request_id", ""))) is None:
                 continue
             message = Message(
                 role=Role.user,
                 parts=[envelope_part(INPUT_RESPONSE_KIND, **payload)],
                 message_id=uuid.uuid4().hex,
-                task_id=task.id,
+                task_id=turn_id,
                 context_id=self._session_id,
             )
             asyncio.create_task(self._drive_input_response(handler, message))
@@ -1192,9 +1193,9 @@ class SessionExecutor(AgentExecutor):
 
     async def pending_decision(self) -> dict:
         """What this session is parked on, as locale-independent data."""
-        tasks = await self._turn_store.turns_for_session(self._session_id)
-        for task in tasks:
-            pending = TurnRecord.from_metadata(task.metadata).pending
+        records = await self._turn_store.control_records_for_session(self._session_id)
+        for _turn_id, record in records:
+            pending = record.pending
             if pending is None or not pending.gates:
                 continue
             unanswered = [gate for gate in pending.gates if gate.request_id not in pending.answers]
@@ -1220,9 +1221,9 @@ class SessionExecutor(AgentExecutor):
 
     async def abort_pending_input(self) -> bool:
         """Deny every gate this session is parked on; the last denial resumes the turn and records each refusal."""
-        tasks = await self._turn_store.turns_for_session(self._session_id)
-        for task in tasks:
-            pending = TurnRecord.from_metadata(task.metadata).pending
+        records = await self._turn_store.control_records_for_session(self._session_id)
+        for _turn_id, record in records:
+            pending = record.pending
             if pending is None or not pending.gates:
                 continue
             for gate in pending.gates:
@@ -1316,6 +1317,11 @@ class SessionExecutor(AgentExecutor):
         ]
         if state_publishers:
             await asyncio.gather(*state_publishers, return_exceptions=True)
+        # Title generation is async relative to the turn, but owned by the session: an immediate
+        # idle sleep may not discard a model call that is already producing the durable title.
+        if self._title_task is not None and not self._title_task.done():
+            with contextlib.suppress(Exception):
+                await self._title_task
         # The browser surface is closed by the session that opened it, and only if a screen tool ever ran.
         if "langmesh.computer.web" in sys.modules:
             with contextlib.suppress(Exception):

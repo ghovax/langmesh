@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from a2a.server.tasks import TaskStore
 from a2a.types import Task
+from langmesh.protocol.turn_record import TurnRecord
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +122,13 @@ class DaemonTurnStore(TaskStore):
     async def turns_for_session(self, session_id: str) -> list[Task]:
         raw = await self._call("turn.list_for_session", session_id=session_id) or []
         return [Task.model_validate(entry) for entry in raw]
+
+    async def control_records_for_session(self, session_id: str) -> list[tuple[str, TurnRecord]]:
+        raw = await self._call("turn.list_control_records", session_id=session_id) or []
+        return [
+            (str(entry.get("id") or ""), TurnRecord.model_validate(entry.get("record") or {}))
+            for entry in raw
+        ]
 
     async def publish_event(self, event: dict) -> None:
         """Hand a live turn event to the daemon, so whoever is attached sees it now."""

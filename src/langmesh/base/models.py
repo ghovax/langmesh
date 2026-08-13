@@ -248,10 +248,13 @@ def resolve_litellm(
     if split is None:
         raise ValueError(f"Model id has no provider prefix: {model_identifier!r}")
     provider_identifier, suffix = split
+    # `models.dev` providers are registered while the catalogue is built. Resolve the model
+    # first so a cold daemon can run its first turn without depending on the UI having listed
+    # models beforehand; model selection and provider registration become one ordered operation.
+    catalog_model = find_model(model_identifier)
     definition: ProviderDefinition | None = get_provider_definition(provider_identifier)
     if definition is None:
         raise ValueError(f"Unknown provider in model id: {model_identifier!r}")
-    catalog_model = find_model(model_identifier)
     # The catalogue's prefix is an override set only for multi-protocol gateways, so an empty one means the provider's own.
     litellm_prefix = (
         catalog_model.litellm_prefix if catalog_model else ""

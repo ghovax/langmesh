@@ -21,7 +21,6 @@ from langmesh.base.tuning import Tunable, active_tuning
 from langmesh.base import telemetry
 from langmesh.daemon import state
 from langmesh.daemon.registry import SessionRecord
-from langmesh.protocol.turn_record import TurnRecord
 from langmesh.base.serialization import compact
 from langmesh.base.errors import log_fields
 
@@ -292,8 +291,8 @@ async def _waiting_on(session_id: str) -> dict:
     if state.turn_store is None:
         return {}
     try:
-        for task in await state.turn_store.turns_for_session(session_id):
-            pending = TurnRecord.from_metadata(task.metadata).pending
+        for _turn_id, record in await state.turn_store.control_records_for_session(session_id):
+            pending = record.pending
             if pending is None or not pending.gates:
                 continue
             unanswered = [gate for gate in pending.gates if gate.request_id not in pending.answers]
@@ -465,36 +464,13 @@ async def _session_history(params: dict) -> dict:
     """A session's turns from the store, so history reads whether the session is running, parked or reaped."""
     assert state.turn_store is not None
     session_id = _require(params, "id")
-    limit = int(params.get("limit") or 0)
-    if limit <= 0:
-        turns = await state.turn_store.turns_for_session(session_id)
-        if not turns:
-            _assert_session_known(session_id)
-        return {
-            "turns": [
-                turn.model_dump(by_alias=True, exclude_none=True, mode="json") for turn in turns
-            ],
-            "next_before_row_id": None,
-            "has_more": False,
-        }
-    raw_cursor = params.get("before_row_id")
-    page = await state.turn_store.turn_page_for_session(
-        session_id,
-        limit=limit,
-        before_row_id=int(raw_cursor) if raw_cursor is not None else None,
-    )
-    turns = page.get("turns") or []
-    if not turns and raw_cursor is None:
+    turns = await state.turn_store.turns_for_session(session_id)
+    if not turns:
         _assert_session_known(session_id)
     return {
         "turns": [
-            turn.model_dump(by_alias=True, exclude_none=True, mode="json")
-            if hasattr(turn, "model_dump")
-            else turn
-            for turn in turns
+            turn.model_dump(by_alias=True, exclude_none=True, mode="json") for turn in turns
         ],
-        "next_before_row_id": page.get("next_before_row_id"),
-        "has_more": bool(page.get("has_more")),
     }
 
 
@@ -877,76 +853,105 @@ async def rpc(request: Request) -> JSONResponse:
 
 
 def _attach_transcript(context_id: str, request: Request) -> EventSourceResponse:
-    """Stream any durable conversation context through the shared snapshot-and-tail transport."""
+    """Stream a live cut immediately, then complete durable turns newest-to-oldest behind it."""
 
     async def stream():
         assert state.turn_store is not None
         subscription = state.event_bus.subscribe(context_id)
+        queue_task: asyncio.Task | None = None
+        history_task: asyncio.Task | None = None
         try:
             # A sender waits for this frame, making subscribe-before-send a transport guarantee.
             yield {"data": compact({"kind": "ready"})}
-            # The newest page, not the whole conversation: a long one costs most of a second to read,
-            # revalidate and re-encode, and the client asks for what came before it when somebody scrolls.
-            # If a terminal save retires replay while the database read is in flight, repeat the
-            # read. This turns the durable snapshot + live suffix cut into a seqlock: the client
-            # can neither miss the terminal row nor receive the active row twice.
+            # If terminal persistence retires replay while the high-water query is in flight,
+            # repeat the cut. The stable row boundary and bus version form a seqlock: durable
+            # history and the replay/live suffix are disjoint and exhaustive by construction.
             while True:
                 before_version = state.event_bus.snapshot(context_id).version
-                page = await state.turn_store.turn_page_for_session(
-                    context_id, limit=active_tuning().amount(Tunable.attach_snapshot_rows)
-                )
+                through_row_id = await state.turn_store.latest_history_row_id(context_id)
                 live_snapshot = state.event_bus.snapshot(context_id)
                 if live_snapshot.turn_id or before_version == live_snapshot.version:
                     break
             replay = live_snapshot.events
             replay_turn_id = live_snapshot.turn_id
             snapshot_sequence = live_snapshot.sequence
-            turns = page.get("turns") or []
-            replay_live_turn = bool(replay_turn_id)
-            if replay_turn_id:
-                # The bus is the source of truth for the current turn. Excluding its partial
-                # durable projection makes snapshot + replay disjoint by construction.
-                turns = [turn for turn in turns if str(getattr(turn, "id", "")) != replay_turn_id]
             yield {
                 "data": compact(
                     {
                         "kind": "snapshot",
-                        "turns": [
-                            turn.model_dump(by_alias=True, exclude_none=True, mode="json")
-                            if hasattr(turn, "model_dump")
-                            else turn
-                            for turn in turns
-                        ],
-                        "has_more": bool(page.get("has_more")),
-                        "next_before_row_id": page.get("next_before_row_id"),
                         "through_seq": snapshot_sequence,
                         "running": live_snapshot.running,
                     }
                 )
             }
             # Subscription precedes the durable read; replay closes that race without requiring a sender handshake.
-            if replay_live_turn:
+            if replay_turn_id:
                 for event in replay:
                     yield {"data": compact(event)}
+
+            history = state.turn_store.stream_turns_for_session(
+                context_id,
+                through_row_id=through_row_id,
+                exclude_turn_id=replay_turn_id,
+            )
+
+            async def encoded_history():
+                async for turn in history:
+                    # Legacy histories can contain large turns. Encoding belongs to the background
+                    # history lane too, or JSON work would briefly block a live delta on the event loop.
+                    yield await asyncio.to_thread(
+                        compact,
+                        {
+                            "kind": "history",
+                            "turn": turn.model_dump(
+                                by_alias=True, exclude_none=True, mode="json"
+                            ),
+                        },
+                    )
+
+            history_frames = encoded_history()
+            queue_task = asyncio.create_task(subscription.queue.get())
+            history_task = asyncio.create_task(anext(history_frames))
+            history_complete = False
             while True:
                 if await request.is_disconnected():
                     break
-                try:
-                    event = await asyncio.wait_for(subscription.queue.get(), timeout=15)
-                except asyncio.TimeoutError:
+                active_tasks = {queue_task}
+                if not history_complete:
+                    active_tasks.add(history_task)
+                completed, _ = await asyncio.wait(
+                    active_tasks, timeout=15, return_when=asyncio.FIRST_COMPLETED
+                )
+                if not completed:
                     # A comment keeps the connection warm through proxies without inventing an event to ignore.
                     yield {"comment": "keepalive"}
                     continue
-                if event is None:
-                    yield {"data": compact({"kind": "done"})}
-                    break
-                if event.get("kind") == "resync":
-                    yield {"data": compact(event)}
-                    break
-                if int(event.get("seq", 0)) <= snapshot_sequence:
+                # Live delivery is always selected first when both lanes become ready together.
+                if queue_task in completed:
+                    event = queue_task.result()
+                    if event is None:
+                        yield {"data": compact({"kind": "done"})}
+                        break
+                    if event.get("kind") == "resync":
+                        yield {"data": compact(event)}
+                        break
+                    queue_task = asyncio.create_task(subscription.queue.get())
+                    if int(event.get("seq", 0)) > snapshot_sequence:
+                        yield {"data": compact(event)}
                     continue
-                yield {"data": compact(event)}
+                if history_task in completed:
+                    try:
+                        history_frame = history_task.result()
+                    except StopAsyncIteration:
+                        history_complete = True
+                        yield {"data": compact({"kind": "history_done"})}
+                        continue
+                    yield {"data": history_frame}
+                    history_task = asyncio.create_task(anext(history_frames))
         finally:
+            for task in (queue_task, history_task):
+                if task is not None and not task.done():
+                    task.cancel()
             state.event_bus.unsubscribe(context_id, subscription)
 
     return EventSourceResponse(stream())

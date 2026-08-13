@@ -9,8 +9,9 @@ import { PanelBody, PanelCard, PanelEmptyState, PanelHeader } from "@/components
 import { timelineItems } from "@/lib/chat-timeline";
 import {
   appendTranscriptPart,
+  appendTranscriptDelta,
   createTranscriptState,
-  replayTurns,
+  TranscriptHistoryBuffer,
   type ChatMessage,
   type TranscriptState,
 } from "@/lib/use-chat";
@@ -28,34 +29,66 @@ function GoalReviewTranscript({ review }: { review: GoalReviewSession }) {
   const [running, setRunning] = useState(review.status === "working");
   const [observedStatus, setObservedStatus] = useState(review.status);
   const transcriptRef = useRef<TranscriptState>(createTranscriptState());
+  const historyBufferRef = useRef(new TranscriptHistoryBuffer());
+  const newestHistorySeenRef = useRef(false);
 
   useEffect(() => {
+    let paint: number | null = null;
+    const renderTranscript = () => {
+      if (paint !== null) return;
+      paint = window.requestAnimationFrame(() => {
+        paint = null;
+        historyBufferRef.current.drainInto(transcriptRef.current);
+        setMessages([...transcriptRef.current.messages]);
+      });
+    };
     const attachment = attachGoalReview(
       review.review_id,
       (frame) => {
         if (frame.kind === "snapshot") {
-          transcriptRef.current = replayTurns(frame.turns);
-          setMessages([...transcriptRef.current.messages]);
-          const snapshotStatus = frame.turns.at(-1)?.status?.state;
+          if (paint !== null) window.cancelAnimationFrame(paint);
+          paint = null;
+          transcriptRef.current = createTranscriptState();
+          historyBufferRef.current.reset();
+          newestHistorySeenRef.current = false;
+          setMessages([]);
+          setRunning(frame.running);
+        } else if (frame.kind === "history") {
+          if (historyBufferRef.current.append(frame.turn, String(frame.turn.id ?? "review"))) {
+            renderTranscript();
+          }
+          const snapshotStatus = frame.turn.status?.state;
           if (
-            snapshotStatus === "working" ||
-            snapshotStatus === "completed" ||
-            snapshotStatus === "canceled" ||
-            snapshotStatus === "failed"
+            !newestHistorySeenRef.current &&
+            (snapshotStatus === "working" ||
+              snapshotStatus === "completed" ||
+              snapshotStatus === "canceled" ||
+              snapshotStatus === "failed")
           ) {
+            newestHistorySeenRef.current = true;
             setObservedStatus(snapshotStatus);
             setRunning(snapshotStatus === "working");
           }
         } else if (frame.kind === "live") {
+          historyBufferRef.current.drainInto(transcriptRef.current);
           appendTranscriptPart(transcriptRef.current, frame.part);
-          setMessages([...transcriptRef.current.messages]);
+          renderTranscript();
+        } else if (frame.kind === "delta") {
+          historyBufferRef.current.drainInto(transcriptRef.current);
+          appendTranscriptDelta(transcriptRef.current, frame);
+          renderTranscript();
         } else if (frame.kind === "turn") {
+          historyBufferRef.current.drainInto(transcriptRef.current);
+          renderTranscript();
           setRunning(frame.running);
         }
       },
       () => undefined,
     );
-    return attachment.abort;
+    return () => {
+      if (paint !== null) window.cancelAnimationFrame(paint);
+      attachment.abort();
+    };
   }, [review.review_id]);
 
   const timeline = useMemo(
