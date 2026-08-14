@@ -65,7 +65,7 @@ A session **parked on a decision** takes no message at all: accepting one would 
 
 ```console
 $ langmesh send "$id" "and check the tests too"
-langmesh: not sent — the session is waiting on a permission decision for `cat /srv/app/notes.txt`
+langmesh: not sent — the session is waiting on a permission decision for "cat /srv/app/notes.txt"
 ```
 
 Answer it with `langmesh allow` (or in the app), then send. `--wait` does not wait on a message that was never delivered.

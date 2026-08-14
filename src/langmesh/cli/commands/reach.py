@@ -120,7 +120,7 @@ def _tailscale(*arguments: str, timeout: float = 15.0) -> subprocess.CompletedPr
                 link.group(0),
             ) from error
         raise TailscaleUnavailable(
-            f"Tailscale did not answer `{' '.join(arguments)}` within {timeout:.0f}s. Open the Tailscale app and check it is connected.",
+            f'Tailscale did not answer "{" ".join(arguments)}" within {timeout:.0f}s. Open the Tailscale app and check it is connected.',
             " ".join(said.split()),
         ) from error
     except OSError as error:
@@ -374,7 +374,7 @@ def _serve(arguments, payload: dict) -> int:
     host = "127.0.0.1"
     if _port_is_taken(host, arguments.port):
         logger.info(
-            f"langmesh: {host}:{arguments.port} is already in use — most likely another `langmesh reach`. Stop it, or pass `--port` to use a different one."
+            f'langmesh: {host}:{arguments.port} is already in use — most likely another "langmesh reach". Stop it, or pass "--port" to use a different one.'
         )
         return 1
 
@@ -396,7 +396,7 @@ def _serve(arguments, payload: dict) -> int:
         )
     elif interface is None:
         logger.info(
-            "langmesh: the interface has not been built, so this will serve the control plane but no screens. Run `cd web && bun run build` in a checkout, or install the packaged build."
+            'langmesh: the interface has not been built, so this will serve the control plane but no screens. Run "cd web && bun run build" in a checkout, or install the packaged build.'
         )
 
     def where_is_the_daemon() -> tuple[str, str]:

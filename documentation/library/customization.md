@@ -90,17 +90,13 @@ class ApplicationPrompt:
 
     def compose(self, layers):
         available = {layer.name: layer.content for layer in layers}
-        return "\n\n".join(
-            f"## {name.replace('_', ' ').title()}\n\n{available[name]}"
-            for name in self.order
-            if available.get(name)
-        )
+        return "\n\n".join(available[name] for name in self.order if name in available)
 
 
 components = SessionComponents(prompt_composer=ApplicationPrompt())
 ```
 
-The default composer uses the catalogue's `system_prompt` template and keeps all supported layers. `BeforeModelHook` remains the final seam for changing the exact message list of one provider request; using it to rewrite the first system message intentionally invalidates that request's provider-cache prefix.
+Keep headings and other markdown in a template, never generated in code. The default composer already renders the catalogue's `system_prompt` template over the same layers; this composer only changes what reaches it. `BeforeModelHook` remains the final seam for changing the exact message list of one provider request; using it to rewrite the first system message intentionally invalidates that request's provider-cache prefix.
 
 ## Attachments
 

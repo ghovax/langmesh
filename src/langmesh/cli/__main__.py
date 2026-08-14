@@ -66,7 +66,7 @@ def _command_send(arguments: argparse.Namespace) -> int:
         waiting_on = (
             "an answer to its question"
             if kind == "question"
-            else f"a permission decision for `{command}`"
+            else f'a permission decision for "{command}"'
             if command
             else "a permission decision"
         )
@@ -230,7 +230,7 @@ def _command_daemon(arguments: argparse.Namespace) -> int:
     if arguments.action == "status":
         # Reporting must not start anything, so a status check can report the absence it was asked about.
         if not daemon_is_up() and not arguments.start:
-            _note("langmeshd is not running (start it with `langmesh serve`)")
+            _note('langmeshd is not running (start it with "langmesh serve")')
             return 1
         _emit(call("daemon.status"))
         return 0
@@ -402,7 +402,7 @@ def _command_run(arguments: argparse.Namespace) -> int:
                     sys.stdout.flush()
                 elif isinstance(event, Suspended):
                     _note(
-                        "\nlangmesh: this turn needs a decision and nothing is watching. Re-run with --allow, or with a permission mode that does not gate it."
+                        "langmesh: this turn needs a decision and nothing is watching. Re-run with --allow, or with a permission mode that does not gate it."
                     )
                     return 2
                 elif isinstance(event, Done):
@@ -412,7 +412,7 @@ def _command_run(arguments: argparse.Namespace) -> int:
             return 0
         except Exception as error:  # noqa: BLE001 — a person gets a sentence, not a traceback
             # A missing credential or an unserveable model is not a bug to report with a stack, though the detail is usually the answer.
-            _note(f"\nlangmesh: the turn failed — {type(error).__name__}: {error}")
+            _note(f"langmesh: the turn failed — {type(error).__name__}: {error}")
             return 1
         finally:
             await session.aclose()
@@ -480,7 +480,7 @@ def _command_open(arguments: argparse.Namespace) -> int:
     ensure_daemon()
     launcher = shutil.which("open")
     if launcher is None:
-        _note("langmesh: `open` is not available; the desktop app is macOS-only")
+        _note('langmesh: "open" is not available; the desktop app is macOS-only')
         return 1
     result = subprocess.run(
         [launcher, "-b", APPLICATION_BUNDLE_ID],
@@ -773,7 +773,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         const="http://127.0.0.1:3000",
         default="",
-        help="serve the interface from a running dev server instead of the built export, so a change reaches the phone without `bun run build`. Defaults to Next's own port",
+        help='serve the interface from a running dev server instead of the built export, so a change reaches the phone without "bun run build". Defaults to Next\'s own port',
     )
     reach.set_defaults(handler=_command_reach)
 
@@ -805,7 +805,7 @@ def build_parser() -> argparse.ArgumentParser:
     auth.add_argument("action", choices=["login", "logout", "status"], nargs="?", default="status")
     auth.set_defaults(handler=_command_auth)
 
-    daemon = add("daemon", help="inspect a running daemon (start one with `langmesh serve`)")
+    daemon = add("daemon", help='inspect a running daemon (start one with "langmesh serve")')
     daemon.add_argument(
         "action",
         choices=["status", "stop", "restart", "endpoint"],

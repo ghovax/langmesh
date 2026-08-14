@@ -56,7 +56,7 @@ def run(arguments) -> int:
         # No argument: what this machine has actually been set to, as the short answer to what has changed.
         print(compact(dict(sorted(_flatten(data)))))
         logger.info(
-            "(what is set; `langmesh configure --all` lists every setting with its default)"
+            '(what is set; "langmesh configure --all" lists every setting with its default)'
         )
         return 0
 

@@ -337,14 +337,14 @@ def run(arguments) -> int:
     directory = interface_directory()
     if directory is None:
         logger.info(
-            "langmesh: the interface has not been built. Run `cd web && bun run build` in a checkout, or install the packaged build which carries it."
+            'langmesh: the interface has not been built. Run "cd web && bun run build" in a checkout, or install the packaged build which carries it.'
         )
         return 1
 
     # Claim the port before starting anything, so a failed bind does not leave a daemon nobody asked for.
     if _port_is_taken(arguments.host, arguments.port):
         logger.info(
-            f"langmesh: {arguments.host}:{arguments.port} is already in use — most likely another `langmesh serve`. Stop it, or pass `--port` to use a different one."
+            f'langmesh: {arguments.host}:{arguments.port} is already in use — most likely another "langmesh serve". Stop it, or pass "--port" to use a different one.'
         )
         return 1
 
@@ -381,7 +381,7 @@ def run(arguments) -> int:
         port = int(daemon_port_path().read_text().strip())
         token = daemon_token_path().read_text().strip()
     except (OSError, ValueError):
-        logger.info("langmesh: langmeshd is not running (start it with `langmesh serve`)")
+        logger.info('langmesh: langmeshd is not running (start it with "langmesh serve")')
         stop_daemon_if_started()
         return 1
 
