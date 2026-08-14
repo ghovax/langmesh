@@ -698,9 +698,9 @@ class Session:
         pending_state = state.get("pending")
         if not messages and not session_state and not pending_state:
             return False
-        from langchain_core.load import loads as load_message
+        from langchain_core.messages import messages_from_dict
 
-        self.runtime.conversation[:] = [load_message(entry) for entry in messages]
+        self.runtime.conversation[:] = messages_from_dict(messages)
         if session_state:
             self.runtime.restore_session(session_state)
         if isinstance(pending_state, Mapping):
@@ -709,13 +709,13 @@ class Session:
         return True
 
     async def save(self) -> None:
-        """Write this session's conversation to its checkpoint store, through LangChain's own codec rather than by hand."""
-        from langchain_core.load import dumps as dump_message
+        """Write this session's conversation to its checkpoint store through LangChain's message codec."""
+        from langchain_core.messages import message_to_dict
 
         await self._checkpoints.save(
             self._session_id,
             {
-                "conversation": [dump_message(message) for message in self.conversation],
+                "conversation": [message_to_dict(message) for message in self.conversation],
                 "session": self.runtime.session_snapshot(),
                 "pending": self._pending.snapshot() if self._pending is not None else None,
             },
