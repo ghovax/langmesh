@@ -825,7 +825,7 @@ function reduceDataPart(
     case "compaction": {
       // A compaction marker: a live indicator, then a separator, rendered as a divider rather than a bubble.
       if (event.status === "started") {
-        // Sends are blocked after a failure, so the next fold start is its explicit retry. Reuse
+        // Sends are blocked after a failure, so the next compaction start is its explicit retry. Reuse
         // that marker on both the live path and history replay; otherwise the stale failure would
         // survive beside the successful retry and keep the composer disabled forever.
         const activeIndex = state.messages.findLastIndex(
@@ -1181,7 +1181,7 @@ export function replayTurns(turns: A2ATurn[], keyNamespace = ""): TranscriptStat
   const state: ReduceState = newReduceState();
   state.keyNamespace = keyNamespace;
   for (const turn of mainTurns) {
-    // A turn's stream is its history plus its trailing status message, which A2A folds in only on the next update.
+    // A turn's stream is its history plus its trailing status message, which A2A compacts in only on the next update.
     const replayMessages = [...(turn.history ?? [])];
     const trailing = turn.status?.message;
     if (
@@ -1945,7 +1945,7 @@ export function useChat(
           result.compacted === false || result.status !== "done" || result.ok === false;
         // The persisted transcript is authoritative: it carries the compaction events the
         // backend wrote, with the exact reason, counts and error code, and removes whatever
-        // history the fold actually reclaimed. Replaying it also settles the local marker
+        // history the compaction actually reclaimed. Replaying it also settles the local marker
         // under the transcript's own identity instead of drawing a duplicate separator.
         try {
           const turns = await fetchSessionTurns(context);
@@ -1996,7 +1996,7 @@ export function useChat(
             closable: true,
           });
         } else {
-          // Only a successful fold releases the queue that the failed one held.
+          // Only a successful compaction releases the queue that the failed one held.
           outboxRef.current?.compactionRecovered();
         }
       })

@@ -448,7 +448,7 @@ class _RunsTurns:
             yield event
 
     async def prepare_compaction_stream(self) -> AsyncIterator[TurnEvent]:
-        """Run the private recording segment and fold, without inventing a user turn afterward."""
+        """Run the private recording segment and compaction, without inventing a user turn afterward."""
         async for event in self.stream("", continue_existing=True, stop_after_compaction=True):
             yield event
 
@@ -537,7 +537,7 @@ class _RunsTurns:
                 continue
 
             # The threshold is a preparation boundary, not a hard cut. The reserved window
-            # gives the agent room for one private recording batch before the fold happens.
+            # gives the agent room for one private recording batch before the compaction happens.
             should_compact = self._should_compact(pending_user_message)
             if should_compact and self._compaction_control.phase == "none":
                 self._begin_compaction_preparation(reason="auto", resume_after=True)
@@ -561,7 +561,7 @@ class _RunsTurns:
                     # model to repeat a side effect merely because the in-memory state was lost.
                     self._record_compaction_preparation()
             if self._compaction_control.phase == "waiting" and not self._compaction_control.started:
-                # The indicator opens when the recording handoff begins, not when the fold finally
+                # The indicator opens when the recording handoff begins, not when the compaction finally
                 # runs: preparation is the long phase, and a session restart must not drop it.
                 self._compaction_control.started = True
                 self._mark_session_dirty()
@@ -571,14 +571,14 @@ class _RunsTurns:
                     tokens_before=conversation_tokens(self._conversation),
                 )
             if self._compaction_control.phase == "recorded":
-                fold_reason = self._compaction_control.reason
+                compaction_reason = self._compaction_control.reason
                 try:
                     self._observation_registry_metadata = (
                         await self._compaction_preparation.describe()
                     )
-                except Exception as error:  # noqa: BLE001 — the fold verification below remains authoritative
+                except Exception as error:  # noqa: BLE001 — the compaction verification below remains authoritative
                     self.note_observation_registry({}, str(error) or type(error).__name__)
-                async for compaction_event in self.compact(reason=fold_reason):
+                async for compaction_event in self.compact(reason=compaction_reason):
                     yield compaction_event
                 if self.compaction_failure:
                     # The send was already accepted. Keep its user message in the durable
@@ -591,13 +591,13 @@ class _RunsTurns:
                     return
                 continue
 
-            # The person's words join the request exactly once, after any needed fold.
+            # The person's words join the request exactly once, after any needed compaction.
             if pending_user_message is not None and self._compaction_control.phase != "waiting":
                 self._conversation.append(pending_user_message)
                 pending_user_message = None
 
             # Steering accepted while a new message was waiting belongs after that message. During
-            # preparation it remains queued until the private segment has folded away.
+            # preparation it remains queued until the private segment has compacted away.
             if self._compaction_control.phase != "waiting":
                 for steering_event in await self._drain_steering_messages():
                     yield steering_event
@@ -709,11 +709,16 @@ class _RunsTurns:
 
             # Calls to make: run the batch behind its checkpoint, then honour a Stop that landed during it.
             preparing_compaction = self._compaction_control.phase == "waiting"
+            def _valid_preparation_call(call: dict) -> bool:
+                if call.get("name") == "bash":
+                    return not str((call.get("args") or {}).get("location") or "").strip() and not bool(
+                        (call.get("args") or {}).get("background")
+                    )
+                # Read-only skill loading is part of the handoff protocol; it cannot mutate anything.
+                return call.get("name") == "load_skill"
+
             preparation_call_is_valid = bool(response.tool_calls) and all(
-                call.get("name") == "bash"
-                and not str((call.get("args") or {}).get("location") or "").strip()
-                and not bool((call.get("args") or {}).get("background"))
-                for call in response.tool_calls
+                _valid_preparation_call(call) for call in response.tool_calls
             )
             if preparing_compaction and not preparation_call_is_valid:
                 self._conversation.append(response)
@@ -754,7 +759,7 @@ class _RunsTurns:
                 return
             if self._compaction_control.phase == "recorded":
                 # The successful recording call is the terminal action of this model segment.
-                # The next loop iteration folds and resumes the already-accepted work.
+                # The next loop iteration compacts and resumes the already-accepted work.
                 continue
             if preparing_compaction:
                 # Inspection, repair, and recording may need several foreground Bash batches.
@@ -776,7 +781,7 @@ class _RunsTurns:
             # Normally the output reserve leaves the complete conversation enough room for
             # its recording handoff. A restored or provider-rejected oversized session is the
             # exceptional case: give the handoff the largest recent view that can actually run,
-            # while retaining the untouched full conversation until the fold commits.
+            # while retaining the untouched full conversation until the compaction commits.
             preparation_budget = self._usable_context() - message_tokens(system_message)
             if conversation_tokens([system_message, *conversation]) > self._usable_context():
                 handoff = conversation[-1:]
@@ -793,7 +798,7 @@ class _RunsTurns:
         """Refuse a request that cannot fit before sending it, with numbers, since the harness knows the window."""
         window = self._context_window
         if self._context_window_estimated:
-            return  # an estimate may schedule a safe fold, but it must never impersonate a provider limit
+            return  # an estimate may schedule a safe compaction, but it must never impersonate a provider limit
         tokens = conversation_tokens(messages)
         if not over_context_window(tokens, window):
             return
@@ -835,7 +840,7 @@ class _RunsTurns:
         thinking_started_at = time.monotonic()
         thinking_done_emitted = False
         yield Status(code="awaiting_model")
-        # The fold checkpoint is a protocol capability: even a profile that omits ordinary shell
+        # The compaction checkpoint is a protocol capability: even a profile that omits ordinary shell
         # access must be able to maintain its workspace-owned registry inside the same sandbox.
         bound_model = self._bound_model
         model_stream = None
@@ -1007,10 +1012,8 @@ class _RunsTurns:
 
         if self._compaction_control.phase == "waiting":
             self._conversation.append(response)
-            for event in self._fail_compaction_preparation(
-                "The agent ended compaction preparation without completing its durable handoff."
-            ):
-                yield event
+            # Best-effort handoff: the summary is the durable memory, so an unadvanced registry must not block the fold.
+            self._record_compaction_preparation()
             step.directive = _CONTINUE
             return
 

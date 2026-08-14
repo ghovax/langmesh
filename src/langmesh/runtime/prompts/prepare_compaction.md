@@ -1,6 +1,6 @@
-# Preserve durable workspace knowledge before folding
+# Preserve durable workspace knowledge before compaction
 
-Pause the current work and load the `observational-memory` skill. Use local foreground Bash as described there to review and, when necessary, update the active observational memory before this conversation is folded.
+This instruction supersedes the previous user request for this turn. Pause it and load the `observational-memory` skill through `load_skill` when you have not already. Then use local foreground Bash as described there to review and, when necessary, update the active observational memory before this conversation is compacted. You must end this turn only after the handoff is acknowledged.
 
 ## Begin with what already exists
 

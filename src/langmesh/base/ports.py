@@ -368,14 +368,34 @@ class CompactionState:
 
 @runtime_checkable
 class Compaction(Protocol):
-    """Decides when a conversation is folded, and how."""
+    """Decides when a conversation is compacted, and how."""
 
     def should_compact(self, state: CompactionState) -> bool:
-        """Whether to fold now. Called before each model call; must be cheap."""
+        """Whether to compact now. Called before each model call; must be cheap."""
         ...
 
     async def compact(self, state: CompactionState) -> list:
         """Return the conversation to carry forward, oldest first."""
+        ...
+
+
+@dataclass
+class CompactionSummaryState:
+    """The compacted-away turns a summarizer distils, and what constrains that distillation."""
+
+    messages: Sequence[Any]
+    """The older turns being replaced, oldest first."""
+
+    system_prompt: str
+    """The cache-stable system prompt the session runs with, so the summary matches its voice."""
+
+
+@runtime_checkable
+class CompactionSummarizer(Protocol):
+    """Produces the durable summary that replaces older turns after a compaction."""
+
+    async def summarize(self, state: CompactionSummaryState) -> str | None:
+        """Return the summary prose, or ``None`` to compact without one."""
         ...
 
 
@@ -617,6 +637,8 @@ __all__ = [
     "Compaction",
     "CompactionPreparation",
     "CompactionState",
+    "CompactionSummarizer",
+    "CompactionSummaryState",
     "ContinuationPolicy",
     "SuspensionGate",
     "ToolMiddleware",

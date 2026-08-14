@@ -14,9 +14,9 @@ class CompactionPreparation:
     async def describe(self) -> dict: ...
 ```
 
-`Session` and the daemon default to `ObservationCompactionPreparation`, which captures the observational-memory revision, runs the private preparation instruction with local foreground Bash only, and folds only after the revision advances. `AgentRuntime` used directly defaults to `DirectCompactionPreparation`, which opens no preparation turn.
+`Session` and the daemon default to `ObservationCompactionPreparation`, which captures the observational-memory revision, runs the private preparation instruction with local foreground Bash only, and compacts only after the revision advances. `AgentRuntime` used directly defaults to `DirectCompactionPreparation`, which opens no preparation turn.
 
-Choose direct folding explicitly when the application has no external memory handoff:
+Choose direct compaction explicitly when the application has no external memory handoff:
 
 ```python
 from langmesh import DirectCompactionPreparation, SessionComponents
@@ -29,13 +29,13 @@ components = SessionComponents(
 
 For another durable system, implement the port. `baseline()` must return checkpoint-safe data; `completed()` must prove the handoff committed after that baseline. Returning an instruction of `None` records preparation immediately.
 
-## Folding
+## Compactioning
 
-`Compaction.should_compact(state)` is the cheap automatic trigger. `compact(state)` returns the model messages retained after a fold.
+`Compaction.should_compaction(state)` is the cheap automatic trigger. `compaction(state)` returns the model messages retained after a compaction.
 
 ```python
 class KeepDecisions:
-    def should_compact(self, state):
+    def should_compaction(self, state):
         return state.context_window > 0 and state.context_tokens > state.context_window * 0.7
 
     async def compact(self, state):
@@ -43,7 +43,30 @@ class KeepDecisions:
         return [await summarize(state.messages), *decisions]
 ```
 
-The runtime rejects a strategy that reclaims no messages, restores the original conversation on failure, emits `CompactionDone(ok=False)`, and blocks later input until `Session.compact()` succeeds.
+The runtime rejects a strategy that reclaims no messages, restores the original conversation on failure, emits `CompactionDone(ok=False)`, and blocks later input until `Session.compaction()` succeeds.
+
+With the built-in compaction, the runtime appends one private compaction instruction to the existing conversation and asks the model to answer with a `submit_compaction_summary` tool call. That request is the system prompt followed by the whole existing conversation and one appended instruction, so the provider-cache prefix is preserved and only the new tail is uncached; the collected summary then continues the session as the system prompt, the summary, and the newest turns in that order. The summary sits as the first message after the system prompt, becomes part of the cached leading block, and is never a user-visible chat row. The tool is carried on every request with the other internal verdict tools so the schema, and therefore the cache prefix, never changes; outside a compaction instruction it is an enforced no-op.
+
+The summary is best-effort by construction: a provider error, an empty reply, or a model that writes prose instead of calling the tool falls back to the plain tail compaction, which never blocks the session. It always runs on the built-in compaction; supply your own distillation through `SessionComponents(compaction_summarizer=...)` to replace the model call:
+
+```python
+from langchain_core.messages import SystemMessage
+
+from langmesh import CompactionSummaryState, SessionComponents
+
+
+class ServiceSummarizer:
+    async def summarize(self, state: CompactionSummaryState) -> str | None:
+        reply = await cheaper_model.ainvoke(
+            [SystemMessage(content=state.system_prompt), *state.messages]
+        )
+        return str(reply.content or "").strip() or None
+
+
+components = SessionComponents(compaction_summarizer=ServiceSummarizer())
+```
+
+Keep the summary request as real messages rather than a rendered string, so the provider-cache prefix survives the custom call too. A custom `Compaction` strategy owns the whole compaction instead, including whether a summary message exists; the summarizer port only decorates the built-in policy.
 
 ## Goal and task continuation
 

@@ -56,15 +56,14 @@ Whether a session may install the tools it needs into a profile of its own.
 
 ## Conversation compaction
 
-How conversation history is folded as it grows.
+How conversation history is compacted as it grows.
 
 | Setting                                  | Type    | Default  | What it is for                                                                                                                                                                             |
 | ---------------------------------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `compaction.automatic`                   | boolean | `true`   | Reclaim context on its own as it fills. Manual compaction works either way.                                                                                                                |
-| `compaction.assumed_context_window`      | integer | `128000` | Conservative scheduling capacity when a custom model reports no window. It can trigger preparation but never a local hard rejection, and the interface labels it as estimated.             |
-| `compaction.reclaim_at_fraction`         | number  | `0.85`   | Recommended preparation boundary. A private local-Bash segment first updates the current observational registry and advances its revision; folding follows only after validation succeeds. |
+| `compaction.reclaim_at_fraction`         | number  | `0.85`   | Recommended preparation boundary. A private local-Bash segment first updates the current observational registry and advances its revision; compaction follows only after validation succeeds. |
 | `compaction.output_reserve_fraction`     | number  | `0.1`    | Share held back as safety space for the preparation segment and the answer. The rest is the usable window every other fraction here is measured against.                                   |
-| `compaction.recent_working_set_fraction` | number  | `0.25`   | Share of the usable window kept verbatim after older history is discarded. Sized in tokens rather than turns because an unattended run can be one turn with hundreds of tool results.      |
+| `compaction.recent_working_set_fraction` | number  | `0.15`   | Share of the usable window kept verbatim after older history is discarded. Sized in tokens rather than turns because an unattended run can be one turn with hundreds of tool results.      |
 
 ## User snapshot
 

@@ -746,9 +746,8 @@ export interface AttachmentSettings {
 }
 
 export interface CompactionSettings {
-  // Reclaiming context on its own as it fills (manual compaction always works).
+  // Compactioning on its own as the conversation fills (manual compaction always works).
   automatic: boolean;
-  assumed_context_window: number;
   reclaim_at_fraction: number;
   output_reserve_fraction: number;
   recent_working_set_fraction: number;
@@ -795,10 +794,9 @@ const DEFAULT_ATTACHMENTS: AttachmentSettings = { inline_image_megabytes: 20 };
 
 const DEFAULT_COMPACTION: CompactionSettings = {
   automatic: true,
-  assumed_context_window: 128000,
   reclaim_at_fraction: 0.85,
   output_reserve_fraction: 0.1,
-  recent_working_set_fraction: 0.25,
+  recent_working_set_fraction: 0.15,
 };
 
 // Persist the context-reclaiming settings.
@@ -1501,7 +1499,7 @@ export interface SendOutcome {
   injected: boolean;
   /** The turn this started, when it started one. */
   taskId: string;
-  /** The session rejected input because its last context fold failed. */
+  /** The session rejected input because its last compaction failed. */
   compactionRequired: boolean;
 }
 
@@ -1746,9 +1744,9 @@ export interface CompactionResult {
 
 export async function compactSession(sessionId: string): Promise<CompactionResult> {
   try {
-    return await rpc<CompactionResult>("session.compact", { id: sessionId });
+    return await rpc<CompactionResult>("session.compaction", { id: sessionId });
   } catch (caught) {
-    swallowed({ component: "api", operation: "compact a session" }, caught);
+    swallowed({ component: "api", operation: "compaction a session" }, caught);
     throw caught;
   }
 }

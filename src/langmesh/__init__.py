@@ -65,6 +65,8 @@ from langmesh.base.ports import (
     Compaction,
     CompactionPreparation,
     CompactionState,
+    CompactionSummarizer,
+    CompactionSummaryState,
     ContinuationPolicy,
     Credentials,
     FileLeases,
@@ -145,6 +147,8 @@ __all__ = [
     "CompactionDone",
     "CompactionStarted",
     "CompactionState",
+    "CompactionSummarizer",
+    "CompactionSummaryState",
     "ContinuationPolicy",
     "Credentials",
     "FileLeases",
@@ -943,7 +947,7 @@ class Session:
         return answer
 
     async def compact(self) -> AsyncIterator[TurnEventUnion]:
-        """Prepare and fold the conversation now, retrying the exact failed phase when necessary."""
+        """Prepare and compact the conversation now, retrying the exact failed phase when necessary."""
         async with self._turn_lock:
             if not self._restored:
                 await self.restore()
@@ -959,7 +963,7 @@ class Session:
                 retry_operation = "prepare"
             resume_after = runtime.resumes_after_compaction
             try:
-                if retry_operation == "fold":
+                if retry_operation == "compact":
                     source = runtime.compact(reason=runtime.pending_compaction_reason)
                 else:
                     source = (
@@ -969,7 +973,7 @@ class Session:
                     )
                 async for event in source:
                     yield event
-                if retry_operation == "fold" and resume_after and not runtime.compaction_failure:
+                if retry_operation == "compact" and resume_after and not runtime.compaction_failure:
                     async for event in runtime.continue_stream():
                         yield event
             finally:

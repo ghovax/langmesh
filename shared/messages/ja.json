@@ -42,7 +42,7 @@
     "answerFailedTitle": "回答を送信できませんでした",
     "cancelToolFailedBody": "サーバーは取り消しを確認しませんでした。接続を確認して、再試行してください。",
     "cancelToolFailedTitle": "そのツール呼び出しを停止できませんでした",
-    "compactFailedBody": "コンテキストの圧縮に失敗しました。続行する前に再試行してください。",
+    "compactFailedBody": "会話の圧縮に失敗しました。続行する前に再試行してください。",
     "compactFailedTitle": "会話を圧縮できませんでした",
     "decisionFailedTitle": "決定を送信できませんでした",
     "heldForDecisionBody": "セッションは{waitingOn}を待っています。メッセージはキューに入っており、判断が済み次第送信されます。",
@@ -81,12 +81,12 @@
     "agentPlaceholder": "エージェントを選択",
     "attachFiles": "ファイルを添付",
     "cacheReads": "キャッシュ読み取り",
-    "compact": "コンパクト",
-    "compactBody": "エージェントが永続的なワークスペース知識を先に保存し、その後で直近の作業をそのまま残して古い会話を破棄します。コンテキストに空きができますが、破棄された会話は復元できません。",
-    "compactConfirm": "今すぐコンパクト",
+    "compact": "圧縮",
+    "compactBody": "エージェントが永続的なワークスペース知識を先に保存し、その後で直近の作業をそのまま残して古い会話を破棄します。会話に空きができますが、破棄された会話は復元できません。",
+    "compactConfirm": "今すぐ圧縮",
     "compactTitle": "会話を圧縮しますか？",
     "compactTooltip": "永続的な知識を保存し、直近の作業を残して古い履歴を破棄します",
-    "compacting": "コンパクト化中…",
+    "compacting": "圧縮中…",
     "compactingTooltip": "会話を圧縮中…",
     "dictationCouldNotOpen": "マイクを開けませんでした: {reason}",
     "dictationFailed": "音声入力を処理できませんでした",
@@ -118,7 +118,7 @@
     "sending": "送信中",
     "sessionTotals": "セッション合計",
     "stop": "停止",
-    "stopUnavailableWhileCompacting": "会話を圧縮中です。途中で停止することはできません。",
+    "stopUnavailableWhileCompacting": "会話を畳み中です。途中で停止することはできません。",
     "stopping": "停止中",
     "total": "合計",
     "uploading": "アップロード中 {count}",
@@ -126,13 +126,13 @@
     "window": "ウィンドウ"
   },
   "ChatMessage": {
-    "compactionFailed": "コンテキストの圧縮に失敗しました",
+    "compactionFailed": "会話の圧縮に失敗しました",
     "compactedTooltip": "{before, plural, other {# 件のメッセージから古い履歴を破棄し、{after} 件を保持しました}}",
     "compactingContext": "会話を圧縮中…",
     "contextCompacted": "会話を圧縮しました",
     "compactionErrors": {
-      "compaction_failed": "圧縮を完了できませんでした。続行する前に再試行してください。",
-      "compaction_no_reclaim": "圧縮で会話領域を解放できませんでした。",
+      "compaction_failed": "畳み込みを完了できませんでした。続行する前に再試行してください。",
+      "compaction_no_reclaim": "畳み込みで会話領域を解放できませんでした。",
       "compaction_preparation_failed": "観察メモリのチェックポイントが完了しなかったため、履歴は削除されませんでした。",
       "compaction_strategy_failed": "設定された圧縮戦略が失敗し、会話は変更されませんでした。"
     },
@@ -177,7 +177,7 @@
       },
       "turn_failed": {
         "title": "ターンを完了できませんでした",
-        "body": "ターンが予期せず停止しました。詳細はデーモンログに記録されています。"
+        "body": "ターンが予期せず停止しました。サーバーの応答を確認して再試行してください。"
       },
       "turn_interrupted": {
         "title": "ターンが中断されました",
@@ -224,7 +224,7 @@
     "loadConversationErrorTitle": "この会話を読み込めませんでした",
     "memory": "メモリ",
     "newConversation": "新しい会話",
-    "openThisFolder": "このフォルダを開く",
+    "openThisCompactioner": "このフォルダを開く",
     "path": "パス",
     "permissionModeFailedTitle": "権限モードを変更できませんでした",
     "queued": "キュー待ち",
@@ -245,7 +245,7 @@
     "switchToDark": "ダークテーマに切り替え",
     "switchToLight": "ライトテーマに切り替え",
     "terminalAndBackground": "ターミナルとバックグラウンド処理",
-    "thisFolder": "このフォルダ",
+    "thisCompactioner": "このフォルダ",
     "unknown": "不明",
     "untitledConversation": "無題の会話",
     "url": "URL"
@@ -328,12 +328,12 @@
     "host": "ホスト",
     "noHosts": "~/.ssh/config にホストがありません。そこに追加してください。",
     "baseDirectory": "フォルダのパス",
-    "openFolder": "フォルダを開く",
     "addLocation": "環境を追加",
     "loadingLocations": "ワークスペースの環境を読み込み中",
     "conflictSameDirectory": "2 つの項目が同じフォルダ {directory} を使用しています。どちらかを削除するか、別のフォルダを選択してください。",
     "conflictNested": "{inner} は {outer} の中にあるため、フォルダが重複しています。外側のフォルダには、その配下がすでに含まれています。",
-    "homeUnresolved": "SSH でこのホストのホームディレクトリを読み取れませんでした。使用するパスを入力してください。"
+    "homeUnresolved": "SSH でこのホストのホームディレクトリを読み取れませんでした。使用するパスを入力してください。",
+    "openFolder": "フォルダを開く"
   },
   "LocationStatus": {
     "uri": "URI",
@@ -495,7 +495,6 @@
     "newest": "新しい順",
     "newestFirst": "新しい順",
     "noMatches": "「{query}」に一致する会話はありません",
-    "openFolder": "フォルダを開く",
     "workspaceOptions": "ワークスペースのオプション",
     "workspaceSettings": "ワークスペース設定",
     "workspaces": "ワークスペース",
@@ -521,7 +520,8 @@
     "fieldConversations": "会話数",
     "fieldWorkspace": "ワークスペース",
     "hideWorkspace": "このワークスペースの会話を非表示",
-    "showWorkspace": "このワークスペースの会話を表示"
+    "showWorkspace": "このワークスペースの会話を表示",
+    "openFolder": "フォルダを開く"
   },
   "Settings": {
     "agent": {
@@ -531,14 +531,6 @@
     "attachments": {
       "_": "添付ファイル",
       "inline_image_megabytes": "インライン化する画像の上限（MB）"
-    },
-    "compaction": {
-      "_": "会話の圧縮",
-      "automatic": "自動で圧縮",
-      "assumed_context_window": "想定コンテキストウィンドウ",
-      "reclaim_at_fraction": "圧縮を始める割合",
-      "output_reserve_fraction": "回答用に確保する割合",
-      "recent_working_set_fraction": "そのまま残す割合"
     },
     "composio": {
       "_": "Composio",
@@ -732,6 +724,13 @@
     "workspace": {
       "_": "ワークスペース",
       "strategy": "方式"
+    },
+    "compaction": {
+      "_": "会話の圧縮",
+      "automatic": "自動で圧縮",
+      "reclaim_at_fraction": "圧縮を始める割合",
+      "output_reserve_fraction": "回答用に確保する割合",
+      "recent_working_set_fraction": "そのまま残す割合"
     }
   },
   "SettingsAbout": {
@@ -742,14 +741,6 @@
     "attachments": {
       "_": "添付したファイルが、それを運ぶ会話にどれだけの負担をかけてよいか。",
       "inline_image_megabytes": "ビジョンモデル向けにインライン化する画像の上限です。これを超えるとパスとメタデータはモデルに届きますが、画素は届きません。"
-    },
-    "compaction": {
-      "_": "会話が長くなったときの畳み方。",
-      "automatic": "コンテキストが埋まってきたら自動で圧縮します。手動の圧縮はどちらの設定でも使えます。",
-      "assumed_context_window": "カスタムモデルがコンテキスト上限を報告しない場合の控えめなスケジュール容量です。推定値として表示し、確実な拒否上限には使用しません。",
-      "reclaim_at_fraction": "使用可能なウィンドウ内で準備を始める目安です。古い履歴を破棄する前にエージェントが永続的な知識を記録できるよう、予約領域は最後のセグメントのために残されます。",
-      "output_reserve_fraction": "現在の回答と圧縮前の記録セグメントのために、使用可能領域の外側へ確保する安全バッファです。",
-      "recent_working_set_fraction": "古い履歴を破棄した後もそのまま残す、使用可能ウィンドウの割合です。1 ターンに多数のツール結果が含まれることがあるため、トークン量で測ります。"
     },
     "composio": {
       "_": "Composio のホスト型 MCP ゲートウェイ。",
@@ -941,6 +932,13 @@
     "workspace": {
       "_": "セッションが作業する場所。",
       "strategy": "セッションの作業場所。プロジェクトのディレクトリそのもの、専用のブランチ、専用の git worktree のいずれか。"
+    },
+    "compaction": {
+      "_": "会話が長くなったときの圧縮方法。",
+      "automatic": "会話が埋まってきたら自動で圧縮します。手動の圧縮はどちらの設定でも使えます。",
+      "reclaim_at_fraction": "使用可能なウィンドウ内で準備を始める目安です。古い履歴を破棄する前にエージェントが永続的な知識を記録できるよう、予約領域は最後のセグメントのために残されます。",
+      "output_reserve_fraction": "現在の回答と圧縮前の記録セグメントのために、使用可能領域の外側へ確保する安全バッファです。",
+      "recent_working_set_fraction": "古い履歴を破棄した後もそのまま残す、使用可能ウィンドウの割合です。1 ターンに多数のツール結果が含まれることがあるため、トークン量で測ります。"
     }
   },
   "SettingsChoices": {
@@ -985,7 +983,6 @@
     "bash": "Bash",
     "chooseAgent": "エージェントを選択",
     "commandPermissions": "コマンド権限",
-    "compaction": "コンパクション",
     "composioApiKey": "Composio API キー",
     "computerControl": "コンピュータ操作",
     "computerControlBody": "コンピュータ操作には、このMac上の他のアプリを読み取り・操作するためのアクセシビリティ権限が必要です。",
@@ -1061,7 +1058,8 @@
     "toolboxUnavailable": "このマシンには、セッション専用のツールを用意できるパッケージマネージャーがありません。",
     "tools": "ツール",
     "userContext": "行動プロフィール",
-    "userContextHint": "作業スタイル（よく使うフォルダ、最近のファイル、アプリ、サイト）のスナップショットを共有し、アシスタントが習慣に合わせられるようにします。既定はオフで、データはこのマシン内に留まります。"
+    "userContextHint": "作業スタイル（よく使うフォルダ、最近のファイル、アプリ、サイト）のスナップショットを共有し、アシスタントが習慣に合わせられるようにします。既定はオフで、データはこのマシン内に留まります。",
+    "compaction": "圧縮"
   },
   "TerminalPanel": {
     "protocolErrorTitle": "ターミナルプロトコルエラー",

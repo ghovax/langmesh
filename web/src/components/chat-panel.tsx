@@ -602,7 +602,7 @@ export function ChatPanel({
     [sessionId],
   );
 
-  const currentFolderName = folderDisplayName(workingDirectory) || translation("thisFolder");
+  const currentCompactionerName = folderDisplayName(workingDirectory) || translation("thisCompactioner");
   const renderedTimeline = useMemo(() => timelineItems(messages), [messages]);
   // The review a user message's turn started, so its transcript is reachable from that row.
   const reviewIdByUserMessage = useMemo(() => {
@@ -992,7 +992,7 @@ export function ChatPanel({
                   }}
                 >
                   <LuFolderOpen size={13} />
-                  <Box flex={1}>{translation("openThisFolder")}</Box>
+                  <Box flex={1}>{translation("openThisCompactioner")}</Box>
                 </Menu.Item>
                 <Menu.Item
                   value="delete"
@@ -1109,7 +1109,7 @@ export function ChatPanel({
                           textAlign="center"
                           mb={4}
                         >
-                          {translation("buildPrompt", { folder: currentFolderName })}
+                          {translation("buildPrompt", { folder: currentCompactionerName })}
                         </Heading>
 
                         {/* The locations read as a section like the ones under them, with the same icon, heading and list. */}

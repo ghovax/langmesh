@@ -44,6 +44,7 @@ from langmesh.runtime.tools.registry import (
     wait_for as wait_for_tool,
     submit_goal_review as submit_goal_review_tool,
     permission_decision as permission_decision_tool,
+    submit_compaction_summary as submit_compaction_summary_tool,
 )
 from langmesh.base.ports import Observation
 from langmesh.runtime.tools.context import ToolContext
@@ -471,6 +472,7 @@ class AgentRuntime(
         "update_tasks": "_tool_update_tasks",
         "update_goal": "_tool_update_goal",
         "submit_goal_review": "_tool_submit_goal_review",
+        "submit_compaction_summary": "_tool_submit_compaction_summary",
         "search_web": "_tool_search_web",
         "read_turn": "_tool_read_turn",
         "control_screen": "_tool_control_screen",
@@ -577,14 +579,22 @@ class AgentRuntime(
         self._tools = [tool for tool in configured_tools if tool.name != "submit_goal_review"]
         if profile.accepts_goal_review:
             self._tools.append(submit_goal_review_tool)
+        if profile.accepts_compaction_summary:
+            self._tools.append(submit_compaction_summary_tool)
         # Keep one cache-stable schema while restricting verdict execution to dedicated reviewers.
         self._model_tools = [
-            *(tool for tool in self._tools if tool.name != "submit_goal_review"),
+            *(
+                tool
+                for tool in self._tools
+                if tool.name not in {"submit_goal_review", "submit_compaction_summary"}
+            ),
             submit_goal_review_tool,
             permission_decision_tool,
+            submit_compaction_summary_tool,
         ]
         self._tool_schemas: dict[str, Any] = {tool.name: tool.args_schema for tool in self._tools}
         self._bound_model = self._model.bind_tools(self._model_tools)
+        self._compaction_summarizer = components.compaction_summarizer
         # The evaluator gates against the same narrowed allow-list the tool set was built from.
         self._permissions = (
             permissions
@@ -621,10 +631,12 @@ class AgentRuntime(
         initial_observation_registry_error = None
         self._approvals = approvals
         self._transcript = transcript
-        # The daemon's event publisher is optional; the registry reader is used only for fold verification.
+        # The daemon's event publisher is optional; the registry reader is used only for compaction verification.
         self._goal_review_journal = components.goal_review_journal
         self._accepts_goal_review = profile.accepts_goal_review
+        self._accepts_compaction_summary = profile.accepts_compaction_summary
         self._submitted_goal_review = None
+        self._submitted_compaction_summary: Any = None
         # When the turn now running began, for the transcript entry it will produce.
         self._turn_started_at = None
         # The conversation and the prompt this runtime runs with.
@@ -675,11 +687,11 @@ class AgentRuntime(
         self._latest_context_tokens = conversation_tokens(self._conversation)
         context_window = getattr(self._model, "context_window", None)
         reported_context_window = max(0, int(context_window())) if callable(context_window) else 0
+        # Every model must advertise its own context capacity; an unknown window means the
+        # harness cannot schedule compacting or refuse an oversized request with numbers.
         self._context_window_estimated = reported_context_window == 0
-        self._context_window = (
-            reported_context_window or self._global_configuration.compaction.assumed_context_window
-        )
-        # Durable fold preparation: one state value prevents contradictory phase, reason,
+        self._context_window = reported_context_window
+        # Durable compaction preparation: one state value prevents contradictory phase, reason,
         # resumption, revision, and failure flags from surviving a restart.
         self._compaction_control = _CompactionControl()
         self._turn_recovery = "none"
@@ -721,7 +733,7 @@ class AgentRuntime(
         if metadata_changed:
             self._observation_registry_metadata = dict(metadata)
             # The memory panel receives this revision immediately, while the model's static
-            # prefix adopts it only at an explicit prompt refresh such as successful folding.
+            # prefix adopts it only at an explicit prompt refresh such as successful compacting.
         self._observation_registry_error = normalized_error
         if error_changed:
             self._pending_observation_registry_feedback = normalized_error
@@ -938,7 +950,7 @@ class AgentRuntime(
         return dict(self._token_usage)
 
     def _accumulate_usage(self, response: AIMessage) -> TurnEvent | None:
-        """Fold one call's usage into the session total and answer a USAGE event, or ``None`` when none was reported."""
+        """Compaction one call's usage into the session total and answer a USAGE event, or ``None`` when none was reported."""
         usage = getattr(response, "usage_metadata", None)
         if not usage:
             return None
@@ -964,7 +976,7 @@ class AgentRuntime(
         model = getattr(self, "_model", None)
         reported_context_window = model.context_window() if model is not None else 0
         # Some OpenAI-compatible gateways omit model metadata on a response. Never replace
-        # a catalogued non-zero window with that absence: doing so disables automatic folding.
+        # a catalogued non-zero window with that absence: doing so disables automatic compacting.
         if reported_context_window > 0:
             self._context_window = reported_context_window
             self._context_window_estimated = False
@@ -1057,7 +1069,7 @@ class AgentRuntime(
         # Interrupt an active provider read at its next safe boundary. Any prefix already
         # streamed is persisted before this user message is appended, so both surfaces agree.
         # Preparation is an atomic private segment: steering waits at its boundary and is
-        # appended immediately before the fold, then reaches the resumed model call.
+        # appended immediately before the compaction, then reaches the resumed model call.
         if self._compaction_control.phase not in {"waiting", "recorded"}:
             self._abort_event.set()
         return accepted
@@ -1188,7 +1200,7 @@ class AgentRuntime(
         return self._compaction_control.failure
 
     def _fail_compaction(self, message: str) -> None:
-        self._compaction_control.fail_fold(message)
+        self._compaction_control.fail_compaction(message)
         # Messages queued during the atomic preparation segment were never accepted into
         # the conversation. Release their senders so they can remain visibly held outside it.
         self.discard_pending_steering()
@@ -1199,11 +1211,11 @@ class AgentRuntime(
         self._mark_session_dirty()
 
     def retry_compaction(self) -> str | None:
-        """Reopen exactly the failed fold phase and return the operation to drive."""
-        if self._compaction_control.phase == "fold_failed":
-            self._compaction_control.retry_fold()
+        """Reopen exactly the failed compaction phase and return the operation to drive."""
+        if self._compaction_control.phase == "compaction_failed":
+            self._compaction_control.retry_compaction()
             self._mark_session_dirty()
-            return "fold"
+            return "compaction"
         if self._compaction_control.phase != "preparation_failed":
             return None
         # A retry gets one unambiguous preparation notice. Retain any accepted user message
@@ -1216,7 +1228,7 @@ class AgentRuntime(
         return "prepare"
 
     def begin_compaction_preparation(self) -> bool:
-        """Begin an explicit fold's recording handshake when no other fold state is active."""
+        """Begin an explicit compaction's recording handshake when no other compaction state is active."""
         if self._compaction_control.failure or self._compaction_control.phase != "none":
             return False
         self._begin_compaction_preparation(reason="manual", resume_after=False)
@@ -1232,7 +1244,7 @@ class AgentRuntime(
 
     @property
     def awaiting_compaction_recording(self) -> bool:
-        """Whether a persisted fold is waiting for its private recording segment to finish."""
+        """Whether a persisted compaction is waiting for its private recording segment to finish."""
         return self._compaction_control.phase == "waiting"
 
     # The goal, and the four things anyone outside this class does with it.

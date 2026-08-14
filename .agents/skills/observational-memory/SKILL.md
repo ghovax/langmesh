@@ -7,7 +7,7 @@ description: Retrieve or deliberately maintain the active workspace or location'
 
 Observational memory is current workspace/location knowledge in `.agents/observations.sqlite`. It is distinct from Memories, which are user-recorded passages comparable to reusable skills. The registry belongs to the place itself, can be tracked in Git, and contains only current state; Git is its history. Never turn it into an activity log or preserve obsolete rows in the database.
 
-Consulting and maintaining this ledger is a core task, not an optional step. Before anything else in every turn, read the relevant slice of the ledger so it shapes what you inspect, how you interpret it, and what you decide; revisit it periodically as state, plans, or findings change, and before closing a turn. Keep it current as part of the work itself: whenever you establish or learn something likely to change a future agent's decisions, record or update it promptly rather than deferring until compaction or the end.
+Consulting and maintaining this ledger is a core task, not an optional step. Before anything else in every turn, read the relevant slice of the ledger so it shapes what you inspect, how you interpret it, and what you decide; revisit it periodically as state, plans, or findings change, and before closing a turn. Keep it current as part of the work itself: whenever you establish or learn something likely to change a future agent's decisions, record or update it promptly rather than deferring until fold or the end.
 
 ## Retrieve
 

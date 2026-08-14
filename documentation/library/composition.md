@@ -90,7 +90,7 @@ The constructor keeps run facts—directory, identity, permission mode, confinem
 | `hooks` | Any combination of the three hook protocols | None |
 | `middleware` | `ToolMiddleware` sequence | None |
 | `compaction` | `Compaction` | Token-bounded recent working set |
-| `compaction_preparation` | `CompactionPreparation` | Observational-memory preparation in `Session` and daemon; direct folding in bare `AgentRuntime` |
+| `compaction_preparation` | `CompactionPreparation` | Observational-memory preparation in `Session` and daemon; direct compaction in bare `AgentRuntime` |
 | `continuations` | `ContinuationPolicy` | Active tuning allowances |
 | `synchronize_resources` | Async callable | No synchronization |
 | `related_turns` | Async turn reader | `read_turn` unavailable |

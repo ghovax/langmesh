@@ -451,7 +451,7 @@ class _TurnRunner:
         # One trace per turn, grouped by session, nesting under the peer that sent it when there is one.
         task, ingested = resolved.task, resolved.ingested
         self._turn_kind = (
-            # A goal turn carries prose somebody has to be able to read, so it is not folded in with the wakes.
+            # A goal turn carries prose somebody has to be able to read, so it is not compacted in with the wakes.
             TurnKind.GOAL
             if ingested.mode is _TurnMode.GOAL_CONTINUATION
             # The reminder is harness-initiated like a wake, and differs only in having nothing to deliver.
@@ -595,7 +595,7 @@ class _TurnRunner:
         return None
 
     async def _run_compaction_turn(self, prepared: _Prepared) -> object | None:
-        """A manual compaction runs no model turn: it folds the older history and emits the compaction parts."""
+        """A manual compaction runs no model turn: it compacts the older history and emits the compaction parts."""
         if prepared.resolved.ingested.mode is not _TurnMode.COMPACTION:
             return None
         async for compaction_event in prepared.runtime.compact(
@@ -618,7 +618,7 @@ class _TurnRunner:
         }
         if mode in {_TurnMode.COMPACTION_RESUME, _TurnMode.COMPACTION_PREPARE, _TurnMode.RETRY}:
             # The accepted user message is already the conversation tail. This turn merely
-            # resumes the model call that the failed fold prevented.
+            # resumes the model call that the failed compaction prevented.
             self._turn_input = ""
         elif mode is _TurnMode.GOAL_CONTINUATION:
             # Goal review prose stays visible, while an independent task obligation rides inside its reminder.

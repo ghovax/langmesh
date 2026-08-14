@@ -407,14 +407,15 @@ async def _serve() -> int:
         await serving
         return 1
     _write_handshake(state.daemon_token, commons_state.daemon_port)
-    # One line on stdout and then close it, since whoever started the daemon is waiting to read exactly this.
+    # One line on stdout, then hand the descriptor to /dev/null: the starter sees EOF on the announcement, while libraries that print keep a writable stream.
     with contextlib.suppress(OSError, ValueError):
         sys.stdout.write(
             json.dumps({"ready": True, "pid": os.getpid(), "port": commons_state.daemon_port})
             + "\n"
         )
         sys.stdout.flush()
-        sys.stdout.close()
+        # Rebind rather than close: the starter still sees EOF, and libraries that print keep a writable stream.
+        sys.stdout = open(os.devnull, "w")
     logger.info(
         "langmeshd listening on %s and %s:%d",
         state.daemon_socket,

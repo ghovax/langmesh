@@ -694,7 +694,7 @@ METHODS: dict[str, Callable[[dict], Awaitable[dict]]] = {
     "session.send": _session_send,
     "turn.cancel": _turn_cancel,
     "session.respond": _session_respond,
-    "session.compact": _session_compact,
+    "session.compaction": _session_compact,
     "session.retry": _session_retry,
     "session.goal_clear": _session_goal_clear,
     "jobs.list": _jobs_list,

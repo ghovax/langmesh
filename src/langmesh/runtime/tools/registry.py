@@ -17,6 +17,7 @@ from langmesh.base.serialization import compact
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.goal_review import GoalReview
 from langmesh.runtime.locations import PermissionDecision
+from langmesh.runtime.compaction import CompactionSummary
 
 from langmesh.base.configuration import PromptLoader
 
@@ -47,6 +48,10 @@ def _permission_decision(**arguments: Any) -> str:
     raise NotImplementedError("Dispatched only by the automatic permission reviewer.")
 
 
+def _submit_compaction_summary(**arguments: Any) -> str:
+    raise NotImplementedError("Dispatched only by the hidden compaction summarizer.")
+
+
 submit_goal_review = StructuredTool.from_function(
     func=_submit_goal_review,
     name="submit_goal_review",
@@ -59,6 +64,13 @@ permission_decision = StructuredTool.from_function(
     name="permission_decision",
     description="Submit the automatic permission reviewer's internal verdict.",
     args_schema=PermissionDecision,
+)
+
+submit_compaction_summary = StructuredTool.from_function(
+    func=_submit_compaction_summary,
+    name="submit_compaction_summary",
+    description=_DESCRIPTIONS.load("submit_compaction_summary", {}).strip(),
+    args_schema=CompactionSummary,
 )
 
 
@@ -537,6 +549,7 @@ _DESCRIBED = (
     ask_user,
     load_skill,
     submit_goal_review,
+    submit_compaction_summary,
 )
 
 

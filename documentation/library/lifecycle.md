@@ -76,7 +76,7 @@ except Exception:
         consume(event)
 ```
 
-Compaction failures use `compact()` instead. A blocked fold must succeed before new user work is accepted.
+Compaction failures use `compaction()` instead. A blocked compaction must succeed before new user work is accepted.
 
 ## Session close
 

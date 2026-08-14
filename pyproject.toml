@@ -137,6 +137,6 @@ docstring-code-format = true
 # meaning depends on which version happens to be installed cannot gate anything.
 #
 # Widening this is worth doing and is deliberately not done here: the wider default reports
-# several hundred findings, and folding those into an unrelated change is how a diff stops
+# several hundred findings, and compactioning those into an unrelated change is how a diff stops
 # being reviewable. It is its own piece of work.
 select = ["E4", "E7", "E9", "F"]

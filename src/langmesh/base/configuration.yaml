@@ -51,7 +51,6 @@ sandbox:
 # Conversation history always streams continuously from newest to oldest; there is no paging or row-limit setting.
 compaction:
   automatic: true
-  assumed_context_window: 128000
   reclaim_at_fraction: 0.85
   output_reserve_fraction: 0.1
-  recent_working_set_fraction: 0.25
+  recent_working_set_fraction: 0.15
