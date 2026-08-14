@@ -28,30 +28,17 @@ They are the same image, not two binaries, for two reasons. Packaging stays a si
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    participant Cli as langmesh (CLI)
-    participant App as Desktop app (Tauri and Next.js)
-    participant Peer as Another session
-    participant Daemon as langmeshd — the controller
-    participant Registry as Session registry
-    participant Stores as history.sqlite — sole writer
-    participant Session as A session — hosted in the daemon
-    participant Executor as Agent loop (LangChain)
-    participant Permissions as Permission engine
-    participant Tools as Tools: shell, files, web, screen, MCP servers
-    participant Model as Model provider (Anthropic, OpenAI, … via LiteLLM)
+    participant Client
+    participant Daemon as langmeshd
+    participant Session
+    participant Model as Model provider
 
-    Cli->>Daemon: unix socket
-    App->>Daemon: loopback TCP and token
-    Peer->>Daemon: unix socket
-    Daemon->>Registry: register and scope the caller
-    Daemon->>Session: call its verbs directly
-    Session->>Executor: drive the turn
-    Executor->>Model: request completion
-    Model-->>Executor: stream chunks
-    Executor->>Permissions: ask before an enabled call
-    Permissions->>Tools: approved call
-    Session->>Stores: write transcript through the daemon
+    Client->>Daemon: send work
+    Daemon->>Session: run the turn
+    Session->>Model: call the model
+    Model-->>Session: stream output
+    Session-->>Daemon: emit events
+    Daemon-->>Client: relay events
 ```
 
 ## Sessions
