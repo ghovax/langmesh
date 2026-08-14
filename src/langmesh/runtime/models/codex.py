@@ -14,6 +14,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.messages.ai import add_ai_message_chunks
 from langchain_core.messages.ai import UsageMetadata
 from langchain_core.messages.content import ContentBlock, ReasoningContentBlock, TextContentBlock
 from langchain_core.messages.tool import ToolCallChunk
@@ -484,19 +485,22 @@ class ChatCodexModel(BaseChatModel):
                         yield chunk
 
     @staticmethod
-    def _aggregate_to_result(aggregate: Optional[ChatGenerationChunk]) -> ChatResult:
+    def _aggregate_to_result(aggregate: Optional[AIMessageChunk]) -> ChatResult:
         if aggregate is None:
             return ChatResult(generations=[])
-        # The stream only ever yields `AIMessageChunk`, so narrow from the base type for the accessors below.
-        chunk_message = cast(AIMessageChunk, aggregate.message)
         message = AIMessage(
-            content=chunk_message.content,
+            content=aggregate.content,
             # An empty list rather than `None`, because a default applies to an omitted key and an explicit `None` fails validation.
-            tool_calls=list(chunk_message.tool_calls or []),
-            additional_kwargs=chunk_message.additional_kwargs,
-            usage_metadata=chunk_message.usage_metadata,
+            tool_calls=list(aggregate.tool_calls or []),
+            additional_kwargs=aggregate.additional_kwargs,
+            usage_metadata=aggregate.usage_metadata,
         )
         return ChatResult(generations=[ChatGeneration(message=message)])
+
+    @classmethod
+    def _chunks_to_result(cls, chunks: list[AIMessageChunk]) -> ChatResult:
+        aggregate = add_ai_message_chunks(chunks[0], *chunks[1:]) if chunks else None
+        return cls._aggregate_to_result(aggregate)
 
     async def _agenerate(
         self,
@@ -505,10 +509,10 @@ class ChatCodexModel(BaseChatModel):
         run_manager=None,
         **kwargs: Any,
     ) -> ChatResult:
-        aggregate: Optional[ChatGenerationChunk] = None
+        chunks: list[AIMessageChunk] = []
         async for chunk in self._astream(messages, stop=stop, run_manager=run_manager, **kwargs):
-            aggregate = chunk if aggregate is None else aggregate + chunk
-        return self._aggregate_to_result(aggregate)
+            chunks.append(cast(AIMessageChunk, chunk.message))
+        return self._chunks_to_result(chunks)
 
     def _generate(
         self,
@@ -529,7 +533,7 @@ class ChatCodexModel(BaseChatModel):
             "model": self.model,
             "context_window": self.context_window(),
         }
-        aggregate: Optional[ChatGenerationChunk] = None
+        chunks: list[AIMessageChunk] = []
         with httpx.Client(timeout=self.timeout) as client:
             with client.stream("POST", RESPONSES_URL, json=payload, headers=headers) as response:
                 if response.status_code >= 400:
@@ -540,5 +544,5 @@ class ChatCodexModel(BaseChatModel):
                 for line in response.iter_lines():
                     chunk = self._line_to_chunk(line, state)
                     if chunk is not None:
-                        aggregate = chunk if aggregate is None else aggregate + chunk
-        return self._aggregate_to_result(aggregate)
+                        chunks.append(cast(AIMessageChunk, chunk.message))
+        return self._chunks_to_result(chunks)

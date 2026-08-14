@@ -211,11 +211,10 @@ class _CompactsContext:
             messages.append(pending_message)
         return conversation_tokens(messages)
 
-    def _at_folding_threshold(self, pending_message=None) -> bool:
+    def _at_folding_threshold(self, next_request_tokens: int) -> bool:
         """Whether the next request is large enough that folding is worth its cache invalidation."""
         usable = self._usable_context()
-        current = self._next_request_tokens(pending_message)
-        return usable > 0 and max(self._latest_context_tokens, current) >= (
+        return usable > 0 and next_request_tokens >= (
             self._global_configuration.compaction.reclaim_at_fraction * usable
         )
 
@@ -232,7 +231,7 @@ class _CompactsContext:
                 )
             )
         compaction = self._global_configuration.compaction
-        if not compaction.automatic or not self._at_folding_threshold(pending_message):
+        if not compaction.automatic or not self._at_folding_threshold(next_request_tokens):
             return False
         return len(self._bounded_tail(self._conversation)) < len(self._conversation)
 

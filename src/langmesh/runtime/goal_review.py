@@ -252,7 +252,7 @@ class _ReviewsGoal:
         reviewer._tool_context = replace(reviewer._tool_context, toolbox=toolbox)
         reviewer.restore_session(self.session_snapshot())
         reviewer._cached_system_prompt = self._build_static_system_prompt()
-        reviewer._attached_files = list(self._attached_files)
+        reviewer._attached_files = dict(self._attached_files)
         return reviewer
 
     async def _run_goal_review_turn(

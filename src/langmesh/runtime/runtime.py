@@ -360,6 +360,7 @@ class TaskItem(BaseModel):
 class TaskManager:
     def __init__(self):
         self._tasks: list[TaskItem] = []
+        self._by_identifier: dict[str, TaskItem] = {}
         self._next_identifier: int = 1
 
     def add_tasks(self, task_definitions: list[dict]) -> list[str]:
@@ -373,6 +374,7 @@ class TaskManager:
                 dependencies=definition.get("dependencies", []),
             )
             self._tasks.append(task)
+            self._by_identifier[identifier] = task
             created.append(identifier)
         return created
 
@@ -384,7 +386,7 @@ class TaskManager:
         """Apply each update, returning the ids that changed and a complaint for each that did not."""
         updated_ids: list[str] = []
         complaints: list[str] = []
-        known = {task.identifier for task in self._tasks}
+        known = self._by_identifier
         for update in updates:
             unknown = sorted(set(update) - self.UPDATE_KEYS)
             if unknown:
@@ -403,11 +405,8 @@ class TaskManager:
                     f"There is no task {task_id!r}. Current ids: {', '.join(sorted(known)) or 'none'}."
                 )
                 continue
-            for task in self._tasks:
-                if task.identifier == task_id:
-                    task.status = status
-                    updated_ids.append(task_id)
-                    break
+            known[task_id].status = status
+            updated_ids.append(task_id)
         return updated_ids, complaints
 
     def render_json(self) -> str:
@@ -439,7 +438,16 @@ class TaskManager:
     def restore(self, snapshot: dict) -> None:
         """Rehydrate from :meth:`snapshot`, tolerating a missing or partial one by staying empty."""
         self._tasks = [TaskItem.model_validate(task) for task in snapshot.get("tasks", [])]
-        self._next_identifier = int(snapshot.get("next_identifier", len(self._tasks) + 1))
+        self._by_identifier = {task.identifier: task for task in self._tasks}
+        if len(self._by_identifier) != len(self._tasks):
+            raise ValueError("task snapshot contains duplicate identifiers")
+        numeric_identifiers = [
+            int(task.identifier.removeprefix("task-"))
+            for task in self._tasks
+            if task.identifier.removeprefix("task-").isdigit()
+        ]
+        stored_next = int(snapshot.get("next_identifier", 1))
+        self._next_identifier = max(stored_next, max(numeric_identifiers, default=0) + 1)
 
 
 class AgentRuntime(
@@ -691,13 +699,13 @@ class AgentRuntime(
         # What was approved beyond the configured profile, held for the session so one grant is not re-asked.
         self._access_grants: list[Grant] = []
         # The files the person attached: like a grant, but answering what they handed over rather than what was asked.
-        self._attached_files: list[str] = []
+        self._attached_files: dict[str, None] = {}
 
     def note_attachments(self, paths: Sequence[str]) -> None:
         """Record attached files so a tool may read them where they live. Additive across the conversation."""
         for path in paths:
-            if path and path not in self._attached_files:
-                self._attached_files.append(path)
+            if path:
+                self._attached_files.setdefault(path, None)
 
     def refresh_system_prompt(self) -> None:
         """Rebuild catalogue-derived prompt material at the next model-call boundary."""
