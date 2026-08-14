@@ -91,6 +91,8 @@ class ToolResult(TurnEvent):
     status: str = ""
     # Set when this result is a background job's completion, not a synchronous return.
     job_id: str = ""
+    # Model-facing guidance appended after the contiguous tool-result block, never serialized into result data.
+    model_guidance: str = ""
     # A tool result's payload is genuinely open, so it rides a typed envelope with an open tail.
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -166,6 +168,8 @@ class Error(TurnEvent):
     id: str = ""
     code: str = ""
     tool: str = ""
+    # Model-facing guidance appended after the contiguous tool-result block, never serialized into error data.
+    model_guidance: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
 

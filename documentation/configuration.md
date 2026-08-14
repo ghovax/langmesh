@@ -114,7 +114,7 @@ composio:
 
 `api_key` also reads `COMPOSIO_API_KEY` from the environment.
 
-When you enable Composio, it joins the ordinary MCP set. It is not a second path. Tool gating and the client both see it as another server.
+When you enable Composio, it joins the ordinary set of MCP servers. It is not a second path. Tool gating and the client both see it as another server.
 
 ## Execution and permissions
 
@@ -150,7 +150,7 @@ What a session's tool children may do: a `bash` command, or a `control_screen` s
 sandbox:
   enforce: required
   filesystem:
-    readable: ["~/.config", "~/.ssh", "~/.gitconfig", "~/.cargo", "~/.npmrc"]
+    readable: ["~/.config", "~/.ssh", "~/.gitconfig", "~/.cargo", "~/.npmrc", "~/Library/Keychains"]
     writable: ["$WORKSPACE", "$TMPDIR", "/tmp", "$XDG_CACHE_HOME"]
     deny: []
     grantable: []
@@ -169,7 +169,7 @@ Almost every field is a Unix primitive under its own name. `limits` are [`setrli
 
 **The filesystem.** The system stays readable — `/usr` and `/etc` are not secrets, and denying them breaks every command while protecting nothing. The lists govern _your home_, which is closed by default. `readable` is the allowlist that keeps toolchains working. `writable` is narrower still, and `deny` is an opt-in absolute ban that wins over both.
 
-The shipped defaults keep credential and configuration directories readable. To break `git push` in order to protect a key is a bad trade. The default `deny` list is empty, so a path outside `readable` can still be opened by a per-call access request; add a denied path only when no approval should ever open it. `$WORKSPACE` is the session's own directory.
+The shipped defaults keep credential and configuration directories readable, including `~/Library/Keychains` so Git's macOS credential helper works inside the sandbox. To break `git push` in order to protect a key is a bad trade. The default `deny` list is empty, so a path outside `readable` can still be opened by a per-call access request; add a denied path only when no approval should ever open it. `$WORKSPACE` is the session's own directory.
 
 `/tmp` is listed beside `$TMPDIR` because on macOS the two are different places: `$TMPDIR` expands to a per-user directory under `/var/folders`. A writable set that named only `$TMPDIR` refused `/tmp`, which is the scratch path every convention points at and the first one anything reaches for.
 

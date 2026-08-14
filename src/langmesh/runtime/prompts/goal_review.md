@@ -82,7 +82,7 @@ A session that has stopped is telling you about one route. It is not telling you
 Read what has actually been tried, then look for what has not:
 
 - The same command against a different input, a smaller case, or a fresh directory.
-- Reading the thing that failed rather than re-running it — the log, the config, the source of the tool.
+- Reading the thing that failed rather than re-running it — the log, the configuration, the source of the tool.
 - Attacking a different requirement, and coming back to this one with what that turns up.
 - Establishing the ground: the version, the path, the permission, the assumption nobody checked.
 - Doing by hand, once, the thing that was being automated, so the failure has somewhere to be seen.

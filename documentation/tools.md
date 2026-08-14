@@ -72,9 +72,9 @@ A peer that dies before it reports cannot say so. That is the one thing the harn
 
 `list_remote_agents` and `message_remote_agent` are separate verbs, because a remote agent is a separate bargain. It runs on someone else's machine, at someone else's cost. It has no shared history and no access to this filesystem. Present only when one is registered.
 
-**MCP**
+**MCP servers**
 
-`call_mcp_tool`, `list_mcp_tools`, `list_mcp_resources`, `read_mcp_resource` — bridge to any configured [MCP server](agent-system.md#mcp-servers).
+`call_mcp_server_tool`, `list_mcp_tools`, `list_mcp_resources`, `read_mcp_resource` — bridge to any configured [MCP server](agent-system.md#mcp-servers).
 
 ## Screen control (`control_screen`)
 
@@ -113,7 +113,7 @@ LangMesh reads structure, not pixels: there is no screenshot path for computer u
 
 - Grant **Accessibility** permission to LangMesh for native apps (System Settings, then Privacy & Security, then Accessibility). The app prompts you and links directly to the pane. macOS matches the permission to the app's code identity. The packaged build therefore carries a stable identity, which keeps the grant across updates. See the [Development guide](development.md#building-and-signing).
 - Turn on Chrome's remote-debugging toggle once for the browser surface. Open `chrome://inspect` and enable it under the remote-debugging option (LangMesh provides a one-click prompt that opens the page).
-- Set `computer_control.enabled: true` in the config (off by default).
+- Set `computer_control.enabled: true` in the configuration (off by default).
 
 > [!NOTE]
 > Typing fills a field without submitting unless the agent explicitly asks to — so it never posts a form by accident.
@@ -129,4 +129,4 @@ Finding, reading, listing tabs and frames, and switching between tabs are all re
 - Model-facing message templates: `src/langmesh/runtime/prompts/` and `src/langmesh/computer/messages/`
 - The guidance a session gets for screen control: `src/langmesh/runtime/prompts/computer_control_guidance.md`
 
-A tool runs inside the session's own process, so its blast radius is that session. That means its working directory, its permission mode, and its own MCP connections. Under the `worktree` strategy the working directory is the session's own git worktree.
+A tool runs inside the session's own process, so its blast radius is that session. That means its working directory, its permission mode, and its own MCP server connections. Under the `worktree` strategy the working directory is the session's own git worktree.

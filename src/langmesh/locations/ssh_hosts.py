@@ -1,4 +1,4 @@
-"""The SSH host registry, sourced from the user's own config through the system `ssh`."""
+"""The SSH host registry, sourced from the user's own configuration through the system `ssh`."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _PATTERN_CHARACTERS = set("*?!")
 
 @dataclass(frozen=True)
 class SshHost:
-    """A connectable host from the config: its alias, plus the coordinates `ssh -G` resolved."""
+    """A connectable host from the configuration: its alias, plus the coordinates `ssh -G` resolved."""
 
     alias: str
     hostname: str
@@ -24,7 +24,7 @@ class SshHost:
 
 
 def _config_paths(config_path: Path, _seen: set[Path] | None = None) -> list[Path]:
-    """The config file plus every file it includes, glob-expanded and resolved relative to its includer."""
+    """The configuration file and every include, glob-expanded and resolved from its includer."""
     seen = _seen if _seen is not None else set()
     resolved = config_path.expanduser()
     if resolved in seen or not resolved.is_file():
@@ -111,7 +111,7 @@ def resolve_host(alias: str, *, timeout: float = 5.0) -> SshHost | None:
 
 
 def list_ssh_hosts(config_path: Path = DEFAULT_SSH_CONFIG_PATH) -> list[SshHost]:
-    """Every connectable host defined in the SSH config, resolved. Missing config gives []."""
+    """Every connectable host in the SSH configuration, resolved; a missing file gives []."""
     hosts: list[SshHost] = []
     for alias in _literal_aliases(config_path):
         host = resolve_host(alias)

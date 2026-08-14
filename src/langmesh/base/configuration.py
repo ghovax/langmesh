@@ -224,6 +224,8 @@ class FilesystemConfiguration(Section):
             "~/.pyenv",
             "~/.docker",
             "~/.netrc",
+            # Allow Git's macOS credential helper to read the login keychain for HTTPS pushes.
+            "~/Library/Keychains",
         ],
     )
     writable: list[str] = Field(
@@ -1095,16 +1097,16 @@ def list_agents(agents_directory: str | Path | Iterable[str | Path]) -> list[dic
     agents = []
     for name, path in sorted(_agent_paths(agents_directory).items()):
         try:
-            config = AgentConfiguration.from_markdown(path)
+            configuration = AgentConfiguration.from_markdown(path)
             agents.append(
                 {
-                    "id": config.identifier,
-                    "name": config.identifier,
-                    "title": config.display_name,
+                    "id": configuration.identifier,
+                    "name": configuration.identifier,
+                    "title": configuration.display_name,
                     # What the agent is for — surfaced as the subtitle in the UI's agent picker.
-                    "description": config.description,
+                    "description": configuration.description,
                     # The resolved `provider/model`; empty means no runnable model is configured.
-                    "model": config.model_identifier or "",
+                    "model": configuration.model_identifier or "",
                 }
             )
         except Exception:

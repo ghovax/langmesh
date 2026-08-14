@@ -270,7 +270,7 @@ export function SettingsDialog({
     fetchSettings()
       .then((settings) => {
         if (cancelled) return;
-        if (!settingsAgent) setPermissionMode(settings.permission_mode);
+        if (!selectedAgent) setPermissionMode(settings.permission_mode);
         setSavedPermissionMode(settings.permission_mode);
         setSandboxEnforce(settings.sandbox.enforce);
         setSavedSandboxEnforce(settings.sandbox.enforce);
@@ -305,7 +305,7 @@ export function SettingsDialog({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, selectedAgent]);
 
   // Check Full Disk Access only when it is relevant, and again whenever the window regains focus.
   useEffect(() => {

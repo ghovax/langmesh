@@ -144,8 +144,8 @@ def _announcing_server_class():
     class AnnouncingServer(uvicorn.Server):
         """A uvicorn server that sets an event once it is accepting connections, so nothing has to poll for readiness."""
 
-        def __init__(self, config) -> None:  # noqa: ANN001 — matches uvicorn's signature
-            super().__init__(config)
+        def __init__(self, configuration) -> None:  # noqa: ANN001 — matches uvicorn's type
+            super().__init__(configuration)
             self.ready = asyncio.Event()
 
         async def startup(self, sockets=None) -> None:  # noqa: ANN001

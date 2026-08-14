@@ -999,7 +999,7 @@ function reduceDataPart(
         messageMatchesToolEvent(message, toolName, toolCallId),
       );
       const mergedResult =
-        toolName === "call_mcp_tool"
+        toolName === "call_mcp_server_tool"
           ? mergeMcpFinalResult(currentMessage?.meta?.result, event.display)
           : event.display;
       const resultStatus = statusFromWire(event.status);
@@ -1041,11 +1041,11 @@ function reduceDataPart(
       const toolCallId = event.tool_call_id;
       const streamed = streamedMcpResult(data);
       const currentMessage = state.messages.find((message) =>
-        messageMatchesToolEvent(message, "call_mcp_tool", toolCallId),
+        messageMatchesToolEvent(message, "call_mcp_server_tool", toolCallId),
       );
       const mergedResult = mergeMcpResult(currentMessage?.meta?.result, streamed);
       state.messages = state.messages.map((message) =>
-        messageMatchesToolEvent(message, "call_mcp_tool", toolCallId)
+        messageMatchesToolEvent(message, "call_mcp_server_tool", toolCallId)
           ? { ...message, meta: { ...message.meta, status: "running", result: mergedResult } }
           : message,
       );

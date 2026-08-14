@@ -20,19 +20,6 @@ class Escape:
     def __bool__(self) -> bool:
         return bool(self.reads or self.writes or self.network)
 
-    def summary(self, explanation: str = "") -> str:
-        """What the person deciding is shown: the reach asked for, and the reason given for it."""
-        wanted = []
-        if self.writes:
-            wanted.append(f"write {', '.join(self.writes)}")
-        if self.reads:
-            wanted.append(f"read {', '.join(self.reads)}")
-        if self.network:
-            wanted.append("reach the network")
-        asked = "; ".join(wanted) or "reach beyond its confinement"
-        # The model's own reason, without which the path has no purpose attached to it.
-        return f"Needs to {asked} — {explanation}" if explanation else f"Needs to {asked}"
-
 
 def escape_of(
     request: Optional[AccessRequest],
@@ -61,7 +48,6 @@ class Verdict:
 
     kind: Literal["run", "ask", "refuse"]
     reason: Optional[PermissionReason] = None
-    message: str = ""
 
     @property
     def runs(self) -> bool:
@@ -85,19 +71,14 @@ def verdict_for(
     if rule == RULE_DENY:
         return Verdict(
             kind="refuse",
-            reason=PermissionReason(kind="denied_by_rules"),
-            message="Your permission rules deny this.",
+            reason=PermissionReason(kind="rule_denial"),
         )
     if profile is not None and escape:
         refused = _refused_by_deny_list(escape, profile, workspace=workspace)
         if refused:
             return Verdict(
                 kind="refuse",
-                reason=PermissionReason(kind="denied_path", paths=list(refused)),
-                message=(
-                    "These paths are on the deny list, which no approval can widen: "
-                    + ", ".join(refused)
-                ),
+                reason=PermissionReason(kind="path_denial", paths=list(refused)),
             )
     if not escape:
         return Verdict(kind="ask") if rule == RULE_ASK else Verdict(kind="run")
@@ -106,7 +87,7 @@ def verdict_for(
     return Verdict(
         kind="ask",
         reason=PermissionReason(
-            kind="reaches_outside_confinement",
+            kind="confinement_escape",
             paths=list(escape.reads + escape.writes),
         ),
     )

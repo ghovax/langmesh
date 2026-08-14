@@ -231,7 +231,7 @@ class Session:
         transcript: Optional[Transcript] = None,
         credentials: Optional[Credentials] = None,
         peers: Any = None,
-        mcp_manager: Any = None,
+        mcp_server_manager: Any = None,
         # Extension as distinct from configuration: tools the agent gains, and where it may run them.
         tools: Sequence[Any] = (),
         supplied_tool_gate: str = "ask",
@@ -275,7 +275,7 @@ class Session:
         self._permission_mode = permission_mode
         self._sandbox = sandbox
         self._peers = peers
-        self._mcp_manager = mcp_manager
+        self._mcp_server_manager = mcp_server_manager
         self._lifecycle = AsyncExitStack()
         # Reading configuration must not leave a file in the caller's home directory.
         self._configuration = (
@@ -381,7 +381,7 @@ class Session:
                 # Handed over as the caller gave it, including `None`, which the runtime reads as the configured default.
                 sandbox=self._sandbox,
                 session_access=self._peers,
-                mcp_manager=self._mcp_manager,
+                mcp_server_manager=self._mcp_server_manager,
                 catalogue=catalogue,
                 model=self._model,
                 jobs=self._jobs,
@@ -703,23 +703,23 @@ class Session:
                 self._materialized_resources = materialized
                 self._directory = str(materialized.path)
                 self._runtime_directory = self._directory
-                if self._mcp_manager is None:
+                if self._mcp_server_manager is None:
                     from langmesh.base.configuration import MCPConfiguration
 
                     servers = MCPConfiguration.from_dotagents_roots(
                         [Path(self._directory) / ".agents"]
                     ).enabled_servers()
                     if servers:
-                        from langmesh.base.mcp_client import MCPClientManager
+                        from langmesh.base.mcp_client import MCPServerManager
 
-                        manager = MCPClientManager(servers)
+                        manager = MCPServerManager(servers)
                         await manager.start()
-                        self._mcp_manager = manager
+                        self._mcp_server_manager = manager
 
                         async def close_manager() -> None:
                             await manager.aclose()
-                            if self._mcp_manager is manager:
-                                self._mcp_manager = None
+                            if self._mcp_server_manager is manager:
+                                self._mcp_server_manager = None
 
                         self._lifecycle.push_async_callback(close_manager)
             except BaseException:

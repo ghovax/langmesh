@@ -40,7 +40,7 @@ from langmesh.base.cursor_credentials import (
     valid_tokens,
 )
 from langmesh.base.configuration import PromptLoader
-from langmesh.runtime.cache_trace import tracks_conversation_cache
+from langmesh.runtime.cache_trace import active_cache_lane
 from langmesh.base.cursor_subscription import (
     APPEND_PATH,
     RUN_HOSTS,
@@ -97,8 +97,7 @@ def _write_arguments(values: list[str]) -> Optional[dict[str, Any]]:
     marker = f"LANGMESH_{new_id('heredoc').upper().replace('-', '_')}"
     return {
         "command": (
-            f"cat > {shlex.quote(path)} <<'{marker}'"
-            f"{os.linesep}{content}{os.linesep}{marker}"
+            f"cat > {shlex.quote(path)} <<'{marker}'{os.linesep}{content}{os.linesep}{marker}"
         ),
         "access_request": {"mutates": True},
     }
@@ -225,9 +224,7 @@ class ChatCursorModel(BaseChatModel):
         # Only the first system message is the session prompt; later ones stay in place as
         # transcript blocks, as codex treats them, so an appended instruction (the permission
         # review) never rewrites the cached system prefix.
-        first = next(
-            (message for message in messages if isinstance(message, SystemMessage)), None
-        )
+        first = next((message for message in messages if isinstance(message, SystemMessage)), None)
         content = message_text(first) if first is not None else ""
         return _PROMPTS.load("cursor_system_prompt", {"content": content}).strip()
 
@@ -250,7 +247,7 @@ class ChatCursorModel(BaseChatModel):
             return message_text(conversation[0])
         blocks: list[str] = []
         for message in conversation:
-            if isinstance(message, SystemMessage):
+            if isinstance(message, SystemMessage) or message.additional_kwargs.get("reminder"):
                 blocks.append(self._transcript_block("Instruction", message_text(message)))
                 continue
             if isinstance(message, ToolMessage):
@@ -268,9 +265,7 @@ class ChatCursorModel(BaseChatModel):
                     arguments = call.get("args")
                     rendered = arguments if isinstance(arguments, str) else compact(arguments)
                     blocks.append(
-                        self._transcript_block(
-                            f"Assistant tool call: {call.get('name')}", rendered
-                        )
+                        self._transcript_block(f"Assistant tool call: {call.get('name')}", rendered)
                     )
                 continue
             blocks.append(self._transcript_block("User", message_text(message)))
@@ -301,10 +296,10 @@ class ChatCursorModel(BaseChatModel):
         )
 
     @staticmethod
-    def _conversation_key(messages: Sequence[BaseMessage]) -> str:
+    def _conversation_key(messages: Sequence[BaseMessage], lane: str | None = None) -> str:
         """Which conversation this is, keyed on the first non-system exchange so the key is stable for its whole life."""
         conversation = [m for m in messages if not isinstance(m, SystemMessage)]
-        return _digest_messages(conversation[:1])
+        return f"{lane or active_cache_lane()}:{_digest_messages(conversation[:1])}"
 
     def _resumption_for(self, messages: Sequence[BaseMessage]) -> Optional[_Resumption]:
         """A checkpoint worth resuming from, or `None` when the transcript no longer begins with what it was made from.
@@ -313,7 +308,10 @@ class ChatCursorModel(BaseChatModel):
         It just must never record one (`_remember_resumption` stays gated on the flag).
         """
         _prune_resumptions()
-        entry = _resumptions.get(self._conversation_key(messages))
+        lane = active_cache_lane()
+        entry = _resumptions.get(self._conversation_key(messages, lane))
+        if entry is None and lane != "conversation":
+            entry = _resumptions.get(self._conversation_key(messages, "conversation"))
         if entry is None or entry.prefix_length >= len(messages):
             return None
         if _digest_messages(messages[: entry.prefix_length]) != entry.prefix_digest:
@@ -327,8 +325,6 @@ class ChatCursorModel(BaseChatModel):
         blobs: dict[bytes, bytes],
         conversation_id: str,
     ) -> None:
-        if not tracks_conversation_cache():
-            return
         if not checkpoint:
             return
         _resumptions[self._conversation_key(messages)] = _Resumption(

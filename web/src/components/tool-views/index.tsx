@@ -1193,7 +1193,7 @@ export function ToolResultView({
     if (code === "web_search_error")
       return <ErrorView message={asString(data.message) || translation("searchFailed")} />;
     if (code.startsWith("bash")) return <BashResultView data={data} />;
-    if (name === "call_mcp_tool" || name === "read_mcp_resource")
+    if (name === "call_mcp_server_tool" || name === "read_mcp_resource")
       return <McpResultView data={data} />;
     if (code === "empty_response") {
       const message = asString(data.message);

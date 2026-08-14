@@ -15,28 +15,33 @@ INSTRUCTIONS = "instructions"
 TOOLS = "tools"
 ITEM = "item"
 
-_TRACKS_CONVERSATION_CACHE = ContextVar("tracks_conversation_cache", default=True)
+_CACHE_LANE = ContextVar("cache_lane", default="conversation")
 
 
 @contextmanager
-def without_advancing_conversation_cache() -> Generator[None, None, None]:
-    """Run a call that is measured against the conversation's cache chain but does not advance it.
-
-    A probe shares the conversation's cached prefix, so it may be diagnosed against the last request
-    (a real prefix hit) and may resume cursor's checkpoint — yet it never becomes the chain head:
-    the diagnosis is not remembered, and cursor records no resumption from it. The next conversation
-    request is therefore still measured against the conversation, not the probe. The provider's own
-    caching is unaffected; only LangMesh's chain accounting is.
-    """
-    token = _TRACKS_CONVERSATION_CACHE.set(False)
+def cache_lane(name: str) -> Generator[None, None, None]:
+    """Run an auxiliary model call on its own reusable cache branch."""
+    normalized = name.strip()
+    if not normalized or normalized == "conversation":
+        raise ValueError("an auxiliary cache lane needs a distinct non-empty name")
+    parent = active_cache_lane()
+    if parent != "conversation":
+        normalized = f"{parent}/{normalized}"
+    token = _CACHE_LANE.set(normalized)
     try:
         yield
     finally:
-        _TRACKS_CONVERSATION_CACHE.reset(token)
+        _CACHE_LANE.reset(token)
 
 
-def tracks_conversation_cache() -> bool:
-    return _TRACKS_CONVERSATION_CACHE.get()
+def active_cache_lane() -> str:
+    """The cache branch for the current model call."""
+    return _CACHE_LANE.get()
+
+
+def provider_cache_key(session_id: str) -> str:
+    """The stable provider key shared by the main conversation and every branch from it."""
+    return session_id
 
 
 @dataclass(frozen=True)
@@ -135,8 +140,9 @@ __all__ = [
     "Piece",
     "RequestTrace",
     "Segment",
-    "without_advancing_conversation_cache",
+    "active_cache_lane",
+    "cache_lane",
     "diagnose",
     "trace",
-    "tracks_conversation_cache",
+    "provider_cache_key",
 ]

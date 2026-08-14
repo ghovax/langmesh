@@ -94,7 +94,7 @@ export function permissionReasonText(
   if (!reason?.kind) return "";
   const count = (reason.paths ?? []).filter(Boolean).length;
   switch (reason.kind) {
-    case "reaches_outside_confinement":
+    case "confinement_escape":
       return translation("reasonAccessRequest", { count });
     default:
       return "";

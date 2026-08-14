@@ -29,6 +29,25 @@ providers:
 exa:
   api_key: ""
 
+# Read-only credential and toolchain roots needed by ordinary project commands.
+sandbox:
+  filesystem:
+    readable:
+      - "~/.agents"
+      - "~/.config"
+      - "~/.local"
+      - "~/.ssh"
+      - "~/.gitconfig"
+      - "~/.gitignore_global"
+      - "~/.cargo"
+      - "~/.rustup"
+      - "~/.npmrc"
+      - "~/.nvm"
+      - "~/.pyenv"
+      - "~/.docker"
+      - "~/.netrc"
+      - "~/Library/Keychains"
+
 # Conversation history always streams continuously from newest to oldest; there is no paging or row-limit setting.
 compaction:
   automatic: true

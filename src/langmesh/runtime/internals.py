@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from langmesh.base.credentials import is_signed_in
 from langmesh.base.cursor_credentials import is_signed_in as cursor_is_signed_in
-from langmesh.base.configuration import Configuration, PromptLoader
+from langmesh.base.configuration import Configuration
 from langmesh.protocol.events import tool_status_from_result, ToolStatus
 from langmesh.base.providers import resolve_api_key
 from langmesh.base.models import find_model
@@ -74,7 +74,7 @@ _BACKGROUND_HANDLE_PREFIXES = {
 
 
 def _coerce_mcp_arguments(value: Any) -> dict:
-    """An MCP call's `arguments` as a dict, since models often emit the object as a JSON string."""
+    """An MCP server call's `arguments` as a dict, since models often emit the object as a JSON string."""
     if isinstance(value, dict):
         return value
     if isinstance(value, str) and value.strip():
@@ -188,38 +188,6 @@ def _tool_timing_metadata(
     if background_job_id:
         metadata["background_job_id"] = background_job_id
     return metadata
-
-
-_MODEL_PROMPT_LOADER = PromptLoader(Path(__file__).parent / "prompts")
-
-
-def _model_visible_tool_result(
-    content: str,
-    metadata: dict[str, Any],
-    status: str,
-    code: str | None = None,
-    *,
-    kind: str = "tool_result",
-) -> str:
-    """A model-facing tool result: a one-line JSON header, a blank line, then the tool's output as-is."""
-    header: dict[str, Any] = {
-        "kind": kind,
-        "tool_name": metadata.get("tool_name", ""),
-        "tool_call_id": metadata.get("tool_call_id", ""),
-        "status": status,
-        "code": code,
-    }
-    for key in ("started_at", "completed_at", "duration_milliseconds", "background_job_id"):
-        value = metadata.get(key)
-        if value is not None:
-            header[key] = value
-    return _MODEL_PROMPT_LOADER.load(
-        "model_tool_result",
-        {
-            "header": compact(header),
-            "content": content,
-        },
-    )
 
 
 def _model_result_status(content: str, *, ok: bool, backgrounded: bool) -> tuple[str, str | None]:
@@ -341,6 +309,8 @@ class _PreflightGate:
     is_bash: bool = False
     # The model-facing error if the gate is answered no.
     deny_message: str = ""
+    # Who supplied an approval. Empty until resolution; interactive answers default to the person.
+    approved_by: str = ""
     # For an egress gate, the remote agent name (an "always allow" is remembered).
     egress_agent: str = ""
     # The widening asked for, carried so approving records exactly what the planner worked out.

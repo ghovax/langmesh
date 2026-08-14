@@ -34,7 +34,7 @@ from langmesh.runtime.tools.registry import (
     update_tasks as update_tasks_tool,
     update_goal as update_goal_tool,
     list_mcp_tools as list_mcp_tools_tool,
-    call_mcp_tool as call_mcp_tool_tool,
+    call_mcp_server_tool as call_mcp_server_tool_tool,
     list_mcp_resources as list_mcp_resources_tool,
     read_mcp_resource as read_mcp_resource_tool,
     fetch_url as fetch_url_tool,
@@ -44,6 +44,7 @@ from langmesh.runtime.tools.registry import (
     load_skill as load_skill_tool,
     wait_for as wait_for_tool,
     submit_goal_review as submit_goal_review_tool,
+    permission_decision as permission_decision_tool,
 )
 from langmesh.base.ports import Observation
 from langmesh.runtime.tools.context import ToolContext
@@ -88,7 +89,6 @@ from langmesh.runtime.internals import (
     _cap_model_result_payload,
     _maybe_json,
     _model_result_status,
-    _model_visible_tool_result,
     _tool_timing_metadata,
     _utc_timestamp,
     conversation_tokens,
@@ -247,7 +247,7 @@ def _all_available_tools(
         available.extend(
             [
                 list_mcp_tools_tool,
-                call_mcp_tool_tool,
+                call_mcp_server_tool_tool,
                 list_mcp_resources_tool,
                 read_mcp_resource_tool,
             ]
@@ -295,7 +295,7 @@ def _build_tool_context(
     session_id: str = "",
     session_access: Any = None,
     conversation_snapshot: Optional[Callable[[], list[dict[str, Any]]]] = None,
-    mcp_manager: Any = None,
+    mcp_server_manager: Any = None,
 ) -> ToolContext:
     """The session-shaped state this runtime's tools read, derived from configuration rather than installed."""
     # The session's own tools, and the one widening that goes with them: it cannot install where it may not write.
@@ -336,7 +336,7 @@ def _build_tool_context(
         sandbox=sandbox,
         workspace=workspace,
         exa_client=exa_client,
-        mcp_manager=mcp_manager,
+        mcp_server_manager=mcp_server_manager,
         firecrawl_client=firecrawl_client,
         jina_api_key=global_configuration.jina.effective_api_key,
         proxy_url=global_configuration.web_fetch.effective_proxy_url,
@@ -455,7 +455,7 @@ class AgentRuntime(
         "load_skill": "_tool_load_skill",
         "wait_for": "_tool_wait_for",
         "ask_user": "_tool_ask_user",
-        "call_mcp_tool": "_tool_call_mcp_tool",
+        "call_mcp_server_tool": "_tool_call_mcp_server_tool",
         "list_mcp_tools": "_tool_mcp_query",
         "list_mcp_resources": "_tool_mcp_query",
         "read_mcp_resource": "_tool_mcp_query",
@@ -488,7 +488,7 @@ class AgentRuntime(
         parent_session: str = "",
         sandbox=None,
         session_access: Any = None,
-        mcp_manager: Any = None,
+        mcp_server_manager: Any = None,
         model: Any = None,
         jobs: Any = None,
         observer: Any = None,
@@ -517,7 +517,7 @@ class AgentRuntime(
         self._session_id = session_id
         # The session that created this one, empty when a person did. Reporting back needs its id.
         self._parent_session = parent_session
-        # What every child is confined to, held rather than re-derived so a config edit cannot widen a live session.
+        # What every child is confined to, held so a configuration edit cannot widen a live session.
         from langmesh.base.confinement import Grant
 
         # Normalised once, because callers hand this three different shapes.
@@ -575,9 +575,14 @@ class AgentRuntime(
         self._tools = [tool for tool in configured_tools if tool.name != "submit_goal_review"]
         if accepts_goal_review:
             self._tools.append(submit_goal_review_tool)
-        # Tools are bound natively, so the provider sees each real schema and can emit several calls at once.
+        # Keep one cache-stable schema while restricting verdict execution to dedicated reviewers.
+        self._model_tools = [
+            *(tool for tool in self._tools if tool.name != "submit_goal_review"),
+            submit_goal_review_tool,
+            permission_decision_tool,
+        ]
         self._tool_schemas: dict[str, Any] = {tool.name: tool.args_schema for tool in self._tools}
-        self._bound_model = self._model.bind_tools(self._tools)
+        self._bound_model = self._model.bind_tools(self._model_tools)
         # The evaluator gates against the same narrowed allow-list the tool set was built from.
         self._permissions = (
             permissions
@@ -691,7 +696,7 @@ class AgentRuntime(
             session_id=self._session_id,
             session_access=session_access,
             conversation_snapshot=self._peer_conversation_snapshot,
-            mcp_manager=mcp_manager,
+            mcp_server_manager=mcp_server_manager,
         )
         # What was approved beyond the configured profile, held for the session so one grant is not re-asked.
         self._access_grants: list[Grant] = []
@@ -784,16 +789,25 @@ class AgentRuntime(
             if local is not None:
                 return local
             # Every location is remote, so require an explicit choice rather than picking one.
-            names = ", ".join(sorted(self._locations_by_name)) or "(none configured)"
             raise ToolLocationError(
-                f"This workspace has only remote locations and no local default — specify `location` (one of: {names})."
+                self._prompt_loader.load(
+                    "location_required",
+                    {"available_locations": compact(sorted(self._locations_by_name))},
+                )
             )
         if location_value in self._locations:
             return self._locations[location_value]
         if location_value in self._locations_by_name:
             return self._locations_by_name[location_value]
-        names = ", ".join(sorted(self._locations_by_name)) or "(none configured)"
-        raise ToolLocationError(f"Unknown location {location_value!r}. Available: {names}.")
+        raise ToolLocationError(
+            self._prompt_loader.load(
+                "location_unknown",
+                {
+                    "location": location_value,
+                    "available_locations": compact(sorted(self._locations_by_name)),
+                },
+            )
+        )
 
     def _call_policy(self, location: ResolvedLocation | None) -> CallExecutionPolicy:
         """One call's execution policy, as a value, so concurrent calls to different locations cannot cross."""
@@ -876,16 +890,55 @@ class AgentRuntime(
             background_job_id=identifier,
         )
         status, code = _model_result_status(capped_result, ok=True, backgrounded=False)
+        self._append_background_result_messages(capped_result, metadata, status, code)
+
+    def _append_background_result_messages(
+        self,
+        content: str,
+        metadata: dict[str, Any],
+        status: str,
+        code: str | None,
+    ) -> None:
+        """Append background data first and any actionable guidance second."""
         self._conversation.append(
             self._reminder_message(
-                _model_visible_tool_result(
-                    capped_result,
-                    metadata,
-                    status,
-                    code,
-                    kind="background_result",
-                ),
+                self._background_result_message(content, metadata, status, code),
+                marks={"background_result": metadata, "status": status, "code": code},
             )
+        )
+        result_data = _maybe_json(content)
+        result_code = str(result_data.get("code") or "") if isinstance(result_data, dict) else ""
+        if result_code.endswith("_interrupted"):
+            self._conversation.append(
+                self._reminder_message(
+                    self._prompt_loader.load(
+                        "background_interrupted",
+                        {"kind": str(metadata.get("tool_name") or "tool")},
+                    ),
+                    marks={
+                        "background_guidance": True,
+                        "background_result": metadata,
+                    },
+                )
+            )
+
+    def _background_result_message(
+        self,
+        content: str,
+        metadata: dict[str, Any],
+        status: str,
+        code: str | None,
+    ) -> str:
+        """Render a background completion while keeping its machine metadata on the message envelope."""
+        return self._prompt_loader.load(
+            "background_result",
+            {
+                "tool_name": str(metadata.get("tool_name") or "background tool"),
+                "job_id": str(metadata.get("background_job_id") or "unknown"),
+                "status": status,
+                "code": code or "none",
+                "content": content,
+            },
         )
 
     @property
@@ -1299,16 +1352,11 @@ class AgentRuntime(
                 ok=True,
                 backgrounded=False,
             )
-            self._conversation.append(
-                self._reminder_message(
-                    _model_visible_tool_result(
-                        capped_result,
-                        background_metadata,
-                        background_status,
-                        background_code,
-                        kind="background_result",
-                    ),
-                )
+            self._append_background_result_messages(
+                capped_result,
+                background_metadata,
+                background_status,
+                background_code,
             )
             events.append(
                 ToolResult(

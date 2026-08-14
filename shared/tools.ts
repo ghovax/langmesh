@@ -150,7 +150,7 @@ const TOOL_GLYPHS: Record<string, { glyph: GlyphName; tint: string }> = {
   // A wait is the one call doing nothing on purpose, so it reads that way in the muted tint.
   wait_for: { glyph: "clock", tint: "fg.muted" },
   read_turn: { glyph: "history", tint: "blue.fg" },
-  call_mcp_tool: { glyph: "plug", tint: "purple.fg" },
+  call_mcp_server_tool: { glyph: "plug", tint: "purple.fg" },
   list_mcp_tools: { glyph: "plug-zap", tint: "purple.fg" },
   list_mcp_resources: { glyph: "boxes", tint: "purple.fg" },
   read_mcp_resource: { glyph: "book-open", tint: "purple.fg" },

@@ -28,9 +28,10 @@ from langmesh.runtime.cache_trace import (
     TOOLS,
     Piece,
     RequestTrace,
+    active_cache_lane,
     diagnose,
+    provider_cache_key,
     trace,
-    tracks_conversation_cache,
 )
 from langmesh.base.message_content import (
     REASONING_MODEL_KEY,
@@ -70,7 +71,7 @@ class ChatLiteLLMModel(BaseChatModel):
     default_headers: dict[str, str] = {}
 
     #: The last request's segment trace, declared rather than merely assigned so Pydantic will hold it.
-    _previous_trace: Optional[RequestTrace] = PrivateAttr(default=None)
+    _previous_traces: dict[str, RequestTrace] = PrivateAttr(default_factory=dict)
 
     @property
     def _llm_type(self) -> str:
@@ -269,6 +270,8 @@ class ChatLiteLLMModel(BaseChatModel):
     @staticmethod
     def _role_for(message: BaseMessage) -> str:
         # LangChain's message types map onto the OpenAI role names LiteLLM expects.
+        if message.additional_kwargs.get("reminder"):
+            return "system"
         name = message.__class__.__name__
         if isinstance(message, ToolMessage):
             return "tool"
@@ -319,7 +322,7 @@ class ChatLiteLLMModel(BaseChatModel):
             params["extra_headers"] = self.default_headers
         if self.session_id:
             # Which cache to look in: a provider routes the lookup by this key, so requests sharing one land on the same prefix.
-            params["prompt_cache_key"] = self.session_id
+            params["prompt_cache_key"] = provider_cache_key(self.session_id)
         if self._route() == self._GATEWAY_ROUTE:
             # A gateway rewrites the request for whichever provider it routes to, so it is the only thing that can place breakpoints.
             params["extra_body"] = {**params.get("extra_body", {}), "gateway": {"caching": "auto"}}
@@ -349,13 +352,13 @@ class ChatLiteLLMModel(BaseChatModel):
         return trace(pieces)
 
     def _cache_diagnosis(self, current: RequestTrace) -> dict[str, object]:
-        """What this request kept from the last one, and remember it for the next."""
-        if not tracks_conversation_cache():
-            # A probe shares the conversation's prefix: report its real reach, but never become
-            # the head the next request is measured against.
-            return diagnose(current, self._previous_trace)
-        diagnosis = diagnose(current, self._previous_trace)
-        self._previous_trace = current
+        """What this request kept from the previous request in its cache lane."""
+        lane = active_cache_lane()
+        previous = self._previous_traces.get(lane)
+        if previous is None and lane != "conversation":
+            previous = self._previous_traces.get("conversation")
+        diagnosis = diagnose(current, previous)
+        self._previous_traces[lane] = current
         return diagnosis
 
     # Streaming generation.
@@ -520,11 +523,18 @@ class ChatLiteLLMModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         params = self._completion_kwargs(stop=stop, **kwargs)
+        sent = self._apply_cache_breakpoints(self._messages_to_dicts(messages))
+        current_trace = self._trace_request(params, sent)
         response = await litellm.acompletion(
-            messages=self._apply_cache_breakpoints(self._messages_to_dicts(messages)),
+            messages=sent,
             **params,
         )
-        return self._response_to_result(response)
+        result = self._response_to_result(response)
+        if result.generations:
+            result.generations[0].message.additional_kwargs["cache_trace"] = self._cache_diagnosis(
+                current_trace
+            )
+        return result
 
     def _generate(
         self,

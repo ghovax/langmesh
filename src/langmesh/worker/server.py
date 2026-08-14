@@ -83,10 +83,14 @@ async def _respond(session, params: dict) -> dict:
     data: dict[str, Any] = {"request_id": request_id}
     if params.get("declined"):
         data["declined"] = True
+        if params.get("reason"):
+            data["reason"] = str(params["reason"])
     elif params.get("answers") is not None:
         data["answers"] = params.get("answers")
     else:
         data["decision"] = str(params.get("decision") or "deny")
+        if params.get("reason"):
+            data["reason"] = str(params["reason"])
     resolved = await session.resolve_pending_input(data)
     return {"resolved": resolved}
 

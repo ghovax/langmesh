@@ -43,7 +43,7 @@ from langmesh.protocol.metadata import (
 )
 from langmesh.protocol.events import StatusEvent
 from langmesh.protocol.parts import _event_part
-from langmesh.protocol.turn_record import PendingInteraction, ToolGate, TurnRecord
+from langmesh.protocol.turn_record import PermissionAnswer, PendingInteraction, ToolGate, TurnRecord
 from langmesh.runtime.goal import Goal, GoalReviewPhase
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import SuspensionGate
@@ -132,8 +132,8 @@ class SessionExecutor(AgentExecutor):
         self._title_task: Optional[asyncio.Task] = None
         # The report reminder fires at most once for a session's whole life.
         self._nudged_to_report = False
-        # This session's own MCP connections, and the task connecting them.
-        self._mcp_manager = None
+        # This session's own MCP server connections, and the task connecting them.
+        self._mcp_server_manager = None
         self._mcp_connect: Optional[asyncio.Task] = None
         # Held so the screen warm-up is not collected mid-flight; nothing ever awaits it.
         self._screen_warm: Optional[asyncio.Task] = None
@@ -628,9 +628,7 @@ class SessionExecutor(AgentExecutor):
                 verdict = await runtime.reconsider_gate(gate)
                 if not verdict:
                     continue
-                await self.resolve_pending_input(
-                    {"request_id": gate.request_id, "decision": verdict}
-                )
+                await self.resolve_pending_input({"request_id": gate.request_id, **verdict})
 
     def reset_runtimes(self) -> None:
         """Drop cached runtimes so the next turn rebuilds them, deferring any context with work in flight."""
@@ -651,10 +649,27 @@ class SessionExecutor(AgentExecutor):
             return None
         if gate.is_question:
             pending.answers[request_id] = (
-                {"__declined__": True} if payload.get("declined") else payload.get("answers", [])
+                {
+                    "__declined__": True,
+                    "__reason__": str(payload.get("reason", "") or ""),
+                    "__actor__": str(payload.get("actor", "person") or "person"),
+                }
+                if payload.get("declined")
+                else payload.get("answers", [])
             )
         else:
-            pending.answers[request_id] = str(payload.get("decision", "deny"))
+            decision = str(payload.get("decision", "deny"))
+            reason = str(payload.get("reason", "") or "")
+            if decision not in {"allow", "deny"}:
+                reason = reason or "The response did not contain an explicit approval."
+            actor = str(payload.get("actor", "person"))
+            if actor not in {"person", "reviewer", "approver"}:
+                actor = "person"
+            pending.answers[request_id] = PermissionAnswer(
+                allow=decision == "allow",
+                reason=reason,
+                actor=actor,
+            ).model_dump()
         task.metadata = record.apply_to(task.metadata)
         if pending.fully_answered:
             return pending.plans, pending.answers
@@ -780,9 +795,14 @@ class SessionExecutor(AgentExecutor):
         catalogue = machine_catalogue(self._global_configuration, project_directory)
         configuration = catalogue.agent(self._agent_name)
         if configuration is None:
-            available = ", ".join(catalogue.agents()) or "none"
             raise FileNotFoundError(
-                f"Agent configuration not found: {self._agent_name} (available: {available})"
+                catalogue.prompt(
+                    "agent_configuration_not_found",
+                    {
+                        "agent_name": self._agent_name,
+                        "available_agents": compact(list(catalogue.agents())),
+                    },
+                )
             )
         runtime = AgentRuntime(
             turn_store=self._turn_store,
@@ -800,9 +820,9 @@ class SessionExecutor(AgentExecutor):
             # The mode this session was created with, passed explicitly rather than left to the profile's own policy.
             permission_mode=self._permission_mode,
             sandbox=self._sandbox,
-            # The two things the runtime cannot derive: how it reaches peers, and the MCP connections this worker owns.
+            # The two things the runtime cannot derive: how it reaches peers, and the MCP server connections this worker owns.
             session_access=self._peers,
-            mcp_manager=self._mcp_manager,
+            mcp_server_manager=self._mcp_server_manager,
             # The durable job store this worker holds, or a background job would be written to a dictionary that dies.
             jobs=self._job_store,
         )
@@ -896,9 +916,6 @@ class SessionExecutor(AgentExecutor):
                     {
                         "code": f"{job['kind']}_interrupted",
                         "job_id": job["job_id"],
-                        "message": (
-                            "This task was interrupted by a server restart before it finished. Re-run it if the result is still needed."
-                        ),
                         "arguments": job["arguments"],
                     }
                 ),
@@ -1003,11 +1020,11 @@ class SessionExecutor(AgentExecutor):
         # Each session connects its own MCP servers: connections are stateful and belong to this process.
         servers = configuration.mcp.enabled_servers()
         if servers:
-            from langmesh.base.mcp_client import MCPClientManager
+            from langmesh.base.mcp_client import MCPServerManager
 
-            self._mcp_manager = MCPClientManager(servers)
+            self._mcp_server_manager = MCPServerManager(servers)
             # Connected in the background, so a hung server does not delay the session's socket.
-            self._mcp_connect = asyncio.create_task(self._mcp_manager.start())
+            self._mcp_connect = asyncio.create_task(self._mcp_server_manager.start())
 
         # Warm the screen listing now: the first ask costs ~1.8s per running application.
         if self._global_configuration.computer_control.enabled:
@@ -1077,6 +1094,7 @@ class SessionExecutor(AgentExecutor):
         from langmesh.base.configuration import PromptLoader
         from langmesh.protocol.dtos import SessionTitle
         from langmesh.runtime.internals import model_is_authorized
+        from langmesh.runtime.cache_trace import cache_lane
         from langmesh.runtime.runtime import build_chat_model
 
         try:
@@ -1096,6 +1114,7 @@ class SessionExecutor(AgentExecutor):
                 self._global_configuration,
                 titling_configuration,
                 self._runtime_working_directory,
+                session_id=self._session_id,
             ).bind_tools([SessionTitle], tool_choice="auto")
             prompt = PromptLoader(Path(__file__).resolve().parent.parent / "runtime" / "prompts")
             request = [
@@ -1104,38 +1123,39 @@ class SessionExecutor(AgentExecutor):
             ]
             # The tool is offered and the prompt insists on it: forcing it, a thinking model behind a gateway refuses.
             attempts = active_tuning().amount(Tunable.session_title_attempts)
-            for attempt in range(1, attempts + 1):
-                try:
-                    response = await model.ainvoke(request)
-                except Exception:  # noqa: BLE001 — one bad call is not worth the session's name
+            with cache_lane("session-title"):
+                for attempt in range(1, attempts + 1):
+                    try:
+                        response = await model.ainvoke(request)
+                    except Exception:  # noqa: BLE001 — one bad call is not worth the session's name
+                        logger.warning(
+                            "naming session %s failed (attempt %d of %d)",
+                            self._session_id,
+                            attempt,
+                            attempts,
+                            exc_info=True,
+                        )
+                        continue
+                    if not response.tool_calls:
+                        logger.warning(
+                            "the model answered without calling the title tool for session %s (attempt %d of %d)",
+                            self._session_id,
+                            attempt,
+                            attempts,
+                        )
+                        continue
+                    title = (
+                        SessionTitle.model_validate(response.tool_calls[0]["args"]).title or ""
+                    ).strip()
+                    if title:
+                        await self._turn_store.publish_title(title)
+                        return
                     logger.warning(
-                        "naming session %s failed (attempt %d of %d)",
+                        "the model returned an empty title for session %s (attempt %d of %d)",
                         self._session_id,
                         attempt,
                         attempts,
-                        exc_info=True,
                     )
-                    continue
-                if not response.tool_calls:
-                    logger.warning(
-                        "the model answered without calling the title tool for session %s (attempt %d of %d)",
-                        self._session_id,
-                        attempt,
-                        attempts,
-                    )
-                    continue
-                title = (
-                    SessionTitle.model_validate(response.tool_calls[0]["args"]).title or ""
-                ).strip()
-                if title:
-                    await self._turn_store.publish_title(title)
-                    return
-                logger.warning(
-                    "the model returned an empty title for session %s (attempt %d of %d)",
-                    self._session_id,
-                    attempt,
-                    attempts,
-                )
             logger.warning(
                 "gave up naming session %s after %d attempts", self._session_id, attempts
             )
@@ -1341,9 +1361,9 @@ class SessionExecutor(AgentExecutor):
             self._mcp_connect.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._mcp_connect
-        if self._mcp_manager is not None:
+        if self._mcp_server_manager is not None:
             with contextlib.suppress(Exception):
-                await self._mcp_manager.aclose()
+                await self._mcp_server_manager.aclose()
         close = getattr(self._turn_store, "aclose", None)
         if close is not None:
             await close()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from langmesh.base.configuration import Configuration
-from langmesh.base.mcp_client import MCPClientManager
+from langmesh.base.mcp_client import MCPServerManager
 from langmesh.commons import state
 
 
@@ -16,12 +16,12 @@ async def _reload_mcp() -> None:
         # Re-fold the provisioned Composio server in, so a live edit does not drop its tools.
         state.global_configuration.mcp.servers.update(state.composio_servers)
         enabled = state.global_configuration.mcp.enabled_servers()
-        if state.mcp_manager is None:
+        if state.mcp_server_manager is None:
             if enabled:
-                state.mcp_manager = MCPClientManager(enabled)
-                await state.mcp_manager.start()
+                state.mcp_server_manager = MCPServerManager(enabled)
+                await state.mcp_server_manager.start()
         else:
-            await state.mcp_manager.reconcile(enabled)
+            await state.mcp_server_manager.reconcile(enabled)
         await state.reset_runtimes()
 
 
@@ -42,10 +42,10 @@ async def _ensure_mcp_servers_for(working_directory: str) -> None:
             return
         state.global_configuration.mcp.servers.update(new_servers)
         enabled = state.global_configuration.mcp.enabled_servers()
-        if state.mcp_manager is None:
+        if state.mcp_server_manager is None:
             if enabled:
-                state.mcp_manager = MCPClientManager(enabled)
-                await state.mcp_manager.start()
+                state.mcp_server_manager = MCPServerManager(enabled)
+                await state.mcp_server_manager.start()
         else:
-            await state.mcp_manager.reconcile(enabled)
+            await state.mcp_server_manager.reconcile(enabled)
         await state.reset_runtimes()

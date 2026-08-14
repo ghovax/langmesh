@@ -1180,7 +1180,7 @@
     "match": "一致",
     "matched": "一致件数",
     "matches": "一致",
-    "mcpToolError": "MCP ツールがエラーを返しました。",
+    "mcpToolError": "MCP サーバーのツールがエラーを返しました。",
     "message": "メッセージ",
     "multiSelect": "複数選択",
     "newLines": "新しい行",

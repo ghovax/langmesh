@@ -1180,7 +1180,7 @@
     "match": "Match",
     "matched": "Matched",
     "matches": "Matches",
-    "mcpToolError": "The MCP tool returned an error.",
+    "mcpToolError": "The MCP server tool returned an error.",
     "message": "Message",
     "multiSelect": "multi-select",
     "newLines": "New lines",

@@ -8,6 +8,6 @@ This call takes these arguments:
 
 - `server` — The name of a configured MCP server.
 - `tool_name` — The tool name, as `list_mcp_tools` reports it.
-- `arguments` — A JSON object that matches the MCP tool's input schema.
+- `arguments` — A JSON object that matches the MCP server tool's input schema.
 - `access_request` — What this call says about changing anything, and what it needs beyond what the session already holds. Always set `mutates`.
 - `explanation` — A short reason for the call, in the words the user reads.

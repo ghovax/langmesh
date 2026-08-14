@@ -345,6 +345,49 @@ function ComposerIcon({ draw, children }: { draw: number; children: ReactNode })
   );
 }
 
+function StopTurnButton({
+  onAbort,
+  isCompacting,
+}: {
+  onAbort: () => void | Promise<void>;
+  isCompacting: boolean;
+}) {
+  const translation = useTranslations("ChatInput");
+  const [pending, setPending] = useState(false);
+
+  async function stop() {
+    setPending(true);
+    try {
+      await onAbort();
+    } catch {
+      // The cancel call itself failed; the turn is untouched, so the control releases at once.
+      setPending(false);
+      return;
+    }
+    // Last resort: a stop that never reaches the stream must not wedge the button forever.
+    window.setTimeout(() => setPending(false), 15_000);
+  }
+
+  return (
+    <Button
+      onClick={stop}
+      size="sm"
+      colorPalette="red"
+      variant="solid"
+      loading={pending}
+      loadingText={translation("stopping")}
+      // Not while the conversation is being folded, since Stop would describe something the model is not doing.
+      disabled={pending || isCompacting}
+      title={isCompacting ? translation("stopUnavailableWhileCompacting") : undefined}
+    >
+      <ComposerIcon draw={18}>
+        <LuSquare />
+      </ComposerIcon>
+      {translation("stop")}
+    </Button>
+  );
+}
+
 export function ChatInput({
   onSend,
   onAbort,
@@ -391,12 +434,6 @@ export function ChatInput({
   const persistedDraftKeyRef = useRef("");
   const latestInputValueRef = useRef("");
   const [sendPending, setSendPending] = useState(false);
-  const [stopPending, setStopPending] = useState(false);
-
-  // "Stopping" holds until the stream actually ends: the cancel request resolving only means it was sent.
-  useEffect(() => {
-    if (!isStreaming) setStopPending(false);
-  }, [isStreaming]);
   const [compactConfirmOpen, setCompactConfirmOpen] = useState(false);
   const { rowRef: selectorsRowRef, hidden: hiddenLabels } = useFittedRow(COMPOSER_FIT_ORDER);
   // Dictation is absent rather than disabled until it is turned on, and `recording` holds the take a toggle can stop.
@@ -684,20 +721,6 @@ export function ChatInput({
     }
   }
 
-  async function handleAbortClick() {
-    // The cancel request resolving only means it was sent; "Stopping" holds until the stream
-    // actually ends (the isStreaming effect clears it), so it never flashes away mid-stop.
-    setStopPending(true);
-    try {
-      await onAbort();
-    } catch {
-      // The cancel call itself failed; the turn is untouched, so the control releases at once.
-      setStopPending(false);
-    }
-    // Last resort: a stop that never reaches the stream must not wedge the button forever.
-    window.setTimeout(() => setStopPending(false), 15_000);
-  }
-
   function handleKeyDown(event: KeyboardEvent) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -921,22 +944,7 @@ export function ChatInput({
               </IconButton>
             </Tooltip>
             {isStreaming ? (
-              <Button
-                onClick={handleAbortClick}
-                size="sm"
-                colorPalette="red"
-                variant="solid"
-                loading={stopPending}
-                loadingText={translation("stopping")}
-                // Not while the conversation is being folded, since Stop would describe something the model is not doing.
-                disabled={stopPending || isCompacting}
-                title={isCompacting ? translation("stopUnavailableWhileCompacting") : undefined}
-              >
-                <ComposerIcon draw={18}>
-                  <LuSquare />
-                </ComposerIcon>
-                {translation("stop")}
-              </Button>
+              <StopTurnButton onAbort={onAbort} isCompacting={isCompacting} />
             ) : (
               <Button
                 onClick={() => void handleSubmit()}

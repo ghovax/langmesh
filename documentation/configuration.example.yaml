@@ -83,6 +83,7 @@ sandbox:
       - "~/.pyenv"
       - "~/.docker"
       - "~/.netrc"
+      - "~/Library/Keychains"
     # Writable. $WORKSPACE is the session's own directory; the rest is scratch.
     writable:
       - "$WORKSPACE"

@@ -153,7 +153,7 @@ class CompactionUpdateRequest(BaseModel):
     recent_working_set_fraction: float | None = None
 
 
-class MCPToolCallRequest(BaseModel):
+class MCPServerToolCallRequest(BaseModel):
     server: str
     tool_name: str
     arguments: dict = {}

@@ -74,7 +74,7 @@ export function AgentSkills({
           if (!cancelled) setMcpServers(servers);
         })
         .catch((caught) =>
-          swallowed({ component: "agent-skills", operation: "list the MCP tools" }, caught),
+          swallowed({ component: "agent-skills", operation: "list MCP server tools" }, caught),
         );
     };
     loadCapabilities();
@@ -234,7 +234,7 @@ function McpServerGroup({ server }: { server: McpServerTools }) {
   );
 }
 
-// A single MCP tool: its human title when present, else its name (id) in monospace.
+// A single MCP server tool: its human title when present, else its name (id) in monospace.
 function McpToolRow({ tool }: { tool: McpTool }) {
   return (
     <Box>

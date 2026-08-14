@@ -16,6 +16,7 @@ from langmesh.base.tuning import Tunable, active_tuning, clip_to_tokens
 from langmesh.base.serialization import compact
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.goal_review import GoalReview
+from langmesh.runtime.locations import PermissionDecision
 
 from langmesh.base.configuration import PromptLoader
 
@@ -31,10 +32,10 @@ ACCESS_REQUEST = _DESCRIPTIONS.load("access_request", {}).strip()
 #: bash is synchronous by default: the model chooses whether a command backgrounds, so it is never a surprise.
 
 
-def _require_mcp_client_manager():
-    manager = tool_context.current().mcp_manager
+def _require_mcp_server_manager():
+    manager = tool_context.current().mcp_server_manager
     if manager is None:
-        raise RuntimeError("MCP is not configured.")
+        raise RuntimeError("No MCP server is configured.")
     return manager
 
 
@@ -42,11 +43,22 @@ def _submit_goal_review(**arguments: Any) -> str:
     raise NotImplementedError("Dispatched by AgentRuntime._execute_tool.")
 
 
+def _permission_decision(**arguments: Any) -> str:
+    raise NotImplementedError("Dispatched only by the automatic permission reviewer.")
+
+
 submit_goal_review = StructuredTool.from_function(
     func=_submit_goal_review,
     name="submit_goal_review",
     description=_DESCRIPTIONS.load("submit_goal_review", {}).strip(),
     args_schema=GoalReview,
+)
+
+permission_decision = StructuredTool.from_function(
+    func=_permission_decision,
+    name="permission_decision",
+    description="Submit the automatic permission reviewer's internal verdict.",
+    args_schema=PermissionDecision,
 )
 
 
@@ -327,7 +339,7 @@ async def list_mcp_tools(
 ) -> str:
     """Dispatched by AgentRuntime._execute_tool; described in descriptions/list_mcp_tools.md."""
     try:
-        result = await _require_mcp_client_manager().list_tools(server)
+        result = await _require_mcp_server_manager().list_tools(server)
         return compact(result)
     except Exception as exception:
         return compact(
@@ -336,7 +348,7 @@ async def list_mcp_tools(
 
 
 @tool
-async def call_mcp_tool(
+async def call_mcp_server_tool(
     *,
     explanation: str = Field(..., description=EXPLANATION),
     server: str,
@@ -344,23 +356,23 @@ async def call_mcp_tool(
     access_request: dict[str, Any] = Field(..., description=ACCESS_REQUEST),
     arguments: dict[str, Any] | None = None,
 ) -> str:
-    """Dispatched by AgentRuntime._execute_tool; described in descriptions/call_mcp_tool.md."""
+    """Dispatched by AgentRuntime._execute_tool; described in descriptions/call_mcp_server_tool.md."""
     try:
-        result = await _require_mcp_client_manager().call_tool(server, tool_name, arguments or {})
+        result = await _require_mcp_server_manager().call_tool(server, tool_name, arguments or {})
         return compact(result)
     except Exception as exception:
         return compact(
-            {"code": "mcp_call_tool_error", "status": "error", "message": str(exception)}
+            {"code": "mcp_server_tool_call_error", "status": "error", "message": str(exception)}
         )
 
 
-async def call_mcp_tool_with_events(
+async def call_mcp_server_tool_with_events(
     server: str,
     tool_name: str,
     arguments: dict[str, Any] | None,
     event_callback,
 ) -> dict[str, Any]:
-    return await _require_mcp_client_manager().call_tool(
+    return await _require_mcp_server_manager().call_tool(
         server,
         tool_name,
         arguments or {},
@@ -374,7 +386,7 @@ async def list_mcp_resources(
 ) -> str:
     """Dispatched by AgentRuntime._execute_tool; described in descriptions/list_mcp_resources.md."""
     try:
-        result = await _require_mcp_client_manager().list_resources(server)
+        result = await _require_mcp_server_manager().list_resources(server)
         return compact(result)
     except Exception as exception:
         return compact(
@@ -388,7 +400,7 @@ async def read_mcp_resource(
 ) -> str:
     """Dispatched by AgentRuntime._execute_tool; described in descriptions/read_mcp_resource.md."""
     try:
-        result = await _require_mcp_client_manager().read_resource(server, uri)
+        result = await _require_mcp_server_manager().read_resource(server, uri)
         return compact(result)
     except Exception as exception:
         return compact(
@@ -511,7 +523,7 @@ _DESCRIBED = (
     bash,
     search_web,
     list_mcp_tools,
-    call_mcp_tool,
+    call_mcp_server_tool,
     list_mcp_resources,
     read_mcp_resource,
     wait_for,

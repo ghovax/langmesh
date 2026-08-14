@@ -36,7 +36,11 @@ function tallyToolOutcomes(tools: ToolEvent[]): { name: string; total: number; f
     total.set(name, (total.get(name) ?? 0) + 1);
     if (toolStatus(tool.status) === "failed") failed.set(name, (failed.get(name) ?? 0) + 1);
   }
-  return order.map((name) => ({ name, total: total.get(name) ?? 0, failed: failed.get(name) ?? 0 }));
+  return order.map((name) => ({
+    name,
+    total: total.get(name) ?? 0,
+    failed: failed.get(name) ?? 0,
+  }));
 }
 
 // One tally chip in the heading, carrying both the icon and its count so each reads as a single unit.
@@ -83,9 +87,7 @@ export const ToolGroup = memo(function ToolGroup({
   ).length;
   const runningCount =
     tools.filter((tool) => toolStatus(tool.status) === "running").length - backgroundCount;
-  const inputRequired = tools.some(
-    (tool) => toolStatus(tool.status) === "input_required",
-  );
+  const inputRequired = tools.some((tool) => toolStatus(tool.status) === "input_required");
   const active = runningCount > 0 || backgroundCount > 0 || inputRequired || keepOpen;
   const showActivitySpinner = runningCount > 0 || (keepOpen && !inputRequired);
   // Tri-state, so the group can be toggled either way from its default: null follows the default.
@@ -142,8 +144,7 @@ export const ToolGroup = memo(function ToolGroup({
   );
 
   // The heading's chip cluster: tallies, file changes, the remote badge and status chips, all animated.
-  const hasBadges =
-    tally.length > 0 || statusChips.length > 0 || !!groupLocation || !!soleTool;
+  const hasBadges = tally.length > 0 || statusChips.length > 0 || !!groupLocation || !!soleTool;
   const badgeSlot = (
     <>
       {/* The write and access markers of a lone call move up to the heading rather than disappearing with its line. */}

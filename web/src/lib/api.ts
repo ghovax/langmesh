@@ -1279,7 +1279,7 @@ export async function fetchMcpTools(workingDirectory?: string): Promise<McpServe
     );
     return data.servers ?? [];
   } catch (caught) {
-    swallowed({ component: "api", operation: "list the MCP tools" }, caught);
+    swallowed({ component: "api", operation: "list MCP server tools" }, caught);
     return [];
   }
 }

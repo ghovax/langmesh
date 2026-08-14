@@ -18,13 +18,13 @@ from langmesh.runtime.internals import (
     _coerce_structured_arguments,
     _maybe_json,
     _model_result_status,
-    _model_visible_tool_result,
     _ResolvedToolDecision,
     _ToolCall,
     _tool_timing_metadata,
     _utc_timestamp,
 )
 from langmesh.runtime.tools import context as tool_context, fetching
+from langmesh.runtime.tools.output import ToolOutput
 from langmesh.runtime.background import (
     bind_background_jobs,
     bind_tool_call_id,
@@ -53,7 +53,7 @@ from langmesh.runtime.turn_events import (
 )
 from langmesh.runtime.tools.registry import (
     bash as bash_tool,
-    call_mcp_tool_with_events,
+    call_mcp_server_tool_with_events,
     list_mcp_resources as list_mcp_resources_tool,
     list_mcp_tools as list_mcp_tools_tool,
     read_mcp_resource as read_mcp_resource_tool,
@@ -135,6 +135,7 @@ class _DispatchesTools:
         result_content: str = ""
         background_job_id: str | None = None
         denied_commands: list[str] = []
+        model_guidance: list[str] = []
         tool_failed = False
 
         tool_span = _telemetry.start_span("tool.execute", {"tool.name": tool_name})
@@ -144,6 +145,8 @@ class _DispatchesTools:
             ):
                 yield event
                 if isinstance(event, ToolResult):
+                    if event.model_guidance:
+                        model_guidance.append(event.model_guidance)
                     result_str = event.result
                     if isinstance(result_str, dict) and event.status == ToolStatus.RUNNING.value:
                         raw_job_id = result_str.get("job_id")
@@ -168,7 +171,16 @@ class _DispatchesTools:
                         turn_tool_results_log.append({"name": tool_name, "result": result_content})
                 elif isinstance(event, Error):
                     tool_failed = True
-                    result_content = event.message
+                    if event.model_guidance:
+                        model_guidance.append(event.model_guidance)
+                        result_data = {
+                            "code": event.code or "permission_denied",
+                            "status": ToolStatus.ERROR.value,
+                        }
+                        result_data.update(event.extra)
+                        result_content = compact(result_data)
+                    else:
+                        result_content = event.message
                     turn_tool_results_log.append({"name": tool_name, "result": result_content})
                 elif isinstance(event, DeniedInjection):
                     denied_commands.append(event.command)
@@ -207,6 +219,7 @@ class _DispatchesTools:
             "ok": not tool_failed,
             "background_job_id": background_job_id,
             "denied_commands": denied_commands,
+            "model_guidance": model_guidance,
             "metadata": timing_metadata,
         }
 
@@ -285,26 +298,42 @@ class _DispatchesTools:
             else self._tool_schemas
         )
         if not isinstance(arguments, dict):
-            return ("invalid_tool_arguments", f"{tool_name} arguments must be an object.")
+            return (
+                "invalid_tool_arguments",
+                self._prompt_loader.load(
+                    "tool_arguments_not_object",
+                    {"tool_name": tool_name},
+                ),
+            )
         if tool_name not in tool_schemas:
-            accepted = ", ".join(sorted(tool_schemas))
             return (
                 "unknown_tool",
-                f"Unknown or unavailable tool '{tool_name}'. Available tools are: {accepted}.",
+                self._prompt_loader.load(
+                    "unknown_tool",
+                    {
+                        "tool_name": tool_name,
+                        "available_tools": compact(sorted(tool_schemas)),
+                    },
+                ),
             )
         schema = tool_schemas.get(tool_name)
         if schema is not None:
             fields = set(getattr(schema, "model_fields", {}).keys())
             unknown_arguments = sorted(set(arguments) - fields)
             if unknown_arguments:
-                accepted = ", ".join(sorted(fields))
-                rejected = ", ".join(unknown_arguments)
                 return (
                     "invalid_tool_arguments",
-                    f"The tool {tool_name} does not accept the following argument(s) with which it was invoked: {rejected}. Accepted arguments by it are only: {accepted}.",
+                    self._prompt_loader.load(
+                        "unsupported_tool_arguments",
+                        {
+                            "tool_name": tool_name,
+                            "rejected_arguments": compact(unknown_arguments),
+                            "accepted_arguments": compact(sorted(fields)),
+                        },
+                    ),
                 )
-            # Models often emit an MCP call's `arguments` as a JSON string; coerce before validating it.
-            if tool_name == "call_mcp_tool" and isinstance(arguments.get("arguments"), str):
+            # Models often emit an MCP server call's `arguments` as a JSON string; coerce before validating it.
+            if tool_name == "call_mcp_server_tool" and isinstance(arguments.get("arguments"), str):
                 arguments = {
                     **arguments,
                     "arguments": _coerce_mcp_arguments(arguments.get("arguments")),
@@ -321,7 +350,7 @@ class _DispatchesTools:
             _, complaint = parse_access_request(arguments.get("access_request"))
             if complaint:
                 return ("invalid_access_request", complaint)
-        if tool_name == "call_mcp_tool":
+        if tool_name == "call_mcp_server_tool":
             if not arguments.get("server"):
                 return ("invalid_mcp_server", "server is required.")
             if not arguments.get("tool_name"):
@@ -386,7 +415,7 @@ class _DispatchesTools:
 
     def _append_tool_results(self, response, outcomes: dict[str, dict]) -> None:
         """A ToolMessage per tool_call, contiguous, since providers require every result in the block that follows."""
-        denied_command_notes: list[str] = []
+        guidance_notes: list[tuple[str, str]] = []
         for tool_call_data in cast(list[dict], response.tool_calls):
             tool_call_identifier = tool_call_data["id"]
             outcome = outcomes.get(tool_call_identifier, {})
@@ -398,21 +427,29 @@ class _DispatchesTools:
                 ok=outcome.get("ok", True),
                 backgrounded=bool(outcome.get("background_job_id")),
             )
-            model_visible_content = _model_visible_tool_result(
-                content,
-                outcome.get("metadata")
-                or _tool_timing_metadata(
-                    tool_name=tool_call_data.get("name", ""),
-                    tool_call_identifier=tool_call_identifier,
-                    started_at=datetime.now(timezone.utc),
-                    completed_at=datetime.now(timezone.utc),
-                    duration_milliseconds=0,
-                ),
-                result_status,
-                result_code,
+            metadata = outcome.get("metadata") or _tool_timing_metadata(
+                tool_name=tool_call_data.get("name", ""),
+                tool_call_identifier=tool_call_identifier,
+                started_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(timezone.utc),
+                duration_milliseconds=0,
             )
             self._conversation.append(
-                ToolMessage(content=model_visible_content, tool_call_id=tool_call_identifier)
+                ToolMessage(
+                    content=content,
+                    tool_call_id=tool_call_identifier,
+                    name=str(tool_call_data.get("name") or ""),
+                    status="error" if result_status == ToolStatus.ERROR.value else "success",
+                    artifact={
+                        "metadata": metadata,
+                        "status": result_status,
+                        "code": result_code,
+                        "result": _maybe_json(content),
+                    },
+                )
+            )
+            guidance_notes.extend(
+                (tool_call_identifier, note) for note in outcome.get("model_guidance", []) if note
             )
             background_job_id = outcome.get("background_job_id")
             if background_job_id:
@@ -422,12 +459,22 @@ class _DispatchesTools:
                 )
             denied_commands = outcome.get("denied_commands", [])
             if denied_commands:
-                commands_list = ", ".join(f"'{command}'" for command in denied_commands)
-                denied_command_notes.append(
-                    self._prompt_loader.load("command_denied", {"commands": commands_list})
+                guidance_notes.append(
+                    (
+                        tool_call_identifier,
+                        self._prompt_loader.load(
+                            "command_denied",
+                            {"commands": compact(denied_commands)},
+                        ),
+                    )
                 )
-        for denied_message in denied_command_notes:
-            self._conversation.append(self._reminder_message(denied_message))
+        for tool_call_identifier, guidance in guidance_notes:
+            self._conversation.append(
+                self._reminder_message(
+                    guidance,
+                    marks={"tool_guidance": True, "tool_call_id": tool_call_identifier},
+                )
+            )
 
         # Malformed calls are corrected by a reminder: a ToolMessage would be orphaned and rejected.
         for invalid in response.invalid_tool_calls:
@@ -458,6 +505,7 @@ class _DispatchesTools:
                 id=tool_call_identifier,
                 name=tool_name,
                 result=decision.completed.get("result"),
+                model_guidance=str(decision.completed.get("model_guidance") or ""),
             )
             return
 
@@ -467,9 +515,10 @@ class _DispatchesTools:
                 "id": tool_call_identifier,
                 "tool": tool_name,
                 "message": decision.denial.get("message", ""),
+                "model_guidance": decision.denial.get("message", ""),
+                "extra": {"decision": decision.denial.get("decision", {})},
             }
-            if decision.denial.get("code"):
-                error_kwargs["code"] = decision.denial["code"]
+            error_kwargs["code"] = decision.denial.get("code") or "permission_denied"
             yield Error(**error_kwargs)
             if decision.denial.get("denied_injection"):
                 yield DeniedInjection(
@@ -487,6 +536,24 @@ class _DispatchesTools:
                 self._attached_files
             )
         )
+
+        # Make internal verdicts inert before validation or dispatch outside their dedicated reviewers.
+        if tool_name == "permission_decision" or (
+            tool_name == "submit_goal_review" and not self._accepts_goal_review
+        ):
+            yield ToolResult(
+                id=tool_call_identifier,
+                name=tool_name,
+                result={
+                    "code": "internal_verdict_inert",
+                    "status": ToolStatus.OK.value,
+                },
+                model_guidance=self._prompt_loader.load(
+                    "internal_verdict_inert",
+                    {"tool_name": tool_name},
+                ),
+            )
+            return
 
         # Coerce JSON-string arguments up front, so validation and dispatch see the real container.
         schema = (
@@ -583,9 +650,9 @@ class _DispatchesTools:
             return
         yield ToolResult(
             id=tool_call_identifier,
-            tool=tool_name,
-            display=result if isinstance(result, str) else compact(result),
-            status=ToolStatus.OK,
+            name=tool_name,
+            result=result,
+            status=ToolStatus.OK.value,
         )
 
     async def _tool_bash(
@@ -688,17 +755,17 @@ class _DispatchesTools:
                 yield ToolResult(id=tool_call_identifier, name=tool_name, result=result_data)
                 return
             result_data = await self._run_bash(tool_arguments, tool_call_identifier)
+            model_guidance = ""
             # A refused command is not a finished one, and its first run was confined, so a retry is safe to offer.
             denial = self._sandbox_denial(result_data, policy)
             if denial is not None:
-                verdict, grant = await self.decide_retry(
-                    self.retry_gate(
-                        tool_call_id=tool_call_identifier,
-                        command=raw_command,
-                        denial=denial,
-                        explanation=str(tool_arguments.get("explanation", "") or ""),
-                    )
+                retry_gate = self.retry_gate(
+                    tool_call_id=tool_call_identifier,
+                    command=raw_command,
+                    denial=denial,
+                    explanation=str(tool_arguments.get("explanation", "") or ""),
                 )
+                verdict, grant = await self.decide_retry(retry_gate)
                 if verdict == "run" and grant is not None:
                     result_data = await self._run_bash(
                         tool_arguments,
@@ -716,9 +783,14 @@ class _DispatchesTools:
                     )
                     return
                 else:
-                    # The reviewer refused the widening: the model sees the sandbox refusal as-is.
-                    pass
-            yield ToolResult(id=tool_call_identifier, name=tool_name, result=result_data)
+                    result_data = self._retry_refusal_result(retry_gate)
+                    model_guidance = retry_gate.deny_message
+            yield ToolResult(
+                id=tool_call_identifier,
+                name=tool_name,
+                result=result_data,
+                model_guidance=model_guidance,
+            )
             if isinstance(result_data, dict) and result_data.get("code") == "bash_started":
                 job_id = result_data.get("job_id", "")
                 if job_id:
@@ -1039,15 +1111,26 @@ class _DispatchesTools:
             result = compact(
                 {
                     "code": "user_declined",
-                    "message": (
-                        "The user dismissed the question without answering and chose to stop here. Do not re-ask or proceed on a guess; wait for further direction."
-                    ),
+                    "status": ToolStatus.ERROR.value,
+                    "decision": {
+                        "actor": str(answers.get("__actor__") or "person"),
+                        "reason": answers.get("__reason__") or None,
+                    },
                 }
             )
             yield ToolResult(
                 id=tool_call_identifier,
                 name=tool_name,
                 result=_maybe_json(result),
+                model_guidance=self._prompt_loader.load(
+                    "question_declined",
+                    {
+                        "actor": str(answers.get("__actor__") or "person"),
+                        "reason": str(
+                            answers.get("__reason__") or "No additional reason was provided."
+                        ),
+                    },
+                ),
             )
             self._abort_event.set()
             return
@@ -1058,7 +1141,7 @@ class _DispatchesTools:
             result=_maybe_json(result),
         )
 
-    async def _tool_call_mcp_tool(
+    async def _tool_call_mcp_server_tool(
         self,
         tool_name: str,
         tool_arguments: dict,
@@ -1067,14 +1150,14 @@ class _DispatchesTools:
         policy: CallExecutionPolicy,
         resolved_location: ResolvedLocation | None,
     ) -> AsyncIterator[TurnEvent]:
-        # Permission is resolved; an approved MCP call runs.
+        # Permission is resolved; an approved MCP server call runs.
         event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
         async def on_mcp_event(event: dict[str, Any]) -> None:
             await event_queue.put(event)
 
         call_task = asyncio.create_task(
-            call_mcp_tool_with_events(
+            call_mcp_server_tool_with_events(
                 str(tool_arguments.get("server", "")),
                 str(tool_arguments.get("tool_name", "")),
                 _coerce_mcp_arguments(tool_arguments.get("arguments")),
@@ -1088,7 +1171,7 @@ class _DispatchesTools:
                     while not event_queue.empty():
                         yield Mcp(
                             id=tool_call_identifier,
-                            name="call_mcp_tool",
+                            name="call_mcp_server_tool",
                             server=tool_arguments.get("server", ""),
                             tool=tool_arguments.get("tool_name", ""),
                             event=event_queue.get_nowait(),
@@ -1102,7 +1185,7 @@ class _DispatchesTools:
                 if get_task in done:
                     yield Mcp(
                         id=tool_call_identifier,
-                        name="call_mcp_tool",
+                        name="call_mcp_server_tool",
                         server=tool_arguments.get("server", ""),
                         tool=tool_arguments.get("tool_name", ""),
                         event=get_task.result(),
@@ -1261,7 +1344,16 @@ class _DispatchesTools:
             result = await sessions.invoke(tool_name, tool_arguments, create_tool)
         finally:
             unbind_background_jobs(background_token)
-        yield ToolResult(id=tool_call_identifier, name=tool_name, result=_maybe_json(result))
+        model_guidance = ""
+        if isinstance(result, ToolOutput):
+            model_guidance = result.model_guidance
+            result = result.result
+        yield ToolResult(
+            id=tool_call_identifier,
+            name=tool_name,
+            result=_maybe_json(result) if isinstance(result, str) else result,
+            model_guidance=model_guidance,
+        )
 
     async def _tool_search_web(
         self,
@@ -1278,10 +1370,15 @@ class _DispatchesTools:
         finally:
             unbind_background_jobs(background_token)
         result_data = _maybe_json(result)
+        model_guidance = ""
         if isinstance(result_data, dict) and result_data.get("code") == "web_search_started":
-            # The "do not poll this" guidance comes from a template, keeping user-facing wording out of the code.
-            result_data["note"] = self._prompt_loader.load("web_search_started_note", {})
-        yield ToolResult(id=tool_call_identifier, name=tool_name, result=result_data)
+            model_guidance = self._prompt_loader.load("web_search_started_note", {})
+        yield ToolResult(
+            id=tool_call_identifier,
+            name=tool_name,
+            result=result_data,
+            model_guidance=model_guidance,
+        )
 
     async def _tool_read_turn(
         self,
@@ -1295,20 +1392,21 @@ class _DispatchesTools:
         requested_turn_id = tool_arguments.get("turn_id", "")
         # A search or background-bash handle is not an A2A task, so redirect rather than answer task_not_found.
         background_kind = _background_handle_kind(requested_turn_id)
+        model_guidance = ""
         if self._turn_reader is None:
             result = {
                 "code": "read_turn_unavailable",
                 "message": "Reading turns is not available in this session.",
             }
         elif background_kind is not None:
-            message = self._prompt_loader.load(
+            model_guidance = self._prompt_loader.load(
                 "read_turn_background_handle",
                 {"job_id": requested_turn_id, "kind": background_kind},
             )
             result = {
                 "code": "not_a_readable_turn",
                 "turn_id": requested_turn_id,
-                "message": message,
+                "job_kind": background_kind,
             }
         else:
             task = await self._turn_reader(requested_turn_id)
@@ -1316,7 +1414,12 @@ class _DispatchesTools:
                 result = {"code": "turn_not_found", "turn_id": requested_turn_id}
             else:
                 result = task
-        yield ToolResult(id=tool_call_identifier, name=tool_name, result=result)
+        yield ToolResult(
+            id=tool_call_identifier,
+            name=tool_name,
+            result=result,
+            model_guidance=model_guidance,
+        )
 
     @staticmethod
     def _surface_for(surface_name: str):

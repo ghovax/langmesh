@@ -23,10 +23,10 @@ shutting_down = asyncio.Event()
 last_written_configuration_digest: Optional[str] = None
 
 # Shared connections, one of each per process, since neither can usefully be repeated.
-mcp_manager: Any = None
+mcp_server_manager: Any = None
 remote_agent_manager: Any = None
 composio_servers: dict = {}
-#: What `mcp_manager` was built from, so a write that leaves MCP alone leaves its connections alone.
+#: What `mcp_server_manager` was built from, so unchanged server configuration preserves its connections.
 mcp_server_fingerprint: Optional[str] = None
 # The agent profiles a session could be created with, rebuilt whenever their files change.
 agent_cards: dict = {}
@@ -102,7 +102,7 @@ __all__ = [
     "global_configuration",
     "last_written_configuration_digest",
     "main_loop",
-    "mcp_manager",
+    "mcp_server_manager",
     "observation_registry_watcher",
     "on_session_deleted",
     "push_configuration_store",

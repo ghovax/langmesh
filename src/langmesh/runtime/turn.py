@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from datetime import datetime, timezone
 from langmesh.base import telemetry as _telemetry
 from langmesh.base.identifiers import new_id
@@ -24,7 +24,9 @@ from langmesh.runtime.internals import (
     settled_arguments,
 )
 from langmesh.runtime.prompt.environment import probe_local_environment, probe_user_context
+from langmesh.runtime.cache_trace import cache_lane
 from langmesh.protocol.events import TurnContext
+from langmesh.protocol.turn_record import PermissionAnswer
 from langmesh.base.instructions import instructions_payload
 from langmesh.base.memories import memories_payload
 from langmesh.base.message_content import (
@@ -70,7 +72,6 @@ import time
 import uuid
 from langmesh.base.serialization import compact, lines
 from langmesh.base.tuning import Tunable, active_tuning
-from langmesh.runtime.tools.registry import bash as bash_tool
 
 
 logger = logging.getLogger(__name__)
@@ -189,7 +190,9 @@ class _RunsTurns:
                 else ""
             )
             mcp_servers = (
-                self._prompt_loader.load("mcp_servers", {}) if "call_mcp_tool" in available else ""
+                self._prompt_loader.load("mcp_servers", {})
+                if "call_mcp_server_tool" in available
+                else ""
             )
             # Whole documents, each laid out by its own template: metadata as JSON, the document as itself.
             instruction_files = "".join(
@@ -366,9 +369,21 @@ class _RunsTurns:
             if verdict is None:
                 continue
             if gate.kind == "question":
-                answers[gate.request_id] = verdict.answers if verdict.allow else None
+                answers[gate.request_id] = (
+                    verdict.answers
+                    if verdict.allow
+                    else {
+                        "__declined__": True,
+                        "__reason__": verdict.reason,
+                        "__actor__": "configured approver",
+                    }
+                )
             else:
-                answers[gate.request_id] = "allow" if verdict.allow else "deny"
+                answers[gate.request_id] = PermissionAnswer(
+                    allow=verdict.allow,
+                    reason=verdict.reason,
+                    actor="approver",
+                ).model_dump()
         return answers
 
     def _reminder_message(
@@ -377,7 +392,7 @@ class _RunsTurns:
         image_blocks: list[dict] | None = None,
         marks: dict[str, Any] | None = None,
     ) -> HumanMessage:
-        """Something neither party said, as a user-role message, which keeps the conversation append-only."""
+        """Append harness guidance once; provider adapters preserve its instruction role without moving it."""
         text = self._prompt_loader.load("reminder", {"content": content.strip()}).strip()
         tags = {"reminder": True, **(marks or {})}
         if image_blocks:
@@ -703,7 +718,7 @@ class _RunsTurns:
             )
             if preparing_compaction and not preparation_call_is_valid:
                 self._conversation.append(response)
-                refusal = "Compaction preparation requires at least one local bash call and permits no other tools or locations."
+                refusal = self._prompt_loader.load("compaction_preparation_violation", {})
                 for call_data in response.tool_calls:
                     identifier = str(call_data.get("id") or "")
                     yield Error(
@@ -828,16 +843,17 @@ class _RunsTurns:
         yield Status(code="awaiting_model")
         # The fold checkpoint is a protocol capability: even a profile that omits ordinary shell
         # access must be able to maintain its workspace-owned registry inside the same sandbox.
-        bound_model = (
-            self._model.bind_tools([bash_tool])
-            if self._compaction_control.phase == "waiting"
-            else self._bound_model
-        )
-        model_stream = bound_model.astream(messages)
-        abort_waiter = asyncio.ensure_future(self._abort_event.wait())
-        silence_limit = active_tuning().duration(Tunable.model_silence_give_up)
-        progress_deadline = asyncio.get_running_loop().time() + silence_limit
+        bound_model = self._bound_model
+        model_stream = None
+        abort_waiter = None
+        cache_scope = ExitStack()
         try:
+            if self._compaction_control.phase == "waiting":
+                cache_scope.enter_context(cache_lane("compaction"))
+            model_stream = bound_model.astream(messages)
+            abort_waiter = asyncio.ensure_future(self._abort_event.wait())
+            silence_limit = active_tuning().duration(Tunable.model_silence_give_up)
+            progress_deadline = asyncio.get_running_loop().time() + silence_limit
             while True:
                 chunk_future = asyncio.ensure_future(_stream_next(model_stream))
                 completed, _ = await asyncio.wait(
@@ -944,11 +960,13 @@ class _RunsTurns:
                             block_id=content_delta.block_identifier,
                         )
         finally:
+            cache_scope.close()
             _telemetry.end_span(generation_span)
-            abort_waiter.cancel()
+            if abort_waiter is not None:
+                abort_waiter.cancel()
             # Close the HTTP stream, so an aborted turn never leaks a provider connection.
             with suppress(BaseException):
-                stream_closer = getattr(model_stream, "aclose", None)
+                stream_closer = getattr(model_stream, "aclose", None) if model_stream else None
                 if stream_closer is not None:
                     await stream_closer()
         # A tool-only turn produces no answer text, so close the phase here.
@@ -1069,15 +1087,18 @@ class _RunsTurns:
             gates = [SuspensionGate(**gate.to_dict()) for gate in pending]
             # Automatic-mode gates are announced first, then weighed by the reviewer, so the call
             # is visible while the decision is pending instead of appearing only once it is made.
-            auto_gates = [gate for gate in gates if gate.automatic_review]
+            auto_gates = [gate for gate in pending if gate.automatic_review]
+            reviewed: dict[str, str] = {}
             if auto_gates:
-                yield PermissionReviewing(interactions=auto_gates)
+                yield PermissionReviewing(
+                    interactions=[SuspensionGate(**gate.to_dict()) for gate in auto_gates]
+                )
                 for gate in auto_gates:
-                    plan = plans[gate.tool_call_id]
-                    await self._review_auto_gate(plan.gates[0], plan)
+                    reviewed[gate.request_id] = await self._review_auto_gate(gate)
                 gates = [gate for gate in gates if not gate.automatic_review]
-            answered = await self._answer_gates(gates)
-            if gates and len(answered) < len(gates):
+            interactive_answers = await self._answer_gates(gates)
+            answered = {**reviewed, **interactive_answers}
+            if gates and len(interactive_answers) < len(gates):
                 # One suspend event per turn, and a durable pause, so a session waiting on a person survives a restart.
                 yield Suspended(
                     interactions=[gate for gate in gates if gate.request_id not in answered],
