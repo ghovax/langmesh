@@ -1,0 +1,963 @@
+{
+  "$defs": {
+    "CompactionEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "error_code": {
+          "anyOf": [
+            {
+              "enum": [
+                "compaction_failed",
+                "compaction_no_reclaim",
+                "compaction_preparation_failed",
+                "compaction_strategy_failed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "const": "compaction",
+          "default": "compaction",
+          "type": "string"
+        },
+        "messages_after": {
+          "default": 0,
+          "type": "integer"
+        },
+        "messages_before": {
+          "default": 0,
+          "type": "integer"
+        },
+        "ok": {
+          "default": true,
+          "type": "boolean"
+        },
+        "reason": {
+          "default": "",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "started",
+            "done"
+          ],
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "tokens_after": {
+          "default": 0,
+          "type": "integer"
+        },
+        "tokens_before": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "CumulativeUsage": {
+      "additionalProperties": false,
+      "description": "Session-lifetime running totals, distinct from the per-call figures that describe only the latest call.",
+      "properties": {
+        "cache_read_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "input_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "model_calls": {
+          "default": 0,
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "reachable_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "total_tokens": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "DoneEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "done",
+          "default": "done",
+          "type": "string"
+        },
+        "state": {
+          "default": "completed",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ErrorEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "default": "turn_failed",
+          "enum": [
+            "authentication_failed",
+            "connection_failed",
+            "context_window_exceeded",
+            "image_unsupported",
+            "provider_unavailable",
+            "rate_limited",
+            "request_rejected",
+            "server_error",
+            "turn_failed",
+            "turn_interrupted",
+            "tool_error"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "const": "error",
+          "default": "error",
+          "type": "string"
+        },
+        "parameters": {
+          "tsType": "Record<string, unknown>"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "tool_call_id": {
+          "default": "",
+          "type": "string"
+        },
+        "tool_name": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "InboundMessageEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "goal_review_id": {
+          "default": "",
+          "type": "string"
+        },
+        "kind": {
+          "const": "inbound_message",
+          "default": "inbound_message",
+          "type": "string"
+        },
+        "message_id": {
+          "default": "",
+          "type": "string"
+        },
+        "peer_sender": {
+          "default": "",
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "McpEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "tsType": "Record<string, unknown>"
+        },
+        "kind": {
+          "const": "mcp_event",
+          "default": "mcp_event",
+          "type": "string"
+        },
+        "server": {
+          "default": "",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "tool": {
+          "default": "",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_call_id",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ModelToolResult": {
+      "additionalProperties": false,
+      "description": "The one-line JSON header prepended to every tool result the model reads.",
+      "properties": {
+        "background_job_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "duration_milliseconds": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "default": "tool_result",
+          "enum": [
+            "tool_result",
+            "background_result"
+          ],
+          "type": "string"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "$ref": "#/$defs/ToolStatus"
+        },
+        "tool_call_id": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_name",
+        "tool_call_id",
+        "status",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "PermissionReason": {
+      "additionalProperties": false,
+      "description": "Why approval is needed, as localizable data rather than a sentence.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "PermissionRequestEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "tsType": "Record<string, unknown>"
+        },
+        "command": {
+          "default": "",
+          "type": "string"
+        },
+        "explanation": {
+          "default": "",
+          "type": "string"
+        },
+        "kind": {
+          "const": "permission_request",
+          "default": "permission_request",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PermissionReason"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "tool_call_id": {
+          "default": "",
+          "type": "string"
+        },
+        "tool_name": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "PrefixDivergence": {
+      "additionalProperties": false,
+      "description": "Where a request stopped matching the one before it.",
+      "properties": {
+        "current": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TracedSegment"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "index": {
+          "default": 0,
+          "type": "integer"
+        },
+        "previous": {
+          "$ref": "#/$defs/TracedSegment"
+        },
+        "rewritten": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "QuestionEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "question",
+          "default": "question",
+          "type": "string"
+        },
+        "questions": {
+          "items": {
+            "tsType": "Record<string, unknown>"
+          },
+          "type": "array"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "tool_call_id": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "RetryEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "retry",
+          "default": "retry",
+          "type": "string"
+        },
+        "ok": {
+          "default": true,
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "started",
+            "done"
+          ],
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "StatusEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "default": "",
+          "type": "string"
+        },
+        "kind": {
+          "const": "status",
+          "default": "status",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "TextEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "text",
+          "default": "text",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ThinkingDoneEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "duration_milliseconds": {
+          "default": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "thinking_done",
+          "default": "thinking_done",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ThinkingEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "block_id": {
+          "default": "",
+          "type": "string"
+        },
+        "kind": {
+          "const": "thinking",
+          "default": "thinking",
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "TokenUsageEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "cache_read_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "context_window": {
+          "default": 0,
+          "type": "integer"
+        },
+        "context_window_estimated": {
+          "default": false,
+          "type": "boolean"
+        },
+        "cumulative": {
+          "$ref": "#/$defs/CumulativeUsage"
+        },
+        "divergence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrefixDivergence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "token_usage",
+          "default": "token_usage",
+          "type": "string"
+        },
+        "output_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "prefix_intact": {
+          "default": false,
+          "type": "boolean"
+        },
+        "reachable_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "segments": {
+          "default": 0,
+          "type": "integer"
+        },
+        "shared_segments": {
+          "default": 0,
+          "type": "integer"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ToolCallEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "tsType": "Record<string, unknown>"
+        },
+        "arguments_complete": {
+          "default": true,
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "tool_call",
+          "default": "tool_call",
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "tool_call_id": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_call_id",
+        "tool_name",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ToolMetadata": {
+      "additionalProperties": false,
+      "description": "Correlational and timing facts about a tool call, kept visible to the model as well as the interface.",
+      "properties": {
+        "background_job_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "duration_milliseconds": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tool_call_id": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_name",
+        "tool_call_id"
+      ],
+      "type": "object"
+    },
+    "ToolResultEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "display": {
+          "default": null,
+          "tsType": "unknown"
+        },
+        "kind": {
+          "const": "tool_result",
+          "default": "tool_result",
+          "type": "string"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ToolMetadata"
+        },
+        "status": {
+          "$ref": "#/$defs/ToolStatus"
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "tool_call_id": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_call_id",
+        "tool_name",
+        "status",
+        "metadata",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ToolStatus": {
+      "description": "The lifecycle state of one tool call.",
+      "enum": [
+        "running",
+        "ok",
+        "error"
+      ],
+      "type": "string"
+    },
+    "TracedSegment": {
+      "additionalProperties": false,
+      "description": "Which piece of a request a cache measurement is about, as fields rather than a formatted label.",
+      "properties": {
+        "kind": {
+          "default": "",
+          "type": "string"
+        },
+        "position": {
+          "default": -1,
+          "type": "integer"
+        },
+        "role": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "TurnContext": {
+      "additionalProperties": false,
+      "description": "Session context captured in the cache-stable system prompt.",
+      "properties": {
+        "background": {
+          "tsType": "Record<string, unknown>"
+        },
+        "confinement": {
+          "tsType": "Record<string, unknown>"
+        },
+        "goal": {
+          "tsType": "Record<string, unknown>"
+        },
+        "locations": {
+          "items": {
+            "tsType": "Record<string, unknown>"
+          },
+          "type": "array"
+        },
+        "now": {
+          "default": "",
+          "type": "string"
+        },
+        "pwd": {
+          "default": "",
+          "type": "string"
+        },
+        "screen": {
+          "tsType": "Record<string, unknown>"
+        },
+        "tasks": {
+          "items": {
+            "tsType": "Record<string, unknown>"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "WarningEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "const": "image_metadata_only",
+          "type": "string"
+        },
+        "kind": {
+          "const": "warning",
+          "default": "warning",
+          "type": "string"
+        },
+        "parameters": {
+          "tsType": "Record<string, unknown>"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "WireEvent": {
+      "discriminator": {
+        "mapping": {
+          "compaction": "#/$defs/CompactionEvent",
+          "done": "#/$defs/DoneEvent",
+          "error": "#/$defs/ErrorEvent",
+          "inbound_message": "#/$defs/InboundMessageEvent",
+          "mcp_event": "#/$defs/McpEvent",
+          "permission_request": "#/$defs/PermissionRequestEvent",
+          "question": "#/$defs/QuestionEvent",
+          "retry": "#/$defs/RetryEvent",
+          "status": "#/$defs/StatusEvent",
+          "text": "#/$defs/TextEvent",
+          "thinking": "#/$defs/ThinkingEvent",
+          "thinking_done": "#/$defs/ThinkingDoneEvent",
+          "token_usage": "#/$defs/TokenUsageEvent",
+          "tool_call": "#/$defs/ToolCallEvent",
+          "tool_result": "#/$defs/ToolResultEvent",
+          "warning": "#/$defs/WarningEvent"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TextEvent"
+        },
+        {
+          "$ref": "#/$defs/ThinkingEvent"
+        },
+        {
+          "$ref": "#/$defs/ThinkingDoneEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolCallEvent"
+        },
+        {
+          "$ref": "#/$defs/ToolResultEvent"
+        },
+        {
+          "$ref": "#/$defs/McpEvent"
+        },
+        {
+          "$ref": "#/$defs/StatusEvent"
+        },
+        {
+          "$ref": "#/$defs/DoneEvent"
+        },
+        {
+          "$ref": "#/$defs/CompactionEvent"
+        },
+        {
+          "$ref": "#/$defs/InboundMessageEvent"
+        },
+        {
+          "$ref": "#/$defs/RetryEvent"
+        },
+        {
+          "$ref": "#/$defs/TokenUsageEvent"
+        },
+        {
+          "$ref": "#/$defs/PermissionRequestEvent"
+        },
+        {
+          "$ref": "#/$defs/QuestionEvent"
+        },
+        {
+          "$ref": "#/$defs/WarningEvent"
+        },
+        {
+          "$ref": "#/$defs/ErrorEvent"
+        }
+      ]
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "title": "LangMeshEvents",
+  "type": "object"
+}

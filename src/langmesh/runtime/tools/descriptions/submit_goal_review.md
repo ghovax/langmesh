@@ -1,0 +1,1 @@
+Submit the independent verdict required by an internal goal-review instruction after completing every useful inspection. This tool is unavailable during ordinary work, must be called only after forming your own critical opinion, and must be the final call rather than part of a parallel batch.

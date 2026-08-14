@@ -1,0 +1,142 @@
+[project]
+name = "langmesh"
+version = "0.1.0"
+description = "A composable, durable agent runtime for embedded and hosted sessions"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "langchain>=0.3.0",
+    "litellm>=1.60.0",
+    "sqlalchemy>=2.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "httpx>=0.28.0",
+    "tenacity>=9.0.0",
+    "sse-starlette>=2.0.0",
+    "exa-py>=2.14.0",
+    "tiktoken>=0.8.0",
+    "a2a-sdk==0.3.7",
+    "pyjwt>=2.8.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.27.0",
+    "aiosqlite>=0.22.1",
+    "greenlet>=3.5.2",
+    # The public workspace-resource boundary. Its protocol implementations cover local, memory,
+    # object-store, archive, HTTP, SSH and third-party filesystems without LangMesh inventing one.
+    "fsspec>=2026.6.0,<2027",
+    # Public, event-driven observer API for subscriptions that must be installed before a read.
+    "watchdog>=6.0,<7",
+    # Existing broad directory streams use watchfiles' async iterator API.
+    "watchfiles>=1.2,<1.3",
+    "mcp[cli]>=1.27,<2",
+    "beautifulsoup4>=4.13",
+    "markdownify>=1.2.2",
+    "minify-html>=0.15",
+    "firecrawl-py>=2.0.0",
+    "curl-cffi>=0.15.0",
+    "pillow>=11.0",
+    "python-multipart>=0.0.20",
+    "tree-sitter>=0.26",
+    "tree-sitter-python>=0.25",
+    "tree-sitter-javascript>=0.23",
+    "tree-sitter-typescript>=0.23",
+    "tree-sitter-json>=0.24",
+    "tree-sitter-yaml>=0.7",
+    "tree-sitter-toml>=0.6",
+    "tree-sitter-bash>=0.23",
+    "tree-sitter-html>=0.20",
+    "tree-sitter-css>=0.23",
+    "tree-sitter-c>=0.23",
+    "tree-sitter-cpp>=0.23",
+    "tree-sitter-go>=0.23",
+    "tree-sitter-rust>=0.23",
+    "tree-sitter-markdown>=0.3",
+    # Speech to text for the composer's dictation, on this machine. Apple-Silicon only, like
+    # the frameworks below it: MLX is what makes a gigabyte-class model practical to keep
+    # resident on a laptop. Imported only by the dictation worker, and only once somebody has
+    # turned dictation on — the weights are never bundled and download on first use.
+    "parakeet-mlx>=0.3; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=11.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=11.0; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices>=11.0; sys_platform == 'darwin'",
+    "playwright>=1.61.0",
+    "model2vec>=0.8.2",
+    "croniter>=6.2.4",
+    # `langmesh reach pair` prints its pairing link as a QR code, because the alternative is asking
+    # somebody to type a 43-character token into a phone. Pure Python and dependency-free, which
+    # matters for something the frozen build has to carry.
+]
+
+[project.scripts]
+langmesh = "langmesh.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/langmesh"]
+
+[tool.hatch.build.targets.wheel.force-include]
+".agents/agents" = "langmesh/_bundled/.agents/agents"
+".agents/skills" = "langmesh/_bundled/.agents/skills"
+".agents/mcp.json" = "langmesh/_bundled/.agents/mcp.json"
+
+[tool.uv]
+package = true
+# Not a dependency — a floor on one the speech stack drags in. `librosa` (under `parakeet-mlx`)
+# depends on `numba`, and left alone the resolver settles on a release from before Python 3.13
+# existed, whose build then refuses the interpreter this project requires. A constraint states
+# the bound without adding the package: whoever pulls numba in gets a version that runs here.
+constraint-dependencies = ["numba>=0.61", "llvmlite>=0.44"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[dependency-groups]
+docs = [
+    "mkdocs>=1.6,<2",
+    "mkdocs-material>=9.6,<10",
+    "mkdocstrings[python]>=0.30,<1",
+]
+dev = [
+    "pyinstaller>=6.21.0",
+    # The retrieval harness records one row per query per strategy and pivots it. A frame is the
+    # right shape for that: the questions asked of these measurements keep changing, and a saved
+    # frame answers a new one without re-running the sweep. Test-only — nothing the daemon ships
+    # imports it.
+    "pandas>=2.2",
+    "pyarrow>=18.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    # Pinned to a minor, not left open. Ruff's *default* rule set widens between releases, so
+    # an unpinned `ruff check` means a different check on every machine — 0 findings on one
+    # and 596 on another, from the same source. The rules this repository is checked against
+    # are stated in [tool.ruff] below rather than inherited.
+    "ruff>=0.14,<0.15",
+]
+
+
+[tool.ruff]
+# What the formatter wraps code to. A comment is never rewrapped by any formatter, and `E501` is not
+# in the selected set, so the prose this tree writes on one line stays on one line.
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.format]
+# The tree quotes with double already; saying so keeps a reformat from being about quotes.
+quote-style = "double"
+docstring-code-format = true
+
+[tool.ruff.lint]
+# The set the tree is actually written against and passes clean: pycodestyle errors, pyflakes.
+# Stated explicitly because Ruff's implicit default has grown over releases, and a linter whose
+# meaning depends on which version happens to be installed cannot gate anything.
+#
+# Widening this is worth doing and is deliberately not done here: the wider default reports
+# several hundred findings, and folding those into an unrelated change is how a diff stops
+# being reviewable. It is its own piece of work.
+select = ["E4", "E7", "E9", "F"]
