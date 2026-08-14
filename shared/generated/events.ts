@@ -6,6 +6,8 @@
  */
 
 /**
+ * The lifecycle state of one tool call.
+ *
  * This interface was referenced by `LangMeshEvents`'s JSON-Schema
  * via the `definition` "ToolStatus".
  */
@@ -141,7 +143,7 @@ export interface ModelToolResult {
   tool_name: string;
 }
 /**
- * Why approval is needed, as data rather than a sentence, so a client can say it in its own language.
+ * Why approval is needed, as localizable data rather than a sentence.
  *
  * This interface was referenced by `LangMeshEvents`'s JSON-Schema
  * via the `definition` "PermissionReason".
@@ -307,7 +309,7 @@ export interface ToolResultEvent {
   tool_name: string;
 }
 /**
- * Session context in the static system prompt, refreshed when a context fold rebuilds it.
+ * Session context captured in the cache-stable system prompt.
  *
  * This interface was referenced by `LangMeshEvents`'s JSON-Schema
  * via the `definition` "TurnContext".

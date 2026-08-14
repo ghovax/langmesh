@@ -330,7 +330,7 @@
     },
     "PermissionReason": {
       "additionalProperties": false,
-      "description": "Why approval is needed, as data rather than a sentence, so a client can say it in its own language.",
+      "description": "Why approval is needed, as localizable data rather than a sentence.",
       "properties": {
         "kind": {
           "type": "string"
@@ -788,6 +788,7 @@
       "type": "object"
     },
     "ToolStatus": {
+      "description": "The lifecycle state of one tool call.",
       "enum": [
         "running",
         "ok",
@@ -819,7 +820,7 @@
     },
     "TurnContext": {
       "additionalProperties": false,
-      "description": "Session context in the static system prompt, refreshed when a context fold rebuilds it.",
+      "description": "Session context captured in the cache-stable system prompt.",
       "properties": {
         "background": {
           "tsType": "Record<string, unknown>"
