@@ -27,36 +27,31 @@ LangMesh is one executable entered two ways. `langmesh` is the command a person 
 They are the same image, not two binaries, for two reasons. Packaging stays a single specification, and every session runs inside the daemon, so the whole fleet carries the signed application bundle's code identity. One macOS Accessibility grant therefore covers everything, instead of prompting once per session.
 
 ```mermaid
-flowchart BT
-    subgraph Clients
-        Cli["langmesh (CLI)"]
-        App["Desktop app<br/>(Tauri and Next.js)"]
-        Peer["Another session"]
-    end
+sequenceDiagram
+    autonumber
+    participant Cli as langmesh (CLI)
+    participant App as Desktop app (Tauri and Next.js)
+    participant Peer as Another session
+    participant Daemon as langmeshd — the controller
+    participant Registry as Session registry
+    participant Stores as history.sqlite — sole writer
+    participant Session as A session — hosted in the daemon
+    participant Executor as Agent loop (LangChain)
+    participant Permissions as Permission engine
+    participant Tools as Tools: shell, files, web, screen, MCP servers
+    participant Model as Model provider (Anthropic, OpenAI, … via LiteLLM)
 
-    subgraph Daemon["langmeshd — the controller"]
-        Registry["Session registry"]
-        Lifecycle["Lifecycle and reaper"]
-        Stores["Sole writer:<br/>history.sqlite"]
-    end
-
-    subgraph Session["A session — hosted inside the daemon"]
-        Executor["Agent loop<br/>(LangChain)"]
-        Permissions["Permission engine"]
-        Tools["Tools: shell, files, web,<br/>screen control, MCP servers"]
-    end
-
-    ModelProvider["Model provider<br/>(Anthropic, OpenAI, … via LiteLLM)"]
-
-    Cli -->|unix socket| Daemon
-    App -->|loopback TCP and token| Daemon
-    Peer -->|unix socket| Daemon
-    Daemon --> Registry & Lifecycle & Stores
-    Lifecycle -->|builds and holds| Session
-    Daemon -->|calls its verbs directly| Session
-    Session -->|writes through the daemon| Stores
-    Executor --> Permissions --> Tools
-    Executor <--> ModelProvider
+    Cli->>Daemon: unix socket
+    App->>Daemon: loopback TCP and token
+    Peer->>Daemon: unix socket
+    Daemon->>Registry: register and scope the caller
+    Daemon->>Session: call its verbs directly
+    Session->>Executor: drive the turn
+    Executor->>Model: request completion
+    Model-->>Executor: stream chunks
+    Executor->>Permissions: ask before an enabled call
+    Permissions->>Tools: approved call
+    Session->>Stores: write transcript through the daemon
 ```
 
 ## Sessions
