@@ -6,6 +6,9 @@ build/
 dist/
 wheels/
 
+# MkDocs output
+/site/
+
 # Virtual environments
 .venv
 .env
