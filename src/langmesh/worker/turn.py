@@ -21,7 +21,6 @@ from langchain_core.messages import messages_to_dict
 from langmesh.base import telemetry as _telemetry
 from langmesh.base.configuration import PromptLoader
 from langmesh.base.serialization import compact, conversation_snapshot_id
-from langmesh.base.tuning import Tunable, active_tuning
 from langmesh.protocol.errors import _safe_turn_error
 from langmesh.protocol.events import ErrorEvent, InboundMessageEvent, RetryEvent, StatusEvent
 from langmesh.protocol.metadata import (
@@ -802,15 +801,10 @@ class _TurnRunner:
         goal = runtime.goal
         return _ContinuationPlan(
             goal=bool(
-                goal is not None
-                and goal.is_open
-                and goal.continuations
-                < active_tuning().amount(Tunable.goal_continuation_turns)
+                goal is not None and goal.is_open and runtime.should_continue_goal()
             ),
             tasks=bool(
-                runtime.has_actionable_tasks()
-                and runtime.task_continuations
-                < active_tuning().amount(Tunable.task_continuation_turns)
+                runtime.has_actionable_tasks() and runtime.should_continue_tasks()
             ),
         )
 
@@ -834,7 +828,7 @@ class _TurnRunner:
             return
         # A stopped turn hands the work back, so the goal waits; read off the abort, which "not completed" is not.
         stopped = state is not None and state.aborted
-        spent = goal.continuations >= active_tuning().amount(Tunable.goal_continuation_turns)
+        spent = not runtime.should_continue_goal()
         if not stopped and (state is None or runtime.has_pending_jobs() or not spent):
             return
         # Written now: parking is what stops the session, and a stop only in memory is one a restart undoes.

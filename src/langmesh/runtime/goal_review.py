@@ -11,11 +11,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Awaitable, Callable, Literal, Optional
 
-from a2a.types import Message, Part, Role, Task, TaskState, TaskStatus, TextPart
-from a2a.utils import new_task
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from langmesh.base.configuration import PermissionEvaluator, PromptLoader
+from langmesh.base.ports import GoalReviewContext, GoalReviewOutcome
 from langmesh.base.identifiers import new_id
 from langmesh.base.serialization import compact
 from langmesh.base.tuning import Tunable, active_tuning
@@ -29,7 +28,6 @@ from langmesh.runtime.turn_events import (
     ToolResult,
     TurnEvent,
 )
-from langmesh.worker.sink import _TurnEventSink
 
 
 logger = logging.getLogger(__name__)
@@ -171,6 +169,7 @@ class _ReviewsGoal:
         )
 
     def _goal_reviewer(self, scratch_directory: str):
+        from langmesh.runtime.composition import RuntimeComponents, RuntimeSpec
         from langmesh.runtime.runtime import AgentRuntime
 
         reviewer_configuration = self._agent_configuration.model_copy(
@@ -224,32 +223,35 @@ class _ReviewsGoal:
                 ),
             )
         reviewer = AgentRuntime(
-            agent_configuration=reviewer_configuration,
-            global_configuration=reviewer_global_configuration,
-            session_id=self._session_id,
+            RuntimeSpec(
+                agent=reviewer_configuration,
+                configuration=reviewer_global_configuration,
+                session_id=self._session_id,
+                working_directory=self._working_directory,
+                project_directory=self._project_directory,
+                permission_mode="automatic",
+                parent_session=self._parent_session,
+                sandbox=reviewer_sandbox,
+                accepts_goal_review=True,
+            ),
+            RuntimeComponents(
+                model=self._model,
+                catalogue=self._catalogue,
+                sessions=None,
+                mcp_servers=self._tool_context.mcp_server_manager,
+                tools=tuple(self._extra_tools.values()),
+                supplied_tool_gate=self._supplied_tool_gate,
+                permissions=reviewer_permissions,
+                toolset=tuple(self._tools),
+                related_turns=self._turn_reader,
+            ),
             conversation=list(self._conversation),
-            working_directory=self._working_directory,
-            project_directory=self._project_directory,
-            permission_mode="automatic",
-            locations=None,
-            parent_session=self._parent_session,
-            sandbox=reviewer_sandbox,
-            session_access=None,
-            mcp_server_manager=self._tool_context.mcp_server_manager,
-            model=self._model,
-            catalogue=self._catalogue,
-            tools=tuple(self._extra_tools.values()),
-            supplied_tool_gate=self._supplied_tool_gate,
-            permissions=reviewer_permissions,
-            toolset=tuple(self._tools),
-            accepts_goal_review=True,
         )
         reviewer._locations = dict(self._locations)
         reviewer._locations_by_name = dict(self._locations_by_name)
         reviewer._tool_context = replace(reviewer._tool_context, toolbox=toolbox)
         reviewer.restore_session(self.session_snapshot())
         reviewer._cached_system_prompt = self._build_static_system_prompt()
-        reviewer._turn_reader = self._turn_reader
         reviewer._attached_files = list(self._attached_files)
         return reviewer
 
@@ -257,7 +259,6 @@ class _ReviewsGoal:
         self,
         reviewer,
         instruction: str,
-        sink: _TurnEventSink,
         review_id: str,
         publish: Callable[[TurnEvent], Awaitable[None]] | None,
     ) -> bool:
@@ -268,7 +269,8 @@ class _ReviewsGoal:
                 ):
                     if publish is not None:
                         await publish(GoalReviewProgress(review_id=review_id, event=event))
-                    await sink.handle(event)
+                    if self._goal_review_journal is not None:
+                        await self._goal_review_journal.append(review_id, event)
 
         review_turn = asyncio.create_task(run())
         abort_wait = asyncio.create_task(self._abort_event.wait())
@@ -292,80 +294,35 @@ class _ReviewsGoal:
                 with suppress(asyncio.CancelledError):
                     await review_turn
 
-    async def _goal_review_transcript(
+    async def _open_goal_review_journal(
         self, review_id: str, assignment: str, goal: Goal
-    ) -> tuple[Task, _TurnEventSink]:
-        created_at = datetime.now(timezone.utc).isoformat()
-        message = Message(
-            role=Role.user,
-            parts=[Part(root=TextPart(text=assignment))],
-            message_id=new_id("message"),
-            context_id=review_id,
-        )
-        task = new_task(message)
-        task.status = TaskStatus(state=TaskState.working, timestamp=created_at)
-        if self._turn_store is not None:
-            await self._turn_store.create_goal_review(
-                review_id, self._session_id, goal.text, created_at
-            )
-            await self._turn_store.save(task)
-
-        async def emit(part: Part, *, publish_stream_event: bool = True) -> None:
-            task.history = [
-                *(task.history or []),
-                Message(
-                    role=Role.agent,
-                    parts=[part],
-                    message_id=new_id("message"),
-                    task_id=task.id,
-                    context_id=review_id,
-                ),
-            ]
-            if self._turn_store is not None and publish_stream_event:
-                await self._turn_store.save_goal_review(self._session_id, review_id, task, part)
-            elif self._turn_store is not None:
-                await self._turn_store.save(task)
-
-        def emit_delta(channel: str, block_id: str, text: str) -> None:
-            # Review transcripts share the same bus, so their model deltas take the same direct lane.
-            from langmesh.daemon import state
-
-            state.event_bus.publish_delta(review_id, channel, block_id, text)
-
-        async def save_conversation() -> None:
-            return None
-
-        async def suspend(_interactions, _plans) -> bool:
-            return False
-
-        sink = _TurnEventSink(
-            emit=emit,
-            emit_delta=emit_delta,
-            save_conversation=save_conversation,
-            suspend=suspend,
-            telemetry_span=None,
-            model_identifier=lambda: self.model_identifier,
-        )
-        return task, sink
-
-    async def _finish_goal_review_transcript(
-        self,
-        task: Task,
-        review_id: str,
-        status: TaskState,
-        standing: str | None,
     ) -> None:
-        completed_at = datetime.now(timezone.utc).isoformat()
-        task.status = TaskStatus(state=status, timestamp=completed_at)
-        if self._turn_store is not None:
-            await self._turn_store.save(task)
-            await self._turn_store.finish_goal_review(
-                self._session_id,
-                review_id,
-                status.value,
-                standing,
-                completed_at,
+        if self._goal_review_journal is None:
+            return
+        await self._goal_review_journal.open(
+            GoalReviewContext(
+                review_id=review_id,
+                session_id=self._session_id,
+                goal=goal.text,
+                assignment=assignment,
+                created_at=datetime.now(timezone.utc),
             )
+        )
+
+    async def _close_goal_review_journal(
+        self, review_id: str, status: str, standing: str | None
+    ) -> None:
+        if self._goal_review_journal is None:
+            return
+        await self._goal_review_journal.close(
+            GoalReviewOutcome(
+                review_id=review_id,
+                session_id=self._session_id,
+                status=status,
+                standing=standing,
+                completed_at=datetime.now(timezone.utc),
+            )
+        )
 
     @staticmethod
     def _require_review_submission(reviewer) -> None:
@@ -413,7 +370,7 @@ class _ReviewsGoal:
                 ),
             },
         )
-        task, sink = await self._goal_review_transcript(review_id, assignment, goal)
+        await self._open_goal_review_journal(review_id, assignment, goal)
         transcript_finished = False
         if publish is not None:
             await publish(
@@ -425,20 +382,19 @@ class _ReviewsGoal:
                 )
             )
 
-        async def finish_transcript(status: TaskState, review: GoalReview | None = None) -> None:
+        async def finish_transcript(status: str, review: GoalReview | None = None) -> None:
             nonlocal transcript_finished
             if transcript_finished:
                 return
             transcript_finished = True
-            await sink.flush()
-            await self._finish_goal_review_transcript(
-                task, review_id, status, review.standing if review is not None else None
+            await self._close_goal_review_journal(
+                review_id, status, review.standing if review is not None else None
             )
             if publish is not None:
                 await publish(
                     GoalReviewFinished(
                         review_id=review_id,
-                        status=status.value,
+                        status=status,
                         standing=review.standing if review is not None else None,
                         assessment=review.assessment if review is not None else None,
                         unmet=tuple(review.unmet) if review is not None else (),
@@ -455,14 +411,14 @@ class _ReviewsGoal:
                 instruction = instructions
                 while not self._abort_event.is_set():
                     if not await self._run_goal_review_turn(
-                        reviewer, instruction, sink, review_id, publish
+                        reviewer, instruction, review_id, publish
                     ):
-                        await finish_transcript(TaskState.canceled)
+                        await finish_transcript("canceled")
                         return None
                     if reviewer._submitted_goal_review is not None:
                         review = reviewer._submitted_goal_review
                         review._review_id = review_id
-                        await finish_transcript(TaskState.completed, review)
+                        await finish_transcript("completed", review)
                         return review
                     logger.warning(
                         "the goal reviewer stopped without submitting its verdict; continuing it"
@@ -470,16 +426,16 @@ class _ReviewsGoal:
                     self._require_review_submission(reviewer)
                     instruction = self._prompt_loader.load("goal_review_missing", {})
             except asyncio.CancelledError:
-                await finish_transcript(TaskState.canceled)
+                await finish_transcript("canceled")
                 raise
             except Exception:
-                await finish_transcript(TaskState.failed)
+                await finish_transcript("failed")
                 raise
             finally:
                 reviewer.abort()
                 reviewer.background_jobs.cancel_all()
                 if not transcript_finished:
-                    await finish_transcript(TaskState.canceled)
+                    await finish_transcript("canceled")
         return None
 
     def apply_goal_review(self, review: Optional[GoalReview]) -> Optional[Goal]:

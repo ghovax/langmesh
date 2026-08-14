@@ -317,29 +317,28 @@ class _RunsTurns:
         error: str = "",
     ) -> None:
         """Hand one completed turn to the caller's transcript: one entry per turn, not per message."""
-        if self._transcript is None:
-            return
         from langmesh.base.ports import TurnSummary
 
         usage = self._token_usage
+        summary = TurnSummary(
+            session_id=self._session_id,
+            turn_id=new_id("turn"),
+            started_at=self._turn_started_at or datetime.now(timezone.utc),
+            ended_at=datetime.now(timezone.utc),
+            request=request,
+            response=response,
+            outcome=outcome,
+            tools_called=tuple(entry.get("name", "") for entry in tool_calls),
+            input_tokens=int(usage.get("input_tokens", 0)),
+            output_tokens=int(usage.get("output_tokens", 0)),
+            error=error,
+        )
         try:
-            await self._transcript.record(
-                TurnSummary(
-                    session_id=self._session_id,
-                    turn_id=new_id("turn"),
-                    started_at=self._turn_started_at or datetime.now(timezone.utc),
-                    ended_at=datetime.now(timezone.utc),
-                    request=request,
-                    response=response,
-                    outcome=outcome,
-                    tools_called=tuple(entry.get("name", "") for entry in tool_calls),
-                    input_tokens=int(usage.get("input_tokens", 0)),
-                    output_tokens=int(usage.get("output_tokens", 0)),
-                    error=error,
-                )
-            )
+            if self._transcript is not None:
+                await self._transcript.record(summary)
         except Exception:  # noqa: BLE001 — a record that cannot be written must not lose the turn
             logger.warning("the transcript raised while recording a turn", exc_info=True)
+        await self._hooks.after_turn(summary)
 
     async def _drain_steering_messages(self) -> list[TurnEvent]:
         events: list[TurnEvent] = []
@@ -424,6 +423,10 @@ class _RunsTurns:
                         tool_call_id=tool_call["id"],
                     )
                 )
+
+    def abandon_suspension(self) -> None:
+        """Close a parked tool batch without executing it, leaving valid append-only conversation state."""
+        self._close_dangling_tool_calls()
 
     async def resume_stream(
         self, plans: dict[str, dict], answers: dict[str, Any]
@@ -533,32 +536,19 @@ class _RunsTurns:
                 self._begin_compaction_preparation(reason="auto", resume_after=True)
             if (
                 self._compaction_control.phase == "waiting"
-                and self._compaction_control.registry_revision is None
+                and self._compaction_control.preparation_token is None
             ):
-                try:
-                    self._compaction_control.registry_revision = (
-                        await self._observation_store.revision()
-                    )
-                    self._mark_session_dirty()
-                except Exception as error:  # noqa: BLE001 — becomes the visible retryable blocker
-                    # The private segment knows how to atomically repair an invalid registry.
-                    # Zero is the minimum accepted replacement baseline; verification below
-                    # still requires a complete valid registry whose revision is positive.
-                    logger.warning(
-                        "observation registry requires repair before compaction: %s", error
-                    )
-                    self._compaction_control.registry_revision = 0
-                    self._mark_session_dirty()
+                self._compaction_control.preparation_token = (
+                    await self._compaction_preparation.baseline()
+                )
+                self._mark_session_dirty()
             if (
                 self._compaction_control.phase == "waiting"
-                and self._compaction_control.registry_revision is not None
+                and self._compaction_control.preparation_token is not None
             ):
-                recorded_revision = self._compaction_control.registry_revision
-                try:
-                    current_registry_revision = await self._observation_store.revision()
-                except Exception:  # noqa: BLE001 — the private segment is responsible for repair
-                    current_registry_revision = recorded_revision
-                if current_registry_revision > recorded_revision:
+                if await self._compaction_preparation.completed(
+                    self._compaction_control.preparation_token
+                ):
                     # The write may have committed just before a process stopped or a checkpoint
                     # was persisted. Its revision is the durable acknowledgement; do not ask the
                     # model to repeat a side effect merely because the in-memory state was lost.
@@ -576,7 +566,9 @@ class _RunsTurns:
             if self._compaction_control.phase == "recorded":
                 fold_reason = self._compaction_control.reason
                 try:
-                    self._observation_registry_metadata = await self._observation_store.describe()
+                    self._observation_registry_metadata = (
+                        await self._compaction_preparation.describe()
+                    )
                 except Exception as error:  # noqa: BLE001 — the fold verification below remains authoritative
                     self.note_observation_registry({}, str(error) or type(error).__name__)
                 async for compaction_event in self.compact(reason=fold_reason):
@@ -645,7 +637,7 @@ class _RunsTurns:
                     self._compaction_control.reason = "overflow"
                     self._compaction_control.resume_after = True
                     for compaction_event in self._fail_compaction_preparation(
-                        "The provider exhausted the context window before the observational-memory preparation segment could run."
+                        "The provider exhausted the context window before compaction preparation could run."
                     ):
                         yield compaction_event
                     return
@@ -743,15 +735,10 @@ class _RunsTurns:
             ):
                 yield event
             if self._compaction_control.phase == "waiting":
-                recorded_revision = self._compaction_control.registry_revision
-                if recorded_revision is None:
-                    raise RuntimeError("compaction preparation has no recorded registry revision")
-                try:
-                    revision = await self._observation_store.revision()
-                except Exception as error:  # noqa: BLE001 — becomes the visible retryable blocker
-                    logger.debug("observational-memory checkpoint is not valid yet: %s", error)
-                    revision = recorded_revision
-                if revision > recorded_revision:
+                token = self._compaction_control.preparation_token
+                if token is None:
+                    raise RuntimeError("compaction preparation has no durable baseline")
+                if await self._compaction_preparation.completed(token):
                     self._record_compaction_preparation()
             if self.compaction_failure:
                 if pending_user_message is not None:
@@ -1014,7 +1001,7 @@ class _RunsTurns:
         if self._compaction_control.phase == "waiting":
             self._conversation.append(response)
             for event in self._fail_compaction_preparation(
-                "The agent ended compaction preparation without advancing observational memory."
+                "The agent ended compaction preparation without completing its durable handoff."
             ):
                 yield event
             step.directive = _CONTINUE

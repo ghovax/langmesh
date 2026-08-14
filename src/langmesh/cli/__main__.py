@@ -360,7 +360,7 @@ def _command_run(arguments: argparse.Namespace) -> int:
         return 1
 
     async def drive() -> int:
-        from langmesh import Approval, Session
+        from langmesh import Approval, Session, SessionComponents
 
         class AllowEverything:
             """Answers every gate with yes, reachable only through `--allow` because unattended means nobody is watching."""
@@ -379,9 +379,11 @@ def _command_run(arguments: argparse.Namespace) -> int:
             load_agent(arguments.agent, directory, configuration=configuration),
             directory=directory,
             configuration=configuration,
-            catalogue=load_catalogue(configuration, directory),
             permission_mode=arguments.permission_mode,
-            approvals=AllowEverything() if arguments.allow else None,
+            components=SessionComponents(
+                catalogue=load_catalogue(configuration, directory),
+                approvals=AllowEverything() if arguments.allow else None,
+            ),
         )
         try:
             from langmesh.runtime.turn_events import Done, Suspended, TextChunk

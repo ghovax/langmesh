@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from langmesh.base import telemetry as _telemetry
 from langmesh.base import confinement as _confinement
 from langmesh.base.confinement import parse_access_request
+from langmesh.base.ports import ToolInvocation
 from langmesh.runtime.internals import (
     _background_handle_kind,
     _cap_model_result_payload,
@@ -19,7 +20,6 @@ from langmesh.runtime.internals import (
     _maybe_json,
     _model_result_status,
     _ResolvedToolDecision,
-    _ToolCall,
     _tool_timing_metadata,
     _utc_timestamp,
 )
@@ -488,7 +488,7 @@ class _DispatchesTools:
         """Run one call through the caller's middleware, which asks a plain question a generator cannot answer."""
         if self._pipeline.empty:
             return await invoke(tool_arguments)
-        call = _ToolCall(name=tool_name, arguments=tool_arguments)
+        call = ToolInvocation(name=tool_name, arguments=tool_arguments)
         return await self._pipeline.run(call, lambda made: invoke(made.arguments))
 
     async def _execute_tool(

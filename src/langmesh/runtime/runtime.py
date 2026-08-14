@@ -4,7 +4,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 from langchain_core.messages import (
     AIMessage,
@@ -23,7 +23,6 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langmesh.runtime.models.litellm import ChatLiteLLMModel
 from langmesh.runtime.models.codex import ChatCodexModel
 from langmesh.runtime.models.cursor import ChatCursorModel
-from langmesh.base.file_leases import FileLeaseManager
 from langmesh.base.models import find_model, resolve_litellm
 from langmesh.locations.resolver import LocationAddress, executor_for, location_uri_for
 from langmesh.runtime.tools.registry import (
@@ -85,6 +84,7 @@ from langmesh.base.serialization import compact
 from langmesh.base.toolbox import toolbox_for
 from langmesh.runtime.goal import Goal
 from langmesh.runtime.goal_review import _ReviewsGoal
+from langmesh.runtime.composition import RuntimeComponents, RuntimeSpec
 from langmesh.runtime.internals import (
     _cap_model_result_payload,
     _maybe_json,
@@ -476,64 +476,57 @@ class AgentRuntime(
 
     def __init__(
         self,
-        agent_configuration: AgentConfiguration,
-        global_configuration: Configuration,
-        session_id: str = "",
+        spec: RuntimeSpec,
+        components: RuntimeComponents = RuntimeComponents(),
+        *,
         conversation: Optional[list] = None,
-        working_directory: str = "",
-        project_directory: str = "",
-        permission_mode: str = "",
-        file_lease_manager: FileLeaseManager | None = None,
-        locations: list[dict] | None = None,
-        parent_session: str = "",
-        sandbox=None,
-        session_access: Any = None,
-        mcp_server_manager: Any = None,
-        model: Any = None,
-        jobs: Any = None,
-        observer: Any = None,
-        approvals: Any = None,
-        catalogue: Any = None,
-        transcript: Any = None,
-        turn_store: Any = None,
-        tools: Sequence[BaseTool] = (),
-        supplied_tool_gate: str = "ask",
-        permissions: Any = None,
-        hooks: Sequence[Any] = (),
-        pipeline: Sequence[Any] = (),
-        compaction: Any = None,
-        toolset: Sequence[BaseTool] | None = None,
-        accepts_goal_review: bool = False,
-        resource_sync: Callable[[], Awaitable[None]] | None = None,
     ):
         from langmesh.runtime.hooks import HookRunner
         from langmesh.runtime.pipeline import ToolPipeline
 
-        # The three seams around a turn, each defaulting to what the harness already did.
-        self._hooks = HookRunner(hooks)
-        self._pipeline = ToolPipeline(pipeline)
-        self._compaction = compaction
-        self._resource_sync = resource_sync
+        agent_configuration = spec.agent
+        global_configuration = spec.configuration
+        session_id = spec.session_id
+        working_directory = spec.working_directory
+        project_directory = spec.project_directory
+        session_access = components.sessions
+        mcp_server_manager = components.mcp_servers
+        model = components.model
+        jobs = components.jobs
+        observer = components.observer
+        approvals = components.approvals
+        catalogue = components.catalogue
+        transcript = components.transcript
+        tools = components.tools
+        permissions = components.permissions
+        toolset = components.toolset
+
+        self._spec = spec
+        self._components = components
+        self._hooks = HookRunner(components.hooks)
+        self._pipeline = ToolPipeline(components.middleware)
+        self._compaction = components.compaction
+        self._resource_sync = components.synchronize_resources
         self._session_id = session_id
         # The session that created this one, empty when a person did. Reporting back needs its id.
-        self._parent_session = parent_session
+        self._parent_session = spec.parent_session
         # What every child is confined to, held so a configuration edit cannot widen a live session.
         from langmesh.base.confinement import Grant
 
         # Normalised once, because callers hand this three different shapes.
-        self._sandbox = _as_profile(sandbox)
+        self._sandbox = _as_profile(spec.sandbox)
         self._agent_configuration = agent_configuration
         self._global_configuration = global_configuration
         self._working_directory = working_directory or str(Path.home())
         self._project_directory = project_directory or self._working_directory
         # The daemon already resolved the session mode; a direct library caller falls back to the profile.
         self._permission_mode = PermissionMode.resolve(
-            permission_mode, agent_configuration.permission_default
+            spec.permission_mode, agent_configuration.permission_default
         )
         # The locations the agent may address, with a local one synthesized when none were supplied.
         self._locations: dict[str, ResolvedLocation] = {}
         self._locations_by_name: dict[str, ResolvedLocation] = {}
-        self._build_locations(locations)
+        self._build_locations(list(spec.locations) if spec.locations is not None else None)
 
         model_identifier = agent_configuration.model_identifier
         # Only a runtime that must build a client needs to be told which one.
@@ -555,11 +548,11 @@ class AgentRuntime(
             )
         )
 
-        self._file_lease_manager = file_lease_manager
+        self._file_lease_manager = components.file_leases
         # The caller's tools alongside ours. `BaseTool` is adopted rather than wrapped.
         self._extra_tools = {tool.name: tool for tool in tools}
         # What a caller's tool is gated at: asking by default, so adding one cannot silently widen a session.
-        self._supplied_tool_gate = supplied_tool_gate
+        self._supplied_tool_gate = components.supplied_tool_gate
         configured_tools = (
             list(toolset)
             if toolset is not None
@@ -573,7 +566,7 @@ class AgentRuntime(
             )
         )
         self._tools = [tool for tool in configured_tools if tool.name != "submit_goal_review"]
-        if accepts_goal_review:
+        if spec.accepts_goal_review:
             self._tools.append(submit_goal_review_tool)
         # Keep one cache-stable schema while restricting verdict execution to dedicated reviewers.
         self._model_tools = [
@@ -607,26 +600,21 @@ class AgentRuntime(
         )
         # Where the audit trail goes, and who answers a gate. Both absent by default.
         self._observer = observer
-        from langmesh.base.observation_store import SQLiteObservationStore
+        from langmesh.runtime.compaction import DirectCompactionPreparation
 
-        self._observation_store = SQLiteObservationStore(
-            global_configuration.observation_database_for(self._working_directory)
+        self._compaction_preparation = (
+            components.compaction_preparation or DirectCompactionPreparation()
         )
-        try:
-            self._observation_registry_metadata = self._observation_store.describe_sync()
-            initial_observation_registry_error = None
-        except Exception as error:  # noqa: BLE001 — queued privately for repair at the next opening
-            self._observation_registry_metadata = {
-                "path": str(self._observation_store.path),
-                "exists": self._observation_store.path.exists(),
-                "status": "invalid",
-            }
-            initial_observation_registry_error = str(error) or type(error).__name__
+        from langmesh.runtime.continuation import TuningContinuationPolicy
+
+        self._continuations = components.continuations or TuningContinuationPolicy()
+        self._observation_registry_metadata = {}
+        initial_observation_registry_error = None
         self._approvals = approvals
         self._transcript = transcript
         # The daemon's event publisher is optional; the registry reader is used only for fold verification.
-        self._turn_store = turn_store
-        self._accepts_goal_review = accepts_goal_review
+        self._goal_review_journal = components.goal_review_journal
+        self._accepts_goal_review = spec.accepts_goal_review
         self._submitted_goal_review = None
         # When the turn now running began, for the transcript entry it will produce.
         self._turn_started_at = None
@@ -668,7 +656,7 @@ class AgentRuntime(
         # The permission policy as one value, resolved by the daemon before this runtime is built.
         self._a2a_turn_id: str = ""
         # Reads another task by id from the shared store, so context-aware agents can coordinate.
-        self._turn_reader: Optional[Callable] = None
+        self._turn_reader: Optional[Callable] = components.related_turns
         self._steering_messages: asyncio.Queue[tuple[str, str, str, asyncio.Future[bool]]] = (
             asyncio.Queue()
         )
@@ -698,6 +686,7 @@ class AgentRuntime(
             conversation_snapshot=self._peer_conversation_snapshot,
             mcp_server_manager=mcp_server_manager,
         )
+        self._on_goal_change = components.goal_listener
         # What was approved beyond the configured profile, held for the session so one grant is not re-asked.
         self._access_grants: list[Grant] = []
         # The files the person attached: like a grant, but answering what they handed over rather than what was asked.
@@ -1012,6 +1001,10 @@ class AgentRuntime(
         return self._working_directory
 
     @property
+    def permission_mode(self) -> PermissionMode:
+        return self._permission_mode
+
+    @property
     def project_directory(self) -> str:
         return self._project_directory
 
@@ -1095,6 +1088,25 @@ class AgentRuntime(
 
     def has_actionable_tasks(self) -> bool:
         return bool(self._task_manager.actionable())
+
+    def should_continue_goal(self) -> bool:
+        return self._continuations.continue_goal(
+            self._goal,
+            self._goal.continuations if self._goal is not None else 0,
+        )
+
+    def should_continue_tasks(self) -> bool:
+        return self._continuations.continue_tasks(
+            self._task_manager.actionable(),
+            self._task_continuations,
+        )
+
+    def task_continuation_message(self) -> str:
+        """The hidden instruction that makes unfinished tracked work an actual next turn."""
+        return self._prompt_loader.load(
+            "task_continuation_note",
+            {"tasks": compact(self.unfinished_tasks())},
+        )
 
     @property
     def task_continuations(self) -> int:

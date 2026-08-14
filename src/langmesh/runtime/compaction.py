@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from itertools import accumulate, takewhile
-from typing import AsyncIterator, Literal
+from typing import Any, AsyncIterator, Literal
 
 from langmesh.base.message_content import forget_carried_reasoning
 from langmesh.runtime.internals import (
@@ -21,6 +21,48 @@ from langmesh.base.errors import log_fields
 logger = logging.getLogger(__name__)
 
 
+class ObservationCompactionPreparation:
+    """Require an observational-memory revision to advance before folding."""
+
+    def __init__(self, store: Any) -> None:
+        self._store = store
+
+    def instruction(self, default: str) -> str:
+        return default
+
+    async def baseline(self) -> int:
+        try:
+            return await self._store.revision()
+        except Exception as error:  # noqa: BLE001 — repair is the preparation turn's job
+            logger.warning("observation registry requires repair before compaction: %s", error)
+            return 0
+
+    async def completed(self, baseline: Any) -> bool:
+        try:
+            return await self._store.revision() > int(baseline)
+        except Exception:  # noqa: BLE001 — an invalid registry is not a completed checkpoint
+            return False
+
+    async def describe(self) -> dict:
+        return await self._store.describe()
+
+
+class DirectCompactionPreparation:
+    """Fold directly, for applications that persist no external memory handoff."""
+
+    def instruction(self, default: str) -> None:
+        return None
+
+    async def baseline(self) -> None:
+        return None
+
+    async def completed(self, baseline: Any) -> bool:
+        return True
+
+    async def describe(self) -> dict:
+        return {}
+
+
 @dataclass
 class _CompactionControl:
     """The fold handshake as one state value, so invalid flag combinations cannot accumulate."""
@@ -28,7 +70,7 @@ class _CompactionControl:
     phase: Literal["none", "waiting", "recorded", "preparation_failed", "fold_failed"] = "none"
     reason: Literal["auto", "manual", "overflow"] = "manual"
     resume_after: bool = False
-    registry_revision: int | None = None
+    preparation_token: Any = None
     failure: str | None = None
     # Whether the running compaction indicator has already been announced for this preparation.
     started: bool = False
@@ -39,7 +81,7 @@ class _CompactionControl:
         self.phase = "waiting"
         self.reason = reason
         self.resume_after = resume_after
-        self.registry_revision = None
+        self.preparation_token = None
         self.failure = None
         self.started = False
 
@@ -66,7 +108,7 @@ class _CompactionControl:
         self.phase = "none"
         self.reason = "manual"
         self.resume_after = False
-        self.registry_revision = None
+        self.preparation_token = None
         self.failure = None
         self.started = False
 
@@ -75,7 +117,7 @@ class _CompactionControl:
             "phase": self.phase,
             "reason": self.reason,
             "resume_after": self.resume_after,
-            "registry_revision": self.registry_revision,
+            "preparation_token": self.preparation_token,
             "failure": self.failure,
             "started": self.started,
         }
@@ -92,11 +134,7 @@ class _CompactionControl:
             else "none",
             reason=reason if reason in {"auto", "manual", "overflow"} else "manual",
             resume_after=bool(value.get("resume_after", False)),
-            registry_revision=(
-                max(0, int(value["registry_revision"]))
-                if value.get("registry_revision") is not None
-                else None
-            ),
+            preparation_token=value.get("preparation_token"),
             failure=(str(value["failure"]) if value.get("failure") else None),
             started=bool(value.get("started", False)),
         )
@@ -199,14 +237,20 @@ class _CompactsContext:
         return len(self._bounded_tail(self._conversation)) < len(self._conversation)
 
     def _begin_compaction_preparation(self, *, reason: str, resume_after: bool) -> None:
-        """Append the one private handoff that asks the agent to preserve durable work before folding."""
-        self._conversation.append(
-            self._reminder_message(
-                self._prompt_loader.load("prepare_compaction", {}),
-                marks={"compaction_preparation": True},
-            )
-        )
+        """Begin the configured durable handoff before folding."""
         self._compaction_control.begin(reason=reason, resume_after=resume_after)
+        instruction = self._compaction_preparation.instruction(
+            self._prompt_loader.load("prepare_compaction", {})
+        )
+        if instruction is None:
+            self._compaction_control.record()
+        else:
+            self._conversation.append(
+                self._reminder_message(
+                    instruction,
+                    marks={"compaction_preparation": True},
+                )
+            )
         self._mark_session_dirty()
 
     def _fail_compaction_preparation(
@@ -274,7 +318,7 @@ class _CompactsContext:
         """Reclaim the window after the explicit observational-memory handoff has completed."""
         if self._compaction_control.phase != "recorded":
             for event in self._fail_compaction_preparation(
-                "Compaction requires a successful observational-memory checkpoint segment first."
+                "Compaction requires its configured durable preparation to complete first."
             ):
                 yield event
             return
@@ -409,4 +453,8 @@ class KeepRecentTurns:
         return list(state.messages[-self._keep * 2 :])
 
 
-__all__ = ["KeepRecentTurns"]
+__all__ = [
+    "DirectCompactionPreparation",
+    "KeepRecentTurns",
+    "ObservationCompactionPreparation",
+]

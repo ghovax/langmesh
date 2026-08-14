@@ -426,14 +426,6 @@ class _ToolPlan:
 
 
 @dataclass
-class _ToolCall:
-    """One call as middleware sees it. Mutable arguments, so a layer can rewrite a path without rebuilding it."""
-
-    name: str
-    arguments: dict
-
-
-@dataclass
 class _ResolvedToolDecision:
     """The verdict a batch runner hands each tool: run it, deny it, or return the ``ask_user`` answers."""
 

@@ -45,6 +45,7 @@ from langmesh.protocol.events import StatusEvent
 from langmesh.protocol.parts import _event_part
 from langmesh.protocol.turn_record import PermissionAnswer, PendingInteraction, ToolGate, TurnRecord
 from langmesh.runtime.goal import Goal, GoalReviewPhase
+from langmesh.runtime.composition import RuntimeComponents, RuntimeSpec
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import SuspensionGate
 from langmesh.worker.turn import _ContextState, _ContinuationPlan, _TurnRunner
@@ -804,38 +805,48 @@ class SessionExecutor(AgentExecutor):
                     },
                 )
             )
+        runtime_directory = working_directory or project_directory or str(Path.cwd())
         runtime = AgentRuntime(
-            turn_store=self._turn_store,
-            agent_configuration=configuration,
-            catalogue=catalogue,
-            global_configuration=self._global_configuration,
-            session_id=session_id,
+            RuntimeSpec(
+                agent=configuration,
+                configuration=self._global_configuration,
+                session_id=session_id,
+                working_directory=runtime_directory,
+                project_directory=project_directory or runtime_directory,
+                locations=locations,
+                parent_session=self._parent,
+                permission_mode=self._permission_mode,
+                sandbox=self._sandbox,
+            ),
+            RuntimeComponents(
+                catalogue=catalogue,
+                file_leases=self._file_lease_manager,
+                sessions=self._peers,
+                mcp_servers=self._mcp_server_manager,
+                jobs=self._job_store,
+                compaction_preparation=self._compaction_preparation(runtime_directory),
+                related_turns=self._make_turn_reader(),
+                goal_listener=lambda goal: self._notify_goal_state(session_id, goal),
+                goal_review_journal=self._goal_review_journal(session_id),
+            ),
             conversation=conversation,
-            working_directory=working_directory or "",
-            project_directory=project_directory or working_directory or "",
-            file_lease_manager=self._file_lease_manager,
-            locations=locations,
-            # Who to answer: the return path is a message, and a message needs an address.
-            parent_session=self._parent,
-            # The mode this session was created with, passed explicitly rather than left to the profile's own policy.
-            permission_mode=self._permission_mode,
-            sandbox=self._sandbox,
-            # The two things the runtime cannot derive: how it reaches peers, and the MCP server connections this worker owns.
-            session_access=self._peers,
-            mcp_server_manager=self._mcp_server_manager,
-            # The durable job store this worker holds, or a background job would be written to a dictionary that dies.
-            jobs=self._job_store,
         )
-        # No event sink on the runtime: path-tagged activity reaches the stream from `worker/turn.py`.
-        runtime.set_turn_reader(self._make_turn_reader())
-        # Every goal change reaches the daemon, which is what makes a goal visible and callable-off.
-        runtime.set_goal_listener(lambda goal: self._notify_goal_state(session_id, goal))
         if self._observation_registry_metadata or self._observation_registry_error:
             runtime.note_observation_registry(
                 self._observation_registry_metadata,
                 self._observation_registry_error,
             )
         return runtime
+
+    def _compaction_preparation(self, working_directory: str):
+        from langmesh.base.observation_store import SQLiteObservationStore
+        from langmesh.runtime.compaction import ObservationCompactionPreparation
+
+        return ObservationCompactionPreparation(
+            SQLiteObservationStore(
+                self._global_configuration.observation_database_for(working_directory)
+            )
+        )
 
     def _make_turn_reader(self):
         async def read_turn(turn_id: str):
@@ -850,6 +861,18 @@ class SessionExecutor(AgentExecutor):
             )
 
         return read_turn
+
+    def _goal_review_journal(self, session_id: str):
+        """Bind core review events to this worker's product transcript adapter."""
+        from langmesh.worker.goal_review_journal import DaemonGoalReviewJournal
+
+        return DaemonGoalReviewJournal(
+            self._turn_store,
+            lambda: self._contexts.get(session_id).runtime.model_identifier
+            if self._contexts.get(session_id) is not None
+            and self._contexts[session_id].runtime is not None
+            else "",
+        )
 
     async def _runtime_for(self, session_id: str, workspace: SessionWorktree) -> AgentRuntime:
         # Apply a reset deferred while work was in flight, so this turn rebuilds with the new configuration.

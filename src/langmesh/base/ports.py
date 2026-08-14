@@ -8,6 +8,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Awaitable,
+    Callable,
     Mapping,
     Optional,
     Protocol,
@@ -89,6 +90,39 @@ class Observer(Protocol):
     """Receives transient audit signals. May return an awaitable for asynchronous handling."""
 
     def observe(self, observation: Observation) -> Awaitable[None] | None: ...
+
+
+@dataclass(frozen=True)
+class GoalReviewContext:
+    """The stable identity and assignment of one independent goal review."""
+
+    review_id: str
+    session_id: str
+    goal: str
+    assignment: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class GoalReviewOutcome:
+    """The terminal state a goal-review journal records."""
+
+    review_id: str
+    session_id: str
+    status: str
+    standing: str | None
+    completed_at: datetime
+
+
+@runtime_checkable
+class GoalReviewJournal(Protocol):
+    """Records a linked review without making the core depend on a product transcript format."""
+
+    async def open(self, context: GoalReviewContext) -> None: ...
+
+    async def append(self, review_id: str, event: Any) -> None: ...
+
+    async def close(self, outcome: GoalReviewOutcome) -> None: ...
 
 
 # Where a session's resumable state lives.
@@ -324,35 +358,166 @@ class Compaction(Protocol):
         """Whether to fold now. Called before each model call; must be cheap."""
         ...
 
+
+@runtime_checkable
+class CompactionPreparation(Protocol):
+    """Defines and verifies the durable handoff required before old conversation is discarded."""
+
+    def instruction(self, default: str) -> str | None:
+        """The private instruction to run, or ``None`` when no handoff is required."""
+        ...
+
+    async def baseline(self) -> Any: ...
+
+    async def completed(self, baseline: Any) -> bool: ...
+
+    async def describe(self) -> Mapping[str, Any]: ...
+
+
+@runtime_checkable
+class ContinuationPolicy(Protocol):
+    """Decides whether unfinished goals and tracked tasks may open another autonomous turn."""
+
+    def continue_goal(self, goal: Any, completed_turns: int) -> bool: ...
+
+    def continue_tasks(
+        self,
+        unfinished_tasks: Sequence[Mapping[str, Any]],
+        completed_turns: int,
+    ) -> bool: ...
+
     async def compact(self, state: CompactionState) -> list:
         """The conversation to carry forward, oldest first."""
         ...
 
 
 @runtime_checkable
-class TurnHook(Protocol):
-    """Sees a turn as it runs and may bound it. Every method optional; one that raises is logged and skipped."""
+class BeforeModelHook(Protocol):
+    """May transform the request assembled for one model call."""
 
     async def before_model(self, messages: list) -> list:
-        """The conversation about to go to the model. Return it, or a changed copy."""
         ...
+
+
+@runtime_checkable
+class BeforeToolsHook(Protocol):
+    """May narrow the already-approved tool batch before execution."""
 
     async def before_tools(self, calls: list[dict]) -> list[dict]:
-        """The approved batch about to run. Return it, a subset, or an empty list."""
         ...
 
+
+@runtime_checkable
+class AfterTurnHook(Protocol):
+    """Observes the immutable summary after one turn ends."""
+
     async def after_turn(self, summary: TurnSummary) -> None:
-        """The turn is over: what it did, what it cost, how it ended."""
         ...
+
+
+TurnHook = BeforeModelHook | BeforeToolsHook | AfterTurnHook
+
+
+@dataclass
+class ToolInvocation:
+    """One mutable call as middleware sees it, before its handler runs."""
+
+    name: str
+    arguments: dict[str, Any]
 
 
 @runtime_checkable
 class ToolMiddleware(Protocol):
     """Wraps one tool call, ours and the caller's alike, so a cross-cutting concern is one testable layer."""
 
-    async def run(self, call: Any, proceed: Any) -> Any:
+    async def run(
+        self,
+        call: ToolInvocation,
+        proceed: Callable[[ToolInvocation], Awaitable[Any]],
+    ) -> Any:
         """Run `call`, or don't, or run it and do something around it."""
         ...
+
+
+@runtime_checkable
+class PermissionPolicy(Protocol):
+    """Enables tools and rejects disallowed argument shapes."""
+
+    def check_tool(self, tool_name: str, /, **arguments: Any) -> None: ...
+
+    def check_bash_background(self) -> None: ...
+
+
+@runtime_checkable
+class FileLeases(Protocol):
+    """Coordinates concurrent filesystem mutation across composed sessions."""
+
+    async def acquire(
+        self,
+        *,
+        owner_session_id: str,
+        scope: str,
+        path: str,
+        working_directory: str,
+        description: str,
+        timeout: float = ...,
+    ) -> str: ...
+
+    def release(self, token: str) -> None: ...
+
+
+@runtime_checkable
+class WorkspaceManager(Protocol):
+    """Prepares the directory in which a session's tools execute."""
+
+    async def prepare(
+        self,
+        session_id: str,
+        source_working_directory: str,
+        strategy: str,
+    ) -> Any: ...
+
+
+@runtime_checkable
+class SessionAccess(Protocol):
+    """Creates and addresses peer sessions without coupling the core to a daemon transport."""
+
+    session_id: str
+    working_directory: str
+    permission_mode: str
+
+    async def create(
+        self,
+        *,
+        agent: str,
+        working_directory: str,
+        inherited_conversation: list[dict[str, Any]],
+    ) -> dict: ...
+
+    async def send(self, session_id: str, text: str) -> None: ...
+
+    async def get(self, session_id: str) -> dict: ...
+
+    async def children(self) -> list[dict]: ...
+
+    async def end(self, session_id: str) -> dict: ...
+
+    async def remote_list(self) -> list[dict]: ...
+
+    async def remote_send(self, name: str, text: str) -> dict: ...
+
+
+@runtime_checkable
+class MCPServers(Protocol):
+    """The initialized MCP server connections a runtime may query and call."""
+
+    async def list_tools(self, server: str = "") -> Any: ...
+
+    async def call_tool(self, server: str, tool: str, arguments: Mapping[str, Any]) -> Any: ...
+
+    async def list_resources(self, server: str = "") -> Any: ...
+
+    async def read_resource(self, server: str, uri: str) -> Any: ...
 
 
 @runtime_checkable
@@ -396,21 +561,35 @@ def describe_unmet(port: type, candidate: Any) -> str:
 __all__ = [
     "Approval",
     "Approvals",
+    "AfterTurnHook",
+    "BeforeModelHook",
+    "BeforeToolsHook",
     "CatalogueLike",
     "Checkpoints",
     "Credentials",
+    "GoalReviewContext",
+    "GoalReviewJournal",
+    "GoalReviewOutcome",
+    "FileLeases",
     "JobStore",
     "MemoryCheckpoints",
     "MemoryJobStore",
     "MemoryTranscript",
+    "MCPServers",
     "Observation",
     "Observer",
+    "PermissionPolicy",
+    "SessionAccess",
     "Compaction",
+    "CompactionPreparation",
     "CompactionState",
+    "ContinuationPolicy",
     "SuspensionGate",
     "ToolMiddleware",
+    "ToolInvocation",
     "TurnHook",
     "Transcript",
     "TurnSummary",
+    "WorkspaceManager",
     "describe_unmet",
 ]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, Optional, Protocol, runtime_checkable
+from typing import Any, Literal, Optional
 
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import Field, ValidationError, create_model
@@ -16,29 +16,6 @@ from langmesh.runtime.tools.registry import EXPLANATION, tool_description as _de
 
 # The prompts these tools speak with. What they tell the *model* is a description, and lives with every other one.
 _PROMPTS = PromptLoader(Path(__file__).resolve().parent.parent / "prompts")
-
-
-@runtime_checkable
-class SessionAccess(Protocol):
-    """What a session needs in order to work with its peers, implemented by the worker that holds its identity."""
-
-    session_id: str
-    working_directory: str
-    permission_mode: str
-
-    async def create(
-        self,
-        *,
-        agent: str,
-        working_directory: str,
-        inherited_conversation: list[dict[str, Any]],
-    ) -> dict: ...
-    async def send(self, session_id: str, text: str) -> None: ...
-    async def get(self, session_id: str) -> dict: ...
-    async def children(self) -> list[dict]: ...
-    async def end(self, session_id: str) -> dict: ...
-    async def remote_list(self) -> list[dict]: ...
-    async def remote_send(self, name: str, text: str) -> dict: ...
 
 
 def _unavailable(code: str) -> str:

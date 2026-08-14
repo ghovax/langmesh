@@ -22,6 +22,9 @@ class MaximumToolCalls:
         self._used += min(len(calls), remaining)
         return calls[:remaining]
 
+    async def after_turn(self, _summary: Any) -> None:
+        self._used = 0
+
 
 class HookRunner:
     """Calls a turn's hooks in order, and absorbs their failures."""

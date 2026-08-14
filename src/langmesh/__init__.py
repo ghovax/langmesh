@@ -16,6 +16,8 @@ from langmesh.base.configuration import (
     Configuration,
     FilesystemConfiguration,
     SandboxConfiguration,
+    MCPConfiguration,
+    MCPServerConfiguration,
     ToolboxConfiguration,
     ToolsConfiguration,
 )
@@ -24,6 +26,8 @@ from langmesh.base.errors import CompactionBlockedError
 from langmesh.base.instructions import Instruction
 from langmesh.base.observation_store import ObservationRegistryError
 from langmesh.base.observations import ObservationRegistry
+from langmesh.base.file_leases import FileLeaseManager
+from langmesh.base.mcp_client import MCPServerManager
 from langmesh.base.resources import (
     LocalResourceChanges,
     MaterializedResources,
@@ -36,27 +40,49 @@ from langmesh.base.resources import (
     resource_path,
 )
 from langmesh.base.skills import Skill
-from langmesh.runtime.compaction import KeepRecentTurns
+from langmesh.base.worktrees import SessionWorktree, SessionWorktreeManager
+from langmesh.runtime.compaction import (
+    DirectCompactionPreparation,
+    KeepRecentTurns,
+    ObservationCompactionPreparation,
+)
+from langmesh.runtime.continuation import TuningContinuationPolicy
+from langmesh.runtime.composition import RuntimeComponents, RuntimeSpec, SessionComponents
 from langmesh.runtime.hooks import MaximumToolCalls
+from langmesh.runtime.session_control import PendingTurn, SessionPhase, SessionState
 from langmesh.base.ports import (
     Approval,
     Approvals,
+    AfterTurnHook,
+    BeforeModelHook,
+    BeforeToolsHook,
     CatalogueLike,
     Checkpoints,
     Compaction,
+    CompactionPreparation,
     CompactionState,
+    ContinuationPolicy,
     Credentials,
+    FileLeases,
+    GoalReviewContext,
+    GoalReviewJournal,
+    GoalReviewOutcome,
     JobStore,
     MemoryCheckpoints,
     MemoryJobStore,
     MemoryTranscript,
+    MCPServers,
     Observation,
     Observer,
+    PermissionPolicy,
+    SessionAccess,
     SuspensionGate,
     ToolMiddleware,
+    ToolInvocation,
     Transcript,
     TurnHook,
     TurnSummary,
+    WorkspaceManager,
     describe_unmet,
 )
 from langmesh.base.schedules import (
@@ -94,29 +120,45 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "AgentConfiguration",
+    "AgentRuntime",
     "BashToolConfiguration",
     "Approval",
     "Approvals",
+    "AfterTurnHook",
+    "BeforeModelHook",
+    "BeforeToolsHook",
     "Catalogue",
     "CatalogueLike",
     "Checkpoint",
     "Checkpoints",
     "Compaction",
+    "CompactionPreparation",
     "CompactionBlockedError",
     "CompactionDone",
     "CompactionStarted",
     "CompactionState",
+    "ContinuationPolicy",
     "Credentials",
+    "FileLeases",
     "Configuration",
     "Done",
+    "DirectCompactionPreparation",
     "EventType",
     "FilesystemConfiguration",
+    "FileLeaseManager",
     "GoalReviewFinished",
     "GoalReviewProgress",
     "GoalReviewStarted",
+    "GoalReviewContext",
+    "GoalReviewJournal",
+    "GoalReviewOutcome",
     "Instruction",
     "JobStore",
     "Mcp",
+    "MCPConfiguration",
+    "MCPServerConfiguration",
+    "MCPServerManager",
+    "MCPServers",
     "KeepRecentTurns",
     "MaximumToolCalls",
     "MemoryCheckpoints",
@@ -124,6 +166,7 @@ __all__ = [
     "MemoryTranscript",
     "MaterializedResources",
     "Observation",
+    "ObservationCompactionPreparation",
     "ObservationRegistry",
     "ObservationRegistryError",
     "OverlayResources",
@@ -132,8 +175,18 @@ __all__ = [
     "ResourceChange",
     "ResourceChangeSource",
     "ResourceWatchUnsupported",
+    "RuntimeComponents",
+    "RuntimeSpec",
     "PermissionMode",
+    "PermissionPolicy",
+    "PendingTurn",
     "Session",
+    "SessionAccess",
+    "SessionComponents",
+    "SessionPhase",
+    "SessionState",
+    "SessionWorktree",
+    "SessionWorktreeManager",
     "ScheduleError",
     "Status",
     "Steering",
@@ -144,6 +197,7 @@ __all__ = [
     "ToolboxConfiguration",
     "ToolCall",
     "ToolMiddleware",
+    "ToolInvocation",
     "ToolResult",
     "TurnEvent",
     "TurnEventUnion",
@@ -157,9 +211,11 @@ __all__ = [
     "next_firing",
     "validate_schedule",
     "ToolsConfiguration",
+    "TuningContinuationPolicy",
     "SuspensionGate",
     "Transcript",
     "TurnSummary",
+    "WorkspaceManager",
     "__version__",
 ]
 
@@ -170,6 +226,15 @@ try:  # pragma: no cover - a source checkout has no distribution metadata
     __version__ = _package_version("langmesh")
 except Exception:  # noqa: BLE001 — a missing distribution must not break an import
     __version__ = "0"
+
+
+def __getattr__(name: str) -> Any:
+    """Keep the heavyweight runtime lazy while making it a first-class library export."""
+    if name == "AgentRuntime":
+        from langmesh.runtime.runtime import AgentRuntime
+
+        return AgentRuntime
+    raise AttributeError(name)
 
 
 def _apply_providers(configuration: Any, providers: Mapping[str, str | Mapping[str, str]]) -> None:
@@ -221,29 +286,8 @@ class Session:
         # Provider credentials in code, though the environment variables still win.
         providers: Optional[Mapping[str, str | Mapping[str, str]]] = None,
         model_identifier: str = "",
-        # The seams, each defaulting to the least surprising thing for a program that is not a daemon.
-        model: Any = None,
-        catalogue: Optional[CatalogueLike] = None,
-        checkpoints: Optional[Checkpoints] = None,
-        jobs: Optional[JobStore] = None,
-        observer: Optional[Observer] = None,
-        approvals: Optional[Approvals] = None,
-        transcript: Optional[Transcript] = None,
-        credentials: Optional[Credentials] = None,
-        peers: Any = None,
-        mcp_server_manager: Any = None,
-        # Extension as distinct from configuration: tools the agent gains, and where it may run them.
-        tools: Sequence[Any] = (),
-        supplied_tool_gate: str = "ask",
-        # The three seams around a turn, each defaulting to what the harness has always done.
-        hooks: Sequence[Any] = (),
-        pipeline: Sequence[Any] = (),
-        compaction: Optional[Compaction] = None,
-        permissions: Any = None,
         locations: Optional[list[dict]] = None,
-        # A git worktree per session, off by default because it writes to disk.
-        workspace: Any = None,
-        tracer_provider: Any = None,
+        components: SessionComponents = SessionComponents(),
         # Any fsspec-backed workspace. Non-local sources are materialized for Bash and SQLite,
         # then synchronized at tool boundaries and close.
         resources: WorkspaceResourcesLike | None = None,
@@ -274,35 +318,63 @@ class Session:
         self._session_id = session_id or new_id("session")
         self._permission_mode = permission_mode
         self._sandbox = sandbox
-        self._peers = peers
-        self._mcp_server_manager = mcp_server_manager
+        if not isinstance(components, SessionComponents):
+            raise TypeError("components must be a SessionComponents value")
+        self._components = components
+        self._mcp_server_manager = components.mcp_servers
         self._lifecycle = AsyncExitStack()
         # Reading configuration must not leave a file in the caller's home directory.
+        if configuration is not None and not isinstance(configuration, Configuration):
+            raise TypeError("configuration must be a Configuration value")
         self._configuration = (
-            configuration
+            configuration.model_copy(deep=True)
             if configuration is not None
             else Configuration(toolbox=ToolboxConfiguration(enabled=False))
         )
         if providers:
             _apply_providers(self._configuration, providers)
         self._model_identifier = model_identifier
-        self._model = model
-        self._catalogue = _require(CatalogueLike, catalogue, "catalogue")
-        self._checkpoints = _require(Checkpoints, checkpoints, "checkpoints") or MemoryCheckpoints()
-        self._jobs = _require(JobStore, jobs, "jobs") or MemoryJobStore()
-        self._observer = _require(Observer, observer, "observer")
-        self._approvals = _require(Approvals, approvals, "approvals")
-        self._transcript = _require(Transcript, transcript, "transcript") or MemoryTranscript()
-        self._credentials = _require(Credentials, credentials, "credentials")
-        self._tools = list(tools)
-        self._supplied_tool_gate = supplied_tool_gate
-        self._permissions = permissions
-        self._hooks = list(hooks)
-        self._pipeline = list(pipeline)
-        self._compaction = _require(Compaction, compaction, "compaction")
+        self._catalogue = _require(CatalogueLike, components.catalogue, "components.catalogue")
+        self._checkpoints = (
+            _require(Checkpoints, components.checkpoints, "components.checkpoints")
+            or MemoryCheckpoints()
+        )
+        self._jobs = _require(JobStore, components.jobs, "components.jobs") or MemoryJobStore()
+        self._observer = _require(Observer, components.observer, "components.observer")
+        self._approvals = _require(Approvals, components.approvals, "components.approvals")
+        self._transcript = (
+            _require(Transcript, components.transcript, "components.transcript")
+            or MemoryTranscript()
+        )
+        self._credentials = _require(
+            Credentials, components.credentials, "components.credentials"
+        )
+        self._compaction = _require(
+            Compaction, components.compaction, "components.compaction"
+        )
+        _require(
+            CompactionPreparation,
+            components.compaction_preparation,
+            "components.compaction_preparation",
+        )
+        _require(
+            ContinuationPolicy,
+            components.continuations,
+            "components.continuations",
+        )
+        _require(PermissionPolicy, components.permissions, "components.permissions")
+        _require(FileLeases, components.file_leases, "components.file_leases")
+        _require(
+            GoalReviewJournal,
+            components.goal_review_journal,
+            "components.goal_review_journal",
+        )
+        _require(WorkspaceManager, components.workspace, "components.workspace")
+        _require(SessionAccess, components.sessions, "components.sessions")
+        _require(MCPServers, components.mcp_servers, "components.mcp_servers")
         self._locations = locations
-        self._workspace = workspace
-        self._tracer_provider = tracer_provider
+        self._workspace = components.workspace
+        self._tracer_provider = components.tracer_provider
         self._observations = ObservationRegistry(self._resources, configuration=self._configuration)
         self._materialized_resources: MaterializedResources | None = None
         # Where tools actually run. Equal to `directory` unless a workspace repointed it.
@@ -311,6 +383,8 @@ class Session:
         self._runtime: Any = None
         self._restored = False
         self._turn_lock = asyncio.Lock()
+        self._phase = SessionPhase.IDLE
+        self._pending: PendingTurn | None = None
 
     @property
     def id(self) -> str:
@@ -360,6 +434,16 @@ class Session:
                 catalogue = project_catalogue(self._configuration, self._directory)
             else:
                 catalogue = self._catalogue
+            compaction_preparation = self._components.compaction_preparation
+            if compaction_preparation is None:
+                from langmesh.base.observation_store import SQLiteObservationStore
+                from langmesh.runtime.compaction import ObservationCompactionPreparation
+
+                compaction_preparation = ObservationCompactionPreparation(
+                    SQLiteObservationStore(
+                        self._configuration.observation_database_for(self._runtime_directory)
+                    )
+                )
             agent_configuration = self._agent
             # A model named at the call site beats the profile's, since editing a file to express a runtime choice is the wrong seam.
             if self._model_identifier:
@@ -372,33 +456,30 @@ class Session:
                     update={"provider": provider, "model": model}
                 )
             self._runtime = AgentRuntime(
-                agent_configuration=agent_configuration,
-                global_configuration=self._configuration,
-                session_id=self._session_id,
-                working_directory=self._runtime_directory,
-                project_directory=self._directory,
-                permission_mode=self._permission_mode,
-                # Handed over as the caller gave it, including `None`, which the runtime reads as the configured default.
-                sandbox=self._sandbox,
-                session_access=self._peers,
-                mcp_server_manager=self._mcp_server_manager,
-                catalogue=catalogue,
-                model=self._model,
-                jobs=self._jobs,
-                observer=self._observer,
-                approvals=self._approvals,
-                transcript=self._transcript,
-                tools=self._tools,
-                supplied_tool_gate=self._supplied_tool_gate,
-                permissions=self._permissions,
-                hooks=self._hooks,
-                pipeline=self._pipeline,
-                compaction=self._compaction,
-                locations=self._resolved_locations(),
-                resource_sync=(
-                    self._materialized_resources.sync
-                    if self._materialized_resources is not None
-                    else None
+                RuntimeSpec(
+                    agent=agent_configuration,
+                    configuration=self._configuration,
+                    session_id=self._session_id,
+                    working_directory=self._runtime_directory,
+                    project_directory=self._directory,
+                    permission_mode=self._permission_mode,
+                    sandbox=self._sandbox,
+                    locations=self._resolved_locations(),
+                ),
+                self._components.for_runtime(
+                    catalogue=catalogue,
+                    jobs=self._jobs,
+                    observer=self._observer,
+                    approvals=self._approvals,
+                    transcript=self._transcript,
+                    mcp_servers=self._mcp_server_manager,
+                    compaction=self._compaction,
+                    compaction_preparation=compaction_preparation,
+                    synchronize_resources=(
+                        self._materialized_resources.sync
+                        if self._materialized_resources is not None
+                        else None
+                    ),
                 ),
             )
         return self._runtime
@@ -448,6 +529,96 @@ class Session:
         """The record of this session's turns."""
         return self._transcript
 
+    @property
+    def state(self) -> SessionState:
+        """The current control surface as one coherent snapshot."""
+        runtime = self._runtime
+        return SessionState(
+            phase=self._phase,
+            pending=self._pending,
+            permission_mode=str(runtime.permission_mode if runtime is not None else self._permission_mode),
+            compaction_failure=runtime.compaction_failure if runtime is not None else None,
+            background_jobs=tuple(runtime.background_snapshots()) if runtime is not None else (),
+            unfinished_tasks=tuple(runtime.unfinished_tasks()) if runtime is not None else (),
+            goal=runtime.goal if runtime is not None else None,
+        )
+
+    def interrupt(self) -> bool:
+        """Request cancellation of the turn currently running."""
+        if self._runtime is None or self._phase not in {
+            SessionPhase.RUNNING,
+            SessionPhase.COMPACTING,
+            SessionPhase.RETRYING,
+        }:
+            return False
+        self._runtime.abort()
+        return True
+
+    def interrupt_tool(self, tool_call_id: str) -> bool:
+        """Cancel one foreground or detached tool call by its streamed identifier."""
+        return bool(self._runtime and self._runtime.abort_tool(tool_call_id))
+
+    def background_tool(self, tool_call_id: str) -> bool:
+        """Detach one eligible foreground tool call without stopping its turn."""
+        return bool(self._runtime and self._runtime.send_tool_to_background(tool_call_id))
+
+    def background_jobs(self) -> tuple[Mapping[str, Any], ...]:
+        """Return immutable snapshots of this session's active background work."""
+        return tuple(self._runtime.background_snapshots()) if self._runtime is not None else ()
+
+    async def steer(self, message: str, *, message_id: str = "") -> bool:
+        """Append a user message at the running turn's next safe provider boundary."""
+        if self._runtime is None or self._phase is not SessionPhase.RUNNING:
+            return False
+        accepted = self._runtime.enqueue_steering(message, message_id=message_id)
+        return bool(await accepted) if accepted is not None else False
+
+    def respond(self, request_id: str, decision: Approval) -> SessionState:
+        """Record one human response; call :meth:`resume` once ``state.pending.ready`` is true."""
+        if not isinstance(decision, Approval):
+            raise TypeError("decision must be an Approval value")
+        if self._pending is None:
+            raise RuntimeError("This session has no suspended turn.")
+        self._pending = self._pending.with_decision(request_id, decision)
+        return self.state
+
+    async def cancel_pending(self) -> None:
+        """Abandon a suspended batch without executing any of its calls."""
+        async with self._turn_lock:
+            if self._pending is None:
+                raise RuntimeError("This session has no suspended turn.")
+            self.runtime.abandon_suspension()
+            self._pending = None
+            self._phase = SessionPhase.IDLE
+            await self.save()
+
+    async def set_permission_mode(self, mode: str | PermissionMode) -> SessionState:
+        """Change live permission policy and re-evaluate any unanswered parked gates."""
+        resolved = mode if isinstance(mode, PermissionMode) else PermissionMode.resolve(mode)
+        self._permission_mode = str(resolved)
+        runtime = self.runtime
+        runtime.set_permission_mode(resolved)
+        pending = self._pending
+        if pending is not None:
+            for gate in pending.remaining:
+                verdict = await runtime.reconsider_gate(gate)
+                if not verdict:
+                    continue
+                if gate.kind == "question":
+                    decision = Approval(
+                        allow=False,
+                        reason=str(verdict.get("reason") or ""),
+                    )
+                else:
+                    decision = Approval(
+                        allow=verdict.get("decision") == "allow",
+                        reason=str(verdict.get("reason") or ""),
+                    )
+                pending = pending.with_decision(gate.request_id, decision)
+            self._pending = pending
+            await self.save()
+        return self.state
+
     async def restore(self) -> bool:
         """Reload this session's conversation from its checkpoint store, and say whether anything was found."""
         self._restored = True
@@ -456,13 +627,17 @@ class Session:
             return False
         messages = state.get("conversation") or []
         session_state = state.get("session") or {}
-        if not messages and not session_state:
+        pending_state = state.get("pending")
+        if not messages and not session_state and not pending_state:
             return False
         from langchain_core.load import loads as load_message
 
         self.runtime.conversation[:] = [load_message(entry) for entry in messages]
         if session_state:
             self.runtime.restore_session(session_state)
+        if isinstance(pending_state, Mapping):
+            self._pending = PendingTurn.restore(pending_state)
+            self._phase = SessionPhase.SUSPENDED
         return True
 
     async def save(self) -> None:
@@ -474,6 +649,7 @@ class Session:
             {
                 "conversation": [dump_message(message) for message in self.conversation],
                 "session": self.runtime.session_snapshot(),
+                "pending": self._pending.snapshot() if self._pending is not None else None,
             },
         )
 
@@ -516,21 +692,34 @@ class Session:
         async with self._turn_lock:
             if not self._restored:
                 await self.restore()
+            if self._pending is not None:
+                raise RuntimeError(
+                    "This session is suspended. Respond to every pending interaction and call Session.resume(), or call Session.cancel_pending()."
+                )
+            self._phase = SessionPhase.RUNNING
             failure = self.runtime.compaction_failure
             if failure:
+                self._phase = SessionPhase.IDLE
                 raise CompactionBlockedError(
                     f"Context compaction failed: {failure} Retry Session.compact() before sending more work."
                 )
             # Somebody is here again, so a goal that had used its allowance gets it back.
             self.runtime.abandon_turn_retry()
             self.runtime.restore_goal_allowance()
+            self.runtime.restore_task_allowance()
             try:
                 async for event in self.runtime.stream(self._compose(message, attachments)):
+                    if isinstance(event, Suspended):
+                        self._pending = PendingTurn(
+                            interactions=tuple(event.interactions),
+                            plans=event.plans,
+                            decisions={},
+                        )
+                        self._phase = SessionPhase.SUSPENDED
                     yield event
                 if self.runtime.compaction_failure:
                     return
-                # A goal outlives the turn that set it, so this call is over when the goal is rather than when the model stops talking.
-                async for event in self._pursue_goal():
+                async for event in self._continue_work():
                     yield event
                 self.runtime.mark_turn_succeeded()
             except Exception:
@@ -538,57 +727,139 @@ class Session:
                 raise
             finally:
                 await self.save()
+                if self._pending is None:
+                    self._phase = SessionPhase.IDLE
 
-    async def _pursue_goal(self) -> AsyncIterator[TurnEventUnion]:
-        """Keep driving turns while the review says the goal is unreached, up to its allowance."""
-        from langmesh.base.tuning import Tunable, active_tuning
-
-        allowance = active_tuning().amount(Tunable.goal_continuation_turns)
-        while True:
-            goal = self.runtime.goal
-            if goal is None or not goal.is_open:
-                return
-            if goal.continuations >= allowance:
-                self.runtime.park_goal()
-                return
-            goal = self.runtime.goal
-            if goal is None or not goal.is_open:
-                return
-            review_events: asyncio.Queue[TurnEventUnion] = asyncio.Queue()
-            review_task = asyncio.create_task(self.runtime.review_goal(review_events.put))
-            try:
-                while True:
-                    if not review_events.empty():
-                        yield review_events.get_nowait()
-                        continue
-                    if review_task.done():
-                        break
-                    next_event = asyncio.create_task(review_events.get())
-                    finished, _ = await asyncio.wait(
-                        {review_task, next_event}, return_when=asyncio.FIRST_COMPLETED
+    async def resume(
+        self,
+        decisions: Mapping[str, Approval] | None = None,
+    ) -> AsyncIterator[TurnEventUnion]:
+        """Resume a suspended turn after explicit decisions for every interaction."""
+        async with self._turn_lock:
+            if not self._restored:
+                await self.restore()
+            pending = self._pending
+            if pending is None:
+                raise RuntimeError("This session has no suspended turn.")
+            for request_id, decision in (decisions or {}).items():
+                if not isinstance(decision, Approval):
+                    raise TypeError(f"Decision {request_id!r} must be an Approval value.")
+                pending = pending.with_decision(request_id, decision)
+            self._pending = pending
+            if not pending.ready:
+                missing = ", ".join(gate.request_id for gate in pending.remaining)
+                raise RuntimeError(f"The suspended turn still needs decisions for: {missing}.")
+            answers: dict[str, Any] = {}
+            for gate in pending.interactions:
+                decision = pending.decisions[gate.request_id]
+                if gate.kind == "question":
+                    answers[gate.request_id] = (
+                        dict(decision.answers)
+                        if decision.allow
+                        else {
+                            "__declined__": True,
+                            "__reason__": decision.reason,
+                            "__actor__": "person",
+                        }
                     )
-                    if next_event in finished:
-                        yield next_event.result()
-                    else:
-                        next_event.cancel()
-                        with contextlib.suppress(asyncio.CancelledError):
-                            await next_event
-                while not review_events.empty():
-                    yield review_events.get_nowait()
-                review = await review_task
+                else:
+                    answers[gate.request_id] = {
+                        "allow": decision.allow,
+                        "reason": decision.reason,
+                        "actor": "person",
+                    }
+            self._pending = None
+            self._phase = SessionPhase.RUNNING
+            try:
+                async for event in self.runtime.resume_stream(dict(pending.plans), answers):
+                    if isinstance(event, Suspended):
+                        self._pending = PendingTurn(
+                            interactions=tuple(event.interactions),
+                            plans=event.plans,
+                            decisions={},
+                        )
+                        self._phase = SessionPhase.SUSPENDED
+                    yield event
+                if self.runtime.compaction_failure:
+                    return
+                async for event in self._continue_work():
+                    yield event
+                self.runtime.mark_turn_succeeded()
+            except Exception:
+                self.runtime.mark_turn_failed()
+                raise
             finally:
-                if not review_task.done():
-                    review_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await review_task
-            goal = self.runtime.apply_goal_review(review)
-            if goal is None or not goal.is_open or not goal.review_message:
+                await self.save()
+                if self._pending is None:
+                    self._phase = SessionPhase.IDLE
+
+    async def _continue_work(self) -> AsyncIterator[TurnEventUnion]:
+        """Review goals and reopen actionable tracked work through one continuation turn."""
+        while True:
+            if self.runtime.has_pending_jobs():
                 return
-            self.runtime.note_goal_continuation()
+            goal = self.runtime.goal
+            continue_goal = self.runtime.should_continue_goal()
+            continue_tasks = self.runtime.should_continue_tasks()
+            if goal is not None and goal.is_open and not continue_goal:
+                self.runtime.park_goal()
+            if not continue_goal and not continue_tasks:
+                return
+            continuation_parts: list[str] = []
+            opens_exchange = False
+            if continue_goal:
+                review_events: asyncio.Queue[TurnEventUnion] = asyncio.Queue()
+                review_task = asyncio.create_task(self.runtime.review_goal(review_events.put))
+                try:
+                    while True:
+                        if not review_events.empty():
+                            yield review_events.get_nowait()
+                            continue
+                        if review_task.done():
+                            break
+                        next_event = asyncio.create_task(review_events.get())
+                        finished, _ = await asyncio.wait(
+                            {review_task, next_event}, return_when=asyncio.FIRST_COMPLETED
+                        )
+                        if next_event in finished:
+                            yield next_event.result()
+                        else:
+                            next_event.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await next_event
+                    while not review_events.empty():
+                        yield review_events.get_nowait()
+                    review = await review_task
+                finally:
+                    if not review_task.done():
+                        review_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await review_task
+                goal = self.runtime.apply_goal_review(review)
+                if goal is not None and goal.is_open and goal.review_message:
+                    continuation_parts.append(goal.review_message)
+                    self.runtime.note_goal_continuation()
+                    opens_exchange = True
+            if continue_tasks and self.runtime.should_continue_tasks():
+                continuation_parts.append(self.runtime.task_continuation_message())
+                self.runtime.note_task_continuation()
+            if not continuation_parts:
+                return
             async for event in self.runtime.stream(
-                goal.review_message, as_system_note=True, opens_exchange=True
+                "\n\n".join(continuation_parts),
+                as_system_note=True,
+                opens_exchange=opens_exchange,
             ):
+                if isinstance(event, Suspended):
+                    self._pending = PendingTurn(
+                        interactions=tuple(event.interactions),
+                        plans=event.plans,
+                        decisions={},
+                    )
+                    self._phase = SessionPhase.SUSPENDED
                 yield event
+            if self._pending is not None:
+                return
 
     async def ask(self, message: str, *, attachments: Sequence[str | Path] = ()) -> str:
         """Drive a turn, or a goal to its end, and answer with the agent's prose."""
@@ -598,7 +869,7 @@ class Session:
         async for event in self.stream(message, attachments=attachments):
             if isinstance(event, Suspended):
                 raise PermissionError(
-                    "This turn needs a human decision, and nothing is answering gates. Pass `approvals=` to decide them in code, drive `stream()` and answer them yourself, or create the session in a permission mode that does not gate this work."
+                    "This turn is suspended. Inspect `session.state.pending`, call `session.respond(...)` for each interaction, then drive `session.resume()`; or supply an approver through SessionComponents."
                 )
             if isinstance(event, Done):
                 answer = event.text or answer
@@ -609,6 +880,9 @@ class Session:
         async with self._turn_lock:
             if not self._restored:
                 await self.restore()
+            if self._pending is not None:
+                raise RuntimeError("A suspended turn must be resumed or cancelled before compaction.")
+            self._phase = SessionPhase.COMPACTING
             runtime = self.runtime
             if runtime.compaction_failure:
                 retry_operation = runtime.retry_compaction()
@@ -632,17 +906,23 @@ class Session:
                         yield event
             finally:
                 await self.save()
+                self._phase = SessionPhase.IDLE
 
     async def retry(self) -> AsyncIterator[TurnEventUnion]:
         """Continue the last failed turn from its durable conversation state."""
         async with self._turn_lock:
             if not self._restored:
                 await self.restore()
+            if self._pending is not None:
+                raise RuntimeError("A suspended turn must be resumed or cancelled before retrying.")
+            self._phase = SessionPhase.RETRYING
             if self.runtime.compaction_failure:
+                self._phase = SessionPhase.IDLE
                 raise CompactionBlockedError(
                     "Context compaction is blocked; retry Session.compact() before retrying the turn."
                 )
             if not self.runtime.begin_turn_retry():
+                self._phase = SessionPhase.IDLE
                 raise RuntimeError("This session has no failed turn to retry.")
             try:
                 async for event in self.runtime.continue_stream():
@@ -653,6 +933,7 @@ class Session:
                 raise
             finally:
                 await self.save()
+                self._phase = SessionPhase.IDLE
 
     @property
     def conversation(self) -> list:
@@ -689,6 +970,8 @@ class Session:
         self._materialized_resources = None
         self._runtime = None
         self._restored = False
+        self._phase = SessionPhase.IDLE
+        self._pending = None
         local_resource_path = self._resources.local_path
         self._directory = str(local_resource_path) if local_resource_path is not None else ""
         self._runtime_directory = self._directory
