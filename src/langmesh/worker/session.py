@@ -46,6 +46,7 @@ from langmesh.protocol.parts import _event_part
 from langmesh.protocol.turn_record import PermissionAnswer, PendingInteraction, ToolGate, TurnRecord
 from langmesh.runtime.goal import Goal, GoalReviewPhase
 from langmesh.runtime.composition import RuntimeComponents, RuntimeSpec
+from langmesh.runtime.locations import Location
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import SuspensionGate
 from langmesh.worker.turn import _ContextState, _ContinuationPlan, _TurnRunner
@@ -592,9 +593,14 @@ class SessionExecutor(AgentExecutor):
     def set_locations(self, locations: Optional[list[dict]]) -> int:
         """Adopt the workspace's environments after an edit, so a session already open sees the new set."""
         self._locations = locations
+        runtime_locations = (
+            tuple(Location.from_mapping(location) for location in locations)
+            if locations is not None
+            else None
+        )
         for state in self._contexts.values():
             if state.runtime is not None:
-                state.runtime.set_locations(locations)
+                state.runtime.set_locations(runtime_locations)
         return len(locations or [])
 
     async def set_permission_mode(self, mode: str) -> str:
@@ -813,7 +819,11 @@ class SessionExecutor(AgentExecutor):
                 session_id=session_id,
                 working_directory=runtime_directory,
                 project_directory=project_directory or runtime_directory,
-                locations=locations,
+                locations=(
+                    tuple(Location.from_mapping(location) for location in locations)
+                    if locations is not None
+                    else None
+                ),
                 parent_session=self._parent,
                 permission_mode=self._permission_mode,
                 sandbox=self._sandbox,

@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable, Sequence
 from langchain_core.tools import BaseTool
 
 from langmesh.base.configuration import AgentConfiguration, Configuration
+from langmesh.runtime.locations import Location
 
 
 @dataclass(frozen=True)
@@ -22,7 +23,7 @@ class RuntimeSpec:
     project_directory: str = ""
     permission_mode: str = ""
     sandbox: Any = None
-    locations: Sequence[dict] | None = None
+    locations: Sequence[Location] | None = None
     parent_session: str = ""
     accepts_goal_review: bool = False
 
@@ -31,6 +32,10 @@ class RuntimeSpec:
             raise ValueError("session_id must not be empty")
         if not self.working_directory or not Path(self.working_directory).is_absolute():
             raise ValueError("working_directory must be an absolute path")
+        if self.locations is not None:
+            object.__setattr__(self, "locations", tuple(self.locations))
+            if not all(isinstance(location, Location) for location in self.locations):
+                raise TypeError("locations must contain only Location values")
 
 
 @dataclass(frozen=True)

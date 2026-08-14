@@ -57,7 +57,7 @@ from langmesh.runtime.background import (
 
 from langmesh.base.permission_mode import PermissionMode
 
-from langmesh.runtime.locations import CallExecutionPolicy, ResolvedLocation, ToolLocationError
+from langmesh.runtime.locations import CallExecutionPolicy, Location, ResolvedLocation, ToolLocationError
 from langmesh.runtime.turn_events import (
     ToolResult,
     TurnEvent,
@@ -526,7 +526,7 @@ class AgentRuntime(
         # The locations the agent may address, with a local one synthesized when none were supplied.
         self._locations: dict[str, ResolvedLocation] = {}
         self._locations_by_name: dict[str, ResolvedLocation] = {}
-        self._build_locations(list(spec.locations) if spec.locations is not None else None)
+        self._build_locations(spec.locations)
 
         model_identifier = agent_configuration.model_identifier
         # Only a runtime that must build a client needs to be told which one.
@@ -722,7 +722,7 @@ class AgentRuntime(
         self._pending_observation_registry_feedback = None
         return message
 
-    def set_locations(self, locations: list[dict] | None) -> None:
+    def set_locations(self, locations: Sequence[Location] | None) -> None:
         """Adopt the workspace's environments as they are now, so one added later reaches an existing session."""
         carried = {uri: resolved.executor for uri, resolved in self._locations.items()}
         self._locations = {}
@@ -732,7 +732,7 @@ class AgentRuntime(
 
     def _build_locations(
         self,
-        locations: list[dict] | None,
+        locations: Sequence[Location] | None,
         *,
         executors: dict[str, Any] | None = None,
     ) -> None:
@@ -740,27 +740,21 @@ class AgentRuntime(
         entries = locations or []
         if not entries:
             # None supplied: synthesize one local location, so the single-location default still applies.
-            entries = [
-                {
-                    "name": "local",
-                    "kind": "local",
-                    "base_directory": self._working_directory,
-                }
-            ]
+            entries = [Location("local", "local", self._working_directory)]
         for entry in entries:
-            kind = entry.get("kind", "local")
-            base_directory = str(entry.get("base_directory") or self._working_directory)
-            host_alias = str(entry.get("host_alias") or "")
+            kind = entry.kind
+            base_directory = entry.base_directory
+            host_alias = entry.host_alias
             address = LocationAddress(
                 kind=kind, base_directory=base_directory, host_alias=host_alias
             )
-            uri = str(entry.get("uri") or location_uri_for(address))
+            uri = entry.uri or location_uri_for(address)
             resolved = ResolvedLocation(
                 uri=uri,
-                name=str(entry.get("name") or "location"),
+                name=entry.name,
                 kind=kind,
                 base_directory=base_directory,
-                executor=(executors or {}).get(uri) or executor_for(address),
+                executor=entry.executor or (executors or {}).get(uri) or executor_for(address),
             )
             self._locations[uri] = resolved
             self._locations_by_name[resolved.name] = resolved

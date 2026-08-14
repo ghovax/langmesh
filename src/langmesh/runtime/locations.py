@@ -3,12 +3,45 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel
 
 from langmesh.base.permission_mode import PermissionMode
 from langmesh.locations.executor import LocationExecutor
+
+
+@dataclass(frozen=True)
+class Location:
+    """One addressable execution environment, optionally with a caller-supplied executor."""
+
+    name: str
+    kind: Literal["local", "remote"]
+    base_directory: str
+    host_alias: str = ""
+    uri: str = ""
+    executor: LocationExecutor | None = None
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "Location":
+        return cls(
+            name=str(value.get("name") or "location"),
+            kind=str(value.get("kind") or "local"),
+            base_directory=str(value.get("base_directory") or ""),
+            host_alias=str(value.get("host_alias") or ""),
+            uri=str(value.get("uri") or ""),
+            executor=value.get("executor"),
+        )
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("location name must not be empty")
+        if self.kind not in {"local", "remote"}:
+            raise ValueError("location kind must be 'local' or 'remote'")
+        if not self.base_directory:
+            raise ValueError("location base_directory must not be empty")
+        if self.kind == "remote" and not self.host_alias and not (self.executor and self.uri):
+            raise ValueError("a remote location needs host_alias, or both uri and a custom executor")
 
 
 @dataclass

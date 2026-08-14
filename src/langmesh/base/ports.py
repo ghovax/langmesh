@@ -358,6 +358,10 @@ class Compaction(Protocol):
         """Whether to fold now. Called before each model call; must be cheap."""
         ...
 
+    async def compact(self, state: CompactionState) -> list:
+        """Return the conversation to carry forward, oldest first."""
+        ...
+
 
 @runtime_checkable
 class CompactionPreparation(Protocol):
@@ -385,10 +389,6 @@ class ContinuationPolicy(Protocol):
         unfinished_tasks: Sequence[Mapping[str, Any]],
         completed_turns: int,
     ) -> bool: ...
-
-    async def compact(self, state: CompactionState) -> list:
-        """The conversation to carry forward, oldest first."""
-        ...
 
 
 @runtime_checkable

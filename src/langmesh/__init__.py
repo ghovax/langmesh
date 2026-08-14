@@ -41,6 +41,7 @@ from langmesh.base.resources import (
 )
 from langmesh.base.skills import Skill
 from langmesh.base.worktrees import SessionWorktree, SessionWorktreeManager
+from langmesh.locations.executor import LocationExecutor, LocalExecutor, SshExecutor
 from langmesh.runtime.compaction import (
     DirectCompactionPreparation,
     KeepRecentTurns,
@@ -49,6 +50,7 @@ from langmesh.runtime.compaction import (
 from langmesh.runtime.continuation import TuningContinuationPolicy
 from langmesh.runtime.composition import RuntimeComponents, RuntimeSpec, SessionComponents
 from langmesh.runtime.hooks import MaximumToolCalls
+from langmesh.runtime.locations import Location
 from langmesh.runtime.session_control import PendingTurn, SessionPhase, SessionState
 from langmesh.base.ports import (
     Approval,
@@ -160,6 +162,9 @@ __all__ = [
     "MCPServerManager",
     "MCPServers",
     "KeepRecentTurns",
+    "Location",
+    "LocationExecutor",
+    "LocalExecutor",
     "MaximumToolCalls",
     "MemoryCheckpoints",
     "MemoryJobStore",
@@ -189,6 +194,7 @@ __all__ = [
     "SessionWorktreeManager",
     "ScheduleError",
     "Status",
+    "SshExecutor",
     "Steering",
     "Suspended",
     "TextChunk",
@@ -286,7 +292,7 @@ class Session:
         # Provider credentials in code, though the environment variables still win.
         providers: Optional[Mapping[str, str | Mapping[str, str]]] = None,
         model_identifier: str = "",
-        locations: Optional[list[dict]] = None,
+        locations: Sequence[Location] | None = None,
         components: SessionComponents = SessionComponents(),
         # Any fsspec-backed workspace. Non-local sources are materialized for Bash and SQLite,
         # then synchronized at tool boundaries and close.
@@ -372,7 +378,9 @@ class Session:
         _require(WorkspaceManager, components.workspace, "components.workspace")
         _require(SessionAccess, components.sessions, "components.sessions")
         _require(MCPServers, components.mcp_servers, "components.mcp_servers")
-        self._locations = locations
+        if locations is not None and not all(isinstance(location, Location) for location in locations):
+            raise TypeError("locations must contain only Location values")
+        self._locations = tuple(locations) if locations is not None else None
         self._workspace = components.workspace
         self._tracer_provider = components.tracer_provider
         self._observations = ObservationRegistry(self._resources, configuration=self._configuration)
@@ -382,6 +390,7 @@ class Session:
         self._bindings: list = []
         self._runtime: Any = None
         self._restored = False
+        self._observation_metadata_loaded = False
         self._turn_lock = asyncio.Lock()
         self._phase = SessionPhase.IDLE
         self._pending: PendingTurn | None = None
@@ -484,12 +493,14 @@ class Session:
             )
         return self._runtime
 
-    def _resolved_locations(self) -> Optional[list[dict]]:
+    def _resolved_locations(self) -> Sequence[Location] | None:
         """Where this session's tools may run, with `None` meaning one local location at the working directory."""
         return self._locations
 
     async def prepare_worktree(self, strategy: str = "worktree") -> str:
         """Give this session its own git worktree and run its tools there; opt-in, because it writes to disk."""
+        if self._runtime is not None:
+            raise RuntimeError("prepare_worktree must run before the session builds its runtime")
         if not self._directory:
             raise RuntimeError("prepare_worktree requires a local directory-backed session")
         manager = self._workspace
@@ -500,6 +511,52 @@ class Session:
         prepared = await manager.prepare(self._session_id, self._directory, strategy)
         self._runtime_directory = prepared.runtime_working_directory or self._directory
         return self._runtime_directory
+
+    def set_locations(self, locations: Sequence[Location] | None) -> SessionState:
+        """Replace the addressable execution locations, reaching the next tool call in a live turn."""
+        if locations is not None and not all(isinstance(location, Location) for location in locations):
+            raise TypeError("locations must contain only Location values")
+        self._locations = tuple(locations) if locations is not None else None
+        if self._runtime is not None:
+            self._runtime.set_locations(self._locations)
+        return self.state
+
+    def refresh_prompt(self) -> None:
+        """Rebuild catalogue-derived static instructions at the next model boundary."""
+        if self._runtime is not None:
+            self._runtime.refresh_system_prompt()
+
+    async def clear_goal(self) -> bool:
+        """Call off the current goal and durably record its final state before returning."""
+        async with self._turn_lock:
+            if not self._restored:
+                await self.restore()
+            runtime = self.runtime
+            goal = runtime.goal
+            if goal is None:
+                return False
+            from langmesh.runtime.goal import Goal
+
+            runtime.write_goal(
+                goal.updated(status=Goal.CLEARED, review_message=None, review_id=None)
+            )
+            await self.save()
+            return True
+
+    async def refresh_observations(self) -> None:
+        """Reload observational-memory metadata and rebuild the prompt at the next model boundary."""
+        try:
+            metadata = await self._observations.describe()
+        except ObservationRegistryError as error:
+            self.runtime.note_observation_registry({}, str(error))
+        else:
+            self.runtime.note_observation_registry(metadata)
+        self._observation_metadata_loaded = True
+        self.runtime.refresh_system_prompt()
+
+    async def _ensure_observation_metadata(self) -> None:
+        if not self._observation_metadata_loaded:
+            await self.refresh_observations()
 
     async def sync_resources(self) -> None:
         """Publish path-native changes to the configured fsspec workspace now."""
@@ -516,13 +573,7 @@ class Session:
                 )
             await self._materialized_resources.refresh()
             if self._runtime is not None:
-                try:
-                    metadata = await self._observations.describe()
-                except ObservationRegistryError as error:
-                    self._runtime.note_observation_registry({}, str(error))
-                else:
-                    self._runtime.note_observation_registry(metadata)
-                self._runtime.refresh_system_prompt()
+                await self.refresh_observations()
 
     @property
     def transcript(self) -> Transcript:
@@ -573,14 +624,18 @@ class Session:
         accepted = self._runtime.enqueue_steering(message, message_id=message_id)
         return bool(await accepted) if accepted is not None else False
 
-    def respond(self, request_id: str, decision: Approval) -> SessionState:
-        """Record one human response; call :meth:`resume` once ``state.pending.ready`` is true."""
+    async def respond(self, request_id: str, decision: Approval) -> SessionState:
+        """Durably record one human response; call :meth:`resume` when ``state.pending.ready`` is true."""
         if not isinstance(decision, Approval):
             raise TypeError("decision must be an Approval value")
-        if self._pending is None:
-            raise RuntimeError("This session has no suspended turn.")
-        self._pending = self._pending.with_decision(request_id, decision)
-        return self.state
+        async with self._turn_lock:
+            if not self._restored:
+                await self.restore()
+            if self._pending is None:
+                raise RuntimeError("This session has no suspended turn.")
+            self._pending = self._pending.with_decision(request_id, decision)
+            await self.save()
+            return self.state
 
     async def cancel_pending(self) -> None:
         """Abandon a suspended batch without executing any of its calls."""
@@ -692,6 +747,7 @@ class Session:
         async with self._turn_lock:
             if not self._restored:
                 await self.restore()
+            await self._ensure_observation_metadata()
             if self._pending is not None:
                 raise RuntimeError(
                     "This session is suspended. Respond to every pending interaction and call Session.resume(), or call Session.cancel_pending()."
@@ -738,6 +794,7 @@ class Session:
         async with self._turn_lock:
             if not self._restored:
                 await self.restore()
+            await self._ensure_observation_metadata()
             pending = self._pending
             if pending is None:
                 raise RuntimeError("This session has no suspended turn.")
@@ -880,6 +937,7 @@ class Session:
         async with self._turn_lock:
             if not self._restored:
                 await self.restore()
+            await self._ensure_observation_metadata()
             if self._pending is not None:
                 raise RuntimeError("A suspended turn must be resumed or cancelled before compaction.")
             self._phase = SessionPhase.COMPACTING
@@ -913,6 +971,7 @@ class Session:
         async with self._turn_lock:
             if not self._restored:
                 await self.restore()
+            await self._ensure_observation_metadata()
             if self._pending is not None:
                 raise RuntimeError("A suspended turn must be resumed or cancelled before retrying.")
             self._phase = SessionPhase.RETRYING
@@ -941,9 +1000,7 @@ class Session:
         return self.runtime.conversation
 
     async def aclose(self) -> None:
-        """Release what the session opened: background jobs, and the browser if it was used."""
-        import sys
-
+        """Release resources owned by this session without disturbing another session in the process."""
         if self._runtime is not None:
             with contextlib.suppress(Exception):
                 self._runtime.abort()
@@ -959,17 +1016,14 @@ class Session:
 
                     reset_tracer(token)
         self._bindings.clear()
-        from langmesh.runtime.background import cancel_all_background_jobs
-
-        with contextlib.suppress(Exception):
-            cancel_all_background_jobs()
-        if "langmesh.computer.web" in sys.modules:
+        if self._runtime is not None:
             with contextlib.suppress(Exception):
-                sys.modules["langmesh.computer.web"].close()
+                self._runtime.background_jobs.cancel_all()
         await self._lifecycle.aclose()
         self._materialized_resources = None
         self._runtime = None
         self._restored = False
+        self._observation_metadata_loaded = False
         self._phase = SessionPhase.IDLE
         self._pending = None
         local_resource_path = self._resources.local_path
