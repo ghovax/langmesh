@@ -215,27 +215,35 @@ class _RunsTurns:
             )
             # One statement of how to think, rendered into this prompt and the reviewer's, so they cannot drift.
             thinking_language = self._prompt_loader.load("thinking_language", {}).strip()
-            self._cached_system_prompt = self._prompt_loader.load(
-                "system_prompt",
-                {
-                    "agent_prompt": self._system_prompt,
-                    "thinking_language": thinking_language,
-                    "context": context_json,
-                    "user_environment": user_environment,
-                    "instructions": instructions,
-                    "skills": lines(skills_payload(agent_skills)),
-                    "memories": lines(memories_payload(memories)),
-                    "observational_memory": self._prompt_loader.load(
-                        "observational_memory",
-                        {"metadata": compact(self._observation_registry_metadata)},
-                    ).strip(),
-                    "agent_context": agent_context,
-                    "computer_control_guidance": computer_control_guidance,
-                    "toolbox": toolbox,
-                    "peer_sessions": peer_sessions,
-                    "mcp_servers": mcp_servers,
-                },
-            ).strip()
+            variables = {
+                "agent_prompt": self._system_prompt,
+                "thinking_language": thinking_language,
+                "context": context_json,
+                "user_environment": user_environment,
+                "instructions": instructions,
+                "skills": lines(skills_payload(agent_skills)),
+                "memories": lines(memories_payload(memories)),
+                "observational_memory": self._prompt_loader.load(
+                    "observational_memory",
+                    {"metadata": compact(self._observation_registry_metadata)},
+                ).strip(),
+                "agent_context": agent_context,
+                "computer_control_guidance": computer_control_guidance,
+                "toolbox": toolbox,
+                "peer_sessions": peer_sessions,
+                "mcp_servers": mcp_servers,
+            }
+            if self._prompt_composer is None:
+                prompt = self._prompt_loader.load("system_prompt", variables)
+            else:
+                from langmesh.base.ports import PromptLayer
+
+                prompt = self._prompt_composer.compose(
+                    tuple(PromptLayer(name, content) for name, content in variables.items())
+                )
+                if not isinstance(prompt, str):
+                    raise TypeError("prompt_composer.compose() must return a string")
+            self._cached_system_prompt = prompt.strip()
         return self._cached_system_prompt
 
     def _user_context_enabled(self) -> bool:

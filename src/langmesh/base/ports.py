@@ -18,6 +18,9 @@ from typing import (
 
 if TYPE_CHECKING:  # pragma: no cover - import only for typing; `base` stays free of langchain
     from langchain_core.language_models.chat_models import BaseChatModel
+    from pathlib import Path
+
+    from langmesh.base.attachments import AttachmentInput
 
     # The model seam as a type: every provider and every mock in that ecosystem already implements it.
     ChatModel = BaseChatModel
@@ -137,6 +140,19 @@ class Checkpoints(Protocol):
     async def load(self, session_id: str) -> Optional[Mapping[str, Any]]:
         """The last saved state, or ``None`` for a session that has never been saved."""
         ...
+
+
+@runtime_checkable
+class Attachments(Protocol):
+    """Composes application-owned paths into one model-facing turn input."""
+
+    def compose(
+        self,
+        message: str,
+        attachments: Sequence[Path],
+        model_identifier: str,
+        inline_image_bytes: int,
+    ) -> AttachmentInput: ...
 
 
 class MemoryCheckpoints:
@@ -545,6 +561,21 @@ class CatalogueLike(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class PromptLayer:
+    """One named piece of the cache-stable system prompt."""
+
+    name: str
+    content: str
+
+
+@runtime_checkable
+class PromptComposer(Protocol):
+    """Places and formats the named static prompt layers assembled by the runtime."""
+
+    def compose(self, layers: Sequence[PromptLayer]) -> str: ...
+
+
 def describe_unmet(port: type, candidate: Any) -> str:
     """Which of a port's methods ``candidate`` is missing, as a sentence, so a refusal can be acted on."""
     missing = sorted(
@@ -561,6 +592,7 @@ def describe_unmet(port: type, candidate: Any) -> str:
 __all__ = [
     "Approval",
     "Approvals",
+    "Attachments",
     "AfterTurnHook",
     "BeforeModelHook",
     "BeforeToolsHook",
@@ -579,6 +611,8 @@ __all__ = [
     "Observation",
     "Observer",
     "PermissionPolicy",
+    "PromptComposer",
+    "PromptLayer",
     "SessionAccess",
     "Compaction",
     "CompactionPreparation",

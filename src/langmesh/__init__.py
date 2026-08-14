@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Mapping, Optional, Sequence
 
 from langmesh.base.catalogue import Catalogue
+from langmesh.base.attachments import AttachmentInput, PathAttachments
 from langmesh.base.configuration import (
     AgentConfiguration,
     BashToolConfiguration,
@@ -55,6 +56,7 @@ from langmesh.runtime.session_control import PendingTurn, SessionPhase, SessionS
 from langmesh.base.ports import (
     Approval,
     Approvals,
+    Attachments,
     AfterTurnHook,
     BeforeModelHook,
     BeforeToolsHook,
@@ -77,6 +79,8 @@ from langmesh.base.ports import (
     Observation,
     Observer,
     PermissionPolicy,
+    PromptComposer,
+    PromptLayer,
     SessionAccess,
     SuspensionGate,
     ToolMiddleware,
@@ -126,6 +130,8 @@ __all__ = [
     "BashToolConfiguration",
     "Approval",
     "Approvals",
+    "AttachmentInput",
+    "Attachments",
     "AfterTurnHook",
     "BeforeModelHook",
     "BeforeToolsHook",
@@ -175,6 +181,7 @@ __all__ = [
     "ObservationRegistry",
     "ObservationRegistryError",
     "OverlayResources",
+    "PathAttachments",
     "Observer",
     "SandboxConfiguration",
     "ResourceChange",
@@ -184,6 +191,8 @@ __all__ = [
     "RuntimeSpec",
     "PermissionMode",
     "PermissionPolicy",
+    "PromptComposer",
+    "PromptLayer",
     "PendingTurn",
     "Session",
     "SessionAccess",
@@ -344,6 +353,10 @@ class Session:
         self._checkpoints = (
             _require(Checkpoints, components.checkpoints, "components.checkpoints")
             or MemoryCheckpoints()
+        )
+        self._attachments = (
+            _require(Attachments, components.attachments, "components.attachments")
+            or PathAttachments()
         )
         self._jobs = _require(JobStore, components.jobs, "components.jobs") or MemoryJobStore()
         self._observer = _require(Observer, components.observer, "components.observer")
@@ -712,30 +725,27 @@ class Session:
         """The model-facing input for a turn, including attachments, through the same composition the daemon uses."""
         if not attachments:
             return message
-        from langmesh.protocol.files import attachment_from_path
-        from langmesh.protocol.parts import attachment_payload, compose_turn_input
-
-        records = []
+        resolved = []
         for attachment in attachments:
             path = Path(attachment)
             if not path.is_absolute():
                 path = Path(self._runtime_directory) / resource_path(str(path))
-            records.append(attachment_from_path(path))
+            resolved.append(path)
         runtime = self.runtime
-        runtime.note_attachments([record["path"] for record in records])
-        turn_input, images_not_inlined = compose_turn_input(
+        composed = self._attachments.compose(
             message,
-            [attachment_payload(records)],
+            tuple(resolved),
             runtime.model_identifier,
+            runtime.inline_image_bytes,
         )
-        if images_not_inlined:
-            # A library caller may have no client to raise a warning event to, so this goes to the log it does have.
+        runtime.note_attachments(composed.paths)
+        if composed.images_not_inlined:
             logger.warning(
                 "%d attached image(s) were not inlined: %s does not advertise vision support. The model has the file paths and can open them with its tools.",
-                images_not_inlined,
+                composed.images_not_inlined,
                 runtime.model_identifier or "the session model",
             )
-        return turn_input
+        return composed.value
 
     async def stream(
         self,

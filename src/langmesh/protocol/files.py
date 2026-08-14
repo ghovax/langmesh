@@ -18,8 +18,11 @@ import jwt
 
 from a2a.types import FilePart, FileWithBytes, FileWithUri
 
+from langmesh.base.attachments import attachment_from_path
 from langmesh.base.net_trust import UntrustedHostError, pin_to_ip, resolve_public_ips
 from langmesh.base.tuning import Tunable, active_tuning
+
+__all__ = ["attachment_from_path"]
 
 # Ceiling on a single ingested file, so one part cannot exhaust disk.
 DEFAULT_MAXIMUM_FILE_BYTES = 50 * 1024 * 1024
@@ -63,24 +66,6 @@ def _attachment(path: Path, name: str, mime_type: str, size: int) -> dict[str, A
         "mime_type": mime_type or "application/octet-stream",
         "size": size,
         "sha256": path.stem,
-    }
-
-
-def attachment_from_path(path: Path | str) -> dict[str, Any]:
-    """The attachment record for a local file the user handed over, referenced in place."""
-    resolved = Path(path).expanduser().resolve(strict=True)
-    if not resolved.is_file():
-        raise FileNotFoundError(f"{resolved} is not a regular file.")
-    name = resolved.name
-    return {
-        "upload_id": f"ref-{time.strftime('%Y%m%d%H%M%S', time.gmtime())}-{os.urandom(4).hex()}",
-        "title": name,
-        "filename": name,
-        "path": str(resolved),
-        "mime_type": mimetypes.guess_type(name)[0] or "application/octet-stream",
-        "size": resolved.stat().st_size,
-        # Referenced in place, so nothing is stored under a digest, though the field stays present and empty.
-        "sha256": "",
     }
 
 

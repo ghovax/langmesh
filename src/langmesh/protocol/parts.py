@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-import base64
-from pathlib import Path
 from typing import Optional
 
 from a2a.types import DataPart, FilePart, Part, TextPart
 
+from langmesh.base.attachments import (
+    all_attachments as _all_attachments,
+    attachment_payload,
+    compose_turn_input,
+    image_attachments as _image_attachments,
+)
 from langmesh.base.message_content import content_block_metadata
-from langmesh.base.models import find_model
 from langmesh.base.paths import uploads_directory
-from langmesh.base.serialization import compact
 from langmesh.protocol.events import (
     ToolMetadata,
     ToolResultEvent,
@@ -26,6 +28,13 @@ from langmesh.protocol.metadata import (
     part_payload,
     wrap_part_payload,
 )
+
+__all__ = [
+    "_all_attachments",
+    "_image_attachments",
+    "attachment_payload",
+    "compose_turn_input",
+]
 
 
 def _input_response_payload(message) -> Optional[dict]:
@@ -61,99 +70,12 @@ def _structured_data_payloads(message) -> list[dict]:
     return payloads
 
 
-# Attachments with this mime prefix are viewable by a vision model and so are inlined as image blocks.
-_INLINE_IMAGE_MIME_PREFIX = "image/"
-
-
-def _image_attachments(structured_payloads: list[dict]) -> list[dict]:
-    """Every image attachment carried by the turn's ``attachments`` parts."""
-    images: list[dict] = []
-    for payload in structured_payloads:
-        if payload.get(PART_KIND) != "attachments":
-            continue
-        for attachment in payload.get("attachments") or []:
-            if not isinstance(attachment, dict):
-                continue
-            if str(attachment.get("mime_type", "")).startswith(_INLINE_IMAGE_MIME_PREFIX):
-                images.append(attachment)
-    return images
-
-
-def _all_attachments(structured_payloads: list[dict]) -> list[dict]:
-    """Every file attachment carried by the turn (images and non-images alike)."""
-    attachments: list[dict] = []
-    for payload in structured_payloads:
-        if payload.get(PART_KIND) != "attachments":
-            continue
-        for attachment in payload.get("attachments") or []:
-            if isinstance(attachment, dict):
-                attachments.append(attachment)
-    return attachments
-
-
-def _model_supports_vision(model_identifier: str) -> bool:
-    if not model_identifier:
-        return True
-    model = find_model(model_identifier)
-    if model is None:
-        return True
-    return model.vision
-
-
 def _attachment_warning_event(image_count: int, model_identifier: str) -> WarningEvent:
     """A localized notice that images reached a text-only model as file metadata."""
     return WarningEvent(
         code="image_metadata_only",
         parameters={"count": image_count, "model": model_identifier},
     )
-
-
-def _image_content_block(attachment: dict, inline_image_bytes: int) -> Optional[dict]:
-    """An image content block built from a stored attachment, or `None` when it is missing or too large."""
-    path = str(attachment.get("path") or "")
-    if not path:
-        return None
-    mime_type = str(attachment.get("mime_type") or "application/octet-stream")
-    try:
-        raw = Path(path).read_bytes()
-    except OSError:
-        return None
-    if len(raw) > inline_image_bytes:
-        return None
-    encoded = base64.b64encode(raw).decode("ascii")
-    return {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}}
-
-
-# Each agent profile is served as its own A2A agent under this prefix.
-
-
-def compose_turn_input(
-    user_text: str,
-    structured_payloads: list[dict],
-    model_identifier: str,
-    inline_image_bytes: int,
-) -> tuple[object, int]:
-    """What the model reads for a turn carrying attachments, and how many images were left out."""
-    # The metadata always rides along as text, so the model can act on the files whether or not it can see them.
-    text_payload = compact({"text": user_text, "data_parts": structured_payloads})
-    images = _image_attachments(structured_payloads)
-    if not images:
-        return text_payload, 0
-    if not _model_supports_vision(model_identifier):
-        return text_payload, len(images)
-    blocks = [
-        block
-        for image in images
-        if (block := _image_content_block(image, inline_image_bytes)) is not None
-    ]
-    if not blocks:
-        return text_payload, 0
-    return [{"type": "text", "text": text_payload}, *blocks], 0
-
-
-def attachment_payload(attachments: list[dict]) -> dict:
-    """The structured payload an ``attachments`` DataPart carries."""
-    return {PART_KIND: "attachments", "attachments": attachments}
 
 
 def _text_part(text: str, block_identifier: str) -> Part:

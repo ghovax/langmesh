@@ -52,6 +52,7 @@ class RuntimeComponents:
     mcp_servers: Any = None
     file_leases: Any = None
     permissions: Any = None
+    prompt_composer: Any = None
     tools: Sequence[BaseTool] = field(default_factory=tuple)
     toolset: Sequence[BaseTool] | None = None
     supplied_tool_gate: str = "ask"
@@ -84,6 +85,7 @@ class RuntimeComponents:
             MCPServers,
             Observer,
             PermissionPolicy,
+            PromptComposer,
             SessionAccess,
             Transcript,
             describe_unmet,
@@ -101,6 +103,7 @@ class RuntimeComponents:
             "mcp_servers": MCPServers,
             "observer": Observer,
             "permissions": PermissionPolicy,
+            "prompt_composer": PromptComposer,
             "sessions": SessionAccess,
             "transcript": Transcript,
         }
@@ -118,6 +121,7 @@ class SessionComponents(RuntimeComponents):
     """Runtime capabilities plus the ownership seams of an embedded session."""
 
     checkpoints: Any = None
+    attachments: Any = None
     credentials: Any = None
     workspace: Any = None
     tracer_provider: Any = None

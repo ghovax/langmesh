@@ -503,6 +503,7 @@ class AgentRuntime(
 
         self._spec = spec
         self._components = components
+        self._prompt_composer = components.prompt_composer
         self._hooks = HookRunner(components.hooks)
         self._pipeline = ToolPipeline(components.middleware)
         self._compaction = components.compaction
