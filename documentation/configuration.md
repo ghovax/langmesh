@@ -16,7 +16,7 @@ Three ways to change it, all writing the same file:
 This document is the reference for the file itself.
 
 > [!IMPORTANT]
-> Every credential can also be set through an environment variable, which takes precedence over the file. That lets you run a daemon without writing any secret to disk. Never commit a filled-in configuration or a `.env` — see [Security notes](../SECURITY.md).
+> Every credential can also be set through an environment variable, which takes precedence over the file. That lets you run a daemon without writing secrets to disk. Never commit a filled-in configuration or `.env`; see the [security policy](https://github.com/ghovax/langmesh/blob/main/SECURITY.md).
 
 A change applies to whatever starts **next**. A running session keeps the configuration it was built with. That is the same guarantee its permission mode carries. Some settings are the exception: the daemon pushes them out, and the sandbox, computer control, and the user-context snapshot each ask live sessions to rebuild.
 

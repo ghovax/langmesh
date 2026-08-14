@@ -220,7 +220,7 @@ says which one is missing, with the link to fix it.
 It serves no browser interface, deliberately: that bundle authenticates by being on the same
 machine as the daemon, so it carries no reach token and every call it made through this door
 would come back 401. `langmesh serve` is the browser's door; this is the phone's. The app itself,
-and how to run it, are in [`mobile/`](../mobile/README.md).
+and how to run it, are in the repository's [mobile client directory](https://github.com/ghovax/langmesh/tree/main/mobile).
 
 ## The desktop app
 

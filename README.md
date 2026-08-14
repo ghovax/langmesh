@@ -72,17 +72,19 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`stream()` instead of `ask()` gives the work as it happens: text chunks, tool calls, tool results, suspensions, and typed start/progress/finish events for an independent goal review. `model=` takes any LangChain chat model, and the same session composes with it:
+`stream()` instead of `ask()` gives typed live events. Replaceable behavior lives in one immutable `SessionComponents` value:
 
 ```python
 from langchain_anthropic import ChatAnthropic
+from langmesh import SessionComponents
 
-async with Session(reviewer, directory="/srv/checkout", model=ChatAnthropic(model="claude-opus-4-5")) as session:
+components = SessionComponents(model=ChatAnthropic(model="claude-opus-4-5"))
+async with Session(reviewer, directory="/srv/checkout", components=components) as session:
     async for event in session.stream("Summarise what the test suite covers."):
         ...  # Consume each typed event as it arrives.
 ```
 
-Every durable runtime concern is a seam: `checkpoints`, `jobs`, `transcript`, `approvals`, `observer`, `sandbox`, `catalogue`, `peers`, and `resources`. The resource seam is a small structural interface implemented by `WorkspaceResources`, which delegates filesystem protocols, mapping adapters, and transactions to [fsspec](https://filesystem-spec.readthedocs.io/). A local directory is the default; memory, object storage, SSH, archives, and third-party filesystems use their established fsspec implementations. Path-native tools receive a leased local materialization, and LangMesh synchronizes its changes at completed tool-batch boundaries and session close.
+`SessionComponents` exposes models, prompt and attachment composition, checkpoints, jobs, transcripts, approvals, audit, tools, permission policy, hooks, middleware, compaction, continuation, peer sessions, MCP servers, workspaces, file leases, credentials, and tracing. Execution locations are immutable run facts passed to `Session`. Workspace data uses `WorkspaceResourcesLike`, normally the fsspec-backed `WorkspaceResources`.
 
 ```python
 from langmesh import Session, WorkspaceResources
@@ -123,7 +125,7 @@ Pass `configuration=custom_configuration` when constructing the registry if the 
 Three more sit around the turn: bound it, wrap its tools, decide how its history folds. Each one is an object with a method or two, so your own is as short as the ones that ship:
 
 ```python
-from langmesh import KeepRecentTurns, MaximumToolCalls, Session
+from langmesh import KeepRecentTurns, MaximumToolCalls, Session, SessionComponents
 
 class RefuseNetworkTools:
     """A hook. Sees the batch the permission rules approved, and narrows it."""
@@ -144,16 +146,18 @@ class Timed:
 async with Session(
     reviewer,
     directory="/srv/checkout",
-    hooks=[MaximumToolCalls(20), RefuseNetworkTools()],
-    pipeline=[Timed()],
-    compaction=KeepRecentTurns(20),
+    components=SessionComponents(
+        hooks=(MaximumToolCalls(20), RefuseNetworkTools()),
+        middleware=(Timed(),),
+        compaction=KeepRecentTurns(20),
+    ),
 ) as session:
     ...
 ```
 
-A hook narrows and can never widen: `before_tools` runs after the permission barrier, so it sees only calls the rules already allowed. [As a library](documentation/library.md) has the rest.
+A hook narrows and can never widen: `before_tools` runs after the permission barrier. The [library documentation](documentation/library/index.md) covers composition, lifecycle, customization, compaction, persistence, and the complete API.
 
-A program that _is_ running on someone's machine can ask for that machine's agents deliberately, through `langmesh.daemon.machine`. [As a library](documentation/library.md) is the reference: the full seam table, a worked Redis checkpoint store, and what you give up by not using the daemon.
+A program running on a managed machine can deliberately load its agent catalogue through `langmesh.daemon.machine`. The [library guide](documentation/library/index.md) documents the public seams, durable control state, persistence examples, and product boundary.
 
 ### From the terminal
 

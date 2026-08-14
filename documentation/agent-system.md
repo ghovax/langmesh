@@ -98,7 +98,7 @@ Observational memory is separate: `.agents/observations.sqlite` is current works
       "url": "https://mcp.context7.com/mcp",
       "stateful": true
     },
-    "my-tool": {
+    "local_echo": {
       "enabled": true,
       "transport": "stdio",
       "command": "uv",
@@ -110,4 +110,4 @@ Observational memory is separate: `.agents/observations.sqlite` is current works
 }
 ```
 
-Their tools and resources appear to the agent through the `call_mcp_server_tool`, `list_mcp_tools`, `list_mcp_resources`, and `read_mcp_resource` tools. An example stdio server lives in [`examples/mcp/`](../examples/mcp/).
+Their tools and resources appear to the agent through the `call_mcp_server_tool`, `list_mcp_tools`, `list_mcp_resources`, and `read_mcp_resource` tools. The repository includes a complete [stdio server example](https://github.com/ghovax/langmesh/tree/main/examples/mcp).

@@ -18,9 +18,9 @@ Six terms carry most of the meaning here, and four of them are LangMesh's own.
 
 ## The four layers
 
-Each layer uses the one below it and adds a single thing — the [documentation index](README.md) lists them, and what each one knows about your machine.
+Each layer uses the one below it and adds a single thing; the [documentation index](index.md) lists their responsibilities.
 
-The bottom layer is the whole of the harness. A program can embed it and never start a daemon; see [As a library](library.md). Everything below in this document is what the three layers above add.
+The bottom layer is the whole harness. A program can embed it without starting a daemon; see the [library guide](library/index.md). Everything below describes the product layers above it.
 
 LangMesh is one executable entered two ways. `langmesh` is the command a person runs and `langmeshd` is the daemon that hosts the sessions.
 
@@ -43,7 +43,7 @@ flowchart BT
     subgraph Session["A session — hosted inside the daemon"]
         Executor["Agent loop<br/>(LangChain)"]
         Permissions["Permission engine"]
-        Tools["Tools: shell, files, web,<br/>screen control, MCP"]
+        Tools["Tools: shell, files, web,<br/>screen control, MCP servers"]
     end
 
     ModelProvider["Model provider<br/>(Anthropic, OpenAI, … via LiteLLM)"]
@@ -146,7 +146,7 @@ The toolbox is per session and dies with it. Packages come out of the shared rea
 
 ## Permissions
 
-A session's permission mode is chosen when the session is created and can be changed while it runs — the change reaches the turn already in flight. A child gets a mode no looser than its parent's, and tightening a session tightens everything it created. There is no bypass mode and no standing "always allow"; the only runtime decisions are allow-once and deny. See [Security notes](../SECURITY.md).
+A session's permission mode is chosen when the session is created and can change while it runs; the change reaches the turn already in flight. A child gets a mode no looser than its parent's, and tightening a session tightens everything it created. There is no bypass mode or standing "always allow"; the runtime decisions are allow once and deny. See the [security policy](https://github.com/ghovax/langmesh/blob/main/SECURITY.md).
 
 ## Request lifecycle (a message)
 

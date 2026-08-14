@@ -1,7 +1,7 @@
 [project]
 name = "langmesh"
 version = "0.1.0"
-description = "An agent harness where every session is a process you can address"
+description = "A composable, durable agent runtime for embedded and hosted sessions"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -97,6 +97,11 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [dependency-groups]
+docs = [
+    "mkdocs>=1.6,<2",
+    "mkdocs-material>=9.6,<10",
+    "mkdocstrings[python]>=0.30,<1",
+]
 dev = [
     "pyinstaller>=6.21.0",
     # The retrieval harness records one row per query per strategy and pivots it. A frame is the

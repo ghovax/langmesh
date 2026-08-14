@@ -198,7 +198,7 @@ Beyond the battery: lint with `uv run ruff check`, and drive the affected path t
 
 | Path | What lives there |
 |---|---|
-| `.agents/` | Bundled agents, skills, memories, MCP configuration |
+| `.agents/` | Bundled agents, skills, memories, and MCP server configuration |
 | `web/` | The desktop app: Next.js UI, and the Tauri shell in `src-tauri/` |
 | `packaging/` | PyInstaller freeze and signing, plus `entry.py` for the frozen build |
 | `scripts/` | Layering, import and translation checks; the verification battery |

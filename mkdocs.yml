@@ -1,0 +1,54 @@
+site_name: LangMesh
+site_description: Library and product documentation for the LangMesh agent harness
+repo_url: https://github.com/ghovax/langmesh
+docs_dir: documentation
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            members_order: source
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+nav:
+  - Overview: index.md
+  - Library:
+      - Start here: library/index.md
+      - Composition: library/composition.md
+      - Models and cache behavior: library/models.md
+      - Lifecycle and control: library/lifecycle.md
+      - Events and driving patterns: library/events.md
+      - Tools, hooks, and policy: library/customization.md
+      - Compaction and continuation: library/compaction.md
+      - Resources and persistence: library/resources.md
+      - API reference: library/api.md
+  - Product:
+      - Architecture: architecture.md
+      - Installation: installation.md
+      - Command line: cli.md
+      - Desktop app: app.md
+      - Agent system: agent-system.md
+      - Configuration: configuration.md
+      - Configuration reference: configuration-reference.md
+      - Tools: tools.md
+      - Development: development.md
+  - Build these docs: building.md
+  - Security: https://github.com/ghovax/langmesh/blob/main/SECURITY.md
+strict: true

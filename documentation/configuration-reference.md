@@ -145,7 +145,7 @@ Fetching a page directly.
 
 ## Composio
 
-Composio's hosted MCP gateway.
+Composio's hosted MCP server gateway.
 
 | Setting                    | Type    | Default                            | What it is for                                                      |
 | -------------------------- | ------- | ---------------------------------- | ------------------------------------------------------------------- |
@@ -157,7 +157,7 @@ Composio's hosted MCP gateway.
 
 ## MCP servers
 
-MCP servers, read from mcp.json.
+MCP servers, read from `mcp.json`.
 
 | Setting       | Type | Default | What it is for                                                                                           |
 | ------------- | ---- | ------- | -------------------------------------------------------------------------------------------------------- |
