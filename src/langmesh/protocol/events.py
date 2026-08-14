@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from enum import Enum
 from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
+from langmesh.runtime.values import PermissionReason, ToolStatus, TurnContext
 
 
 TurnErrorCode = Literal[
@@ -31,21 +31,6 @@ CompactionErrorCode = Literal[
 
 
 # Shared building blocks
-
-
-class ToolStatus(str, Enum):
-    RUNNING = "running"  # accepted / in flight (a backgrounded command, a live search)
-    OK = "ok"  # finished successfully
-    ERROR = "error"  # failed, denied, or cancelled (see `code` for which)
-
-
-def tool_status_from_result(result: Any) -> ToolStatus:
-    """Read a result's explicit lifecycle status, defaulting synchronous results to OK."""
-    record = result if isinstance(result, dict) else {}
-    explicit = record.get("status")
-    if explicit in (ToolStatus.RUNNING.value, ToolStatus.OK.value, ToolStatus.ERROR.value):
-        return ToolStatus(explicit)
-    return ToolStatus.OK
 
 
 class ToolMetadata(BaseModel):
@@ -208,13 +193,6 @@ class TokenUsageEvent(_EventBase):
     divergence: Optional[PrefixDivergence] = None
 
 
-class PermissionReason(BaseModel):
-    """Why approval is needed, as data rather than a sentence, so a client can say it in its own language."""
-
-    kind: str
-    paths: list[str] = Field(default_factory=list)
-
-
 class PermissionRequestEvent(_EventBase):
     kind: Literal["permission_request"] = "permission_request"
     request_id: str
@@ -314,23 +292,6 @@ class ModelToolResult(BaseModel):
     completed_at: str | None = None
     duration_milliseconds: int | None = None
     background_job_id: str | None = None
-
-
-class TurnContext(BaseModel):
-    """Session context in the static system prompt, refreshed when a context fold rebuilds it."""
-
-    now: str = ""
-    pwd: str = ""
-    # The session's goal as the agent wrote it, and where it stands when that is anything other than open.
-    goal: dict[str, Any] = Field(default_factory=dict)
-    tasks: list[dict[str, Any]] = Field(default_factory=list)
-    background: dict[str, Any] = Field(default_factory=dict)
-    # Where tools may run and under which mode, here rather than in the cached prompt because it changes mid-session.
-    locations: list[dict[str, Any]] = Field(default_factory=list)
-    # What the system will permit a tool child and what has been granted on top, which a mid-session grant changes.
-    confinement: dict[str, Any] = Field(default_factory=dict)
-    # Where a screen script can be pointed and what may be called there, present only when the screen tool is enabled.
-    screen: dict[str, Any] = Field(default_factory=dict)
 
 
 MODEL_ENVELOPE_MODELS: tuple[type[BaseModel], ...] = (

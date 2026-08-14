@@ -18,7 +18,7 @@ from langmesh.base.ports import GoalReviewContext, GoalReviewOutcome
 from langmesh.base.identifiers import new_id
 from langmesh.base.serialization import compact
 from langmesh.base.tuning import Tunable, active_tuning
-from langmesh.protocol.events import ToolStatus
+from langmesh.runtime.values import ToolStatus
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.goal import Goal, NonBlankText
 from langmesh.runtime.turn_events import (

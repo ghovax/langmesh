@@ -17,10 +17,10 @@ from langmesh.base.paths import uploads_directory
 from langmesh.protocol.events import (
     ToolMetadata,
     ToolResultEvent,
-    ToolStatus,
     WarningEvent,
     _EventBase,
 )
+from langmesh.runtime.values import ToolStatus
 from langmesh.protocol.files import ingest_file_part
 from langmesh.protocol.metadata import (
     INPUT_RESPONSE_KIND,

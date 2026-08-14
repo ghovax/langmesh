@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any, ClassVar, Literal, Union
 
 from langmesh.base.ports import SuspensionGate
-from langmesh.protocol.events import ToolStatus, tool_status_from_result
+from langmesh.runtime.values import ToolStatus, tool_status_from_result
 
 
 class EventType(str, Enum):

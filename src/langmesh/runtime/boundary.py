@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 from langmesh.base.confinement import AccessRequest, Profile, _contained_in, expand
-from langmesh.protocol.events import PermissionReason
+from langmesh.runtime.values import PermissionReason
 
 
 @dataclass(frozen=True)

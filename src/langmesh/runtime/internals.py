@@ -7,7 +7,7 @@ from datetime import datetime
 from langmesh.base.credentials import is_signed_in
 from langmesh.base.cursor_credentials import is_signed_in as cursor_is_signed_in
 from langmesh.base.configuration import Configuration
-from langmesh.protocol.events import tool_status_from_result, ToolStatus
+from langmesh.runtime.values import ToolStatus, tool_status_from_result
 from langmesh.base.providers import resolve_api_key
 from langmesh.base.models import find_model
 from langmesh.base.tuning import active_tuning, clip_to_tokens, count_tokens, Tunable

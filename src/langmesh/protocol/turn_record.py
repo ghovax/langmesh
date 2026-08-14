@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any, Optional, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 # One key holds the whole record, under the same extension URI a message's turn metadata uses.
 from langmesh.protocol.metadata import METADATA_KEY
@@ -74,16 +74,6 @@ class ToolGate(BaseModel):
     @property
     def is_question(self) -> bool:
         return self.kind == "question"
-
-
-class PermissionAnswer(BaseModel):
-    """One permission decision, including the explanation the model must receive on denial."""
-
-    model_config = ConfigDict(strict=True)
-
-    allow: bool
-    reason: str = ""
-    actor: Literal["person", "reviewer", "approver"]
 
 
 class PendingInteraction(BaseModel):

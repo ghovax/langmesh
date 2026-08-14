@@ -25,8 +25,7 @@ from langmesh.runtime.internals import (
 )
 from langmesh.runtime.prompt.environment import probe_local_environment, probe_user_context
 from langmesh.runtime.cache_trace import cache_lane
-from langmesh.protocol.events import TurnContext
-from langmesh.protocol.turn_record import PermissionAnswer
+from langmesh.runtime.values import PermissionAnswer, TurnContext
 from langmesh.base.instructions import instructions_payload
 from langmesh.base.memories import memories_payload
 from langmesh.base.message_content import (

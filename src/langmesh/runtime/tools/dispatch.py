@@ -31,7 +31,7 @@ from langmesh.runtime.background import (
     unbind_background_jobs,
     unbind_tool_call_id,
 )
-from langmesh.protocol.events import ToolStatus
+from langmesh.runtime.values import ToolStatus
 from langmesh.runtime.goal import Goal
 from langmesh.base.file_leases import FileLeaseConflict
 from langmesh.base.skills import enabled_skills

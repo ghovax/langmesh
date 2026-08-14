@@ -43,12 +43,13 @@ from langmesh.protocol.metadata import (
 )
 from langmesh.protocol.events import StatusEvent
 from langmesh.protocol.parts import _event_part
-from langmesh.protocol.turn_record import PermissionAnswer, PendingInteraction, ToolGate, TurnRecord
+from langmesh.protocol.turn_record import PendingInteraction, ToolGate, TurnRecord
 from langmesh.runtime.goal import Goal, GoalReviewPhase
 from langmesh.runtime.composition import RuntimeComponents, RuntimeSpec
 from langmesh.runtime.locations import Location
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import SuspensionGate
+from langmesh.runtime.values import PermissionAnswer
 from langmesh.worker.turn import _ContextState, _ContinuationPlan, _TurnRunner
 from langmesh.base.serialization import compact
 
