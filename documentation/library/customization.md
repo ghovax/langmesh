@@ -85,18 +85,29 @@ Middleware may rewrite `call.arguments`, short-circuit, retry, or translate an e
 `PromptComposer` receives every cache-stable system-prompt layer as a named `PromptLayer`. Use it to select, order, wrap, or relocate application guidance without forking the runtime.
 
 ```python
+from langmesh.base.configuration import PromptLoader
+
+
 class ApplicationPrompt:
-    order = ("agent_prompt", "instructions", "context", "skills", "memories")
+    template = """{{ agent_prompt }}
+
+{{ instructions }}
+
+{{ context }}
+
+{{ skills }}
+
+{{ memories }}"""
 
     def compose(self, layers):
         available = {layer.name: layer.content for layer in layers}
-        return "\n\n".join(available[name] for name in self.order if name in available)
+        return PromptLoader.render(self.template, available)
 
 
 components = SessionComponents(prompt_composer=ApplicationPrompt())
 ```
 
-Keep headings and other markdown in a template, never generated in code. The default composer already renders the catalogue's `system_prompt` template over the same layers; this composer only changes what reaches it. `BeforeModelHook` remains the final seam for changing the exact message list of one provider request; using it to rewrite the first system message intentionally invalidates that request's provider-cache prefix.
+The template places one `{{ layer_name }}` placeholder per layer, and the renderer drops any placeholder that resolves empty. Headings and other markdown belong in the template, never generated in code. The default composer already renders the catalogue's `system_prompt` template over the same layers; this composer only changes what reaches it. `BeforeModelHook` remains the final seam for changing the exact message list of one provider request; using it to rewrite the first system message intentionally invalidates that request's provider-cache prefix.
 
 ## Attachments
 

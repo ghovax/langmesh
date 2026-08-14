@@ -10,7 +10,7 @@ from langmesh import Session, WorkspaceResources
 
 resources = WorkspaceResources.memory(
     {
-        "README.md": "# Review target\n",
+        "README.md": "# Review target",
         ".agents/instructions/review.md": "Cite every finding.",
     }
 )

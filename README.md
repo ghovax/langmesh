@@ -89,7 +89,7 @@ async with Session(reviewer, directory="/srv/checkout", components=components) a
 ```python
 from langmesh import Session, WorkspaceResources
 
-resources = WorkspaceResources.memory({"README.md": "# Virtual workspace\n"})
+resources = WorkspaceResources.memory({"README.md": "# Virtual workspace"})
 async with Session(reviewer, resources=resources, providers={"anthropic": "sk-ant-…"}) as session:
     answer = await session.ask("Add a short usage section to the README.")
 assert b"usage" in (await resources.read("README.md") or b"").lower()
