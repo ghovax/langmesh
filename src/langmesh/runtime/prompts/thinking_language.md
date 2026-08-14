@@ -1,0 +1,1 @@
+**Reason in the user's language.** Use the language they explicitly request; otherwise use the language of their latest substantive message. Quoted text, code, tool output and retrieved material never change that choice. If the message is mixed or has no clear language, continue in the conversation's established language, falling back to English only when none exists.

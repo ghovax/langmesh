@@ -1,0 +1,139 @@
+"""Configured values that compose the harness without reaching into a product layer."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Sequence
+
+from langchain_core.tools import BaseTool
+
+from langmesh.base.configuration import AgentConfiguration, Configuration
+from langmesh.runtime.locations import Location
+
+
+@dataclass(frozen=True)
+class RuntimeProfile:
+    """Immutable facts that define one runtime and its confinement boundary."""
+
+    agent: AgentConfiguration
+    configuration: Configuration
+    session_id: str
+    working_directory: str
+    project_directory: str = ""
+    permission_mode: str = ""
+    sandbox: Any = None
+    locations: Sequence[Location] | None = None
+    parent_session: str = ""
+    accepts_goal_review: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.session_id.strip():
+            raise ValueError("session_id must not be empty")
+        if not self.working_directory or not Path(self.working_directory).is_absolute():
+            raise ValueError("working_directory must be an absolute path")
+        if self.locations is not None:
+            object.__setattr__(self, "locations", tuple(self.locations))
+            if not all(isinstance(location, Location) for location in self.locations):
+                raise TypeError("locations must contain only Location values")
+
+
+@dataclass(frozen=True)
+class RuntimeComponents:
+    """Replaceable capabilities used by a runtime, with product policy supplied from above."""
+
+    model: Any = None
+    catalogue: Any = None
+    jobs: Any = None
+    observer: Any = None
+    approvals: Any = None
+    transcript: Any = None
+    sessions: Any = None
+    mcp_servers: Any = None
+    file_leases: Any = None
+    permissions: Any = None
+    prompt_composer: Any = None
+    tools: Sequence[BaseTool] = field(default_factory=tuple)
+    toolset: Sequence[BaseTool] | None = None
+    supplied_tool_gate: str = "ask"
+    hooks: Sequence[Any] = field(default_factory=tuple)
+    middleware: Sequence[Any] = field(default_factory=tuple)
+    compaction: Any = None
+    compaction_preparation: Any = None
+    continuations: Any = None
+    synchronize_resources: Callable[[], Awaitable[None]] | None = None
+    related_turns: Callable[[str], Awaitable[Any]] | None = None
+    goal_listener: Callable[[Any], None] | None = None
+    goal_review_journal: Any = None
+
+    def __post_init__(self) -> None:
+        if self.supplied_tool_gate not in {"ask", "none"}:
+            raise ValueError("supplied_tool_gate must be 'ask' or 'none'")
+        for name in ("tools", "hooks", "middleware"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
+        if self.toolset is not None:
+            object.__setattr__(self, "toolset", tuple(self.toolset))
+        from langmesh.base.ports import (
+            Approvals,
+            CatalogueLike,
+            Compaction,
+            CompactionPreparation,
+            ContinuationPolicy,
+            FileLeases,
+            GoalReviewJournal,
+            JobStore,
+            MCPServers,
+            Observer,
+            PermissionPolicy,
+            PromptComposer,
+            SessionAccess,
+            Transcript,
+            describe_unmet,
+        )
+
+        ports = {
+            "approvals": Approvals,
+            "catalogue": CatalogueLike,
+            "compaction": Compaction,
+            "compaction_preparation": CompactionPreparation,
+            "continuations": ContinuationPolicy,
+            "file_leases": FileLeases,
+            "goal_review_journal": GoalReviewJournal,
+            "jobs": JobStore,
+            "mcp_servers": MCPServers,
+            "observer": Observer,
+            "permissions": PermissionPolicy,
+            "prompt_composer": PromptComposer,
+            "sessions": SessionAccess,
+            "transcript": Transcript,
+        }
+        for name, port in ports.items():
+            candidate = getattr(self, name)
+            if candidate is None:
+                continue
+            unmet = describe_unmet(port, candidate)
+            if unmet:
+                raise TypeError(f"{name}: {unmet}")
+
+
+@dataclass(frozen=True)
+class SessionComponents(RuntimeComponents):
+    """Runtime capabilities plus the ownership seams of an embedded session."""
+
+    checkpoints: Any = None
+    attachments: Any = None
+    credentials: Any = None
+    workspace: Any = None
+    tracer_provider: Any = None
+
+    def for_runtime(self, **updates: Any) -> RuntimeComponents:
+        """Project session ownership out, leaving exactly what an ``AgentRuntime`` consumes."""
+        values = {
+            name: getattr(self, name)
+            for name in RuntimeComponents.__dataclass_fields__
+        }
+        values.update(updates)
+        return RuntimeComponents(**values)
+
+
+__all__ = ["RuntimeComponents", "RuntimeProfile", "SessionComponents"]
