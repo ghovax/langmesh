@@ -42,7 +42,7 @@ The activity label comes from real states: queue delivery, daemon acceptance, pr
 
 A turn failure renders a localized error card. **Try again** calls the backend's retry verb, shows its spinner from the durable retry event, and continues the saved conversation tail; it never resends the user's message. Sending fresh work instead explicitly supersedes that retryable failure.
 
-Compaction is an explicit visible state even when it was automatically recommended. Before folding, the agent receives a private Bash-only checkpoint segment and must advance the workspace observation registry at least once; the reserve leaves room for multiple inspection or correction calls. A failed checkpoint or fold leaves the conversation unchanged, renders a localized blocking card, disables every send path, and keeps queued messages outside the backend until **Retry** continues the existing compaction operation. Success resumes any message the daemon had already accepted rather than sending it again.
+Compaction is an explicit visible state even when it was automatically recommended. Before compacting, the agent receives a private Bash-only checkpoint segment and must advance the workspace observation registry at least once; the reserve leaves room for multiple inspection or correction calls. A failed checkpoint or compaction leaves the conversation unchanged, renders a localized blocking card, disables every send path, and keeps queued messages outside the backend until **Retry** continues the existing compaction operation. Success resumes any message the daemon had already accepted rather than sending it again.
 
 ## Environments
 

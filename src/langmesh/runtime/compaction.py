@@ -1,28 +1,47 @@
-"""The runtime's compaction concern: when and how to fold a conversation."""
+"""The runtime's compaction concern: when and how to compaction a conversation."""
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import json
+import asyncio
+from contextlib import suppress
+from dataclasses import dataclass, replace
 from itertools import accumulate, takewhile
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, AsyncIterator, Literal
+
+from pydantic import BaseModel, Field
 
 from langmesh.base.message_content import forget_carried_reasoning
 from langmesh.runtime.internals import (
     conversation_tokens,
     message_tokens,
 )
-from langmesh.runtime.turn_events import CompactionDone, CompactionStarted, TurnEvent
-from langmesh.base.ports import CompactionState
-from langchain_core.messages import HumanMessage, ToolMessage
+from langmesh.runtime.turn_events import CompactionDone, CompactionStarted, TurnEvent, Usage
+from langmesh.base.ports import CompactionState, CompactionSummaryState
+from langmesh.runtime.cache_trace import cache_lane
+from langmesh.base.tuning import Tunable, active_tuning
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langmesh.base.errors import log_fields
+from langmesh.runtime.turn_events import ToolResult
+from langmesh.runtime.values import ToolStatus
 
 
 logger = logging.getLogger(__name__)
 
 
+class CompactionSummary(BaseModel):
+    """The durable summary a compaction instruction asks the model to submit."""
+
+    summary: str = Field(
+        description="The entire summary of the conversation compacted away, factual and specific."
+    )
+
+
 class ObservationCompactionPreparation:
-    """Require an observational-memory revision to advance before folding."""
+    """Require an observational-memory revision to advance before compacting."""
 
     def __init__(self, store: Any) -> None:
         self._store = store
@@ -38,6 +57,9 @@ class ObservationCompactionPreparation:
             return 0
 
     async def completed(self, baseline: Any) -> bool:
+        # An absent registry has nothing to hand off, so an empty baseline is a complete handoff.
+        if not baseline:
+            return True
         try:
             return await self._store.revision() > int(baseline)
         except Exception:  # noqa: BLE001 — an invalid registry is not a completed checkpoint
@@ -48,7 +70,7 @@ class ObservationCompactionPreparation:
 
 
 class DirectCompactionPreparation:
-    """Fold directly, for applications that persist no external memory handoff."""
+    """Compaction directly, for applications that persist no external memory handoff."""
 
     def instruction(self, default: str) -> None:
         return None
@@ -65,9 +87,9 @@ class DirectCompactionPreparation:
 
 @dataclass
 class _CompactionControl:
-    """The fold handshake as one state value, so invalid flag combinations cannot accumulate."""
+    """The compaction handshake as one state value, so invalid flag combinations cannot accumulate."""
 
-    phase: Literal["none", "waiting", "recorded", "preparation_failed", "fold_failed"] = "none"
+    phase: Literal["none", "waiting", "recorded", "preparation_failed", "compaction_failed"] = "none"
     reason: Literal["auto", "manual", "overflow"] = "manual"
     resume_after: bool = False
     preparation_token: Any = None
@@ -94,13 +116,13 @@ class _CompactionControl:
         self.phase = "preparation_failed"
         self.failure = message
 
-    def fail_fold(self, message: str) -> None:
-        self.phase = "fold_failed"
+    def fail_compaction(self, message: str) -> None:
+        self.phase = "compaction_failed"
         self.failure = message
 
-    def retry_fold(self) -> None:
-        if self.phase != "fold_failed":
-            raise RuntimeError(f"Cannot retry a fold from {self.phase}.")
+    def retry_compaction(self) -> None:
+        if self.phase != "compaction_failed":
+            raise RuntimeError(f"Cannot retry a compaction from {self.phase}.")
         self.phase = "recorded"
         self.failure = None
 
@@ -130,7 +152,7 @@ class _CompactionControl:
         reason = value.get("reason")
         return cls(
             phase=phase
-            if phase in {"none", "waiting", "recorded", "preparation_failed", "fold_failed"}
+            if phase in {"none", "waiting", "recorded", "preparation_failed", "compaction_failed"}
             else "none",
             reason=reason if reason in {"auto", "manual", "overflow"} else "manual",
             resume_after=bool(value.get("resume_after", False)),
@@ -152,7 +174,7 @@ class _CompactsContext:
     """Keep a conversation inside its window after the agent checkpoints workspace knowledge."""
 
     def _usable_context(self) -> int:
-        """How much of the window a conversation may occupy, leaving room for the answer and for the fold itself."""
+        """How much of the window a conversation may occupy, leaving room for the answer and for the compact itself."""
         window = self._context_window
         if window <= 0:
             return 0
@@ -161,7 +183,7 @@ class _CompactsContext:
         )
 
     def _recent_working_set(self, reason: str = "automatic", recent: list | None = None) -> int:
-        """The tail kept verbatim rather than folded, as a share of the usable window so it scales with the model."""
+        """The tail kept verbatim rather than compacted, as a share of the usable window so it scales with the model."""
         fraction = self._global_configuration.compaction.recent_working_set_fraction
         budget = int(self._usable_context() * fraction)
         if budget > 0 and reason != "manual":
@@ -211,8 +233,8 @@ class _CompactsContext:
             messages.append(pending_message)
         return conversation_tokens(messages)
 
-    def _at_folding_threshold(self, next_request_tokens: int) -> bool:
-        """Whether the next request is large enough that folding is worth its cache invalidation."""
+    def _at_compacting_threshold(self, next_request_tokens: int) -> bool:
+        """Whether the next request is large enough that compacting is worth its cache invalidation."""
         usable = self._usable_context()
         return usable > 0 and next_request_tokens >= (
             self._global_configuration.compaction.reclaim_at_fraction * usable
@@ -231,12 +253,12 @@ class _CompactsContext:
                 )
             )
         compaction = self._global_configuration.compaction
-        if not compaction.automatic or not self._at_folding_threshold(next_request_tokens):
+        if not compaction.automatic or not self._at_compacting_threshold(next_request_tokens):
             return False
         return len(self._bounded_tail(self._conversation)) < len(self._conversation)
 
     def _begin_compaction_preparation(self, *, reason: str, resume_after: bool) -> None:
-        """Begin the configured durable handoff before folding."""
+        """Begin the configured durable handoff before compacting."""
         self._compaction_control.begin(reason=reason, resume_after=resume_after)
         instruction = self._compaction_preparation.instruction(
             self._prompt_loader.load("prepare_compaction", {})
@@ -245,9 +267,9 @@ class _CompactsContext:
             self._compaction_control.record()
         else:
             self._conversation.append(
-                self._reminder_message(
-                    instruction,
-                    marks={"compaction_preparation": True},
+                SystemMessage(
+                    content=instruction,
+                    additional_kwargs={"compaction_preparation": True},
                 )
             )
         self._mark_session_dirty()
@@ -255,7 +277,7 @@ class _CompactsContext:
     def _fail_compaction_preparation(
         self, error: str, *, error_code: str = "compaction_preparation_failed"
     ) -> list[TurnEvent]:
-        """Make an incomplete recording handshake the same durable, visible blocker as a failed fold."""
+        """Make an incomplete recording handshake the same durable, visible blocker as a failed compaction."""
         messages = len(self._conversation)
         tokens = conversation_tokens(self._conversation)
         self._compaction_control.fail_preparation(error)
@@ -365,15 +387,15 @@ class _CompactsContext:
                 tokens_after=self._latest_context_tokens,
             )
             return
-        # The explicit handoff has committed. The fold itself only changes conversation state.
+        # The explicit handoff has committed. The compact itself only changes conversation state.
         original = list(self._conversation)
-        foldable = self._without_compaction_preparation(original)
-        messages_before = len(foldable)
+        compactable = self._without_compaction_preparation(original)
+        messages_before = len(compactable)
         tokens_before = self._latest_context_tokens
         yield CompactionStarted(
             reason=reason, messages_before=messages_before, tokens_before=tokens_before
         )
-        kept = self._bounded_tail(foldable, reason)
+        kept = self._bounded_tail(compactable, reason)
         if len(kept) >= messages_before:
             # A manual no-op is not a broken session. Automatic/overflow attempts that cannot
             # reclaim space are failures and stop future input until the user retries.
@@ -384,7 +406,7 @@ class _CompactsContext:
                 self._fail_compaction(error)
             if ok:
                 try:
-                    self._conversation[:] = foldable
+                    self._conversation[:] = compactable
                     self._latest_context_tokens = conversation_tokens(self._conversation)
                 except Exception as failure:  # noqa: BLE001 — represented as a retryable UI blocker
                     self._conversation[:] = original
@@ -407,8 +429,13 @@ class _CompactsContext:
                 error_code=error_code,
             )
             return
+        older = compactable[: len(compactable) - len(kept)]
+        summary = await self._summarize_compacted(older, compactable) if older else None
+        retained = (
+            [self._summary_message(summary), *kept] if summary else list(kept)
+        )
         try:
-            self._conversation[:] = _without_provider_reasoning(kept)
+            self._conversation[:] = _without_provider_reasoning(retained)
             self._latest_context_tokens = conversation_tokens(self._conversation)
         except Exception as error:  # noqa: BLE001 — represented as a retryable UI blocker
             self._conversation[:] = original
@@ -434,6 +461,195 @@ class _CompactsContext:
             messages_after=len(self._conversation),
             tokens_before=tokens_before,
             tokens_after=self._latest_context_tokens,
+        )
+
+    @staticmethod
+    def _summary_message(summary: str) -> HumanMessage:
+        """One cache-stable message that replaces the compacted turns, invisible to the interface."""
+        return HumanMessage(
+            content=summary,
+            additional_kwargs={"reminder": True, "summary": True},
+        )
+
+    async def _summarize_compacted(self, older: list, conversation: list) -> str | None:
+        """Ask the model to distil the conversation before compacting, preserving its cache prefix."""
+        state = CompactionSummaryState(
+            messages=tuple(older),
+            system_prompt=self._build_static_system_prompt(),
+        )
+        if self._compaction_summarizer is not None:
+            try:
+                with cache_lane("compaction-summary"):
+                    summary = await self._compaction_summarizer.summarize(state)
+            except Exception as error:  # noqa: BLE001 — a failed summary never blocks the compaction
+                logger.warning("compaction summarizer failed; compacting without one: %s", error)
+                return None
+            return str(summary or "").strip() or None
+        instruction = self._prompt_loader.load("compaction_summary", {})
+        with TemporaryDirectory(prefix="langmesh-compaction-summary-") as scratch_directory:
+            summarizer = self._compaction_summarizer_runtime(scratch_directory)
+            try:
+                while not self._abort_event.is_set():
+                    last_usage = None
+                    with cache_lane("compaction-summary"):
+                        async for _event in summarizer.stream(
+                            instruction, as_system_note=True, opens_exchange=True
+                        ):
+                            # The hidden session is private: nothing here is published.
+                            if isinstance(_event, Usage):
+                                last_usage = _event
+                    submitted = summarizer._submitted_compaction_summary
+                    if submitted is not None:
+                        if last_usage is not None:
+                            logger.info(
+                                "compaction summary cache lane=compaction-summary prefix_intact=%s cache_read_tokens=%d reachable_tokens=%d shared_segments=%d segments=%d input_tokens=%d output_tokens=%d",
+                                last_usage.prefix_intact,
+                                last_usage.cache_read_tokens,
+                                last_usage.reachable_tokens,
+                                last_usage.shared_segments,
+                                last_usage.segments,
+                                last_usage.input_tokens,
+                                last_usage.output_tokens,
+                            )
+                        return str(submitted.summary or "").strip() or None
+                    logger.warning(
+                        "the compaction summarizer stopped without submitting its summary; continuing it"
+                    )
+                    self._require_compaction_summary_submission(summarizer)
+                    instruction = self._prompt_loader.load("compaction_summary_missing", {})
+            except Exception as error:  # noqa: BLE001 — a failed summary never blocks the compaction
+                logger.exception("compaction summary failed; compacting without one: %s", error)
+                return None
+            finally:
+                summarizer.abort()
+        return None
+
+    @staticmethod
+    def _require_compaction_summary_submission(summarizer) -> None:
+        """Constrain a summarizer that already reviewed the conversation to its one accepted verdict tool."""
+        summary_tool = next(
+            tool for tool in summarizer._tools if tool.name == "submit_compaction_summary"
+        )
+        summarizer._tools = [summary_tool]
+        summarizer._tool_schemas = {summary_tool.name: summary_tool.args_schema}
+
+    def _compaction_summarizer_runtime(self, scratch_directory: str):
+        """The hidden session that produces the compaction summary, mirroring the goal reviewer."""
+        from langmesh.base.configuration import PermissionEvaluator
+        from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
+        from langmesh.runtime.runtime import AgentRuntime
+
+        summarizer_configuration = self._agent_configuration.model_copy(
+            update={"permission_mode": "automatic"}
+        )
+        summarizer_global_configuration = self._global_configuration.model_copy(
+            update={
+                "toolbox": self._global_configuration.toolbox.model_copy(update={"enabled": False}),
+                # The hidden session inherits the full conversation, so it must never compact itself.
+                "compaction": self._global_configuration.compaction.model_copy(
+                    update={"automatic": False}
+                ),
+            }
+        )
+        summarizer_permissions = PermissionEvaluator(
+            summarizer_configuration.model_copy(
+                update={
+                    "tools": summarizer_configuration.tools.model_copy(
+                        update={
+                            "bash": summarizer_configuration.tools.bash.model_copy(
+                                update={"background_allowed": False}
+                            ),
+                            "disabled": sorted(
+                                set(summarizer_configuration.tools.disabled)
+                                | {tool.name for tool in self._tools}
+                            ),
+                        }
+                    )
+                }
+            )
+        )
+        granted_sandbox = self._granted_profile()
+        summarizer_sandbox = granted_sandbox.narrowed(
+            writable=(scratch_directory,),
+            network=granted_sandbox.network,
+            workspace=self._working_directory,
+        )
+        summarizer_sandbox = replace(
+            summarizer_sandbox,
+            environment={
+                **summarizer_sandbox.environment,
+                "TMPDIR": scratch_directory,
+                "XDG_CACHE_HOME": scratch_directory,
+            },
+        )
+        summarizer = AgentRuntime(
+            RuntimeProfile(
+                agent=summarizer_configuration,
+                configuration=summarizer_global_configuration,
+                session_id=self._session_id,
+                working_directory=self._working_directory,
+                project_directory=self._project_directory,
+                permission_mode="automatic",
+                parent_session=self._parent_session,
+                sandbox=summarizer_sandbox,
+                accepts_goal_review=False,
+                accepts_compaction_summary=True,
+            ),
+            RuntimeComponents(
+                model=self._model,
+                catalogue=self._catalogue,
+                sessions=None,
+                mcp_servers=self._tool_context.mcp_server_manager,
+                tools=tuple(self._extra_tools.values()),
+                supplied_tool_gate=self._supplied_tool_gate,
+                permissions=summarizer_permissions,
+                toolset=tuple(self._tools),
+            ),
+            conversation=list(self._conversation),
+        )
+        summarizer._locations = dict(self._locations)
+        summarizer._locations_by_name = dict(self._locations_by_name)
+        summarizer._tool_context = replace(summarizer._tool_context, toolbox=None)
+        summarizer.restore_session(self.session_snapshot())
+        # A fresh handshake keeps the hidden session from folding its own summary turn.
+        summarizer._compaction_control = _CompactionControl()
+        summarizer._cached_system_prompt = self._build_static_system_prompt()
+        summarizer._attached_files = dict(self._attached_files)
+        return summarizer
+
+    async def _tool_submit_compaction_summary(
+        self,
+        tool_name: str,
+        tool_arguments: dict,
+        tool_call_identifier: str,
+        decision: Any,
+        policy: Any,
+        resolved_location: Any,
+    ):
+        """The one dispatchable call of the hidden compaction summarizer."""
+        model_guidance = ""
+        if not self._accepts_compaction_summary:
+            result = {
+                "code": "internal_verdict_inert",
+                "status": ToolStatus.OK.value,
+            }
+            model_guidance = self._prompt_loader.load(
+                "internal_verdict_inert",
+                {"tool_name": tool_name},
+            )
+        else:
+            submitted = CompactionSummary.model_validate(tool_arguments)
+            self._submitted_compaction_summary = submitted
+            self._abort_event.set()
+            result = {
+                "code": "compaction_summary_submitted",
+                "status": ToolStatus.OK.value,
+            }
+        yield ToolResult(
+            id=tool_call_identifier,
+            name=tool_name,
+            result=result,
+            model_guidance=model_guidance,
         )
 
 

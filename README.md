@@ -95,7 +95,7 @@ async with Session(reviewer, resources=resources, providers={"anthropic": "sk-an
 assert b"usage" in (await resources.read("README.md") or b"").lower()
 ```
 
-Observational memory belongs to those workspace resources, not the session: the agent maintains `.agents/observations.sqlite` through Bash, Git can track it, and LangMesh reads it for presentation, fold verification, and a constant-sized progressive-disclosure descriptor in the system prompt. The descriptor contains only path, revision, counts, and timestamp extent; the agent retrieves relevant entries on demand rather than receiving an ever-growing prompt block.
+Observational memory belongs to those workspace resources, not the session: the agent maintains `.agents/observations.sqlite` through Bash, Git can track it, and LangMesh reads it for presentation, compaction verification, and a constant-sized progressive-disclosure descriptor in the system prompt. The descriptor contains only path, revision, counts, and timestamp extent; the agent retrieves relevant entries on demand rather than receiving an ever-growing prompt block.
 
 Library callers can read or subscribe to the same validated current-state registry without starting a daemon or polling:
 
@@ -122,7 +122,7 @@ All three methods are read-only and create nothing. `describe()` supports progre
 
 Pass `configuration=custom_configuration` when constructing the registry if the configured project `.agents` root is somewhere other than its default relative location.
 
-Three more sit around the turn: bound it, wrap its tools, decide how its history folds. Each one is an object with a method or two, so your own is as short as the ones that ship:
+Three more sit around the turn: bound it, wrap its tools, decide how its history compactions. Each one is an object with a method or two, so your own is as short as the ones that ship:
 
 ```python
 from langmesh import KeepRecentTurns, MaximumToolCalls, Session, SessionComponents

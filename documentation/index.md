@@ -18,6 +18,6 @@ LangMesh is an agent harness with two delivery layers: the `langmesh` Python lib
 - A suspended tool batch is checkpointed with its plans and decisions, so process restart cannot repeat completed side effects.
 - Tool policy runs before hooks; hooks may remove approved calls but cannot add calls.
 - Model-visible history is append-only. Reviewer and continuation requests preserve the existing provider-cache prefix.
-- Compaction preparation, folding, continuation, persistence, workspaces, locations, MCP server connections, and peer sessions are replaceable library ports.
+- Compaction preparation, compaction, continuation, persistence, workspaces, locations, MCP server connections, and peer sessions are replaceable library ports.
 
 Start with the [library quickstart](library/index.md) when embedding LangMesh, or [installation](installation.md) when using the product.

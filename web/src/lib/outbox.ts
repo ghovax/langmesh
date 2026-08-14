@@ -6,7 +6,7 @@ export type Delivery =
   | "accepted"
   /** The session is parked on a decision and took nothing. It stays queued, and stays visible. */
   | "refused"
-  /** A failed context fold blocks the session until the user retries it. */
+  /** A failed compaction blocks the session until the user retries it. */
   | "compaction"
   /** The attempt did not reach the session at all. It stays queued. */
   | "failed";
@@ -23,7 +23,7 @@ export type OutboxHold =
   | "decision"
   /** The last attempt never reached the session. It will go on the next attempt. */
   | "unreachable"
-  /** Context compaction failed; retrying compaction is the only release. */
+  /** A failed compaction is the only thing holding the session; retrying it is the only release. */
   | "compaction"
   /** Nothing is wrong: the queue is empty, or delivery is under way. */
   | null;
@@ -74,7 +74,7 @@ export class Outbox {
     this.messages = [...this.messages, message];
     this.announce();
     // A held queue moves only through its matching explicit release. Adding another message cannot
-    // implicitly retry a failed request, a refused decision, or a failed context fold. It was
+    // implicitly retry a failed request, a refused decision, or a failed compaction. It was
     // accepted by the local queue immediately, so the composer must not claim an API send is active.
     if (this.held !== null) {
       return Promise.resolve(
@@ -104,7 +104,7 @@ export class Outbox {
     void this.pump();
   }
 
-  /** A successful explicit compaction retry releases messages held by the failed fold. */
+  /** A successful explicit compaction retry releases messages held by the failed compaction. */
   compactionRecovered(): void {
     if (this.held !== "compaction") return;
     this.held = null;

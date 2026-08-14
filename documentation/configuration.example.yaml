@@ -115,15 +115,13 @@ workspace:
 
 compaction:
   automatic: true
-  # Conservative scheduling estimate used only when a custom model reports no context capacity.
-  assumed_context_window: 128000
   # Recommended preparation boundary. Late on purpose, with reserved room for the registry checkpoint.
   reclaim_at_fraction: 0.85
   # Safety space for the preparation segment and answer. Every other fraction is a share of what remains.
   output_reserve_fraction: 0.1
   # How much recent conversation stays verbatim. Tokens rather than turns, because an unattended
   # run is one instruction and several hundred tool results.
-  recent_working_set_fraction: 0.25
+  recent_working_set_fraction: 0.15
 
 # What a file the person attaches may cost the conversation it rides in
 attachments:
@@ -206,14 +204,14 @@ composio:
 # the shared pool when a session in that folder starts.
 mcp:
   servers: {}
-    # my-server:
+    # code-indexer:
     #   command: "npx"
     #   args: ["-y", "@scope/server"]
 
 # Sessions on other machines, reachable as peers.
 remote_agents:
   agents: {}
-    # my-peer:
+    # build-runner:
     #   url: "https://…"
 
 telemetry:

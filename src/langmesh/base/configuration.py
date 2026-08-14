@@ -278,13 +278,12 @@ class WorkspaceConfiguration(Section):
 
 
 class CompactionConfiguration(Section):
-    """Context folding thresholds. Observational memory is a separate, user-managed concern."""
+    """Context compacting thresholds. Observational memory is a separate, user-managed concern."""
 
     automatic: bool = Field(True)
-    assumed_context_window: int = Field(128_000, ge=1)
     reclaim_at_fraction: float = Field(0.85)
     output_reserve_fraction: float = Field(0.1)
-    recent_working_set_fraction: float = Field(0.25)
+    recent_working_set_fraction: float = Field(0.15)
 
     @field_validator(
         "reclaim_at_fraction",
@@ -337,7 +336,7 @@ class TuningConfiguration(Section):
 
 
 class UserContextConfiguration(Section):
-    """Opt-in snapshot of how the user works on this machine, folded into the system prompt."""
+    """Opt-in snapshot of how the user works on this machine, compacted into the system prompt."""
 
     enabled: bool = Field(False)
     refresh_hours: float = Field(6.0, gt=0)

@@ -107,7 +107,7 @@ const COMPOSER_FIT_ORDER = [
   "model-provider",
   "model-capabilities",
   "context-detail",
-  "compact",
+  "compaction",
   "sandbox",
   "permission",
   "agent",
@@ -376,7 +376,7 @@ function StopTurnButton({
       variant="solid"
       loading={pending}
       loadingText={translation("stopping")}
-      // Not while the conversation is being folded, since Stop would describe something the model is not doing.
+      // Not while the conversation is being compacted, since Stop would describe something the model is not doing.
       disabled={pending || isCompacting}
       title={isCompacting ? translation("stopUnavailableWhileCompacting") : undefined}
     >
@@ -860,7 +860,7 @@ export function ChatInput({
                       : attachments.length > 0
                         ? translation("placeholderAttachments")
                         : isCompacting
-                          ? // Compaction runs as a turn, so this says the message drains when the fold is done rather than next turn.
+                          ? // Compaction runs as a turn, so this says the message drains when the compaction is done rather than next turn.
                             translation("placeholderCompacting")
                           : isStreaming
                             ? translation("placeholderStreaming")
@@ -1024,11 +1024,11 @@ export function ChatInput({
         />
         {/* What the turn has spent, pushed to the far end by a margin rather than by a spacer the fit would have to ignore. */}
         <Flex ms="auto" align="center" gap={2} flexShrink={0}>
-          {/* Offered whenever there is a conversation to compact: when to do it is the reader's judgement, not a threshold's. */}
+          {/* Offered whenever there is a conversation to compaction: when to do it is the reader's judgement, not a threshold's. */}
           {onCompact && !!sessionId && (
             <Button
-              data-fit-control="compact"
-              {...(hiddenLabels.has("compact") ? { "data-fit-collapsed": "" } : {})}
+              data-fit-control="compaction"
+              {...(hiddenLabels.has("compaction") ? { "data-fit-collapsed": "" } : {})}
               variant="outline"
               h="var(--control-height)"
               // Stated rather than inherited, because the button recipe's own gap is not the one this row uses.
@@ -1050,8 +1050,8 @@ export function ChatInput({
                 <LuFoldVertical size={14} />
               )}
               <Text
-                data-fit-label="compact"
-                data-fit-hidden={hiddenLabels.has("compact") ? "" : undefined}
+                data-fit-label="compaction"
+                data-fit-hidden={hiddenLabels.has("compaction") ? "" : undefined}
               >
                 {isCompacting ? translation("compacting") : translation("compact")}
               </Text>

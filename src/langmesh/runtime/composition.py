@@ -26,6 +26,7 @@ class RuntimeProfile:
     locations: Sequence[Location] | None = None
     parent_session: str = ""
     accepts_goal_review: bool = False
+    accepts_compaction_summary: bool = False
 
     def __post_init__(self) -> None:
         if not self.session_id.strip():
@@ -60,6 +61,7 @@ class RuntimeComponents:
     middleware: Sequence[Any] = field(default_factory=tuple)
     compaction: Any = None
     compaction_preparation: Any = None
+    compaction_summarizer: Any = None
     continuations: Any = None
     synchronize_resources: Callable[[], Awaitable[None]] | None = None
     related_turns: Callable[[str], Awaitable[Any]] | None = None
@@ -78,6 +80,7 @@ class RuntimeComponents:
             CatalogueLike,
             Compaction,
             CompactionPreparation,
+            CompactionSummarizer,
             ContinuationPolicy,
             FileLeases,
             GoalReviewJournal,
@@ -96,6 +99,7 @@ class RuntimeComponents:
             "catalogue": CatalogueLike,
             "compaction": Compaction,
             "compaction_preparation": CompactionPreparation,
+            "compaction_summarizer": CompactionSummarizer,
             "continuations": ContinuationPolicy,
             "file_leases": FileLeases,
             "goal_review_journal": GoalReviewJournal,

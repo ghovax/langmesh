@@ -537,9 +537,14 @@ class _DispatchesTools:
             )
         )
 
-        # Make internal verdicts inert before validation or dispatch outside their dedicated reviewers.
-        if tool_name == "permission_decision" or (
-            tool_name == "submit_goal_review" and not self._accepts_goal_review
+        # Make internal verdicts inert before validation or dispatch outside their dedicated environments.
+        if (
+            tool_name == "permission_decision"
+            or (
+                tool_name == "submit_compaction_summary"
+                and not self._accepts_compaction_summary
+            )
+            or (tool_name == "submit_goal_review" and not self._accepts_goal_review)
         ):
             yield ToolResult(
                 id=tool_call_identifier,
@@ -567,7 +572,8 @@ class _DispatchesTools:
             tool_arguments = _with_schema_defaults(schema, tool_arguments)
 
         if tool_name != "submit_goal_review" and not (
-            self._compaction_control.phase == "waiting" and tool_name == "bash"
+            self._compaction_control.phase == "waiting"
+            and tool_name in {"bash", "load_skill"}
         ):
             try:
                 self._permissions.check_tool(tool_name, **tool_arguments)

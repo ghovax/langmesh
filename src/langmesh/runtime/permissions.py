@@ -288,7 +288,7 @@ class _DecidesPermissions:
         )
 
     def _granted_profile(self):
-        """The session's confinement with every standing grant folded in. What an escape is measured against."""
+        """The session's confinement with every standing grant compacted in. What an escape is measured against."""
         profile = self._sandbox
         for grant in self._access_grants:
             profile = profile.with_grant(grant, workspace=self._working_directory or "")
@@ -339,9 +339,8 @@ class _DecidesPermissions:
             tool_name == "submit_goal_review" and not self._accepts_goal_review
         ):
             return plan
-        if self._compaction_control.phase == "waiting" and tool_name == "bash":
-            # A local, foreground Bash call is the fold protocol itself. The turn loop has
-            # already rejected every other shape; the ordinary sandbox remains the boundary.
+        if self._compaction_control.phase == "waiting" and tool_name in {"bash", "load_skill"}:
+            # The handoff protocol itself: local foreground Bash and read-only skill loading; the turn loop rejects every other shape.
             return plan
         schema = self._tool_schemas.get(tool_name)
         if schema is not None:

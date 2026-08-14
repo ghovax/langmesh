@@ -219,9 +219,9 @@ class CompactionDone(TurnEvent):
     messages_before: int = 0
     messages_after: int = 0
     tokens_before: int = 0
-    # What the fold actually reclaimed, reported by every strategy including a supplied one.
+    # What the compaction actually reclaimed, reported by every strategy including a supplied one.
     tokens_after: int = 0
-    # Present only on a failed fold; the client resolves it through its locale catalogue.
+    # Present only on a failed compaction; the client resolves it through its locale catalogue.
     error_code: str | None = None
 
 

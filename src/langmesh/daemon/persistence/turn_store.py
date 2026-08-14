@@ -711,7 +711,7 @@ class AppendOnlyTaskStore(TaskStore):
         compacted_messages = _compact_history([json.loads(row.message) for row in existing_rows])
         if len(compacted_messages) > len(existing_rows):  # pragma: no cover - invariant guard
             raise AssertionError(
-                f"compaction grew history for {turn_id}: {len(existing_rows)} -> {len(compacted_messages)}"
+                f"compact grew history for {turn_id}: {len(existing_rows)} -> {len(compacted_messages)}"
             )
         for message_index, message in enumerate(compacted_messages):
             await connection.execute(

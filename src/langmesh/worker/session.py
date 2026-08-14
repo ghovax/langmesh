@@ -209,6 +209,14 @@ class SessionExecutor(AgentExecutor):
                 runtime = state.runtime if state is not None else None
                 if runtime is None:
                     runtime = await self._runtime_for(session_id, self._workspace())
+                elif state is not None and state.running:
+                    # Wait for the in-flight turn's teardown (which releases this lock) before mutating the shared runtime.
+                    async with state.lock:
+                        pass
+                    state = self._contexts.get(session_id)
+                    runtime = state.runtime if state is not None else None
+                    if runtime is None:
+                        runtime = await self._runtime_for(session_id, self._workspace())
                 retry_operation = runtime.retry_compaction()
                 if retry_operation == "prepare":
                     should_resume = runtime.resumes_after_compaction
@@ -223,7 +231,7 @@ class SessionExecutor(AgentExecutor):
                         result_event_kind="compaction",
                     )
                     return {"compacted": result is not None, **(result or {})}
-                if retry_operation == "fold":
+                if retry_operation == "compact":
                     should_resume = runtime.resumes_after_compaction
                     result = await self._run_compaction_turn(session_id)
                     if should_resume and result and result.get("ok") is not False:
@@ -1270,7 +1278,7 @@ class SessionExecutor(AgentExecutor):
         return {}
 
     async def compaction_failure(self) -> str | None:
-        """The durable fold failure that forbids accepting another user message."""
+        """The durable compaction failure that forbids accepting another user message."""
         state = self._contexts.get(self._session_id)
         if state is not None and state.runtime is not None:
             return state.runtime.compaction_failure

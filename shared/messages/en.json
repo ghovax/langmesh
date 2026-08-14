@@ -42,7 +42,7 @@
     "answerFailedTitle": "Couldn't submit your answer",
     "cancelToolFailedBody": "The server did not confirm the cancellation. Check the connection and retry.",
     "cancelToolFailedTitle": "Couldn't stop that tool call",
-    "compactFailedBody": "Context compaction failed. Retry it before continuing.",
+    "compactFailedBody": "Compacting the conversation failed. Retry it before continuing.",
     "compactFailedTitle": "Couldn't compact the conversation",
     "decisionFailedTitle": "Couldn't submit your decision",
     "heldForDecisionBody": "The session is waiting on {waitingOn}. Your message is queued and goes out as soon as you decide.",
@@ -82,7 +82,7 @@
     "attachFiles": "Attach files",
     "cacheReads": "Cache reads",
     "compact": "Compact",
-    "compactBody": "The agent first preserves durable workspace knowledge, then discards older conversation while keeping the most recent work verbatim. This frees context, but discarded dialogue can no longer be recalled.",
+    "compactBody": "The agent first preserves durable workspace knowledge, then discards older conversation while keeping the most recent work verbatim. This frees room in the conversation, but discarded dialogue can no longer be recalled.",
     "compactConfirm": "Compact now",
     "compactTitle": "Compact the conversation?",
     "compactTooltip": "Preserve durable knowledge, then discard older history while keeping recent work verbatim",
@@ -118,7 +118,7 @@
     "sending": "Sending",
     "sessionTotals": "Session totals",
     "stop": "Stop",
-    "stopUnavailableWhileCompacting": "The conversation is being compacted; it cannot be stopped mid-fold.",
+    "stopUnavailableWhileCompacting": "The conversation is being compacted; it cannot be stopped mid-compaction.",
     "stopping": "Stopping",
     "total": "Total",
     "uploading": "Uploading {count}",
@@ -126,13 +126,13 @@
     "window": "Window"
   },
   "ChatMessage": {
-    "compactionFailed": "Context compaction failed",
+    "compactionFailed": "Conversation compaction failed",
     "compactedTooltip": "{before, plural, =1 {Compacted # message down to {after}} other {Compacted # messages down to {after}}}",
     "compactingContext": "Compacting the conversation…",
     "contextCompacted": "Conversation compacted",
     "compactionErrors": {
-      "compaction_failed": "The fold could not complete. Retry it before continuing.",
-      "compaction_no_reclaim": "The fold could not reclaim any conversation space.",
+      "compaction_failed": "The compaction could not complete. Retry it before continuing.",
+      "compaction_no_reclaim": "The compaction could not reclaim any conversation space.",
       "compaction_preparation_failed": "The observational-memory checkpoint did not complete, so no history was removed.",
       "compaction_strategy_failed": "The configured compaction strategy failed without changing the conversation."
     },
@@ -177,7 +177,7 @@
       },
       "turn_failed": {
         "title": "Turn could not complete",
-        "body": "The turn stopped unexpectedly. Details were written to the daemon log."
+        "body": "The turn stopped unexpectedly. Read what the server says about it and retry."
       },
       "turn_interrupted": {
         "title": "Turn interrupted",
@@ -224,7 +224,7 @@
     "loadConversationErrorTitle": "Couldn’t load this conversation",
     "memory": "Memory",
     "newConversation": "New conversation",
-    "openThisFolder": "Open this folder",
+    "openThisCompactioner": "Open this folder",
     "path": "Path",
     "permissionModeFailedTitle": "Couldn't change the permission mode",
     "queued": "Queued",
@@ -245,7 +245,7 @@
     "switchToDark": "Switch to dark theme",
     "switchToLight": "Switch to light theme",
     "terminalAndBackground": "Terminal and background processes",
-    "thisFolder": "this folder",
+    "thisCompactioner": "this folder",
     "unknown": "Unknown",
     "untitledConversation": "Untitled conversation",
     "url": "URL"
@@ -327,13 +327,13 @@
     "removeLocation": "Remove environment",
     "host": "Host",
     "noHosts": "No hosts in ~/.ssh/config. Add one there.",
-    "baseDirectory": "Folder path",
-    "openFolder": "Open folder",
+    "baseDirectory": "Compactioner path",
     "addLocation": "Add environment",
     "loadingLocations": "Loading workspace environments",
     "conflictSameDirectory": "Two entries use the same folder {directory}. Remove one or choose a different folder.",
     "conflictNested": "{inner} is inside {outer}, so the folders overlap. The outer folder already includes everything beneath it.",
-    "homeUnresolved": "LangMesh could not read this host's home directory over SSH. Type the path to use."
+    "homeUnresolved": "LangMesh could not read this host's home directory over SSH. Type the path to use.",
+    "openFolder": "Open folder"
   },
   "LocationStatus": {
     "uri": "URI",
@@ -495,7 +495,6 @@
     "newest": "Newest",
     "newestFirst": "Newest first",
     "noMatches": "No conversations match “{query}”",
-    "openFolder": "Open folder",
     "workspaceOptions": "Workspace options",
     "workspaceSettings": "Workspace settings",
     "workspaces": "Workspaces",
@@ -521,7 +520,8 @@
     "fieldConversations": "Conversations",
     "fieldWorkspace": "Workspace",
     "hideWorkspace": "Hide this workspace's conversations",
-    "showWorkspace": "Show this workspace's conversations"
+    "showWorkspace": "Show this workspace's conversations",
+    "openFolder": "Open folder"
   },
   "Settings": {
     "agent": {
@@ -531,14 +531,6 @@
     "attachments": {
       "_": "Attachments",
       "inline_image_megabytes": "Inline an image up to (MB)"
-    },
-    "compaction": {
-      "_": "Conversation compaction",
-      "automatic": "Compact automatically",
-      "assumed_context_window": "Assumed context window",
-      "reclaim_at_fraction": "Compact at (share of window)",
-      "output_reserve_fraction": "Reserved for the answer (share)",
-      "recent_working_set_fraction": "Kept verbatim (share)"
     },
     "composio": {
       "_": "Composio",
@@ -732,6 +724,13 @@
     "workspace": {
       "_": "Workspaces",
       "strategy": "Strategy"
+    },
+    "compaction": {
+      "_": "Conversation compaction",
+      "automatic": "Compact automatically",
+      "reclaim_at_fraction": "Compact at (share of window)",
+      "output_reserve_fraction": "Reserved for the answer (share)",
+      "recent_working_set_fraction": "Kept verbatim (share)"
     }
   },
   "SettingsAbout": {
@@ -742,14 +741,6 @@
     "attachments": {
       "_": "What a file you attach may cost the conversation it rides in.",
       "inline_image_megabytes": "The ceiling on an image inlined for a vision model. Above it the path and metadata still reach the model, but the pixels do not."
-    },
-    "compaction": {
-      "_": "How conversation history is folded as it grows.",
-      "automatic": "Reclaim context on its own as it fills. Manual compaction works either way.",
-      "assumed_context_window": "Conservative scheduling capacity when a custom model reports no context window. It is shown as estimated and never used as a certain rejection limit.",
-      "reclaim_at_fraction": "Recommended preparation boundary within the usable window. The agent records durable knowledge before older history is discarded, so the reserved space remains available for that final segment.",
-      "output_reserve_fraction": "Safety buffer kept outside the usable window for the current answer and the pre-fold recording segment.",
-      "recent_working_set_fraction": "Share of the usable window kept verbatim after older history is discarded. It is measured in tokens because one turn may contain hundreds of tool results."
     },
     "composio": {
       "_": "Composio's hosted MCP gateway.",
@@ -941,6 +932,13 @@
     "workspace": {
       "_": "Where a session's tools run.",
       "strategy": "Where a session's work happens: the project directory itself, a branch of its own, or a git worktree of its own."
+    },
+    "compaction": {
+      "_": "How conversation history is compacted as it grows.",
+      "automatic": "Compact on its own as the conversation fills. Manual compaction works either way.",
+      "reclaim_at_fraction": "Recommended preparation boundary within the usable window. The agent records durable knowledge before older history is discarded, so the reserved space remains available for that final segment.",
+      "output_reserve_fraction": "Safety buffer kept outside the usable window for the current answer and the pre-compaction recording segment.",
+      "recent_working_set_fraction": "Share of the usable window kept verbatim after older history is discarded. It is measured in tokens because one turn may contain hundreds of tool results."
     }
   },
   "SettingsChoices": {
@@ -985,7 +983,6 @@
     "bash": "Bash",
     "chooseAgent": "Choose agent",
     "commandPermissions": "Command permissions",
-    "compaction": "Compaction",
     "composioApiKey": "Composio API key",
     "computerControl": "Computer control",
     "computerControlBody": "Computer control needs Accessibility access to read and drive other apps on this Mac.",
@@ -1061,7 +1058,8 @@
     "toolboxUnavailable": "This machine has no package manager that can give a session tools of its own.",
     "tools": "Tools",
     "userContext": "Work habits",
-    "userContextHint": "Share a snapshot of how you work — frequent folders, recent files, apps, and sites — so the assistant fits your habits. Off by default; stays on this machine."
+    "userContextHint": "Share a snapshot of how you work — frequent folders, recent files, apps, and sites — so the assistant fits your habits. Off by default; stays on this machine.",
+    "compaction": "Compaction"
   },
   "TerminalPanel": {
     "protocolErrorTitle": "Terminal protocol error",

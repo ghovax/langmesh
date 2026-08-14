@@ -125,6 +125,66 @@ function WarningMessageCard({ message }: { message: ChatMessage }) {
   );
 }
 
+// A failed compaction is an error the person must act on, so it renders as a full card like
+// the other server errors rather than a divider label.
+function CompactionErrorCard({
+  message,
+  onRetry,
+  retrying = false,
+}: {
+  message: ChatMessage;
+  onRetry?: () => void;
+  retrying?: boolean;
+}) {
+  const translation = useTranslations("ChatMessage");
+  const errorCode = message.meta?.compactionErrorCode;
+  return (
+    <Box
+      w="100%"
+      maxW="640px"
+      border="1px solid"
+      borderColor="red.muted"
+      bg="red.subtle"
+      borderRadius="md"
+      px={2.5}
+      py={2.5}
+    >
+      <Flex align="center" gap={2} color="red.fg">
+        <Box display="flex" alignItems="center" flexShrink={0}>
+          <LuTriangleAlert size={15} />
+        </Box>
+        <Text textStyle="panelTitle" lineHeight="1.3">
+          {translation("compactionFailed")}
+        </Text>
+      </Flex>
+      {errorCode ? (
+        <Box mt={1.5}>
+          <MarkdownContent
+            content={translation(`compactionErrors.${errorCode}`)}
+            fontSize="sm"
+          />
+        </Box>
+      ) : null}
+      {onRetry && (
+        <Flex mt={2.5}>
+          <Button
+            variant="solid"
+            colorPalette="red"
+            fontWeight="medium"
+            px={2.5}
+            minH="2rem"
+            onClick={onRetry}
+            disabled={retrying}
+          >
+            {retrying ? <ActivitySpinner /> : <LuRotateCw size={13} />}
+            {translation(retrying ? "retrying" : "retry")}
+          </Button>
+        </Flex>
+      )}
+    </Box>
+  );
+}
+
 function ToolMessageCard({ message }: ChatMessageProps) {
   return (
     <ToolCall
@@ -426,23 +486,32 @@ export const ChatMessageItem = memo(function ChatMessageItem({
       // A full-width divider marking where earlier context was summarized away.
       const running = message.meta?.status === "running";
       const failed = message.meta?.status === "failed";
+      if (failed) {
+        return (
+          <Box alignSelf="flex-start" w="100%">
+            <CompactionErrorCard message={message} onRetry={onRetry} retrying={retrying} />
+          </Box>
+        );
+      }
       const before = Number(message.meta?.messagesBefore ?? 0);
       const after = Number(message.meta?.messagesAfter ?? 0);
       return (
         <Box alignSelf="stretch" w="100%">
-          <Flex align="center" gap={3} py={failed ? 2 : 1} color={failed ? "red.fg" : "fg.subtle"}>
+          <Flex align="center" gap={3} py={1} color="fg.subtle">
             <Separator flex={1} />
             <Flex
               align="center"
               gap={1.5}
               flexShrink={0}
-              color={running ? "blue.fg" : failed ? "red.fg" : undefined}
+              color={running ? "blue.fg" : undefined}
               title={
-                running || !before ? undefined : translation("compactedTooltip", { before, after })
+                running || !before
+                  ? undefined
+                  : translation("compactedTooltip", { before, after })
               }
             >
               <ActivityIcon>
-                {running ? <ActivitySpinner /> : failed ? <LuTriangleAlert /> : <LuFoldVertical />}
+                {running ? <ActivitySpinner /> : <LuFoldVertical />}
               </ActivityIcon>
               <Box>
                 <Text
@@ -451,35 +520,9 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                 >
                   {running
                     ? translation("compactingContext")
-                    : failed
-                      ? translation("compactionFailed")
-                      : translation("contextCompacted")}
+                    : translation("contextCompacted")}
                 </Text>
-                {failed && message.meta?.compactionErrorCode ? (
-                  <Text textStyle="2xs" color="red.fg" maxW="36rem">
-                    {translation(`compactionErrors.${message.meta.compactionErrorCode}`)}
-                  </Text>
-                ) : null}
               </Box>
-              {failed && onRetry ? (
-                <>
-                  <LuDot size={18} style={{ flexShrink: 0, opacity: 0.7 }} />
-                  <Button
-                    size="2xs"
-                    variant="plain"
-                    px={1}
-                    gap={1}
-                    colorPalette="red"
-                    color="red.fg"
-                    flexShrink={0}
-                    onClick={onRetry}
-                    disabled={retrying}
-                  >
-                    {retrying ? <ActivitySpinner /> : <LuRotateCw size={13} />}
-                    {translation(retrying ? "retrying" : "retry")}
-                  </Button>
-                </>
-              ) : null}
             </Flex>
             <Separator flex={1} />
           </Flex>

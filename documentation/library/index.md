@@ -76,5 +76,5 @@ Supplied tools are gated by default. Set `supplied_tool_gate="none"` only when t
 - [Lifecycle and control](lifecycle.md) covers suspension, resume, interrupts, steering, and retries.
 - [Events and driving patterns](events.md) covers the complete stream contract.
 - [Customization](customization.md) covers tools, policy, hooks, middleware, locations, peer sessions, and MCP servers.
-- [Compaction and continuation](compaction.md) covers history folding and autonomous work.
+- [Compaction and continuation](compaction.md) covers history compaction and autonomous work.
 - [Resources and persistence](resources.md) covers virtual workspaces, checkpoints, transcripts, and background jobs.

@@ -1,6 +1,6 @@
 # Events and driving patterns
 
-`Session.stream()`, `resume()`, `compact()`, and `retry()` yield a closed `TurnEventUnion`. Dispatch on the variant class; the `EventType` enum is available for generic transports.
+`Session.stream()`, `resume()`, `compaction()`, and `retry()` yield a closed `TurnEventUnion`. Dispatch on the variant class; the `EventType` enum is available for generic transports.
 
 | Event | Meaning | Typical action |
 | --- | --- | --- |
@@ -11,7 +11,7 @@
 | `Suspended` | Durable permission or question batch | Collect decisions, call `respond()`, then `resume()` |
 | `Steering` | Mid-turn user message accepted | Reconcile optimistic UI by message id |
 | `Usage` | Latest request and cumulative token/cache data | Update usage telemetry |
-| `CompactionStarted` / `CompactionDone` | Context fold lifecycle | Show fold state and reclaimed size |
+| `CompactionStarted` / `CompactionDone` | Context compaction lifecycle | Show compaction state and reclaimed size |
 | `GoalReviewStarted` / `GoalReviewProgress` / `GoalReviewFinished` | Independent goal review | Render review status separately from assistant prose |
 | `Checkpoint` | Tool batch became durable | Commit a product high-water mark if needed |
 | `Error` | Structured turn or tool failure | Render its code and parameters |
