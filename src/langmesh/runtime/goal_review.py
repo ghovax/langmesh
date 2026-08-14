@@ -169,7 +169,7 @@ class _ReviewsGoal:
         )
 
     def _goal_reviewer(self, scratch_directory: str):
-        from langmesh.runtime.composition import RuntimeComponents, RuntimeSpec
+        from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
         from langmesh.runtime.runtime import AgentRuntime
 
         reviewer_configuration = self._agent_configuration.model_copy(
@@ -223,7 +223,7 @@ class _ReviewsGoal:
                 ),
             )
         reviewer = AgentRuntime(
-            RuntimeSpec(
+            RuntimeProfile(
                 agent=reviewer_configuration,
                 configuration=reviewer_global_configuration,
                 session_id=self._session_id,

@@ -14,7 +14,7 @@
 
 ## Composition
 
-::: langmesh.runtime.composition.RuntimeSpec
+::: langmesh.runtime.composition.RuntimeProfile
 
 ::: langmesh.runtime.composition.RuntimeComponents
 

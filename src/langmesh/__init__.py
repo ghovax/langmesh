@@ -49,7 +49,7 @@ from langmesh.runtime.compaction import (
     ObservationCompactionPreparation,
 )
 from langmesh.runtime.continuation import TuningContinuationPolicy
-from langmesh.runtime.composition import RuntimeComponents, RuntimeSpec, SessionComponents
+from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile, SessionComponents
 from langmesh.runtime.hooks import MaximumToolCalls
 from langmesh.runtime.locations import Location
 from langmesh.runtime.session_control import PendingTurn, SessionPhase, SessionState
@@ -188,7 +188,7 @@ __all__ = [
     "ResourceChangeSource",
     "ResourceWatchUnsupported",
     "RuntimeComponents",
-    "RuntimeSpec",
+    "RuntimeProfile",
     "PermissionMode",
     "PermissionPolicy",
     "PromptComposer",
@@ -478,7 +478,7 @@ class Session:
                     update={"provider": provider, "model": model}
                 )
             self._runtime = AgentRuntime(
-                RuntimeSpec(
+                RuntimeProfile(
                     agent=agent_configuration,
                     configuration=self._configuration,
                     session_id=self._session_id,

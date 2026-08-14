@@ -13,7 +13,7 @@ from langmesh.runtime.locations import Location
 
 
 @dataclass(frozen=True)
-class RuntimeSpec:
+class RuntimeProfile:
     """Immutable facts that define one runtime and its confinement boundary."""
 
     agent: AgentConfiguration
@@ -136,4 +136,4 @@ class SessionComponents(RuntimeComponents):
         return RuntimeComponents(**values)
 
 
-__all__ = ["RuntimeComponents", "RuntimeSpec", "SessionComponents"]
+__all__ = ["RuntimeComponents", "RuntimeProfile", "SessionComponents"]

@@ -84,7 +84,7 @@ from langmesh.base.serialization import compact
 from langmesh.base.toolbox import toolbox_for
 from langmesh.runtime.goal import Goal
 from langmesh.runtime.goal_review import _ReviewsGoal
-from langmesh.runtime.composition import RuntimeComponents, RuntimeSpec
+from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.internals import (
     _cap_model_result_payload,
     _maybe_json,
@@ -484,7 +484,7 @@ class AgentRuntime(
 
     def __init__(
         self,
-        spec: RuntimeSpec,
+        profile: RuntimeProfile,
         components: RuntimeComponents = RuntimeComponents(),
         *,
         conversation: Optional[list] = None,
@@ -492,11 +492,11 @@ class AgentRuntime(
         from langmesh.runtime.hooks import HookRunner
         from langmesh.runtime.pipeline import ToolPipeline
 
-        agent_configuration = spec.agent
-        global_configuration = spec.configuration
-        session_id = spec.session_id
-        working_directory = spec.working_directory
-        project_directory = spec.project_directory
+        agent_configuration = profile.agent
+        global_configuration = profile.configuration
+        session_id = profile.session_id
+        working_directory = profile.working_directory
+        project_directory = profile.project_directory
         session_access = components.sessions
         mcp_server_manager = components.mcp_servers
         model = components.model
@@ -509,7 +509,7 @@ class AgentRuntime(
         permissions = components.permissions
         toolset = components.toolset
 
-        self._spec = spec
+        self._profile = profile
         self._components = components
         self._prompt_composer = components.prompt_composer
         self._hooks = HookRunner(components.hooks)
@@ -518,24 +518,24 @@ class AgentRuntime(
         self._resource_sync = components.synchronize_resources
         self._session_id = session_id
         # The session that created this one, empty when a person did. Reporting back needs its id.
-        self._parent_session = spec.parent_session
+        self._parent_session = profile.parent_session
         # What every child is confined to, held so a configuration edit cannot widen a live session.
         from langmesh.base.confinement import Grant
 
         # Normalised once, because callers hand this three different shapes.
-        self._sandbox = _as_profile(spec.sandbox)
+        self._sandbox = _as_profile(profile.sandbox)
         self._agent_configuration = agent_configuration
         self._global_configuration = global_configuration
         self._working_directory = working_directory or str(Path.home())
         self._project_directory = project_directory or self._working_directory
         # The daemon already resolved the session mode; a direct library caller falls back to the profile.
         self._permission_mode = PermissionMode.resolve(
-            spec.permission_mode, agent_configuration.permission_default
+            profile.permission_mode, agent_configuration.permission_default
         )
         # The locations the agent may address, with a local one synthesized when none were supplied.
         self._locations: dict[str, ResolvedLocation] = {}
         self._locations_by_name: dict[str, ResolvedLocation] = {}
-        self._build_locations(spec.locations)
+        self._build_locations(profile.locations)
 
         model_identifier = agent_configuration.model_identifier
         # Only a runtime that must build a client needs to be told which one.
@@ -575,7 +575,7 @@ class AgentRuntime(
             )
         )
         self._tools = [tool for tool in configured_tools if tool.name != "submit_goal_review"]
-        if spec.accepts_goal_review:
+        if profile.accepts_goal_review:
             self._tools.append(submit_goal_review_tool)
         # Keep one cache-stable schema while restricting verdict execution to dedicated reviewers.
         self._model_tools = [
@@ -623,7 +623,7 @@ class AgentRuntime(
         self._transcript = transcript
         # The daemon's event publisher is optional; the registry reader is used only for fold verification.
         self._goal_review_journal = components.goal_review_journal
-        self._accepts_goal_review = spec.accepts_goal_review
+        self._accepts_goal_review = profile.accepts_goal_review
         self._submitted_goal_review = None
         # When the turn now running began, for the transcript entry it will produce.
         self._turn_started_at = None

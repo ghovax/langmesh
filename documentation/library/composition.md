@@ -4,21 +4,21 @@ LangMesh separates three concerns:
 
 | Value | Owns | Changes while running? |
 | --- | --- | --- |
-| `RuntimeSpec` | Agent, global configuration, identity, directories, confinement, locations, parent, reviewer capability | No |
+| `RuntimeProfile` | Agent, global configuration, identity, directories, confinement, locations, parent, reviewer capability | No |
 | `RuntimeComponents` | Model and replaceable runtime capabilities | No; replace the value before construction |
 | `SessionComponents` | All runtime components plus checkpoints, credentials, workspace management, and tracing | No; `Session` owns their lifetime |
 
-The daemon uses the same `RuntimeSpec` and `RuntimeComponents` API as an embedder. Product persistence is connected through `GoalReviewJournal`; the core never imports daemon or worker state.
+The daemon uses the same `RuntimeProfile` and `RuntimeComponents` API as an embedder. Product persistence is connected through `GoalReviewJournal`; the core never imports daemon or worker state.
 
 ## Direct runtime construction
 
 Use `Session` unless your application already owns checkpointing, resource leases, and turn serialization. Direct construction is appropriate for a scheduler or another session host.
 
 ```python
-from langmesh import AgentRuntime, RuntimeComponents, RuntimeSpec
+from langmesh import AgentRuntime, RuntimeComponents, RuntimeProfile
 
 
-spec = RuntimeSpec(
+profile = RuntimeProfile(
     agent=agent,
     configuration=configuration,
     session_id="session-018f",
@@ -34,13 +34,13 @@ components = RuntimeComponents(
     permissions=permission_policy,
     file_leases=file_leases,
 )
-runtime = AgentRuntime(spec, components)
+runtime = AgentRuntime(profile, components)
 
 async for event in runtime.stream("Inspect the current change."):
     consume(event)
 ```
 
-`RuntimeSpec` requires a non-empty session id and an absolute working directory. `RuntimeComponents` validates structural ports at construction and copies mutable sequences to tuples.
+`RuntimeProfile` requires a non-empty session id and an absolute working directory. `RuntimeComponents` validates structural ports at construction and copies mutable sequences to tuples.
 
 ## Session composition
 

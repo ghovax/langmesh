@@ -1,13 +1,13 @@
 """The configurable core runtime and its public composition values."""
 
-from langmesh.runtime.composition import RuntimeComponents, RuntimeSpec, SessionComponents
+from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile, SessionComponents
 from langmesh.runtime.session_control import PendingTurn, SessionPhase, SessionState
 
 __all__ = [
     "AgentRuntime",
     "PendingTurn",
     "RuntimeComponents",
-    "RuntimeSpec",
+    "RuntimeProfile",
     "SessionComponents",
     "SessionPhase",
     "SessionState",

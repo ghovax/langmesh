@@ -45,7 +45,7 @@ from langmesh.protocol.events import StatusEvent
 from langmesh.protocol.parts import _event_part
 from langmesh.protocol.turn_record import PendingInteraction, ToolGate, TurnRecord
 from langmesh.runtime.goal import Goal, GoalReviewPhase
-from langmesh.runtime.composition import RuntimeComponents, RuntimeSpec
+from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.locations import Location
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import SuspensionGate
@@ -814,7 +814,7 @@ class SessionExecutor(AgentExecutor):
             )
         runtime_directory = working_directory or project_directory or str(Path.cwd())
         runtime = AgentRuntime(
-            RuntimeSpec(
+            RuntimeProfile(
                 agent=configuration,
                 configuration=self._global_configuration,
                 session_id=session_id,
