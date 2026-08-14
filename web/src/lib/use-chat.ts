@@ -4,13 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelTurn,
   abortToolCall,
+  retrySessionTurn,
   attachSession,
   compactSession,
   messageParts,
   resolvePermission,
   resolveQuestion,
   fetchSessionTurns,
-  fetchSessionTurnsPage,
   sessionCreate,
   sessionSend,
   CONTENT_BLOCK_METADATA_KEY,
@@ -21,6 +21,8 @@ import {
   type A2APart,
   type A2ATurn as A2ATurnWire,
   type PermissionMode,
+  type SessionStreamFrame,
+  type SendOutcome,
   type WorktreeStrategy,
 } from "./api";
 import {
@@ -35,7 +37,7 @@ import {
 import { toaster } from "@/components/ui/toaster";
 import { swallowed } from "@/lib/swallowed";
 import { useTranslations } from "next-intl";
-import { asArray, asRecord } from "@/lib/coerce";
+import { asRecord } from "@/lib/coerce";
 import type { PrefixDivergence, WireEvent } from "@shared/generated/events";
 import { clientIdentifier } from "@/lib/identifier";
 import { Outbox, type Delivery, type OutboxHold, type OutboxMessage } from "@/lib/outbox";
@@ -61,8 +63,6 @@ const TERMINAL_STATES: ReadonlySet<TaskState> = new Set([
   "rejected",
 ]);
 
-const HISTORY_PAGE_LIMIT = 500;
-
 // A file attached to a turn, as the metadata a chip renders from. Carried on the user message's meta.
 export interface MessageAttachment {
   filename: string;
@@ -70,6 +70,8 @@ export interface MessageAttachment {
   mimeType: string;
   size: number;
 }
+
+export type TranslationParameters = Record<string, string | number>;
 
 // The per-message side data reducers attach and views read. Every field optional and role-specific.
 export interface MessageMeta {
@@ -82,10 +84,17 @@ export interface MessageMeta {
   permission?: ToolPermission;
   question?: ToolQuestion;
   error?: FriendlyError;
-  warning?: { code: string; title: string; message: string };
+  warning?: { code: "image_metadata_only"; parameters?: TranslationParameters };
   reason?: string;
   messagesBefore?: number;
   messagesAfter?: number;
+  compactionErrorCode?:
+    | "compaction_failed"
+    | "compaction_no_reclaim"
+    | "compaction_preparation_failed"
+    | "compaction_strategy_failed";
+  retrying?: boolean;
+  retryFailed?: boolean;
   durationMs?: number;
   attachments?: MessageAttachment[];
   // On a peer message: which session sent it, since a report comes from somewhere with an id.
@@ -135,6 +144,7 @@ export interface TokenUsage {
   contextInputTokens: number;
   contextOutputTokens: number;
   contextWindow: number;
+  contextWindowEstimated: boolean;
   // What the latest call's cache did and why, since a running total cannot say which call missed.
   contextCacheReadTokens: number;
   reachableTokens: number;
@@ -169,90 +179,64 @@ function requiredContentBlockIdentifier(metadata: Record<string, unknown> | unde
   return identifier;
 }
 
+type FriendlyErrorCode =
+  | "authentication_failed"
+  | "connection_failed"
+  | "context_window_exceeded"
+  | "image_unsupported"
+  | "provider_unavailable"
+  | "rate_limited"
+  | "request_rejected"
+  | "server_error"
+  | "turn_failed"
+  | "turn_interrupted";
+
 interface FriendlyError {
-  code: string;
-  title: string;
-  message: string;
+  code: FriendlyErrorCode;
+  parameters?: TranslationParameters;
   status?: number;
 }
 
-function friendlyErrorFromData(data: Record<string, unknown>): FriendlyError {
-  const code = String(data.code ?? "turn_failed");
-  const status = typeof data.status === "number" ? data.status : undefined;
-  const fallback = (() => {
-    switch (code) {
-      case "provider_unavailable":
-        return {
-          title: "Model temporarily unavailable",
-          message:
-            "The agent's model provider is temporarily unavailable. Try again in a moment or configure a different model for this agent.",
-        };
-      case "rate_limited":
-        return {
-          title: "Model rate limit reached",
-          message:
-            "The agent's provider is rate limiting requests. Wait a bit or configure another model for this agent.",
-        };
-      case "authentication_failed":
-        return {
-          title: "Provider credentials need attention",
-          message:
-            "The agent's provider rejected the configured credentials. Check the API key or configure another model for this agent.",
-        };
-      case "connection_failed":
-      case "network_error":
-        return {
-          title: "Connection interrupted",
-          message:
-            "The model connection dropped before the turn finished. Check the connection and retry.",
-        };
-      case "server_error":
-        return {
-          title: "Server request failed",
-          message: "LangMesh could not start the turn. Check the daemon log and try again.",
-        };
-      // The fallback for when the daemon could not name the window and the model. Its own case, since an overlong conversation is worth saying plainly.
-      case "context_window_exceeded":
-      case "request_too_large":
-        return {
-          title: "Conversation is too long for this model",
-          message:
-            "The request was larger than this model's context window. Compact the conversation, start a new one, or switch to a model with a larger window. A single tool result — a long file or a screen listing — is the usual cause.",
-        };
-      case "request_rejected":
-        return {
-          title: "Model rejected the request",
-          message:
-            "The agent's model could not accept this turn. Adjust the request or configure a different model for this agent.",
-        };
-      case "image_unsupported":
-        return {
-          title: "This model can't read images",
-          message:
-            "The agent's model rejected the attached image — it looks like a text-only model. Configure a vision-capable model for this agent and try again.",
-        };
-      default:
-        return {
-          title: "Turn could not complete",
-          message: "The turn stopped unexpectedly. The raw details were written to the server log.",
-        };
-    }
-  })();
+function translationParameters(value: unknown): TranslationParameters | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value).filter(
+    (entry): entry is [string, string | number] =>
+      typeof entry[1] === "string" || typeof entry[1] === "number",
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function structuredErrorFromData(data: Record<string, unknown>): FriendlyError {
+  const code = data.code;
+  if (
+    code !== "authentication_failed" &&
+    code !== "connection_failed" &&
+    code !== "context_window_exceeded" &&
+    code !== "image_unsupported" &&
+    code !== "provider_unavailable" &&
+    code !== "rate_limited" &&
+    code !== "request_rejected" &&
+    code !== "server_error" &&
+    code !== "turn_failed" &&
+    code !== "turn_interrupted"
+  ) {
+    throw new Error(`Invalid turn error code: ${String(code)}`);
+  }
+  const parameters = translationParameters(data.parameters);
   return {
     code,
-    status,
-    title: String(data.title ?? fallback.title),
-    message: String(data.message ?? fallback.message),
+    ...(typeof data.status === "number" ? { status: data.status } : {}),
+    ...(parameters ? { parameters } : {}),
   };
 }
 
 // A turn-level failure worth a toast. A tool-scoped error renders on its own card instead.
-function friendlyErrorFromPart(part: A2APart | undefined): FriendlyError | null {
+function structuredErrorFromPart(part: A2APart | undefined): FriendlyError | null {
   if (!part || part.kind !== "data") return null;
   const payload = partPayload(part.data);
   // A `tool_call_id` marks a failure belonging to one card, which renders in place.
   if (payload.kind !== "error" || payload.tool_call_id) return null;
-  return friendlyErrorFromData(payload);
+  return structuredErrorFromData(payload);
 }
 
 /** Take a row back out of the transcript, for a message that turned out never to have been delivered. */
@@ -260,17 +244,57 @@ function dropMessage(state: ReduceState, id: string): void {
   state.messages = state.messages.filter((message) => message.id !== id);
 }
 
+function settleCompactionMarker(state: ReduceState, fallbackId: string, meta: MessageMeta): void {
+  const runningIndex = state.messages.findLastIndex(
+    (message) => message.role === "compaction" && message.meta?.status === "running",
+  );
+  if (runningIndex >= 0) {
+    state.messages = state.messages.map((message, index) =>
+      index === runningIndex ? { ...message, meta: { ...message.meta, ...meta } } : message,
+    );
+    return;
+  }
+  // The persisted row may already have settled this same pass under a different id; do not
+  // draw a second separator beside the one the transcript owns.
+  if (meta.status === "done" || meta.status === "failed") {
+    const alreadySettled = state.messages.some(
+      (message) => message.role === "compaction" && message.meta?.status === meta.status,
+    );
+    if (alreadySettled) return;
+  }
+  const existing = state.messages.find((message) => message.id === fallbackId);
+  if (existing) {
+    upsertMessage(state, { ...existing, meta: { ...existing.meta, ...meta } });
+    return;
+  }
+  state.appendMessage({
+    id: fallbackId,
+    role: "compaction",
+    content: "",
+    timestamp: new Date().toISOString(),
+    meta,
+  });
+}
+
+function dropCompactionMarker(state: ReduceState, fallbackId: string): void {
+  const runningIndex = state.messages.findLastIndex(
+    (message) => message.role === "compaction" && message.meta?.status === "running",
+  );
+  if (runningIndex >= 0) {
+    state.messages = state.messages.filter((_, index) => index !== runningIndex);
+    return;
+  }
+  dropMessage(state, fallbackId);
+}
+
 function pushErrorMessage(state: ReduceState, error: FriendlyError, sourceId?: string): void {
-  state.messages = [
-    ...state.messages,
-    {
-      id: stableMessageId(state, "error", sourceId),
-      role: "error",
-      content: `${error.title} — ${error.message}`,
-      timestamp: new Date().toISOString(),
-      meta: { error },
-    },
-  ];
+  state.appendMessage({
+    id: stableMessageId(state, "error", sourceId),
+    role: "error",
+    content: "",
+    timestamp: new Date().toISOString(),
+    meta: { error },
+  });
 }
 
 function streamedMcpResult(data: Record<string, unknown>): Record<string, unknown> {
@@ -311,12 +335,120 @@ function mergeMcpFinalResult(existing: unknown, finalResult: unknown): unknown {
 
 // Turning A2A stream parts into chat state. Shared by attach and replay, so both render identically.
 
-interface ReduceState {
-  messages: ChatMessage[];
-  tasks: ChatTask[];
-  tokenUsage: TokenUsage | null; // latest cumulative token totals, if any reported
+type BufferedDelta = {
+  key: string;
+  channel: "text" | "thinking";
+  blockIdentifier: string;
+  chunks: string[];
+};
+
+class TranscriptIndex {
+  private runningThinking = -1;
+  private readonly blockOwners = new Map<string, number>();
+
+  private observe(message: ChatMessage, messageIndex: number): void {
+    if (isRunningThinkingMessage(message)) this.runningThinking = messageIndex;
+    for (const block of message.contentBlocks ?? []) {
+      this.blockOwners.set(block.identifier, messageIndex);
+    }
+  }
+
+  update(previous: ChatMessage[], messages: ChatMessage[]): void {
+    // Replacing rows cannot move an owner. Appending observes only the suffix; filters and prepends
+    // take the one safe rebuild path. Thus streaming rows stay O(1), while structural edits converge.
+    if (messages.length === previous.length) return;
+    if (
+      messages.length > previous.length &&
+      previous.every((message, messageIndex) => message === messages[messageIndex])
+    ) {
+      for (let messageIndex = previous.length; messageIndex < messages.length; messageIndex += 1) {
+        this.observe(messages[messageIndex], messageIndex);
+      }
+      return;
+    }
+    this.runningThinking = -1;
+    this.blockOwners.clear();
+    messages.forEach((message, messageIndex) => this.observe(message, messageIndex));
+  }
+
+  thinking(): number {
+    return this.runningThinking;
+  }
+
+  finishThinking(): void {
+    this.runningThinking = -1;
+  }
+
+  blockOwner(identifier: string): number | undefined {
+    return this.blockOwners.get(identifier);
+  }
+
+  observeAppended(message: ChatMessage, messageIndex: number): void {
+    this.observe(message, messageIndex);
+  }
+}
+
+class LiveDeltaBuffer {
+  private turnId = "";
+  private readonly cursors = new Map<string, number>();
+  private deltas: BufferedDelta[] = [];
+
+  append(frame: Extract<SessionStreamFrame, { kind: "delta" }>): void {
+    if (frame.turn_id !== this.turnId) {
+      this.turnId = frame.turn_id;
+      this.cursors.clear();
+    }
+    const key = `${frame.turn_id}:${frame.channel}:${frame.block_id}`;
+    const expectedCursor = this.cursors.get(key) ?? 0;
+    if (frame.cursor > expectedCursor) throw new Error("Live transcript stream has a gap.");
+    const consumed = Math.max(0, expectedCursor - frame.cursor);
+    if (consumed >= frame.chunks.length) return;
+    const chunks = frame.chunks.slice(consumed);
+    this.cursors.set(key, frame.cursor + frame.chunks.length);
+    const previous = this.deltas.at(-1);
+    if (previous?.key === key) previous.chunks.push(...chunks);
+    else
+      this.deltas.push({
+        key,
+        channel: frame.channel,
+        blockIdentifier: frame.block_id,
+        chunks,
+      });
+  }
+
+  take(): BufferedDelta[] {
+    const buffered = this.deltas;
+    this.deltas = [];
+    return buffered;
+  }
+}
+
+class ReduceState {
+  private transcript: ChatMessage[] = [];
+  tasks: ChatTask[] = [];
+  tokenUsage: TokenUsage | null = null; // latest cumulative token totals, if any reported
   // Per-source occurrence counter, so a key comes from the server messageId rather than array position.
-  keyCounts: Map<string, number>;
+  keyCounts = new Map<string, number>();
+  live = new LiveDeltaBuffer();
+  // Namespaces generated fallback ids while complete turns arrive independently newest-to-oldest.
+  keyNamespace = "";
+  // One owner for every derived location; it is rebuilt after structural edits and history merges.
+  readonly index = new TranscriptIndex();
+
+  get messages(): ChatMessage[] {
+    return this.transcript;
+  }
+
+  set messages(messages: ChatMessage[]) {
+    const previous = this.transcript;
+    this.transcript = messages;
+    this.index.update(previous, messages);
+  }
+
+  appendMessage(message: ChatMessage): void {
+    this.transcript.push(message);
+    this.index.observeAppended(message, this.transcript.length - 1);
+  }
 }
 
 export type TranscriptState = ReduceState;
@@ -325,29 +457,8 @@ export function createTranscriptState(): TranscriptState {
   return newReduceState();
 }
 
-// Whether a replayed transcript would render exactly what is on screen, which is the end-of-stream flash.
-function rendersIdentically(current: ChatMessage[], replayed: ChatMessage[]): boolean {
-  if (current.length !== replayed.length) return false;
-  for (let index = 0; index < current.length; index += 1) {
-    if (current[index].role !== replayed[index].role) return false;
-    if (current[index].content !== replayed[index].content) return false;
-  }
-  for (let index = 0; index < current.length; index += 1) {
-    if (
-      JSON.stringify(current[index].meta ?? null) !== JSON.stringify(replayed[index].meta ?? null)
-    )
-      return false;
-  }
-  return true;
-}
-
 function newReduceState(): ReduceState {
-  return {
-    messages: [],
-    tasks: [],
-    tokenUsage: null,
-    keyCounts: new Map(),
-  };
+  return new ReduceState();
 }
 
 // A position-independent id: the A2A messageId plus an occurrence counter, so replay converges.
@@ -360,7 +471,7 @@ function stableMessageId(state: ReduceState, prefix: string, sourceId: string | 
     // A monotonic counter, not the array length, or inserting a row earlier renumbers every row after it.
     const issued = state.keyCounts.get("") ?? 0;
     state.keyCounts.set("", issued + 1);
-    return `${prefix}-anon-${issued}`;
+    return `${prefix}-${state.keyNamespace || "live"}-anon-${issued}`;
   }
   // A message that has an id is that id, so the optimistic copy and the echo are one row.
   return `${prefix}-${sourceId}`;
@@ -370,7 +481,7 @@ function upsertMessage(state: ReduceState, message: ChatMessage): void {
   // Replace in place when the row exists, append when it does not, so a message arriving twice converges.
   const index = state.messages.findIndex((existing) => existing.id === message.id);
   if (index === -1) {
-    state.messages = [...state.messages, message];
+    state.appendMessage(message);
     return;
   }
   state.messages = state.messages.map((existing, position) =>
@@ -410,23 +521,29 @@ function isRunningThinkingMessage(message: ChatMessage): boolean {
 }
 
 function finishRunningThinking(state: ReduceState): void {
-  state.messages = state.messages.map((message) =>
-    isRunningThinkingMessage(message)
-      ? { ...message, meta: { ...message.meta, status: "done" } }
-      : message,
-  );
+  const index = state.index.thinking();
+  if (index < 0) return;
+  const message = state.messages[index];
+  if (message && isRunningThinkingMessage(message)) {
+    state.messages[index] = { ...message, meta: { ...message.meta, status: "done" } };
+  }
+  state.index.finishThinking();
 }
 
 // Close the in-flight thinking row with its measured duration, so it reads "Thought for Ns".
 function finishRunningThinkingWithDuration(state: ReduceState, durationMs: number): void {
-  state.messages = state.messages.map((message) =>
-    isRunningThinkingMessage(message)
-      ? { ...message, meta: { ...message.meta, status: "done", durationMs } }
-      : message,
-  );
+  const index = state.index.thinking();
+  if (index < 0) return;
+  const message = state.messages[index];
+  if (message && isRunningThinkingMessage(message)) {
+    state.messages[index] = {
+      ...message,
+      meta: { ...message.meta, status: "done", durationMs },
+    };
+  }
+  state.index.finishThinking();
 }
 
-// Open the Thinking row when a turn is sent, so the create/attach round trip is not invisible.
 function finishActiveTools(state: ReduceState): void {
   state.messages = state.messages.map((message) =>
     message.role === "tool_call" && message.meta?.status === "running"
@@ -437,28 +554,25 @@ function finishActiveTools(state: ReduceState): void {
 
 // The one path for the thinking signal: ensure a running row exists, then append the reasoning.
 function applyThinking(state: ReduceState, text: string): void {
-  let index = state.messages.findLastIndex(isRunningThinkingMessage);
+  let index = state.index.thinking();
   if (index === -1) {
     // Counted in its own right, not by the array's length nor by the shared anonymous counter: both advance
     // differently on a live turn and on its replay, and any drift re-keys every reasoning row after it.
     const issued = state.keyCounts.get("thinking") ?? 0;
     state.keyCounts.set("thinking", issued + 1);
-    state.messages = [
-      ...state.messages,
-      {
-        id: `status-${issued}`,
-        role: "thinking",
-        content: "",
-        timestamp: new Date().toISOString(),
-        meta: { status: "running" },
-      },
-    ];
+    const message: ChatMessage = {
+      id: `status-${state.keyNamespace || "live"}-${issued}`,
+      role: "thinking",
+      content: "",
+      timestamp: new Date().toISOString(),
+      meta: { status: "running" },
+    };
+    state.appendMessage(message);
     index = state.messages.length - 1;
   }
   // The session is reasoning, so a row opened optimistically stops being provisional.
-  state.messages = state.messages.map((message, messageIndex) =>
-    messageIndex === index ? { ...message, content: message.content + text } : message,
-  );
+  const message = state.messages[index];
+  state.messages[index] = { ...message, content: message.content + text };
 }
 
 function hasAssistantTextAfterLastUser(state: ReduceState): boolean {
@@ -507,50 +621,42 @@ function appendAssistantContentBlock(
   const existingIndex = existingContentBlocks.findIndex(
     (contentBlock) => contentBlock.identifier === blockIdentifier,
   );
-  const contentBlocks =
-    existingIndex >= 0
-      ? existingContentBlocks.map((contentBlock, contentBlockIndex) =>
-          contentBlockIndex === existingIndex
-            ? { ...contentBlock, content: contentBlock.content + text }
-            : contentBlock,
-        )
-      : [...existingContentBlocks, { identifier: blockIdentifier, content: text }];
+  let contentBlocks: Array<{ identifier: string; content: string }>;
+  if (existingIndex >= 0) {
+    existingContentBlocks[existingIndex] = {
+      ...existingContentBlocks[existingIndex],
+      content: existingContentBlocks[existingIndex].content + text,
+    };
+    contentBlocks = existingContentBlocks;
+  } else {
+    contentBlocks = [...existingContentBlocks, { identifier: blockIdentifier, content: text }];
+  }
   return { ...message, content: message.content + text, contentBlocks };
-}
-
-/** The message already holding this block of prose, grouped by the identity the model gives it. */
-function messageHoldingBlock(state: ReduceState, blockIdentifier: string): string | null {
-  const owner = state.messages.findLast(
-    (message) =>
-      message.role === "assistant" &&
-      message.contentBlocks?.some((block) => block.identifier === blockIdentifier),
-  );
-  return owner?.id ?? null;
 }
 
 function pushAssistantText(state: ReduceState, text: string, blockIdentifier: string): void {
   if (!text) return;
   if (!blockIdentifier) throw new Error("Assistant text requires a content-block identity.");
   finishRunningThinking(state);
-  const owner = messageHoldingBlock(state, blockIdentifier);
-  if (owner !== null) {
-    state.messages = state.messages.map((message) =>
-      message.id === owner ? appendAssistantContentBlock(message, text, blockIdentifier) : message,
+  const ownerIndex = state.index.blockOwner(blockIdentifier);
+  if (ownerIndex !== undefined) {
+    state.messages[ownerIndex] = appendAssistantContentBlock(
+      state.messages[ownerIndex],
+      text,
+      blockIdentifier,
     );
     return;
   }
-  state.messages = [
-    ...state.messages,
-    {
-      // The block it opened with, which the live stream and a replay both carry, so a settled turn is
-      // re-rendered rather than rebuilt: a new key here unmounts the prose, its highlighting and its diagrams.
-      id: `asst-${blockIdentifier}`,
-      role: "assistant",
-      content: text,
-      contentBlocks: [{ identifier: blockIdentifier, content: text }],
-      timestamp: new Date().toISOString(),
-    },
-  ];
+  const message: ChatMessage = {
+    // The block it opened with, which the live stream and a replay both carry, so a settled turn is
+    // re-rendered rather than rebuilt: a new key here unmounts the prose, its highlighting and its diagrams.
+    id: `asst-${blockIdentifier}`,
+    role: "assistant",
+    content: text,
+    contentBlocks: [{ identifier: blockIdentifier, content: text }],
+    timestamp: new Date().toISOString(),
+  };
+  state.appendMessage(message);
 }
 
 // Attachments into the lean shape the UI renders, shared by the live send and replay so chips match.
@@ -626,6 +732,7 @@ function reduceInboundMessage(
 
 // The one reduction of a part, walked by replay and by the live tail alike.
 function reduceAgentPart(state: ReduceState, part: A2APart, sourceId?: string): void {
+  drainLiveDeltas(state);
   if (part.kind === "text") {
     pushAssistantText(state, part.text ?? "", requiredContentBlockIdentifier(part.metadata));
     return;
@@ -634,12 +741,35 @@ function reduceAgentPart(state: ReduceState, part: A2APart, sourceId?: string): 
   reduceDataPart(state, partPayload(part.data), sourceId);
 }
 
+function reduceLiveDelta(
+  state: ReduceState,
+  frame: Extract<SessionStreamFrame, { kind: "delta" }>,
+): void {
+  state.live.append(frame);
+}
+
+function drainLiveDeltas(state: ReduceState): void {
+  for (const delta of state.live.take()) {
+    const text = delta.chunks.join("");
+    if (delta.channel === "thinking") applyThinking(state, text);
+    else pushAssistantText(state, text, delta.blockIdentifier);
+  }
+}
+
 export function appendTranscriptPart(
   state: TranscriptState,
   part: A2APart,
   sourceId?: string,
 ): void {
   reduceAgentPart(state, part, sourceId);
+}
+
+export function appendTranscriptDelta(
+  state: TranscriptState,
+  frame: Extract<SessionStreamFrame, { kind: "delta" }>,
+): void {
+  reduceLiveDelta(state, frame);
+  drainLiveDeltas(state);
 }
 
 function reduceAgentMessage(state: ReduceState, message: A2AMessage): void {
@@ -672,85 +802,110 @@ function reduceDataPart(
               message.id.startsWith(`${role}-${sourceId}-`),
           );
       if (alreadyShown) break;
-      state.messages = [
-        ...state.messages,
-        {
-          id: identifier ? `${role}-${identifier}` : stableMessageId(state, role, sourceId),
-          role,
-          content: text,
-          timestamp: new Date().toISOString(),
-          ...(steeringSender || goalReviewId
-            ? {
-                meta: {
-                  ...(steeringSender ? { peerSender: steeringSender } : {}),
-                  ...(goalReviewId ? { goalReviewId } : {}),
-                },
-              }
-            : {}),
-        },
-      ];
+      if (role === "user") {
+        // Sending new work explicitly supersedes any still-retryable failed turn.
+        state.messages = state.messages.filter((message) => message.role !== "error");
+      }
+      state.appendMessage({
+        id: identifier ? `${role}-${identifier}` : stableMessageId(state, role, sourceId),
+        role,
+        content: text,
+        timestamp: new Date().toISOString(),
+        ...(steeringSender || goalReviewId
+          ? {
+              meta: {
+                ...(steeringSender ? { peerSender: steeringSender } : {}),
+                ...(goalReviewId ? { goalReviewId } : {}),
+              },
+            }
+          : {}),
+      });
       break;
     }
     case "compaction": {
       // A compaction marker: a live indicator, then a separator, rendered as a divider rather than a bubble.
       if (event.status === "started") {
-        const runningIndex = state.messages.findLastIndex(
-          (message) => message.role === "compaction" && message.meta?.status === "running",
+        // Sends are blocked after a failure, so the next fold start is its explicit retry. Reuse
+        // that marker on both the live path and history replay; otherwise the stale failure would
+        // survive beside the successful retry and keep the composer disabled forever.
+        const activeIndex = state.messages.findLastIndex(
+          (message) =>
+            message.role === "compaction" &&
+            (message.meta?.status === "running" || message.meta?.status === "failed"),
         );
-        if (runningIndex >= 0) {
+        if (activeIndex >= 0) {
           state.messages = state.messages.map((message, index) =>
-            index === runningIndex
-              ? { ...message, meta: { ...message.meta, reason: event.reason ?? "" } }
+            index === activeIndex
+              ? {
+                  ...message,
+                  meta: { status: "running", reason: event.reason ?? "" },
+                }
               : message,
           );
         } else {
-          state.messages = [
-            ...state.messages,
-            {
-              id: stableMessageId(state, "compaction", sourceId),
-              role: "compaction",
-              content: "",
-              timestamp: new Date().toISOString(),
-              meta: { status: "running", reason: event.reason ?? "" },
-            },
-          ];
+          state.appendMessage({
+            id: stableMessageId(state, "compaction", sourceId),
+            role: "compaction",
+            content: "",
+            timestamp: new Date().toISOString(),
+            meta: { status: "running", reason: event.reason ?? "" },
+          });
         }
         break;
       }
       if (event.status === "done") {
+        const failed = event.ok === false;
         const changed =
           event.ok !== false && (event.messages_after ?? 0) < (event.messages_before ?? 0);
         const runningIndex = state.messages.findLastIndex(
           (message) => message.role === "compaction" && message.meta?.status === "running",
         );
-        if (!changed) {
+        if (!changed && !failed) {
           // Nothing was compacted — remove the running indicator so no separator lingers.
           if (runningIndex >= 0)
             state.messages = state.messages.filter((_, index) => index !== runningIndex);
           break;
         }
         const meta = {
-          status: "done",
+          status: failed ? "failed" : "done",
           reason: event.reason ?? "",
           messagesBefore: event.messages_before ?? 0,
           messagesAfter: event.messages_after ?? 0,
+          ...(failed && event.error_code ? { compactionErrorCode: event.error_code } : {}),
         };
         if (runningIndex >= 0) {
           state.messages = state.messages.map((message, index) =>
             index === runningIndex ? { ...message, meta } : message,
           );
         } else {
-          state.messages = [
-            ...state.messages,
-            {
-              id: stableMessageId(state, "compaction", sourceId),
-              role: "compaction",
-              content: "",
-              timestamp: new Date().toISOString(),
-              meta,
-            },
-          ];
+          state.appendMessage({
+            id: stableMessageId(state, "compaction", sourceId),
+            role: "compaction",
+            content: "",
+            timestamp: new Date().toISOString(),
+            meta,
+          });
         }
+      }
+      break;
+    }
+    case "retry": {
+      const errorIndex = state.messages.findLastIndex((message) => message.role === "error");
+      if (errorIndex < 0) break;
+      if (event.status === "started") {
+        state.messages = state.messages.map((message, index) =>
+          index === errorIndex
+            ? { ...message, meta: { ...message.meta, retrying: true } }
+            : message,
+        );
+      } else if (event.ok !== false) {
+        state.messages = state.messages.filter((_, index) => index !== errorIndex);
+      } else {
+        state.messages = state.messages.map((message, index) =>
+          index === errorIndex
+            ? { ...message, meta: { ...message.meta, retrying: false, retryFailed: true } }
+            : message,
+        );
       }
       break;
     }
@@ -772,6 +927,7 @@ function reduceDataPart(
         contextOutputTokens,
         contextTokens: contextInputTokens + contextOutputTokens,
         contextWindow: event.context_window ?? 0,
+        contextWindowEstimated: event.context_window_estimated ?? false,
         contextCacheReadTokens: event.cache_read_tokens ?? 0,
         reachableTokens: event.reachable_tokens ?? 0,
         prefixIntact: event.prefix_intact ?? false,
@@ -821,21 +977,18 @@ function reduceDataPart(
         );
         break;
       }
-      state.messages = [
-        ...state.messages,
-        {
-          id: toolCallMessageId(toolCallId),
-          role: "tool_call",
-          content: event.tool_name || "unknown",
-          timestamp: new Date().toISOString(),
-          meta: {
-            arguments: event.arguments,
-            argumentsComplete: event.arguments_complete === true,
-            toolCallId,
-            status: "running",
-          },
+      state.appendMessage({
+        id: toolCallMessageId(toolCallId),
+        role: "tool_call",
+        content: event.tool_name || "unknown",
+        timestamp: new Date().toISOString(),
+        meta: {
+          arguments: event.arguments,
+          argumentsComplete: event.arguments_complete === true,
+          toolCallId,
+          status: "running",
         },
-      ];
+      });
       break;
     }
     case "tool_result": {
@@ -846,7 +999,7 @@ function reduceDataPart(
         messageMatchesToolEvent(message, toolName, toolCallId),
       );
       const mergedResult =
-        toolName === "call_mcp_tool"
+        toolName === "call_mcp_server_tool"
           ? mergeMcpFinalResult(currentMessage?.meta?.result, event.display)
           : event.display;
       const resultStatus = statusFromWire(event.status);
@@ -869,21 +1022,18 @@ function reduceDataPart(
           : message,
       );
       if (!matched) {
-        state.messages = [
-          ...state.messages,
-          {
-            id: toolCallMessageId(toolCallId),
-            role: "tool_call",
-            content: toolName || "unknown",
-            timestamp: new Date().toISOString(),
-            meta: {
-              argumentsComplete: true,
-              toolCallId,
-              status: resultStatus,
-              result: mergedResult,
-            },
+        state.appendMessage({
+          id: toolCallMessageId(toolCallId),
+          role: "tool_call",
+          content: toolName || "unknown",
+          timestamp: new Date().toISOString(),
+          meta: {
+            argumentsComplete: true,
+            toolCallId,
+            status: resultStatus,
+            result: mergedResult,
           },
-        ];
+        });
       }
       break;
     }
@@ -891,11 +1041,11 @@ function reduceDataPart(
       const toolCallId = event.tool_call_id;
       const streamed = streamedMcpResult(data);
       const currentMessage = state.messages.find((message) =>
-        messageMatchesToolEvent(message, "call_mcp_tool", toolCallId),
+        messageMatchesToolEvent(message, "call_mcp_server_tool", toolCallId),
       );
       const mergedResult = mergeMcpResult(currentMessage?.meta?.result, streamed);
       state.messages = state.messages.map((message) =>
-        messageMatchesToolEvent(message, "call_mcp_tool", toolCallId)
+        messageMatchesToolEvent(message, "call_mcp_server_tool", toolCallId)
           ? { ...message, meta: { ...message.meta, status: "running", result: mergedResult } }
           : message,
       );
@@ -944,7 +1094,7 @@ function reduceDataPart(
             arguments: event.arguments ?? {},
           },
         };
-        state.messages = [...state.messages, raised];
+        state.appendMessage(raised);
       }
       break;
     }
@@ -983,23 +1133,34 @@ function reduceDataPart(
         // A tool-scoped error with no card is still model-facing, so swallow it rather than raise a toast.
         break;
       }
-      pushErrorMessage(state, friendlyErrorFromData(data), sourceId);
+      const retryIndex = state.messages.findLastIndex(
+        (message) => message.role === "error" && message.meta?.retryFailed === true,
+      );
+      if (retryIndex >= 0) {
+        state.messages = state.messages.map((message, index) =>
+          index === retryIndex
+            ? {
+                ...message,
+                meta: { ...message.meta, error: structuredErrorFromData(data), retryFailed: false },
+              }
+            : message,
+        );
+      } else {
+        pushErrorMessage(state, structuredErrorFromData(data), sourceId);
+      }
       break;
     }
     case "warning": {
       finishRunningThinking(state);
-      const title = event.title ?? "Warning";
-      const message = event.message ?? "";
-      state.messages = [
-        ...state.messages,
-        {
-          id: stableMessageId(state, "warning", sourceId),
-          role: "warning",
-          content: message ? `${title} — ${message}` : title,
-          timestamp: new Date().toISOString(),
-          meta: { warning: { code: event.code ?? "", title, message } },
+      state.appendMessage({
+        id: stableMessageId(state, "warning", sourceId),
+        role: "warning",
+        content: "",
+        timestamp: new Date().toISOString(),
+        meta: {
+          warning: { code: event.code, parameters: translationParameters(event.parameters) },
         },
-      ];
+      });
       break;
     }
     case "text":
@@ -1015,48 +1176,10 @@ function reduceDataPart(
   }
 }
 
-// Rebuild messages from persisted tasks, already compacted server-side, so no client pass is needed.
-/** The pages of a turn, joined back into it: history in the order given, and each artifact kept once. */
-function coalesceTurnPages(turns: A2ATurn[]): A2ATurn[] {
-  const byIdentifier = new Map<string, A2ATurn>();
-  const ordered: A2ATurn[] = [];
-  for (const turn of turns) {
-    const identifier = String(turn.id ?? "");
-    const held = identifier ? byIdentifier.get(identifier) : undefined;
-    if (!held) {
-      const copy = {
-        ...turn,
-        history: [...(turn.history ?? [])],
-        artifacts: [...(turn.artifacts ?? [])],
-      };
-      if (identifier) byIdentifier.set(identifier, copy);
-      ordered.push(copy);
-      continue;
-    }
-    held.history = [...(held.history ?? []), ...(turn.history ?? [])];
-    const seen = new Set((held.artifacts ?? []).map((artifact) => artifact.artifactId));
-    for (const artifact of turn.artifacts ?? []) {
-      if (seen.has(artifact.artifactId)) continue;
-      seen.add(artifact.artifactId);
-      held.artifacts = [...(held.artifacts ?? []), artifact];
-    }
-    // The later page is the newer one, so its status carries the turn's real ending.
-    if (turn.status) held.status = turn.status;
-  }
-  return ordered;
-}
-
-export function replayTurns(turns: A2ATurn[]): {
-  messages: ChatMessage[];
-  tasks: ChatTask[];
-  tokenUsage: TokenUsage | null;
-  keyCounts: Map<string, number>;
-} {
-  // Left in the order the server sent them, with a turn's pages joined before anything judges it.
-  const mainTurns = coalesceTurnPages(
-    turns.filter((turn) => !(turnState(turn).referenceTurnIds ?? []).length),
-  );
+export function replayTurns(turns: A2ATurn[], keyNamespace = ""): TranscriptState {
+  const mainTurns = turns.filter((turn) => !(turnState(turn).referenceTurnIds ?? []).length);
   const state: ReduceState = newReduceState();
+  state.keyNamespace = keyNamespace;
   for (const turn of mainTurns) {
     // A turn's stream is its history plus its trailing status message, which A2A folds in only on the next update.
     const replayMessages = [...(turn.history ?? [])];
@@ -1089,12 +1212,68 @@ export function replayTurns(turns: A2ATurn[]): {
     }
     if (TERMINAL_STATES.has(turn.status?.state as TaskState)) finishActiveTools(state);
   }
-  return {
-    messages: state.messages,
-    tasks: state.tasks,
-    tokenUsage: state.tokenUsage,
-    keyCounts: state.keyCounts,
-  };
+  return state;
+}
+
+/** Complete newest-to-oldest turns, accumulated cheaply and prepended once at the next paint. */
+export class TranscriptHistoryBuffer {
+  private segments: ChatMessage[][] = [];
+  private readonly tasks = new Map<string, ChatTask>();
+  private newestTokenUsage: TokenUsage | null | undefined;
+  private bufferedMessages = 0;
+  private paintedMessages = 0;
+
+  append(turn: A2ATurn, keyNamespace = String(turn.id ?? "history")): boolean {
+    const replayed = replayTurns([turn], keyNamespace);
+    this.segments.push(replayed.messages);
+    this.bufferedMessages += replayed.messages.length;
+    for (const task of replayed.tasks) {
+      if (!this.tasks.has(task.identifier)) this.tasks.set(task.identifier, task);
+    }
+    if (this.newestTokenUsage === undefined) this.newestTokenUsage = replayed.tokenUsage;
+    // Paint the newest turn immediately, then double the visible history each time. Consequently
+    // all flattening across an arbitrarily long history copies fewer than twice its final rows.
+    return this.bufferedMessages >= Math.max(1, this.paintedMessages);
+  }
+
+  drainInto(state: TranscriptState): boolean {
+    if (this.segments.length === 0) return false;
+    const seen = new Set(state.messages.map((message) => message.id));
+    const acceptedNewestFirst: ChatMessage[][] = [];
+    for (const segment of this.segments) {
+      const accepted: ChatMessage[] = [];
+      for (const message of segment) {
+        if (seen.has(message.id)) continue;
+        seen.add(message.id);
+        accepted.push(message);
+      }
+      if (accepted.length > 0) acceptedNewestFirst.push(accepted);
+    }
+    const olderMessages = acceptedNewestFirst.reverse().flat();
+    const transcriptWasEmpty = state.messages.length === 0;
+    state.messages = [...olderMessages, ...state.messages];
+    const mergedTasks = new Map(this.tasks);
+    state.tasks.forEach((task) => mergedTasks.set(task.identifier, task));
+    state.tasks = [...mergedTasks.values()];
+    if (state.tokenUsage === null && transcriptWasEmpty) {
+      state.tokenUsage = this.newestTokenUsage ?? null;
+    }
+    this.paintedMessages += olderMessages.length;
+    this.clearBuffered();
+    return true;
+  }
+
+  private clearBuffered(): void {
+    this.segments = [];
+    this.tasks.clear();
+    this.newestTokenUsage = undefined;
+    this.bufferedMessages = 0;
+  }
+
+  reset(): void {
+    this.clearBuffered();
+    this.paintedMessages = 0;
+  }
 }
 
 export function useChat(
@@ -1118,8 +1297,7 @@ export function useChat(
   const [isHistoryLoading, setIsHistoryLoading] = useState(!!initialSessionId);
   // Set when every attempt to load the transcript failed, so the panel can offer a retry.
   const [historyError, setHistoryError] = useState(false);
-  const [hasOlderHistory, setHasOlderHistory] = useState(false);
-  const [isOlderHistoryLoading, setIsOlderHistoryLoading] = useState(false);
+  const [isHistoryStreaming, setIsHistoryStreaming] = useState(!!initialSessionId);
   // Bumped to force the history-load effect to re-run (a manual retry).
   const [historyReloadNonce, setHistoryReloadNonce] = useState(0);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
@@ -1129,24 +1307,21 @@ export function useChat(
   const [deliveringMessage, setDeliveringMessage] = useState<string | null>(null);
 
   // This hook's attach subscription while it drives a turn. Closing it only drops the client end.
-  const attachRef = useRef<{ abort: () => void } | null>(null);
+  const attachRef = useRef<{ abort: () => void; ready: Promise<boolean> } | null>(null);
+  const viewerAttachRef = useRef<{ abort: () => void; ready: Promise<boolean> } | null>(null);
+  const viewerContextRef = useRef<string | null>(null);
+  const historyReloadAppliedRef = useRef(0);
   const stateRef = useRef<ReduceState>(newReduceState());
   const sessionIdRef = useRef<string | null>(initialSessionId);
-  const historyLoadedForRef = useRef<string | null>(null);
-  const historyFragmentsRef = useRef<A2ATurn[]>([]);
-  const historyPageCursorRef = useRef<number | null>(null);
-  const hasOlderHistoryRef = useRef(false);
-  const isOlderHistoryLoadingRef = useRef(false);
   const isStreamingRef = useRef(false);
   // Set by a Stop so the stream close does not drain the queue into a fresh turn. One-shot.
   const abortedByUserRef = useRef(false);
   const errorToastKeysRef = useRef<Set<string>>(new Set());
-  // Whether this session was running, so a final refresh happens once its turn finishes.
-  const wasRunningRef = useRef(false);
   // True once we have driven a turn: the live stream is then authoritative, so never subscribe as well.
   const streamedLocallyRef = useRef(false);
   const startTurnRef = useRef<(message: OutboxMessage) => Promise<Delivery>>(async () => "failed");
   const flushFrameRef = useRef<number | null>(null);
+  const historyBufferRef = useRef(new TranscriptHistoryBuffer());
 
   // Whether the transcript holds a decision nobody has made: a parked session has stopped, not paused.
   const hasPendingDecision = useCallback(
@@ -1159,12 +1334,19 @@ export function useChat(
 
   // A message the session would not take. Not an error: it is queued, visible, and goes out on the decision.
   const notifyHeldForDecision = useCallback(
-    (waitingOn: string) => {
+    (waitingOn: SendOutcome["waitingOn"]) => {
+      if (!waitingOn) return;
+      const described =
+        waitingOn.kind === "question"
+          ? translation("waitingOnQuestion")
+          : waitingOn.command
+            ? translation("waitingOnCommand", { command: waitingOn.command })
+            : translation("waitingOnPermission");
       toaster.create({
         type: "info",
         title: translation("heldForDecisionTitle"),
         description: translation("heldForDecisionBody", {
-          waitingOn: waitingOn || translation("heldForDecisionFallback"),
+          waitingOn: described,
         }),
         closable: true,
       });
@@ -1177,14 +1359,19 @@ export function useChat(
       window.cancelAnimationFrame(flushFrameRef.current);
       flushFrameRef.current = null;
     }
-    setMessages(stateRef.current.messages);
+    drainLiveDeltas(stateRef.current);
+    historyBufferRef.current.drainInto(stateRef.current);
+    // Reducers mutate indexed rows in place between paints; one shallow snapshot per paint makes
+    // React observe the batch without copying the entire transcript for every provider chunk.
+    setMessages([...stateRef.current.messages]);
     setTasks(stateRef.current.tasks);
     setTokenUsage(stateRef.current.tokenUsage);
   }, []);
 
   const flush = useCallback(() => {
     if (typeof window === "undefined") {
-      setMessages(stateRef.current.messages);
+      drainLiveDeltas(stateRef.current);
+      setMessages([...stateRef.current.messages]);
       setTasks(stateRef.current.tasks);
       setTokenUsage(stateRef.current.tokenUsage);
       return;
@@ -1192,36 +1379,27 @@ export function useChat(
     if (flushFrameRef.current != null) return;
     flushFrameRef.current = window.requestAnimationFrame(() => {
       flushFrameRef.current = null;
-      setMessages(stateRef.current.messages);
-      setTasks(stateRef.current.tasks);
-      setTokenUsage(stateRef.current.tokenUsage);
+      flushNow();
     });
-  }, []);
-
-  const applyHistoryFragments = useCallback(() => {
-    const replayed = replayTurns(historyFragmentsRef.current);
-    stateRef.current = {
-      messages: replayed.messages,
-      tasks: replayed.tasks,
-      tokenUsage: replayed.tokenUsage,
-      keyCounts: replayed.keyCounts,
-    };
-    flushNow();
   }, [flushNow]);
 
-  const notifyTurnError = useCallback((part: A2APart | undefined) => {
-    const error = friendlyErrorFromPart(part);
-    if (!error) return;
-    const key = `${sessionIdRef.current || "turn"}:${error.code}:${error.status ?? ""}`;
-    if (errorToastKeysRef.current.has(key)) return;
-    errorToastKeysRef.current.add(key);
-    toaster.create({
-      type: "error",
-      title: error.title,
-      description: error.message,
-      closable: true,
-    });
-  }, []);
+  const messageTranslation = useTranslations("ChatMessage");
+  const notifyTurnError = useCallback(
+    (part: A2APart | undefined) => {
+      const error = structuredErrorFromPart(part);
+      if (!error) return;
+      const key = `${sessionIdRef.current || "turn"}:${error.code}:${error.status ?? ""}`;
+      if (errorToastKeysRef.current.has(key)) return;
+      errorToastKeysRef.current.add(key);
+      toaster.create({
+        type: "error",
+        title: messageTranslation(`errors.${error.code}.title`),
+        description: messageTranslation(`errors.${error.code}.body`, error.parameters),
+        closable: true,
+      });
+    },
+    [messageTranslation],
+  );
 
   // Close this hook's stream on unmount, or orphaned streams exhaust the browser's connection pool.
   useEffect(() => {
@@ -1231,223 +1409,87 @@ export function useChat(
         flushFrameRef.current = null;
       }
       attachRef.current?.abort();
+      viewerAttachRef.current?.abort();
     };
   }, []);
 
+  const prependHistoryTurn = useCallback(
+    (turn: A2ATurn) => {
+      if (historyBufferRef.current.append(turn)) flush();
+    },
+    [flush],
+  );
+
   useEffect(() => {
     if (!initialSessionId) return;
-    if (initialSessionId === sessionIdRef.current && stateRef.current.messages.length > 0) {
-      setIsHistoryLoading(false);
-      return;
-    }
-    if (initialSessionId === sessionIdRef.current && isStreamingRef.current) {
-      setIsHistoryLoading(false);
-      return;
-    }
-    if (historyLoadedForRef.current === initialSessionId) return;
-    // A running session we are not driving loads over the live stream, so skip REST and avoid the race.
-    if (sessionRunning && !streamedLocallyRef.current) {
-      historyLoadedForRef.current = initialSessionId;
-      return;
-    }
-    historyLoadedForRef.current = initialSessionId;
+    // The turn-driving attachment owns a newly created session until its terminal edge. The
+    // session-list update will re-run this effect afterward and install the durable viewer.
+    if (streamedLocallyRef.current) return;
     let cancelled = false;
-    // Abort the fetch when the session switches, or it holds a connection and writes a stale transcript.
-    const controller = new AbortController();
+    let attached = false;
+    const resetTranscript =
+      viewerContextRef.current !== initialSessionId ||
+      historyReloadAppliedRef.current !== historyReloadNonce;
+    viewerContextRef.current = initialSessionId;
+    historyReloadAppliedRef.current = historyReloadNonce;
+    if (resetTranscript) {
+      stateRef.current = newReduceState();
+      historyBufferRef.current.reset();
+    }
+    sessionIdRef.current = initialSessionId;
+    setSessionId(initialSessionId);
+    if (resetTranscript) flushNow();
     setHistoryError(false);
-    setHasOlderHistory(false);
-    setIsHistoryLoading(true);
-
-    // Retry a few times with a short backoff, so a transient failure heals rather than leaving a blank panel.
-    const MAX_ATTEMPTS = 6;
-    const loadHistory = async () => {
-      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-        try {
-          const page = await fetchSessionTurnsPage(
-            initialSessionId,
-            null,
-            controller.signal,
-            HISTORY_PAGE_LIMIT,
-          );
-          if (cancelled) return;
-          historyFragmentsRef.current = page.turns;
-          historyPageCursorRef.current = page.next_before_row_id;
-          hasOlderHistoryRef.current = page.has_more;
-          setHasOlderHistory(page.has_more);
-          setSessionId(initialSessionId);
-          sessionIdRef.current = initialSessionId;
-          applyHistoryFragments();
+    if (resetTranscript) setIsHistoryLoading(true);
+    setIsHistoryStreaming(true);
+    const subscription = attachSession(
+      initialSessionId,
+      (frame) => {
+        if (cancelled || streamedLocallyRef.current) return;
+        if (frame.kind === "snapshot") {
+          attached = true;
+          setHistoryError(false);
+          if (frame.reconnected) setIsHistoryStreaming(true);
+        } else if (frame.kind === "history") {
+          prependHistoryTurn(frame.turn);
           setIsHistoryLoading(false);
-          return;
-        } catch (caught) {
-          if (cancelled || controller.signal.aborted) return;
-          if (attempt === MAX_ATTEMPTS - 1) {
-            swallowed(
-              { component: "transcript", operation: "load the transcript after retrying" },
-              caught,
-            );
-            setHistoryError(true);
-            setIsHistoryLoading(false);
-            return;
-          }
-          await new Promise((resolve) => setTimeout(resolve, Math.min(4000, 300 * 2 ** attempt)));
-          if (cancelled) return;
+        } else if (frame.kind === "history_done") {
+          flushNow();
+          setIsHistoryLoading(false);
+          setIsHistoryStreaming(false);
+        } else if (frame.kind === "live") {
+          reduceAgentPart(stateRef.current, frame.part);
+          flush();
+          setIsHistoryLoading(false);
+        } else if (frame.kind === "delta") {
+          reduceLiveDelta(stateRef.current, frame);
+          flush();
+          setIsHistoryLoading(false);
         }
-      }
-    };
-    loadHistory();
-    return () => {
-      cancelled = true;
-      controller.abort();
-      historyLoadedForRef.current = null;
-    };
-  }, [initialSessionId, applyHistoryFragments, historyReloadNonce, sessionRunning]);
-
-  // Pull every older page back-to-back into a ref, then prepend once, so the scroll never jumps.
-  const drainOlderHistory = useCallback(async () => {
-    const context = sessionIdRef.current;
-    if (!context || isOlderHistoryLoadingRef.current) return;
-    if (historyPageCursorRef.current == null || !hasOlderHistoryRef.current) return;
-    // Never fill history over a live turn: replay would drop the just-sent turn from view.
-    if (streamedLocallyRef.current || isStreamingRef.current) return;
-    isOlderHistoryLoadingRef.current = true;
-    setIsOlderHistoryLoading(true);
-    let fetchedAny = false;
-    try {
-      let cursor: number | null = historyPageCursorRef.current;
-      while (cursor != null && hasOlderHistoryRef.current) {
-        if (streamedLocallyRef.current || isStreamingRef.current) return;
-        const page = await fetchSessionTurnsPage(context, cursor, undefined, HISTORY_PAGE_LIMIT);
-        if (sessionIdRef.current !== context) return;
-        historyFragmentsRef.current = [...page.turns, ...historyFragmentsRef.current];
-        historyPageCursorRef.current = page.next_before_row_id;
-        hasOlderHistoryRef.current = page.has_more;
-        cursor = page.next_before_row_id;
-        fetchedAny = true;
-      }
-    } catch (caught) {
-      // Leave what loaded and resume from the last cursor. Still reported: a permanent failure looks the same otherwise.
-      swallowed({ component: "transcript", operation: "load older history" }, caught);
-    } finally {
-      // Skip the apply if a local turn began mid-drain: the fragments stay unused rather than clobbering it.
-      if (
-        fetchedAny &&
-        sessionIdRef.current === context &&
-        !streamedLocallyRef.current &&
-        !isStreamingRef.current
-      ) {
-        setHasOlderHistory(hasOlderHistoryRef.current);
-        // One replay + render for the whole accumulated transcript.
-        applyHistoryFragments();
-      }
-      isOlderHistoryLoadingRef.current = false;
-      setIsOlderHistoryLoading(false);
-    }
-  }, [applyHistoryFragments]);
-
-  // Kick the drain once the newest page has settled, and not while a turn is streaming.
-  useEffect(() => {
-    if (isHistoryLoading || isOlderHistoryLoading || isStreaming || !hasOlderHistory) return;
-    void drainOlderHistory();
-  }, [isHistoryLoading, isOlderHistoryLoading, isStreaming, hasOlderHistory, drainOlderHistory]);
-
-  // Live updates for a running session this hook is not driving: a snapshot, then a tail, through one reducer.
-  useEffect(() => {
-    if (!initialSessionId) return;
-
-    let cancelled = false;
-    let subscription: { abort: () => void } | null = null;
-    const controller = new AbortController();
-
-    const applySnapshot = (turns: A2ATurn[]) => {
-      const replayed = replayTurns(turns);
-      // Already showing this: keeping the array reference means `setMessages` bails and nothing re-renders.
-      if (rendersIdentically(stateRef.current.messages, replayed.messages)) {
-        stateRef.current.tasks = replayed.tasks;
-        stateRef.current.tokenUsage = replayed.tokenUsage;
-        sessionIdRef.current = initialSessionId;
-        setSessionId(initialSessionId);
-        flushNow();
-        return;
-      }
-      stateRef.current = {
-        messages: replayed.messages,
-        tasks: replayed.tasks,
-        tokenUsage: replayed.tokenUsage,
-        keyCounts: replayed.keyCounts,
-      };
-      sessionIdRef.current = initialSessionId;
-      setSessionId(initialSessionId);
-      flushNow();
-    };
-
-    if (sessionRunning && !isStreamingRef.current && !streamedLocallyRef.current) {
-      wasRunningRef.current = true;
-      subscription = attachSession(
-        initialSessionId,
-        (frame) => {
-          if (cancelled) return;
-          if (frame.kind === "snapshot") {
-            applySnapshot(frame.turns);
-            setHistoryError(false);
-            setIsHistoryLoading(false);
-          } else if (frame.kind === "live") {
-            reduceAgentPart(stateRef.current, frame.part);
-            flush();
-          } else if (frame.kind === "turn" && !frame.running) {
-            // The turn ended, said by the session on the stream we already hold, before the polled listing learns it.
-            void (async () => {
-              try {
-                const tasks = await fetchSessionTurns(initialSessionId, controller.signal);
-                if (!cancelled && !isStreamingRef.current && !streamedLocallyRef.current)
-                  applySnapshot(tasks);
-              } catch (caught) {
-                // Recoverable, since the `sessionRunning` path captures the same state, but not silent.
-                swallowed({ component: "transcript", operation: "read the finished turn" }, caught);
-              }
-            })();
-          }
-        },
-        () => {
-          // Stream closed. The `sessionRunning` flip re-runs this effect and captures the final state.
-        },
-      );
-    } else if (!sessionRunning && wasRunningRef.current) {
-      // The turn just finished: capture its terminal state once, which the live tail misses.
-      wasRunningRef.current = false;
-      void (async () => {
-        try {
-          const tasks = await fetchSessionTurns(initialSessionId, controller.signal);
-          if (!cancelled && !isStreamingRef.current && !streamedLocallyRef.current)
-            applySnapshot(tasks);
-        } catch (caught) {
-          // Leave the last live state in place; it is very nearly the terminal state.
-          swallowed(
-            { component: "transcript", operation: "read the session's final state" },
-            caught,
-          );
-        }
-      })();
-    }
+      },
+      () => {
+        if (cancelled) return;
+        setIsHistoryLoading(false);
+        setIsHistoryStreaming(false);
+        if (!attached) setHistoryError(true);
+      },
+    );
+    viewerAttachRef.current = subscription;
 
     return () => {
       cancelled = true;
-      controller.abort();
-      subscription?.abort();
+      subscription.abort();
+      if (viewerAttachRef.current === subscription) viewerAttachRef.current = null;
     };
-  }, [sessionRunning, initialSessionId, isStreaming, flushNow, flush]);
+  }, [initialSessionId, historyReloadNonce, sessionRunning, flushNow, flush, prependHistoryTurn]);
 
   // Deliberately no drain here or at a turn's end: both read state that delivery itself changed.
 
   // Manual retry after a failed load, clearing the per-session guard so it actually re-fetches.
   const reloadHistory = useCallback(() => {
-    historyLoadedForRef.current = null;
-    historyFragmentsRef.current = [];
-    historyPageCursorRef.current = null;
-    hasOlderHistoryRef.current = false;
-    setHasOlderHistory(false);
     setHistoryError(false);
     setIsHistoryLoading(true);
+    setIsHistoryStreaming(true);
     setHistoryReloadNonce((nonce) => nonce + 1);
   }, []);
 
@@ -1492,6 +1534,7 @@ export function useChat(
           attachRef.current?.abort();
           attachRef.current = null;
           // A Stop or a dropped connection ends a turn with no terminal event, leaving cards spinning.
+          drainLiveDeltas(stateRef.current);
           finishRunningThinking(stateRef.current);
           finishActiveTools(stateRef.current);
           // Commit the terminal transcript and streaming flag together, so no stale intermediate layout can paint.
@@ -1499,21 +1542,36 @@ export function useChat(
           // The queue is not touched here: a turn ending must not be both a trigger and a deletion.
           abortedByUserRef.current = false;
           isStreamingRef.current = false;
-          setIsStreaming(false);
-          // Back to viewer mode, so an autonomous wake is picked up live rather than on a reload.
           streamedLocallyRef.current = false;
+          setIsStreaming(false);
+          // Stay authoritative until the backend confirms the turn settled. Dropping into viewer
+          // mode here re-attaches and replays a snapshot that can race the final durable writes,
+          // briefly replacing the finished transcript with a shorter one. The idle transition
+          // below is the safe moment to return to viewer mode.
         };
 
+        let sendAccepted = false;
+        let idleSnapshotSeen = false;
         const observe = (sessionIdentifier: string) => {
           attachRef.current = attachSession(
             sessionIdentifier,
             (frame) => {
               // The one frame that says the turn ended. The stream does not close: it belongs to the session.
+              if (frame.kind === "snapshot") {
+                idleSnapshotSeen = frame.reconnected && !frame.running;
+                if (sendAccepted && idleSnapshotSeen) finishTurn();
+                return;
+              }
               if (frame.kind === "turn") {
                 if (!frame.running) finishTurn();
                 return;
               }
               // A snapshot is catch-up for a viewer. We are driving, so replacing state would drop the sent message.
+              if (frame.kind === "delta") {
+                reduceLiveDelta(stateRef.current, frame);
+                flush();
+                return;
+              }
               if (frame.kind !== "live") return;
               notifyTurnError(frame.part);
               reduceAgentPart(stateRef.current, frame.part);
@@ -1540,6 +1598,7 @@ export function useChat(
               });
               sessionIdentifier = created.id;
               sessionIdRef.current = created.id;
+              viewerContextRef.current = created.id;
               setSessionId(created.id);
               // The mode the session actually got, which a parent session may have constrained.
               if (created.permission_mode && created.permission_mode !== permissionMode) {
@@ -1548,24 +1607,35 @@ export function useChat(
             }
             // Attach before sending, or the opening frames are missed.
             observe(sessionIdentifier);
+            // The server acknowledges the installed subscription before a send may create any event.
+            if (!(await attachRef.current?.ready)) {
+              throw new Error("The live transcript could not be attached.");
+            }
             const outcome = await sessionSend(sessionIdentifier, messageParts(text, dataParts), {
               messageId: userMessageId,
             });
             // Refused because the session is parked: nothing was delivered, and the message stays in the queue.
             if (!outcome.accepted) {
               withdrawOptimistic();
+              if (outcome.compactionRequired) {
+                finishTurn();
+                settleDelivery("compaction");
+                return;
+              }
               notifyHeldForDecision(outcome.waitingOn);
               finishTurn();
               settleDelivery("refused");
               return;
             }
+            sendAccepted = true;
+            if (idleSnapshotSeen) finishTurn();
             settleDelivery("accepted");
           } catch (caught) {
             // What was thrown goes to telemetry as its own fields, where a name and a stack stay searchable.
             swallowed({ component: "chat", operation: "start the turn" }, caught);
             // Never delivered, so the row goes and the queued card is again the only place it is shown.
             withdrawOptimistic();
-            pushErrorMessage(stateRef.current, friendlyErrorFromData({ code: "server_error" }));
+            pushErrorMessage(stateRef.current, { code: "server_error" });
             // One wind-down for every ending. `finishTurn` closes the stream if one was opened.
             finishTurn();
             // It never reached the session, so the message keeps its place and nothing retries it.
@@ -1612,6 +1682,7 @@ export function useChat(
         if (!outcome.accepted) {
           dropMessage(stateRef.current, key);
           flushNow();
+          if (outcome.compactionRequired) return "compaction";
           notifyHeldForDecision(outcome.waitingOn);
           return "refused";
         }
@@ -1658,8 +1729,10 @@ export function useChat(
     const trimmed = text.trim();
     if (!trimmed) return Promise.resolve();
     // Every message goes in the same way, whatever the session is doing. No branch at the keystroke.
-    outboxRef.current?.add({ id: clientIdentifier(), text: trimmed, dataParts });
-    return Promise.resolve();
+    return (
+      outboxRef.current?.add({ id: clientIdentifier(), text: trimmed, dataParts }) ??
+      Promise.resolve<Delivery>("failed")
+    );
   }, []);
 
   // The held decision was answered, by anyone. The only retry trigger, and one a delivery cannot cause.
@@ -1694,7 +1767,7 @@ export function useChat(
         closable: true,
       });
     },
-    [flush],
+    [flush, translation],
   );
 
   const settleInactivePrompt = useCallback(
@@ -1840,7 +1913,7 @@ export function useChat(
         });
       }
     });
-  }, [flush]);
+  }, [flush, translation]);
 
   // Kick off a manual compaction; the local marker covers passes that finish between stream subscriptions.
   const compact = useCallback(() => {
@@ -1852,22 +1925,87 @@ export function useChat(
       )
     )
       return;
-    const markerId = `compaction-request-${clientIdentifier()}`;
-    stateRef.current.messages = [
-      ...stateRef.current.messages,
-      {
-        id: markerId,
-        role: "compaction",
-        content: "",
-        timestamp: new Date().toISOString(),
-        meta: { status: "running", reason: "manual" },
-      },
-    ];
+    const failed = stateRef.current.messages.findLast(
+      (message) => message.role === "compaction" && message.meta?.status === "failed",
+    );
+    const markerId = failed?.id ?? `compaction-request-${clientIdentifier()}`;
+    const nextMarker: ChatMessage = {
+      id: markerId,
+      role: "compaction",
+      content: "",
+      timestamp: new Date().toISOString(),
+      meta: { status: "running", reason: "manual" },
+    };
+    if (failed) upsertMessage(stateRef.current, nextMarker);
+    else stateRef.current.appendMessage(nextMarker);
     flushNow();
-    void compactSession(context).then((result) => {
-      const marker = stateRef.current.messages.find((message) => message.id === markerId);
-      if (!result?.compacted || result.status !== "done") {
-        if (marker?.meta?.status === "running") dropMessage(stateRef.current, markerId);
+    void compactSession(context)
+      .then(async (result) => {
+        const failed =
+          result.compacted === false || result.status !== "done" || result.ok === false;
+        // The persisted transcript is authoritative: it carries the compaction events the
+        // backend wrote, with the exact reason, counts and error code, and removes whatever
+        // history the fold actually reclaimed. Replaying it also settles the local marker
+        // under the transcript's own identity instead of drawing a duplicate separator.
+        try {
+          const turns = await fetchSessionTurns(context);
+          const replayed = replayTurns(turns);
+          const settled = replayed.messages.some(
+            (message) =>
+              message.role === "compaction" &&
+              (message.meta?.status === "done" || message.meta?.status === "failed"),
+          );
+          if (failed && !settled) {
+            // The failure never reached the backend, so replaying would erase the marker
+            // rather than settle it. Keep the local row and mark it failed.
+            settleCompactionMarker(stateRef.current, markerId, {
+              status: "failed",
+              compactionErrorCode: result.error_code ?? "compaction_failed",
+            });
+          } else {
+            stateRef.current = replayed;
+          }
+          flushNow();
+        } catch (caught) {
+          swallowed({ component: "chat", operation: "read the compacted transcript" }, caught);
+          if (failed) {
+            settleCompactionMarker(stateRef.current, markerId, {
+              status: "failed",
+              compactionErrorCode: result.error_code ?? "compaction_failed",
+            });
+          } else {
+            const changed = (result.messages_after ?? 0) < (result.messages_before ?? 0);
+            if (changed) {
+              settleCompactionMarker(stateRef.current, markerId, {
+                status: "done",
+                reason: result.reason ?? "manual",
+                messagesBefore: result.messages_before ?? 0,
+                messagesAfter: result.messages_after ?? 0,
+              });
+            } else {
+              dropCompactionMarker(stateRef.current, markerId);
+            }
+          }
+          flushNow();
+        }
+        if (failed) {
+          toaster.create({
+            type: "error",
+            title: translation("compactFailedTitle"),
+            description: translation("compactFailedBody"),
+            closable: true,
+          });
+        } else {
+          // Only a successful fold releases the queue that the failed one held.
+          outboxRef.current?.compactionRecovered();
+        }
+      })
+      .catch((caught) => {
+        swallowed({ component: "chat", operation: "compact the conversation" }, caught);
+        settleCompactionMarker(stateRef.current, markerId, {
+          status: "failed",
+          compactionErrorCode: "compaction_failed",
+        });
         flushNow();
         toaster.create({
           type: "error",
@@ -1875,26 +2013,7 @@ export function useChat(
           description: translation("compactFailedBody"),
           closable: true,
         });
-        return;
-      }
-      if (marker?.meta?.status !== "running") return;
-      const changed =
-        result.ok !== false && (result.messages_after ?? 0) < (result.messages_before ?? 0);
-      if (!changed) {
-        dropMessage(stateRef.current, markerId);
-      } else {
-        upsertMessage(stateRef.current, {
-          ...marker,
-          meta: {
-            status: "done",
-            reason: result.reason ?? "manual",
-            messagesBefore: result.messages_before ?? 0,
-            messagesAfter: result.messages_after ?? 0,
-          },
-        });
-      }
-      flushNow();
-    });
+      });
   }, [flushNow, translation]);
 
   const abortTool = useCallback(
@@ -1918,7 +2037,7 @@ export function useChat(
       );
       flush();
     },
-    [flush],
+    [flush, translation],
   );
 
   const dequeueMessage = useCallback(
@@ -1932,6 +2051,87 @@ export function useChat(
   /** Ask again after a failure to reach the session. The person's own retry. */
   const retryOutbox = useCallback(() => outboxRef.current?.retry(), []);
 
+  const retryTurn = useCallback(async (): Promise<boolean> => {
+    const context = sessionIdRef.current;
+    if (!context || isStreamingRef.current) return false;
+    const errorIndex = stateRef.current.messages.findLastIndex(
+      (message) => message.role === "error",
+    );
+    if (errorIndex < 0) return false;
+    stateRef.current.messages = stateRef.current.messages.map((message, index) =>
+      index === errorIndex
+        ? { ...message, meta: { ...message.meta, retrying: true, retryFailed: false } }
+        : message,
+    );
+    flushNow();
+    isStreamingRef.current = true;
+    streamedLocallyRef.current = true;
+    setIsStreaming(true);
+    let retryAccepted = false;
+    let idleSnapshotSeen = false;
+    const observe = attachSession(
+      context,
+      (frame) => {
+        if (frame.kind === "snapshot") {
+          idleSnapshotSeen = frame.reconnected && !frame.running;
+          if (retryAccepted && idleSnapshotSeen) {
+            observe.abort();
+            isStreamingRef.current = false;
+            streamedLocallyRef.current = false;
+            setIsStreaming(false);
+          }
+          return;
+        }
+        if (frame.kind === "turn" && !frame.running) {
+          observe.abort();
+          isStreamingRef.current = false;
+          streamedLocallyRef.current = false;
+          setIsStreaming(false);
+          return;
+        }
+        if (frame.kind === "live") {
+          reduceAgentPart(stateRef.current, frame.part);
+          flush();
+        } else if (frame.kind === "delta") {
+          reduceLiveDelta(stateRef.current, frame);
+          flush();
+        }
+      },
+      () => {
+        isStreamingRef.current = false;
+        streamedLocallyRef.current = false;
+        setIsStreaming(false);
+      },
+    );
+    if (!(await observe.ready)) {
+      isStreamingRef.current = false;
+      streamedLocallyRef.current = false;
+      setIsStreaming(false);
+      return false;
+    }
+    const accepted = await retrySessionTurn(context);
+    retryAccepted = accepted;
+    if (retryAccepted && idleSnapshotSeen) {
+      observe.abort();
+      isStreamingRef.current = false;
+      streamedLocallyRef.current = false;
+      setIsStreaming(false);
+    }
+    if (!accepted) {
+      observe.abort();
+      isStreamingRef.current = false;
+      streamedLocallyRef.current = false;
+      setIsStreaming(false);
+      stateRef.current.messages = stateRef.current.messages.map((message, index) =>
+        index === errorIndex
+          ? { ...message, meta: { ...message.meta, retrying: false, retryFailed: true } }
+          : message,
+      );
+      flushNow();
+    }
+    return accepted;
+  }, [flush, flushNow]);
+
   const reset = useCallback(() => {
     abort();
     stateRef.current = newReduceState();
@@ -1940,10 +2140,7 @@ export function useChat(
     setTokenUsage(null);
     setSessionId(null);
     sessionIdRef.current = null;
-    historyFragmentsRef.current = [];
-    historyPageCursorRef.current = null;
-    hasOlderHistoryRef.current = false;
-    setHasOlderHistory(false);
+    setIsHistoryStreaming(false);
   }, [abort]);
 
   return {
@@ -1954,9 +2151,8 @@ export function useChat(
     sessionId,
     isStreaming: isStreaming || sessionRunning,
     isHistoryLoading,
+    isHistoryStreaming,
     historyError,
-    hasOlderHistory,
-    isOlderHistoryLoading,
     reloadHistory,
     send,
     abort,
@@ -1968,6 +2164,7 @@ export function useChat(
     deliveringMessage,
     grantedPermissionMode,
     retryOutbox,
+    retryTurn,
     handlePermission,
     handleQuestion,
     declineQuestion,

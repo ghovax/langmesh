@@ -40,6 +40,9 @@ def _bundled_dotagents_root() -> Path:
         if (bundle_root / ".agents" / "agents").is_dir():
             return bundle_root / ".agents"
     here = Path(__file__).resolve().parent
+    installed = here.parent / "_bundled" / ".agents"
+    if (installed / "agents").is_dir():
+        return installed
     for candidate in (here, *here.parents):
         if (candidate / ".agents" / "agents").is_dir():
             return candidate / ".agents"
@@ -221,6 +224,8 @@ class FilesystemConfiguration(Section):
             "~/.pyenv",
             "~/.docker",
             "~/.netrc",
+            # Allow Git's macOS credential helper to read the login keychain for HTTPS pushes.
+            "~/Library/Keychains",
         ],
     )
     writable: list[str] = Field(
@@ -273,13 +278,24 @@ class WorkspaceConfiguration(Section):
 
 
 class CompactionConfiguration(Section):
-    """Conversation memory: each exchange is recorded as it closes, and the turns behind the window are dropped."""
+    """Context folding thresholds. Observational memory is a separate, user-managed concern."""
 
     automatic: bool = Field(True)
+    assumed_context_window: int = Field(128_000, ge=1)
     reclaim_at_fraction: float = Field(0.85)
-    observational_memory_limit_fraction: float = Field(0.1, gt=0, lt=1)
     output_reserve_fraction: float = Field(0.1)
     recent_working_set_fraction: float = Field(0.25)
+
+    @field_validator(
+        "reclaim_at_fraction",
+        "output_reserve_fraction",
+        "recent_working_set_fraction",
+    )
+    @classmethod
+    def _fraction(cls, value: float) -> float:
+        if not 0 < value < 1:
+            raise ValueError("compaction fractions must be greater than 0 and less than 1")
+        return value
 
 
 class AttachmentsConfiguration(Section):
@@ -642,6 +658,12 @@ class Configuration(Section):
         """The working directory's own ``.agents`` root, which equals the home root when they are the same place."""
         return self._resolve_local(working_directory, self.AGENTS_ROOT_DIRECTORY)
 
+    def observation_database_for(self, working_directory: str) -> Path:
+        """The workspace-owned observation database beside that workspace's `mcp.json`."""
+        from langmesh.base.observation_store import OBSERVATIONS_FILENAME
+
+        return self.project_agents_root_for(working_directory) / OBSERVATIONS_FILENAME
+
     def agents_root_directories_for(self, working_directory: str) -> list[Path]:
         return _dedupe_paths(
             [
@@ -961,9 +983,7 @@ class PromptLoader:
         return self._replace_variables(content, variables, template_name)
 
     @classmethod
-    def render(
-        cls, template: str, variables: Mapping[str, object], template_name: str = ""
-    ) -> str:
+    def render(cls, template: str, variables: Mapping[str, object], template_name: str = "") -> str:
         """Render a template already in hand, for a catalogue that carries its prompts in memory."""
         return cls._replace_variables(template, variables, template_name)
 
@@ -1077,16 +1097,16 @@ def list_agents(agents_directory: str | Path | Iterable[str | Path]) -> list[dic
     agents = []
     for name, path in sorted(_agent_paths(agents_directory).items()):
         try:
-            config = AgentConfiguration.from_markdown(path)
+            configuration = AgentConfiguration.from_markdown(path)
             agents.append(
                 {
-                    "id": config.identifier,
-                    "name": config.identifier,
-                    "title": config.display_name,
+                    "id": configuration.identifier,
+                    "name": configuration.identifier,
+                    "title": configuration.display_name,
                     # What the agent is for — surfaced as the subtitle in the UI's agent picker.
-                    "description": config.description,
+                    "description": configuration.description,
                     # The resolved `provider/model`; empty means no runnable model is configured.
-                    "model": config.model_identifier or "",
+                    "model": configuration.model_identifier or "",
                 }
             )
         except Exception:

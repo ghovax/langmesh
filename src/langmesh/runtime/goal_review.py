@@ -7,6 +7,7 @@ import logging
 from contextlib import suppress
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Awaitable, Callable, Literal, Optional
 
@@ -14,13 +15,13 @@ from a2a.types import Message, Part, Role, Task, TaskState, TaskStatus, TextPart
 from a2a.utils import new_task
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
-from langmesh.base.configuration import PermissionEvaluator
+from langmesh.base.configuration import PermissionEvaluator, PromptLoader
 from langmesh.base.identifiers import new_id
 from langmesh.base.serialization import compact
 from langmesh.base.tuning import Tunable, active_tuning
 from langmesh.protocol.events import ToolStatus
+from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.goal import Goal, NonBlankText
-from langmesh.runtime.internals import says
 from langmesh.runtime.turn_events import (
     GoalReviewFinished,
     GoalReviewProgress,
@@ -32,6 +33,7 @@ from langmesh.worker.sink import _TurnEventSink
 
 
 logger = logging.getLogger(__name__)
+_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "descriptions")
 
 #: Where a goal stands after one reading of the work, which is not the same as what the session says about it.
 GOAL_STANDING = Literal["unmet", "satisfied", "blocked"]
@@ -55,13 +57,31 @@ class GoalReview(BaseModel):
     """One reading of an open goal: where it stands, and what the session is told to do about it."""
 
     # Evidence precedes the verdict so the decision follows from the review instead of leading it.
-    assessment: NonBlankText = Field(description=says("goal_review_assessment"))
-    unmet: list[NonBlankText] = Field(default_factory=list, description=says("goal_review_unmet"))
-    evidence: NonBlankText | None = Field(default=None, description=says("goal_review_evidence"))
-    blocker: NonBlankText | None = Field(default=None, description=says("goal_review_blocker"))
-    goal_contract: GOAL_CONTRACT = Field(description=says("goal_review_goal_contract"))
-    standing: GOAL_STANDING = Field(description=says("goal_review_standing"))
-    message: NonBlankText | None = Field(default=None, description=says("goal_review_message"))
+    assessment: NonBlankText = Field(
+        description=_DESCRIPTIONS.load("goal_review_assessment", {}).strip()
+    )
+    unmet: list[NonBlankText] = Field(
+        default_factory=list,
+        description=_DESCRIPTIONS.load("goal_review_unmet", {}).strip(),
+    )
+    evidence: NonBlankText | None = Field(
+        default=None,
+        description=_DESCRIPTIONS.load("goal_review_evidence", {}).strip(),
+    )
+    blocker: NonBlankText | None = Field(
+        default=None,
+        description=_DESCRIPTIONS.load("goal_review_blocker", {}).strip(),
+    )
+    goal_contract: GOAL_CONTRACT = Field(
+        description=_DESCRIPTIONS.load("goal_review_goal_contract", {}).strip()
+    )
+    standing: GOAL_STANDING = Field(
+        description=_DESCRIPTIONS.load("goal_review_standing", {}).strip()
+    )
+    message: NonBlankText | None = Field(
+        default=None,
+        description=_DESCRIPTIONS.load("goal_review_message", {}).strip(),
+    )
     _review_id: str = PrivateAttr("")
 
     @model_validator(mode="after")
@@ -114,12 +134,16 @@ class _ReviewsGoal:
         policy: Any,
         resolved_location: Any,
     ):
+        model_guidance = ""
         if not self._accepts_goal_review:
             result = {
-                "code": "goal_review_unavailable",
-                "status": ToolStatus.ERROR.value,
-                "message": "This tool is available only to the internal goal reviewer.",
+                "code": "internal_verdict_inert",
+                "status": ToolStatus.OK.value,
             }
+            model_guidance = self._prompt_loader.load(
+                "internal_verdict_inert",
+                {"tool_name": tool_name},
+            )
         else:
             review = GoalReview.model_validate(tool_arguments)
             goal = self.goal
@@ -130,17 +154,21 @@ class _ReviewsGoal:
                 result = {
                     "code": "goal_review_blocked_too_soon",
                     "status": ToolStatus.ERROR.value,
-                    "message": "Blocking is not available yet; submit unmet with the next review message.",
                 }
+                model_guidance = self._prompt_loader.load("goal_review_blocked_too_soon", {})
             else:
                 self._submitted_goal_review = review
                 self._abort_event.set()
                 result = {
                     "code": "goal_review_submitted",
                     "status": ToolStatus.OK.value,
-                    "message": "The independent goal review was recorded.",
                 }
-        yield ToolResult(id=tool_call_identifier, name=tool_name, result=result)
+        yield ToolResult(
+            id=tool_call_identifier,
+            name=tool_name,
+            result=result,
+            model_guidance=model_guidance,
+        )
 
     def _goal_reviewer(self, scratch_directory: str):
         from langmesh.runtime.runtime import AgentRuntime
@@ -195,9 +223,6 @@ class _ReviewsGoal:
                     ),
                 ),
             )
-        reviewer_tools = tuple(
-            tool for tool in self._tools if tool.name not in _REVIEWER_DISABLED_TOOLS
-        )
         reviewer = AgentRuntime(
             agent_configuration=reviewer_configuration,
             global_configuration=reviewer_global_configuration,
@@ -210,13 +235,13 @@ class _ReviewsGoal:
             parent_session=self._parent_session,
             sandbox=reviewer_sandbox,
             session_access=None,
-            mcp_manager=self._tool_context.mcp_manager,
+            mcp_server_manager=self._tool_context.mcp_server_manager,
             model=self._model,
             catalogue=self._catalogue,
             tools=tuple(self._extra_tools.values()),
             supplied_tool_gate=self._supplied_tool_gate,
             permissions=reviewer_permissions,
-            toolset=reviewer_tools,
+            toolset=tuple(self._tools),
             accepts_goal_review=True,
         )
         reviewer._locations = dict(self._locations)
@@ -237,12 +262,13 @@ class _ReviewsGoal:
         publish: Callable[[TurnEvent], Awaitable[None]] | None,
     ) -> bool:
         async def run() -> None:
-            async for event in reviewer.stream(
-                instruction, as_system_note=True, opens_exchange=True
-            ):
-                if publish is not None:
-                    await publish(GoalReviewProgress(review_id=review_id, event=event))
-                await sink.handle(event)
+            with cache_lane(f"goal-review/{review_id}"):
+                async for event in reviewer.stream(
+                    instruction, as_system_note=True, opens_exchange=True
+                ):
+                    if publish is not None:
+                        await publish(GoalReviewProgress(review_id=review_id, event=event))
+                    await sink.handle(event)
 
         review_turn = asyncio.create_task(run())
         abort_wait = asyncio.create_task(self._abort_event.wait())
@@ -284,7 +310,7 @@ class _ReviewsGoal:
             )
             await self._turn_store.save(task)
 
-        async def emit(part: Part) -> None:
+        async def emit(part: Part, *, publish_stream_event: bool = True) -> None:
             task.history = [
                 *(task.history or []),
                 Message(
@@ -295,8 +321,16 @@ class _ReviewsGoal:
                     context_id=review_id,
                 ),
             ]
-            if self._turn_store is not None:
+            if self._turn_store is not None and publish_stream_event:
                 await self._turn_store.save_goal_review(self._session_id, review_id, task, part)
+            elif self._turn_store is not None:
+                await self._turn_store.save(task)
+
+        def emit_delta(channel: str, block_id: str, text: str) -> None:
+            # Review transcripts share the same bus, so their model deltas take the same direct lane.
+            from langmesh.daemon import state
+
+            state.event_bus.publish_delta(review_id, channel, block_id, text)
 
         async def save_conversation() -> None:
             return None
@@ -306,6 +340,7 @@ class _ReviewsGoal:
 
         sink = _TurnEventSink(
             emit=emit,
+            emit_delta=emit_delta,
             save_conversation=save_conversation,
             suspend=suspend,
             telemetry_span=None,
@@ -338,9 +373,6 @@ class _ReviewsGoal:
         review_tool = next(tool for tool in reviewer._tools if tool.name == "submit_goal_review")
         reviewer._tools = [review_tool]
         reviewer._tool_schemas = {review_tool.name: review_tool.args_schema}
-        reviewer._bound_model = reviewer._model.bind_tools(
-            [review_tool], tool_choice="submit_goal_review"
-        )
 
     async def review_goal(
         self, publish: Callable[[TurnEvent], Awaitable[None]] | None = None
@@ -349,8 +381,6 @@ class _ReviewsGoal:
         goal = self.goal
         if goal is None or not goal.is_open:
             return None
-        await self.wait_for_observational_memory()
-        await self._append_unseen_memory()
         goal = self.goal
         if goal is None or not goal.is_open:
             return None

@@ -1,8 +1,6 @@
-This request was not allowed.
+The permission reviewer refused this request for the following reason:
 
-**Why:**
-
-{{ reason }}
+**Reason:** {{ reason }}
 
 This is settled. Repeating the call will not change it, and there is nothing to wait for.
 

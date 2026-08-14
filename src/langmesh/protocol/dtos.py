@@ -144,16 +144,16 @@ class AttachmentsUpdateRequest(BaseModel):
 
 
 class CompactionUpdateRequest(BaseModel):
-    """Observational-memory compaction settings. Only provided fields are changed."""
+    """Context-folding settings. Only provided fields are changed."""
 
     automatic: bool | None = None
+    assumed_context_window: int | None = Field(default=None, ge=1)
     reclaim_at_fraction: float | None = None
-    observational_memory_limit_fraction: float | None = Field(default=None, gt=0, lt=1)
     output_reserve_fraction: float | None = None
     recent_working_set_fraction: float | None = None
 
 
-class MCPToolCallRequest(BaseModel):
+class MCPServerToolCallRequest(BaseModel):
     server: str
     tool_name: str
     arguments: dict = {}

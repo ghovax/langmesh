@@ -87,7 +87,7 @@ def _entry_from_input(payload: RemoteAgentInput) -> dict:
 
 @router.get("/remote-agents")
 async def list_remote_agents():
-    """The registered external agents with their config (never secrets) and live health."""
+    """The registered external agents with their configuration (never secrets) and live health."""
     assert state.global_configuration is not None
     configuration = state.global_configuration.remote_agents
     manager = state.remote_agent_manager

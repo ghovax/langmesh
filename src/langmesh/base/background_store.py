@@ -11,24 +11,17 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from langmesh.base.paths import background_database_path as _background_database_path
+from langmesh.base.paths import BACKGROUND_DATABASE_FILENAME, data_directory
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from langmesh.base.ports import JobStore
-from langmesh.base.sqlite_lock import background_sqlite_write_lock, configure_background_sqlite_lock
 
-
-BACKGROUND_DATABASE_FILENAME = "background.db"
 
 # Lifecycle of a persisted job.
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"  # finished; result stored; not yet delivered to the model
 STATUS_DELIVERED = "delivered"  # result has reached the model (in-turn or via an autonomous wake)
 STATUS_ABANDONED = "abandoned"  # could not be recovered after a restart (e.g. a bash command)
-
-
-def background_database_path() -> Path:
-    return _background_database_path()
 
 
 def reap_orphaned_process_groups(store: "JobStore | None" = None) -> int:
@@ -69,51 +62,48 @@ class BackgroundJobStore:
     """A SQLite mirror of every background job's lifecycle, which is not turn state."""
 
     def __init__(self, database_path: Path | None = None):
-        self.database_path = database_path or background_database_path()
+        self.database_path = database_path or data_directory() / BACKGROUND_DATABASE_FILENAME
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        configure_background_sqlite_lock(self.database_path)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=30000")
         return connection
 
     def _initialize(self) -> None:
-        with background_sqlite_write_lock():
-            with self._connect() as connection:
-                connection.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS background_jobs (
-                        job_id TEXT PRIMARY KEY,
-                        session_id TEXT NOT NULL,
-                        agent_name TEXT NOT NULL,
-                        kind TEXT NOT NULL,
-                        arguments_json TEXT NOT NULL,
-                        tool_call_id TEXT NOT NULL,
-                        status TEXT NOT NULL,
-                        result_json TEXT,
-                        created_at TEXT NOT NULL,
-                        completed_at TEXT,
-                        delivered_at TEXT,
-                        -- OS process-group id of a job's shell subtree, so a reaper
-                        -- can kill an orphan left by an unclean shutdown (SIGKILL /
-                        -- crash) on the next start.
-                        process_group INTEGER
-                    )
-                    """
+        with self._connect() as connection:
+            # `process_group`: OS process-group id of a job's shell subtree, so a reaper can kill an orphan left by an unclean shutdown (SIGKILL / crash) on the next start.
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS background_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    agent_name TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    arguments_json TEXT NOT NULL,
+                    tool_call_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    result_json TEXT,
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    delivered_at TEXT,
+                    process_group INTEGER
                 )
-                # Indices matched to the hot queries, so the startup and per-turn scans stay cheap.
-                connection.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_background_jobs_context_agent_status ON background_jobs(session_id, agent_name, status)"
-                )
-                connection.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_background_jobs_agent_status ON background_jobs(agent_name, status)"
-                )
-                connection.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_background_jobs_status ON background_jobs(status)"
-                )
+                """
+            )
+            # Indices matched to the hot queries, so the startup and per-turn scans stay cheap.
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_background_jobs_context_agent_status ON background_jobs(session_id, agent_name, status)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_background_jobs_agent_status ON background_jobs(agent_name, status)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_background_jobs_status ON background_jobs(status)"
+            )
 
     def record_started(
         self,
@@ -125,60 +115,55 @@ class BackgroundJobStore:
         arguments: dict[str, Any],
         tool_call_id: str = "",
     ) -> None:
-        with background_sqlite_write_lock():
-            with self._connect() as connection:
-                connection.execute(
-                    """
-                    INSERT OR REPLACE INTO background_jobs (
-                        job_id, session_id, agent_name, kind, arguments_json, tool_call_id,
-                        status, result_json, created_at, completed_at, delivered_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL)
-                    """,
-                    (
-                        job_id,
-                        session_id,
-                        agent_name,
-                        kind,
-                        _json_dump(arguments),
-                        tool_call_id,
-                        STATUS_RUNNING,
-                        _now(),
-                    ),
-                )
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO background_jobs (
+                    job_id, session_id, agent_name, kind, arguments_json, tool_call_id,
+                    status, result_json, created_at, completed_at, delivered_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL)
+                """,
+                (
+                    job_id,
+                    session_id,
+                    agent_name,
+                    kind,
+                    _json_dump(arguments),
+                    tool_call_id,
+                    STATUS_RUNNING,
+                    _now(),
+                ),
+            )
 
     def record_process_group(self, job_id: str, process_group: int) -> None:
         """Record a job's process group once its shell subtree has started, so a reaper can kill it after a crash."""
-        with background_sqlite_write_lock():
-            with self._connect() as connection:
-                connection.execute(
-                    "UPDATE background_jobs SET process_group = ? WHERE job_id = ?",
-                    (process_group, job_id),
-                )
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE background_jobs SET process_group = ? WHERE job_id = ?",
+                (process_group, job_id),
+            )
 
     def record_finished(self, job_id: str, result: str, *, status: str = STATUS_COMPLETED) -> None:
         """Mark a job completed (or failed — both carry a result payload the model reads)."""
-        with background_sqlite_write_lock():
-            with self._connect() as connection:
-                connection.execute(
-                    "UPDATE background_jobs SET status = ?, result_json = ?, completed_at = ? WHERE job_id = ?",
-                    (status, result, _now(), job_id),
-                )
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE background_jobs SET status = ?, result_json = ?, completed_at = ? WHERE job_id = ?",
+                (status, result, _now(), job_id),
+            )
 
     def mark_delivered(self, job_id: str) -> None:
-        with background_sqlite_write_lock():
-            with self._connect() as connection:
-                connection.execute(
-                    "UPDATE background_jobs SET status = ?, delivered_at = ? WHERE job_id = ?",
-                    (STATUS_DELIVERED, _now(), job_id),
-                )
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE background_jobs SET status = ?, delivered_at = ? WHERE job_id = ?",
+                (STATUS_DELIVERED, _now(), job_id),
+            )
 
     def mark_abandoned(self, job_id: str, result: str) -> None:
-        with background_sqlite_write_lock():
-            with self._connect() as connection:
-                connection.execute(
-                    "UPDATE background_jobs SET status = ?, result_json = ?, completed_at = ? WHERE job_id = ?",
-                    (STATUS_ABANDONED, result, _now(), job_id),
-                )
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE background_jobs SET status = ?, result_json = ?, completed_at = ? WHERE job_id = ?",
+                (STATUS_ABANDONED, result, _now(), job_id),
+            )
 
     def running_jobs(self, agent_name: str | None = None) -> list[dict[str, Any]]:
         """Jobs still marked running — i.e. in flight when the process last stopped."""

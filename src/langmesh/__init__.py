@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, AsyncIterator, Mapping, Optional, Sequence
 
@@ -19,7 +20,21 @@ from langmesh.base.configuration import (
     ToolsConfiguration,
 )
 from langmesh.base.permission_mode import PermissionMode
+from langmesh.base.errors import CompactionBlockedError
 from langmesh.base.instructions import Instruction
+from langmesh.base.observation_store import ObservationRegistryError
+from langmesh.base.observations import ObservationRegistry
+from langmesh.base.resources import (
+    LocalResourceChanges,
+    MaterializedResources,
+    OverlayResources,
+    ResourceChange,
+    ResourceChangeSource,
+    ResourceWatchUnsupported,
+    WorkspaceResources,
+    WorkspaceResourcesLike,
+    resource_path,
+)
 from langmesh.base.skills import Skill
 from langmesh.runtime.compaction import KeepRecentTurns
 from langmesh.runtime.hooks import MaximumToolCalls
@@ -87,6 +102,7 @@ __all__ = [
     "Checkpoint",
     "Checkpoints",
     "Compaction",
+    "CompactionBlockedError",
     "CompactionDone",
     "CompactionStarted",
     "CompactionState",
@@ -106,9 +122,16 @@ __all__ = [
     "MemoryCheckpoints",
     "MemoryJobStore",
     "MemoryTranscript",
+    "MaterializedResources",
     "Observation",
+    "ObservationRegistry",
+    "ObservationRegistryError",
+    "OverlayResources",
     "Observer",
     "SandboxConfiguration",
+    "ResourceChange",
+    "ResourceChangeSource",
+    "ResourceWatchUnsupported",
     "PermissionMode",
     "Session",
     "ScheduleError",
@@ -127,6 +150,9 @@ __all__ = [
     "TurnHook",
     "Skill",
     "Usage",
+    "WorkspaceResources",
+    "WorkspaceResourcesLike",
+    "LocalResourceChanges",
     "is_due",
     "next_firing",
     "validate_schedule",
@@ -136,6 +162,7 @@ __all__ = [
     "TurnSummary",
     "__version__",
 ]
+
 
 try:  # pragma: no cover - a source checkout has no distribution metadata
     from importlib.metadata import version as _package_version
@@ -186,7 +213,7 @@ class Session:
         self,
         agent: AgentConfiguration,
         *,
-        directory: str | Path,
+        directory: str | Path | None = None,
         session_id: str = "",
         permission_mode: str = "",
         sandbox: Any = None,
@@ -204,7 +231,7 @@ class Session:
         transcript: Optional[Transcript] = None,
         credentials: Optional[Credentials] = None,
         peers: Any = None,
-        mcp_manager: Any = None,
+        mcp_server_manager: Any = None,
         # Extension as distinct from configuration: tools the agent gains, and where it may run them.
         tools: Sequence[Any] = (),
         supplied_tool_gate: str = "ask",
@@ -217,6 +244,9 @@ class Session:
         # A git worktree per session, off by default because it writes to disk.
         workspace: Any = None,
         tracer_provider: Any = None,
+        # Any fsspec-backed workspace. Non-local sources are materialized for Bash and SQLite,
+        # then synchronized at tool boundaries and close.
+        resources: WorkspaceResourcesLike | None = None,
     ) -> None:
         from langmesh.base.configuration import Configuration
         from langmesh.base.identifiers import new_id
@@ -226,15 +256,27 @@ class Session:
                 "agent must be an AgentConfiguration, not a name. A name would mean this library goes looking for a profile on your machine. Build one in code, or load it yourself: `langmesh.daemon.machine.load_catalogue(...).agent(name)`."
             )
         self._agent = agent
+        if directory is None and resources is None:
+            raise TypeError("directory or resources is required")
+        if directory is not None and resources is not None:
+            raise TypeError("directory and resources describe the same workspace; pass exactly one")
         # Absolute, and not resolved against the process's directory: where tools run is a property of the run.
-        if not Path(directory).is_absolute():
+        if directory is not None and not Path(directory).is_absolute():
             raise ValueError(f"directory must be absolute, got {directory!r}.")
-        self._directory = str(Path(directory))
+        supplied_resources = _require(WorkspaceResourcesLike, resources, "resources")
+        self._resources = (
+            supplied_resources
+            if supplied_resources is not None
+            else WorkspaceResources.local(str(directory))
+        )
+        local_resource_path = self._resources.local_path
+        self._directory = str(local_resource_path) if local_resource_path is not None else ""
         self._session_id = session_id or new_id("session")
         self._permission_mode = permission_mode
         self._sandbox = sandbox
         self._peers = peers
-        self._mcp_manager = mcp_manager
+        self._mcp_server_manager = mcp_server_manager
+        self._lifecycle = AsyncExitStack()
         # Reading configuration must not leave a file in the caller's home directory.
         self._configuration = (
             configuration
@@ -261,11 +303,14 @@ class Session:
         self._locations = locations
         self._workspace = workspace
         self._tracer_provider = tracer_provider
+        self._observations = ObservationRegistry(self._resources, configuration=self._configuration)
+        self._materialized_resources: MaterializedResources | None = None
         # Where tools actually run. Equal to `directory` unless a workspace repointed it.
         self._runtime_directory = self._directory
         self._bindings: list = []
         self._runtime: Any = None
         self._restored = False
+        self._turn_lock = asyncio.Lock()
 
     @property
     def id(self) -> str:
@@ -273,9 +318,24 @@ class Session:
         return self._session_id
 
     @property
+    def resources(self) -> WorkspaceResourcesLike:
+        """The configured workspace resources this session materializes for path-native tools."""
+        return self._resources
+
+    @property
+    def observations(self) -> ObservationRegistry:
+        """A configured observational-memory reader over this session's workspace resources."""
+        return self._observations
+
+    @property
     def runtime(self) -> Any:
         """The underlying `AgentRuntime`, built on first use and exposed so no non-obvious use needs a fork."""
         if self._runtime is None:
+            if self._materialized_resources is None and self._resources is not None:
+                if self._resources.local_path is None:
+                    raise RuntimeError(
+                        "non-local resources require `async with Session(...)` so LangMesh can hold their materialized POSIX view"
+                    )
             from langmesh.base.tuning import set_tuning, tuning_from_policy
             from langmesh.runtime.runtime import AgentRuntime
 
@@ -293,8 +353,13 @@ class Session:
                 self._bindings.append(
                     ("tracer", set_tracer(self._tracer_provider.get_tracer("langmesh")))
                 )
-            # The working directory's own `.agents` plus the packaged base layer, and deliberately nothing of `$HOME`.
-            catalogue = self._catalogue if self._catalogue is not None else Catalogue()
+            # The directory the caller supplied plus the packaged base layer, and deliberately nothing of `$HOME`.
+            if self._catalogue is None:
+                from langmesh.base.catalogue import project_catalogue
+
+                catalogue = project_catalogue(self._configuration, self._directory)
+            else:
+                catalogue = self._catalogue
             agent_configuration = self._agent
             # A model named at the call site beats the profile's, since editing a file to express a runtime choice is the wrong seam.
             if self._model_identifier:
@@ -316,7 +381,7 @@ class Session:
                 # Handed over as the caller gave it, including `None`, which the runtime reads as the configured default.
                 sandbox=self._sandbox,
                 session_access=self._peers,
-                mcp_manager=self._mcp_manager,
+                mcp_server_manager=self._mcp_server_manager,
                 catalogue=catalogue,
                 model=self._model,
                 jobs=self._jobs,
@@ -330,6 +395,11 @@ class Session:
                 pipeline=self._pipeline,
                 compaction=self._compaction,
                 locations=self._resolved_locations(),
+                resource_sync=(
+                    self._materialized_resources.sync
+                    if self._materialized_resources is not None
+                    else None
+                ),
             )
         return self._runtime
 
@@ -339,6 +409,8 @@ class Session:
 
     async def prepare_worktree(self, strategy: str = "worktree") -> str:
         """Give this session its own git worktree and run its tools there; opt-in, because it writes to disk."""
+        if not self._directory:
+            raise RuntimeError("prepare_worktree requires a local directory-backed session")
         manager = self._workspace
         if manager is None:
             from langmesh.base.worktrees import SessionWorktreeManager
@@ -347,6 +419,29 @@ class Session:
         prepared = await manager.prepare(self._session_id, self._directory, strategy)
         self._runtime_directory = prepared.runtime_working_directory or self._directory
         return self._runtime_directory
+
+    async def sync_resources(self) -> None:
+        """Publish path-native changes to the configured fsspec workspace now."""
+        if self._materialized_resources is None:
+            raise RuntimeError("resources are materialized only inside `async with Session(...)`")
+        await self._materialized_resources.sync()
+
+    async def refresh_resources(self) -> None:
+        """Refresh the materialized view from its source at a caller-chosen idle boundary."""
+        async with self._turn_lock:
+            if self._materialized_resources is None:
+                raise RuntimeError(
+                    "resources are materialized only inside `async with Session(...)`"
+                )
+            await self._materialized_resources.refresh()
+            if self._runtime is not None:
+                try:
+                    metadata = await self._observations.describe()
+                except ObservationRegistryError as error:
+                    self._runtime.note_observation_registry({}, str(error))
+                else:
+                    self._runtime.note_observation_registry(metadata)
+                self._runtime.refresh_system_prompt()
 
     @property
     def transcript(self) -> Transcript:
@@ -389,7 +484,12 @@ class Session:
         from langmesh.protocol.files import attachment_from_path
         from langmesh.protocol.parts import attachment_payload, compose_turn_input
 
-        records = [attachment_from_path(path) for path in attachments]
+        records = []
+        for attachment in attachments:
+            path = Path(attachment)
+            if not path.is_absolute():
+                path = Path(self._runtime_directory) / resource_path(str(path))
+            records.append(attachment_from_path(path))
         runtime = self.runtime
         runtime.note_attachments([record["path"] for record in records])
         turn_input, images_not_inlined = compose_turn_input(
@@ -413,18 +513,31 @@ class Session:
         attachments: Sequence[str | Path] = (),
     ) -> AsyncIterator[TurnEventUnion]:
         """Drive a turn, yielding each event, and keep driving turns while a goal the agent set is still open."""
-        if not self._restored:
-            await self.restore()
-        # Somebody is here again, so a goal that had used its allowance gets it back.
-        self.runtime.restore_goal_allowance()
-        try:
-            async for event in self.runtime.stream(self._compose(message, attachments)):
-                yield event
-            # A goal outlives the turn that set it, so this call is over when the goal is rather than when the model stops talking.
-            async for event in self._pursue_goal():
-                yield event
-        finally:
-            await self.save()
+        async with self._turn_lock:
+            if not self._restored:
+                await self.restore()
+            failure = self.runtime.compaction_failure
+            if failure:
+                raise CompactionBlockedError(
+                    f"Context compaction failed: {failure} Retry Session.compact() before sending more work."
+                )
+            # Somebody is here again, so a goal that had used its allowance gets it back.
+            self.runtime.abandon_turn_retry()
+            self.runtime.restore_goal_allowance()
+            try:
+                async for event in self.runtime.stream(self._compose(message, attachments)):
+                    yield event
+                if self.runtime.compaction_failure:
+                    return
+                # A goal outlives the turn that set it, so this call is over when the goal is rather than when the model stops talking.
+                async for event in self._pursue_goal():
+                    yield event
+                self.runtime.mark_turn_succeeded()
+            except Exception:
+                self.runtime.mark_turn_failed()
+                raise
+            finally:
+                await self.save()
 
     async def _pursue_goal(self) -> AsyncIterator[TurnEventUnion]:
         """Keep driving turns while the review says the goal is unreached, up to its allowance."""
@@ -438,7 +551,6 @@ class Session:
             if goal.continuations >= allowance:
                 self.runtime.park_goal()
                 return
-            await self.runtime.wait_for_observational_memory()
             goal = self.runtime.goal
             if goal is None or not goal.is_open:
                 return
@@ -493,14 +605,54 @@ class Session:
         return answer
 
     async def compact(self) -> AsyncIterator[TurnEventUnion]:
-        """Fold the conversation now, yielding the same events an automatic fold does."""
-        if not self._restored:
-            await self.restore()
-        try:
-            async for event in self.runtime.compact(reason="manual"):
-                yield event
-        finally:
-            await self.save()
+        """Prepare and fold the conversation now, retrying the exact failed phase when necessary."""
+        async with self._turn_lock:
+            if not self._restored:
+                await self.restore()
+            runtime = self.runtime
+            if runtime.compaction_failure:
+                retry_operation = runtime.retry_compaction()
+            else:
+                runtime.begin_compaction_preparation()
+                retry_operation = "prepare"
+            resume_after = runtime.resumes_after_compaction
+            try:
+                if retry_operation == "fold":
+                    source = runtime.compact(reason=runtime.pending_compaction_reason)
+                else:
+                    source = (
+                        runtime.continue_stream()
+                        if runtime.resumes_after_compaction
+                        else runtime.prepare_compaction_stream()
+                    )
+                async for event in source:
+                    yield event
+                if retry_operation == "fold" and resume_after and not runtime.compaction_failure:
+                    async for event in runtime.continue_stream():
+                        yield event
+            finally:
+                await self.save()
+
+    async def retry(self) -> AsyncIterator[TurnEventUnion]:
+        """Continue the last failed turn from its durable conversation state."""
+        async with self._turn_lock:
+            if not self._restored:
+                await self.restore()
+            if self.runtime.compaction_failure:
+                raise CompactionBlockedError(
+                    "Context compaction is blocked; retry Session.compact() before retrying the turn."
+                )
+            if not self.runtime.begin_turn_retry():
+                raise RuntimeError("This session has no failed turn to retry.")
+            try:
+                async for event in self.runtime.continue_stream():
+                    yield event
+                self.runtime.mark_turn_succeeded()
+            except Exception:
+                self.runtime.mark_turn_failed()
+                raise
+            finally:
+                await self.save()
 
     @property
     def conversation(self) -> list:
@@ -533,8 +685,47 @@ class Session:
         if "langmesh.computer.web" in sys.modules:
             with contextlib.suppress(Exception):
                 sys.modules["langmesh.computer.web"].close()
+        await self._lifecycle.aclose()
+        self._materialized_resources = None
+        self._runtime = None
+        self._restored = False
+        local_resource_path = self._resources.local_path
+        self._directory = str(local_resource_path) if local_resource_path is not None else ""
+        self._runtime_directory = self._directory
 
     async def __aenter__(self) -> "Session":
+        if self._materialized_resources is None:
+            self._lifecycle = AsyncExitStack()
+            try:
+                materialized = await self._lifecycle.enter_async_context(
+                    self._resources.materialize()
+                )
+                self._materialized_resources = materialized
+                self._directory = str(materialized.path)
+                self._runtime_directory = self._directory
+                if self._mcp_server_manager is None:
+                    from langmesh.base.configuration import MCPConfiguration
+
+                    servers = MCPConfiguration.from_dotagents_roots(
+                        [Path(self._directory) / ".agents"]
+                    ).enabled_servers()
+                    if servers:
+                        from langmesh.base.mcp_client import MCPServerManager
+
+                        manager = MCPServerManager(servers)
+                        await manager.start()
+                        self._mcp_server_manager = manager
+
+                        async def close_manager() -> None:
+                            await manager.aclose()
+                            if self._mcp_server_manager is manager:
+                                self._mcp_server_manager = None
+
+                        self._lifecycle.push_async_callback(close_manager)
+            except BaseException:
+                await self._lifecycle.aclose()
+                self._materialized_resources = None
+                raise
         return self
 
     async def __aexit__(self, *_exception: object) -> None:

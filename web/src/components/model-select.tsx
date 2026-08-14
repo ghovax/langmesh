@@ -11,6 +11,7 @@ import {
   Portal,
   Select,
   Span,
+  Spinner,
   Text,
 } from "@chakra-ui/react";
 import { useEffect, useMemo, useState } from "react";
@@ -24,6 +25,7 @@ import {
   LuEyeOff,
   LuImage,
   LuPaperclip,
+  LuRefreshCw,
 } from "react-icons/lu";
 import {
   fetchSettings,
@@ -37,7 +39,6 @@ import { ChatGPTAuthControl } from "@/components/chatgpt-auth";
 import { CursorAuthControl } from "@/components/cursor-auth";
 import { swallowed } from "@/lib/swallowed";
 import { richTags } from "@/lib/i18n/rich-tags";
-import { CONTROL_ICON_SIZE } from "./session-controls";
 
 interface ModelSelectProps {
   models: ModelOption[];
@@ -53,6 +54,8 @@ interface ModelSelectProps {
   providerHidden?: boolean;
   capabilitiesHidden?: boolean;
   labelHidden?: boolean;
+  /** Re-fetches the model catalog through the daemon; shown when the catalog is empty so a failed load can be retried. */
+  onRetryModels?: () => void | Promise<void>;
 }
 
 // The dropdown option that reveals the free-form model id field, for models the catalog does not list.
@@ -172,6 +175,7 @@ export function ModelSelect({
   providerHidden = false,
   capabilitiesHidden = false,
   labelHidden = false,
+  onRetryModels,
 }: ModelSelectProps) {
   const translation = useTranslations("ModelSelect");
   const tc = useTranslations("Common");
@@ -187,6 +191,7 @@ export function ModelSelect({
   // The endpoint for the custom provider, edited here because it belongs with the model choice.
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [saving, setSaving] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   const providerItems = useMemo<ProviderItem[]>(
     () => providers.map((provider) => ({ value: provider.id, label: provider.name })),
@@ -310,6 +315,16 @@ export function ModelSelect({
     };
   }, [open]);
 
+  async function handleRetryModels() {
+    if (!onRetryModels || retrying) return;
+    setRetrying(true);
+    try {
+      await onRetryModels();
+    } finally {
+      setRetrying(false);
+    }
+  }
+
   async function handleApply() {
     setSaving(true);
     try {
@@ -352,7 +367,7 @@ export function ModelSelect({
         flexShrink={0}
         onClick={openDialog}
       >
-        <LuBot size={CONTROL_ICON_SIZE} />
+        <LuBot size={14} />
         {chipProviderLabel ? (
           <Span
             data-fit-label={fitted ? "model" : undefined}
@@ -408,10 +423,30 @@ export function ModelSelect({
           display="flex"
           flexShrink={0}
         >
-          <ModelCapabilityBadges model={chipModel} size={compact ? 11 : CONTROL_ICON_SIZE} />
+          <ModelCapabilityBadges model={chipModel} size={compact ? 11 : 14} />
         </Box>
         <LuChevronDown size={compact ? 13 : 15} />
       </Button>
+
+      {/* An empty catalog means the load failed or nothing was served; the retry sits with the picker it serves. */}
+      {models.length === 0 && onRetryModels ? (
+        <IconButton
+          aria-label={translation("retryModels")}
+          title={translation("retryModels")}
+          variant="outline"
+          bg="bg"
+          borderColor="border"
+          h="var(--control-height)"
+          flexShrink={0}
+          onClick={handleRetryModels}
+        >
+          {retrying ? (
+            <Spinner boxSize={`${14}px`} borderWidth="1.5px" />
+          ) : (
+            <LuRefreshCw size={14} />
+          )}
+        </IconButton>
+      ) : null}
 
       <Dialog.Root open={open} onOpenChange={(event) => setOpen(event.open)} placement="center">
         <Portal>
@@ -629,6 +664,23 @@ export function ModelSelect({
                 </Flex>
               </Dialog.Body>
               <Dialog.Footer>
+                {/* The catalog can be re-fetched from here too, for a stale list or one that failed to load. */}
+                {onRetryModels ? (
+                  <Button
+                    variant="outline"
+                    me="auto"
+                    flexShrink={0}
+                    gap={1.5}
+                    onClick={handleRetryModels}
+                  >
+                    {retrying ? (
+                      <Spinner boxSize="14px" borderWidth="1.5px" />
+                    ) : (
+                      <LuRefreshCw size={14} />
+                    )}
+                    {translation("retryModels")}
+                  </Button>
+                ) : null}
                 <Button variant="outline" onClick={() => setOpen(false)} disabled={saving}>
                   {tc("cancel")}
                 </Button>

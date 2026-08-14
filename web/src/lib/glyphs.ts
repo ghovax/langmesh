@@ -95,7 +95,7 @@ export function glyph(name: GlyphName | undefined): IconType {
 export const CONCEPT_ICONS = {
   /** A skill: something the agent knows how to do. */
   skill: glyph("sparkles"),
-  /** MCP — a configured server, its tools, and every call into one. */
+  /** MCP server — one configured server, its tools, and every call into it. */
   mcp: glyph("plug"),
   /** A place this workspace can work in — a folder here, or one on an SSH host. */
   environment: glyph("server"),

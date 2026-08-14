@@ -215,12 +215,12 @@ class _RemoteAgent:
         if card is None:
             return None
         if self._client is None:
-            config = ClientConfig(
+            client_configuration = ClientConfig(
                 httpx_client=self._httpx_client(),
                 supported_transports=_available_transports(),
                 streaming=bool(card.capabilities and card.capabilities.streaming),
             )
-            self._client = ClientFactory(config).create(card)
+            self._client = ClientFactory(client_configuration).create(card)
             # Fetch the richer authenticated card now that the client carries auth, re-checking trust on every URL.
             if getattr(card, "supports_authenticated_extended_card", False):
                 try:

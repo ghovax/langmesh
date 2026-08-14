@@ -32,7 +32,6 @@ import twemoji from "@twemoji/api";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { xcode, atomOneDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import type { Components } from "react-markdown";
-import type { Element } from "hast";
 import type { Root } from "mdast";
 import { useReducedMotion } from "motion/react";
 // flowtoken's public component cannot host our own pipeline, so its token animator is used directly.
@@ -187,7 +186,14 @@ function renderChildren(children: ReactNode): ReactNode {
 }
 
 // A single-line `$$...$$` parses as inline math, so a paragraph holding only it is centred here.
-function isDisplayMathParagraph(node: Element | undefined): boolean {
+interface MarkdownElement {
+  children: Array<{
+    type: string;
+    properties?: { className?: unknown };
+  }>;
+}
+
+function isDisplayMathParagraph(node: MarkdownElement | undefined): boolean {
   if (!node || node.children.length !== 1) return false;
   const [child] = node.children;
   return (

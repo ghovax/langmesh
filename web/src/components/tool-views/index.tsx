@@ -2,7 +2,7 @@
 
 import { PERMISSION_MODES } from "@shared/controls";
 import { useAgentName } from "@/lib/agent-names";
-import { Alert, Box, Button, Flex, Link, Text } from "@chakra-ui/react";
+import { Alert, Box, Button, Flex, Link, List, Text } from "@chakra-ui/react";
 import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { LuExternalLink } from "react-icons/lu";
@@ -43,18 +43,14 @@ function BashCallView({ args }: { args: Record<string, unknown> }) {
   const command = asString(args.command);
   const mutation = mutationClaim("bash", args);
   const readOnly =
-    mutation === "reads"
-      ? translation("yes")
-      : mutation === "writes"
-        ? translation("no")
-        : translation("mutationUndeclared");
+    mutation === "reads" ? translation("yes") : mutation === "writes" ? translation("no") : null;
   const access = requestedAccess(args);
   return (
     <FieldList>
       <Field label={translation("command")}>
         <MonoBlock>{command}</MonoBlock>
       </Field>
-      <InlineField label={translation("readOnly")}>{readOnly}</InlineField>
+      {readOnly !== null && <InlineField label={translation("readOnly")}>{readOnly}</InlineField>}
       {access.writes.length > 0 && (
         <Field label={translation("accessWrite")}>
           <MonoList items={access.writes} />
@@ -735,6 +731,75 @@ function UpdateGoalCallView({ args }: { args: Record<string, unknown> }) {
   );
 }
 
+// The internal reviewer's verdict: its standing and contract as pills, and every prose field as markdown.
+function SubmitGoalReviewCallView({ args }: { args: Record<string, unknown> }) {
+  const translation = useTranslations("ToolViews");
+  const standing = asString(args.standing);
+  const standingPalette =
+    standing === "satisfied" ? "green" : standing === "blocked" ? "red" : "orange";
+  const standingKey =
+    standing === "satisfied"
+      ? "standingSatisfied"
+      : standing === "blocked"
+        ? "standingBlocked"
+        : "standingUnmet";
+  const contract = asString(args.goal_contract);
+  const assessment = asString(args.assessment).trim();
+  const unmet = asArray(args.unmet).map(asString).filter(Boolean);
+  const evidence = asString(args.evidence).trim();
+  const blocker = asString(args.blocker).trim();
+  const message = asString(args.message).trim();
+  return (
+    <FieldList>
+      <InlineField label={translation("fieldStanding")}>
+        <Pill colorPalette={standingPalette}>
+          {translation(standingKey as Parameters<typeof translation>[0])}
+        </Pill>
+      </InlineField>
+      <InlineField label={translation("fieldContract")}>
+        <Pill colorPalette="purple">
+          {translation(
+            (contract === "needs_revision"
+              ? "contractNeedsRevision"
+              : "contractComplete") as Parameters<typeof translation>[0],
+          )}
+        </Pill>
+      </InlineField>
+      {assessment ? (
+        <Field label={translation("assessment")}>
+          <MarkdownContent content={assessment} fontSize="xs" />
+        </Field>
+      ) : null}
+      {unmet.length > 0 ? (
+        <Field label={translation("unmet")}>
+          <List.Root pl={4} fontSize="xs" listStyleType="disc">
+            {unmet.map((item, index) => (
+              <List.Item key={index} mb={0.5} _last={{ mb: 0 }}>
+                <MarkdownContent content={item} fontSize="xs" />
+              </List.Item>
+            ))}
+          </List.Root>
+        </Field>
+      ) : null}
+      {evidence ? (
+        <Field label={translation("evidence")}>
+          <MarkdownContent content={evidence} fontSize="xs" />
+        </Field>
+      ) : null}
+      {blocker ? (
+        <Field label={translation("blocker")}>
+          <MarkdownContent content={blocker} fontSize="xs" />
+        </Field>
+      ) : null}
+      {message ? (
+        <Field label={translation("message")}>
+          <MarkdownContent content={message} fontSize="xs" />
+        </Field>
+      ) : null}
+    </FieldList>
+  );
+}
+
 // `wait_for` is entirely its own duration, which the heading already states, so its arguments render as nothing.
 function WaitForResultView({ data }: { data: Record<string, unknown> }) {
   const translation = useTranslations("ToolDisplay");
@@ -802,6 +867,8 @@ export function ToolCallView({ name, args }: { name: string; args?: Record<strin
         return <SessionReferenceCallView args={args} />;
       case "update_goal":
         return <UpdateGoalCallView args={args} />;
+      case "submit_goal_review":
+        return <SubmitGoalReviewCallView args={args} />;
       // Its only argument is the duration, and the heading is already that duration.
       case "wait_for":
         return null;
@@ -1126,7 +1193,7 @@ export function ToolResultView({
     if (code === "web_search_error")
       return <ErrorView message={asString(data.message) || translation("searchFailed")} />;
     if (code.startsWith("bash")) return <BashResultView data={data} />;
-    if (name === "call_mcp_tool" || name === "read_mcp_resource")
+    if (name === "call_mcp_server_tool" || name === "read_mcp_resource")
       return <McpResultView data={data} />;
     if (code === "empty_response") {
       const message = asString(data.message);

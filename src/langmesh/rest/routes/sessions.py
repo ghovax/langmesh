@@ -6,7 +6,7 @@ from langmesh.commons.database import SessionRecord, WorkspaceRecord
 from langmesh.base.paths import uploads_directory
 import asyncio
 import re
-from typing import Literal
+from langmesh.rest.routes.observations import registry_snapshot
 from langmesh.protocol.dtos import (
     SessionDraftRequest,
 )
@@ -41,13 +41,29 @@ async def update_session_draft(session_id: str, request: SessionDraftRequest):
 @router.get("/sessions/{session_id}/record")
 async def session_record(
     session_id: str,
-    ledger: Literal["observations", "directives"] = "observations",
-    live_only: bool = True,
 ):
-    """A session's memory: what the work established, or what the person asked for, as the record holds it."""
-    assert state.turn_store is not None
-    entries = await state.turn_store.ledger_entries(session_id, ledger, live_only=live_only)
-    return {"entries": entries}
+    """The active workspace's current observational memory, addressed through its session."""
+    assert state.session_factory is not None
+    database_session = state.session_factory()
+    try:
+        record = (
+            database_session.query(SessionRecord).filter(SessionRecord.id == session_id).first()
+        )
+        working_directory = (
+            str(record.runtime_working_directory or record.working_directory or "")
+            if record is not None
+            else ""
+        )
+    finally:
+        database_session.close()
+    if not working_directory:
+        return {
+            "entries": {"observations": [], "directives": []},
+            "revision": 0,
+            "metadata": {},
+            "error": "",
+        }
+    return await registry_snapshot(working_directory)
 
 
 @router.get("/sessions/{session_id}/goal-reviews")
@@ -64,22 +80,6 @@ async def session_turns(session_id: str):
     turns = await state.turn_store.turns_for_session(session_id)
     return {
         "turns": [turn.model_dump(by_alias=True, exclude_none=True, mode="json") for turn in turns]
-    }
-
-
-@router.get("/sessions/{session_id}/turns/page")
-async def session_turn_page(session_id: str, before_row_id: int | None = None, limit: int = 400):
-    """A bounded replay page for fast switching, newest first, paging back through `before_row_id`."""
-    assert state.turn_store is not None
-    page = await state.turn_store.turn_page_for_session(
-        session_id, before_row_id=before_row_id, limit=limit
-    )
-    return {
-        "turns": [
-            turn.model_dump(by_alias=True, exclude_none=True, mode="json") for turn in page["turns"]
-        ],
-        "next_before_row_id": page["next_before_row_id"],
-        "has_more": page["has_more"],
     }
 
 

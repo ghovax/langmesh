@@ -6,7 +6,6 @@ from collections import deque
 from contextlib import suppress
 from datetime import datetime, timezone
 from fastapi import HTTPException
-from langmesh.base.sqlite_lock import sqlite_write_lock
 from langmesh.locations.executor import SshExecutor
 from pathlib import Path
 from typing import Any
@@ -128,31 +127,30 @@ def _save_terminal_state(
 ) -> None:
     if state.session_factory is None:
         return
-    with sqlite_write_lock():
-        database_session = state.session_factory()
-        try:
-            now = datetime.now(timezone.utc).isoformat()
-            record = database_session.get(TerminalStateRecord, (terminal_context, terminal_key))
-            if record is None:
-                record = TerminalStateRecord(
-                    session_id=terminal_context,
-                    terminal_key=terminal_key,
-                    working_directory=str(directory),
-                    scrollback=scrollback,
-                    created_at=now,
-                    updated_at=now,
-                )
-                database_session.add(record)
-            else:
-                record.working_directory = str(directory)
-                record.scrollback = scrollback
-                record.updated_at = now
-            database_session.commit()
-        except Exception:
-            database_session.rollback()
-            raise
-        finally:
-            database_session.close()
+    database_session = state.session_factory()
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        record = database_session.get(TerminalStateRecord, (terminal_context, terminal_key))
+        if record is None:
+            record = TerminalStateRecord(
+                session_id=terminal_context,
+                terminal_key=terminal_key,
+                working_directory=str(directory),
+                scrollback=scrollback,
+                created_at=now,
+                updated_at=now,
+            )
+            database_session.add(record)
+        else:
+            record.working_directory = str(directory)
+            record.scrollback = scrollback
+            record.updated_at = now
+        database_session.commit()
+    except Exception:
+        database_session.rollback()
+        raise
+    finally:
+        database_session.close()
 
 
 def _list_terminal_states(terminal_context: str) -> list[dict[str, str]]:
@@ -184,18 +182,17 @@ def _list_terminal_states(terminal_context: str) -> list[dict[str, str]]:
 def _delete_terminal_state(terminal_context: str, terminal_key: str) -> None:
     if state.session_factory is None:
         return
-    with sqlite_write_lock():
-        database_session = state.session_factory()
-        try:
-            record = database_session.get(TerminalStateRecord, (terminal_context, terminal_key))
-            if record is not None:
-                database_session.delete(record)
-                database_session.commit()
-        except Exception:
-            database_session.rollback()
-            raise
-        finally:
-            database_session.close()
+    database_session = state.session_factory()
+    try:
+        record = database_session.get(TerminalStateRecord, (terminal_context, terminal_key))
+        if record is not None:
+            database_session.delete(record)
+            database_session.commit()
+    except Exception:
+        database_session.rollback()
+        raise
+    finally:
+        database_session.close()
 
 
 class TerminalSession:

@@ -57,11 +57,9 @@ export interface ToolEvent {
 /** Whether a call has a complete explanation and may enter the transcript. */
 export function toolCallReady(event: ToolEvent): boolean {
   const explanation = event.arguments?.explanation;
-  return (
-    event.argumentsComplete === true &&
-    typeof explanation === "string" &&
-    explanation.trim().length > 0
-  );
+  // The explanation is what the row is made of; the arguments may still be streaming, so the
+  // line appears the moment the model finishes writing its intent rather than when the call is whole.
+  return typeof explanation === "string" && explanation.trim().length > 0;
 }
 
 export function isSameToolEvent(event: ToolEvent, _name: string, toolCallId: string): boolean {
@@ -96,7 +94,7 @@ export function permissionReasonText(
   if (!reason?.kind) return "";
   const count = (reason.paths ?? []).filter(Boolean).length;
   switch (reason.kind) {
-    case "reaches_outside_confinement":
+    case "confinement_escape":
       return translation("reasonAccessRequest", { count });
     default:
       return "";

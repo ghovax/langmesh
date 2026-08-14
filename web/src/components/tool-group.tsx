@@ -25,16 +25,22 @@ import {
 
 // The grouped, collapsible run of contiguous tool calls, and the single source of truth for how a batch reads.
 
-// Tally tools by name while preserving first-seen order.
-function tallyTools(tools: ToolEvent[]): { order: string[]; counts: Map<string, number> } {
+// Tally tools by name, splitting each type's count into successful and failed calls, preserving first-seen order.
+function tallyToolOutcomes(tools: ToolEvent[]): { name: string; total: number; failed: number }[] {
   const order: string[] = [];
-  const counts = new Map<string, number>();
+  const total = new Map<string, number>();
+  const failed = new Map<string, number>();
   for (const tool of tools) {
     const name = tool.name || "unknown";
-    if (!counts.has(name)) order.push(name);
-    counts.set(name, (counts.get(name) ?? 0) + 1);
+    if (!total.has(name)) order.push(name);
+    total.set(name, (total.get(name) ?? 0) + 1);
+    if (toolStatus(tool.status) === "failed") failed.set(name, (failed.get(name) ?? 0) + 1);
   }
-  return { order, counts };
+  return order.map((name) => ({
+    name,
+    total: total.get(name) ?? 0,
+    failed: failed.get(name) ?? 0,
+  }));
 }
 
 // One tally chip in the heading, carrying both the icon and its count so each reads as a single unit.
@@ -81,19 +87,16 @@ export const ToolGroup = memo(function ToolGroup({
   ).length;
   const runningCount =
     tools.filter((tool) => toolStatus(tool.status) === "running").length - backgroundCount;
-  const inputRequiredCount = tools.filter(
-    (tool) => toolStatus(tool.status) === "input_required",
-  ).length;
-  const inputRequired = inputRequiredCount > 0;
-  const failedCount = tools.filter((tool) => toolStatus(tool.status) === "failed").length;
+  const inputRequired = tools.some((tool) => toolStatus(tool.status) === "input_required");
   const active = runningCount > 0 || backgroundCount > 0 || inputRequired || keepOpen;
   const showActivitySpinner = runningCount > 0 || (keepOpen && !inputRequired);
   // Tri-state, so the group can be toggled either way from its default: null follows the default.
   const [manualOverride, setManualOverride] = useState<boolean | null>(null);
   const bodyOpen = manualOverride ?? false;
 
-  // The left icon owns the latest call, so the tally counts only the earlier ones.
-  const tally = useMemo(() => tallyTools(tools.slice(0, -1)), [tools]);
+  // The heading icon is the latest call's mark; the tally badges carry the per-type counts, split
+  // into successful and failed calls so a failure shows as that type's own red counter.
+  const tally = useMemo(() => tallyToolOutcomes(tools), [tools]);
   const latestTool = tools[tools.length - 1];
   const headingDisplay = latestTool
     ? getToolCallDisplay(latestTool.name, latestTool.arguments)
@@ -115,16 +118,6 @@ export const ToolGroup = memo(function ToolGroup({
 
   // Status chips surface only the states needing attention; running and completed calls speak for themselves.
   const statusChips = [
-    inputRequiredCount > 0 && {
-      kind: "input_required" as StatusKind,
-      count: inputRequiredCount,
-      title: translation("inputRequired"),
-    },
-    failedCount > 0 && {
-      kind: "failed" as StatusKind,
-      count: failedCount,
-      title: translation("failedCount", { count: failedCount }),
-    },
     backgroundCount > 0 && {
       kind: "background" as StatusKind,
       count: backgroundCount,
@@ -151,37 +144,65 @@ export const ToolGroup = memo(function ToolGroup({
   );
 
   // The heading's chip cluster: tallies, file changes, the remote badge and status chips, all animated.
-  const hasBadges =
-    tally.order.length > 0 || statusChips.length > 0 || !!groupLocation || !!soleTool;
+  const hasBadges = tally.length > 0 || statusChips.length > 0 || !!groupLocation || !!soleTool;
   const badgeSlot = (
     <>
       {/* The write and access markers of a lone call move up to the heading rather than disappearing with its line. */}
       {soleTool ? <ToolAccessBadges name={soleTool.name} arguments={soleTool.arguments} /> : null}
-      <AnimatePresence initial={false}>
-        {tally.order.map((name) => {
-          const display = getToolCallDisplay(name, undefined);
-          const ToolIcon = display.icon;
-          const count = tally.counts.get(name) ?? 0;
-          return (
-            <motion.div
-              key={name}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.12, ease: "easeOut" }}
-              style={{ display: "inline-flex", alignItems: "center" }}
-            >
-              <TallyBadge
-                title={display.label}
-                count={count}
-                colorPalette={paletteFromIconColor(display.iconColor)}
-                icon={<ToolIcon />}
-                alwaysShowCount
-              />
-            </motion.div>
-          );
-        })}
-      </AnimatePresence>
+      {!soleTool ? (
+        <AnimatePresence initial={false}>
+          {tally.map(({ name, total, failed }) => {
+            const display = getToolCallDisplay(name, undefined);
+            const ToolIcon = display.icon;
+            const successful = total - failed;
+            // A type reads as one badge unless it carries failures: then it splits into its own
+            // green successful counter and red failed counter, so the batch sums to the total.
+            const badges = [
+              failed === 0 ? (
+                <TallyBadge
+                  key={name}
+                  title={display.label}
+                  count={total}
+                  colorPalette={paletteFromIconColor(display.iconColor)}
+                  icon={<ToolIcon />}
+                  alwaysShowCount
+                />
+              ) : successful > 0 ? (
+                <TallyBadge
+                  key={`${name}-ok`}
+                  title={display.label}
+                  count={successful}
+                  colorPalette="green"
+                  icon={<ToolIcon />}
+                  alwaysShowCount
+                />
+              ) : null,
+              failed > 0 ? (
+                <TallyBadge
+                  key={`${name}-failed`}
+                  title={translation("failedCount", { count: failed })}
+                  count={failed}
+                  colorPalette="red"
+                  icon={<ToolIcon />}
+                  alwaysShowCount
+                />
+              ) : null,
+            ];
+            return (
+              <motion.div
+                key={name}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.12, ease: "easeOut" }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+              >
+                {badges}
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
+      ) : null}
       <ToolLocationBadge arguments={groupLocation} />
       <AnimatePresence initial={false}>
         {statusChips.map(({ kind, count, title }) => {
@@ -205,6 +226,20 @@ export const ToolGroup = memo(function ToolGroup({
             </motion.div>
           );
         })}
+      </AnimatePresence>
+      <AnimatePresence initial={false}>
+        {soleTool && toolStatus(soleTool.status) === "failed" ? (
+          <motion.div
+            key="failed"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.12, ease: "easeOut" }}
+            style={{ display: "inline-flex", alignItems: "center" }}
+          >
+            <Pill colorPalette="red">{translation("failed")}</Pill>
+          </motion.div>
+        ) : null}
       </AnimatePresence>
     </>
   );

@@ -1,38 +1,105 @@
-"""The runtime's compaction concern: when to fold a conversation, and the observation log it folds into."""
+"""The runtime's compaction concern: when and how to fold a conversation."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from functools import partial
+from dataclasses import dataclass
 from itertools import accumulate, takewhile
+from typing import AsyncIterator, Literal
 
-from langmesh.base.identifiers import new_id
-from langmesh.base.message_content import forget_carried_reasoning, message_text
-from langmesh.base.tuning import Tunable, active_tuning, count_tokens
+from langmesh.base.message_content import forget_carried_reasoning
 from langmesh.runtime.internals import (
-    DirectiveBatch,
-    ObservationBatch,
     conversation_tokens,
-    emit_structured,
     message_tokens,
 )
 from langmesh.runtime.turn_events import CompactionDone, CompactionStarted, TurnEvent
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-from typing import AsyncIterator
+from langmesh.base.ports import CompactionState
+from langchain_core.messages import HumanMessage, ToolMessage
 from langmesh.base.errors import log_fields
-from langmesh.base.serialization import content_address, lines
 
 
 logger = logging.getLogger(__name__)
 
 
-def _opens_an_exchange(message) -> bool:
-    """Whether a message begins a unit of work: the person's words, or the review's instruction standing in for them."""
-    if not isinstance(message, HumanMessage):
-        return False
-    tags = message.additional_kwargs
-    return not tags.get("reminder") or bool(tags.get("opens_exchange"))
+@dataclass
+class _CompactionControl:
+    """The fold handshake as one state value, so invalid flag combinations cannot accumulate."""
+
+    phase: Literal["none", "waiting", "recorded", "preparation_failed", "fold_failed"] = "none"
+    reason: Literal["auto", "manual", "overflow"] = "manual"
+    resume_after: bool = False
+    registry_revision: int | None = None
+    failure: str | None = None
+    # Whether the running compaction indicator has already been announced for this preparation.
+    started: bool = False
+
+    def begin(self, *, reason: str, resume_after: bool) -> None:
+        if reason not in {"auto", "manual", "overflow"}:
+            raise ValueError(f"Invalid compaction reason: {reason}")
+        self.phase = "waiting"
+        self.reason = reason
+        self.resume_after = resume_after
+        self.registry_revision = None
+        self.failure = None
+        self.started = False
+
+    def record(self) -> None:
+        if self.phase != "waiting":
+            raise RuntimeError(f"Cannot record compaction preparation from {self.phase}.")
+        self.phase = "recorded"
+
+    def fail_preparation(self, message: str) -> None:
+        self.phase = "preparation_failed"
+        self.failure = message
+
+    def fail_fold(self, message: str) -> None:
+        self.phase = "fold_failed"
+        self.failure = message
+
+    def retry_fold(self) -> None:
+        if self.phase != "fold_failed":
+            raise RuntimeError(f"Cannot retry a fold from {self.phase}.")
+        self.phase = "recorded"
+        self.failure = None
+
+    def clear(self) -> None:
+        self.phase = "none"
+        self.reason = "manual"
+        self.resume_after = False
+        self.registry_revision = None
+        self.failure = None
+        self.started = False
+
+    def snapshot(self) -> dict:
+        return {
+            "phase": self.phase,
+            "reason": self.reason,
+            "resume_after": self.resume_after,
+            "registry_revision": self.registry_revision,
+            "failure": self.failure,
+            "started": self.started,
+        }
+
+    @classmethod
+    def restore(cls, value: object) -> "_CompactionControl":
+        if not isinstance(value, dict):
+            return cls()
+        phase = value.get("phase")
+        reason = value.get("reason")
+        return cls(
+            phase=phase
+            if phase in {"none", "waiting", "recorded", "preparation_failed", "fold_failed"}
+            else "none",
+            reason=reason if reason in {"auto", "manual", "overflow"} else "manual",
+            resume_after=bool(value.get("resume_after", False)),
+            registry_revision=(
+                max(0, int(value["registry_revision"]))
+                if value.get("registry_revision") is not None
+                else None
+            ),
+            failure=(str(value["failure"]) if value.get("failure") else None),
+            started=bool(value.get("started", False)),
+        )
 
 
 def _without_provider_reasoning(messages: list) -> list:
@@ -44,180 +111,7 @@ def _without_provider_reasoning(messages: list) -> list:
 
 
 class _CompactsContext:
-    """Keeping a conversation inside its window: what each exchange establishes is recorded, then its turns are dropped."""
-
-    async def _emit_batch(
-        self,
-        schema,
-        request: list,
-        operation_name: str,
-        *,
-        streamed_field: str = "",
-        on_item=None,
-    ):
-        """One structured call against this runtime's model, which is the shared pass every fold is built on."""
-        return await emit_structured(
-            self._model,
-            schema,
-            request,
-            operation_name,
-            active_tuning().amount(Tunable.compaction_attempts),
-            streamed_field=streamed_field,
-            on_item=on_item,
-        )
-
-    async def _emit_observations(self, request: list, on_observation=None) -> list:
-        """Run one observer call and read its entries from the tool call it makes."""
-        batch = await self._emit_batch(
-            ObservationBatch,
-            request,
-            "observer",
-            streamed_field="observations" if on_observation is not None else "",
-            on_item=on_observation,
-        )
-        return list(batch.observations) if batch else []
-
-    async def _consolidate_observations(self, observations: list[dict]) -> list[dict]:
-        """Ask the model for a smaller replacement set for related live findings."""
-        entries = await self._emit_observations(
-            [
-                SystemMessage(
-                    content=self._prompt_loader.load(
-                        "consolidate_observational_memory",
-                        {"observations": lines(self._readable(self._live(observations)))},
-                    )
-                ),
-                HumanMessage(
-                    content=self._prompt_loader.load("consolidate_observational_memory_now", {})
-                ),
-            ]
-        )
-        return self._identified(entries)
-
-    @staticmethod
-    def _live(entries: list[dict]) -> list[dict]:
-        """What nothing later replaced. The superseded stay stored; they simply stop being read."""
-        replaced = {str(one) for entry in entries for one in (entry.get("supersedes") or [])}
-        return [entry for entry in entries if str(entry.get("id") or "") not in replaced]
-
-    @staticmethod
-    def _identified(entries: list) -> list[dict]:
-        """Each entry with its content address attached, which is how a later pass names it to revise it."""
-        return [{**entry.model_dump(), "id": entry.identity()} for entry in entries]
-
-    @staticmethod
-    def _claims(entries: list[dict]) -> list[dict]:
-        """The record as a later pass is shown it: enough to judge an entry, date it and name it, not its whole text."""
-        fields = (
-            ("kind", "summary") if entries and "summary" in entries[0] else ("category", "claim")
-        )
-        # When it was learned, because deciding what a new finding replaces depends on which came first.
-        return [
-            {
-                "id": entry.get("id"),
-                "learned": entry.get("written_at", ""),
-                **{name: entry.get(name) for name in fields},
-            }
-            for entry in entries
-        ]
-
-    @staticmethod
-    def _readable(entries: list[dict]) -> list[dict]:
-        """An entry as the model reads it, without the bookkeeping that only this code needs."""
-        hidden = {"exchange", "written_at"}
-        return [
-            {name: value for name, value in entry.items() if name not in hidden}
-            | {"learned": entry.get("written_at", "")}
-            for entry in entries
-        ]
-
-    @staticmethod
-    def _entry_ids(entries: list[dict]) -> list[str]:
-        """The durable identities represented by one memory message."""
-        return [str(entry["id"]) for entry in entries if entry.get("id")]
-
-    def _build_memory_message(
-        self,
-        template: str,
-        observations: list[dict],
-        directives: list[dict],
-        *,
-        represented: dict[str, list[dict]] | None = None,
-    ):
-        """One persistent memory addition, carrying the identities needed to append each entry exactly once."""
-        represented = represented or {"observations": observations, "directives": directives}
-        return self._reminder_message(
-            self._prompt_loader.load(
-                template,
-                {
-                    "observations": lines(self._readable(self._live(observations))),
-                    "directives": lines(self._readable(self._live(directives))),
-                },
-            ),
-            marks={
-                "memory_record": {
-                    "observations": self._entry_ids(represented["observations"]),
-                    "directives": self._entry_ids(represented["directives"]),
-                }
-            },
-        )
-
-    def _recorded_memory_ids(self) -> dict[str, set[str]]:
-        """The ledger entries already appended to the persistent conversation."""
-        recorded = {"observations": set(), "directives": set()}
-        for message in self._conversation:
-            mark = message.additional_kwargs.get("memory_record")
-            if not isinstance(mark, dict):
-                continue
-            for ledger in recorded:
-                recorded[ledger].update(str(identifier) for identifier in mark.get(ledger, []))
-        return recorded
-
-    async def _append_unseen_memory(self, excluded_exchanges: set[str] | None = None) -> None:
-        """Append unseen entries except records that were in flight when this model opening began."""
-        snapshot = await self._memory_snapshot()
-        recorded = self._recorded_memory_ids()
-        excluded_exchanges = excluded_exchanges or set()
-        observations = [
-            entry
-            for entry in snapshot["observations"]
-            if str(entry.get("id") or "") not in recorded["observations"]
-            and str(entry.get("exchange") or "") not in excluded_exchanges
-        ]
-        directives = [
-            entry
-            for entry in snapshot["directives"]
-            if str(entry.get("id") or "") not in recorded["directives"]
-            and str(entry.get("exchange") or "") not in excluded_exchanges
-        ]
-        if observations or directives:
-            self._conversation.append(
-                self._build_memory_message("observation_update", observations, directives)
-            )
-
-    async def _replace_memory_records_with_snapshot(self) -> None:
-        """At the explicit rewrite boundary, replace old notices with one complete live memory snapshot."""
-        self._conversation[:] = [
-            message
-            for message in self._conversation
-            if not message.additional_kwargs.get("memory_record")
-        ]
-        snapshot = await self._memory_snapshot()
-        observations = snapshot["observations"]
-        directives = snapshot["directives"]
-        if not observations and not directives:
-            return
-        visible_directives = [
-            entry for entry in self._live(directives) if entry.get("still_binding", True)
-        ]
-        self._conversation.append(
-            self._build_memory_message(
-                "observation_log",
-                observations,
-                visible_directives,
-                represented=snapshot,
-            )
-        )
+    """Keep a conversation inside its window after the agent checkpoints workspace knowledge."""
 
     def _usable_context(self) -> int:
         """How much of the window a conversation may occupy, leaving room for the answer and for the fold itself."""
@@ -228,36 +122,135 @@ class _CompactsContext:
             0, window - int(window * self._global_configuration.compaction.output_reserve_fraction)
         )
 
-    def _recent_working_set(self, reason: str = "automatic") -> int:
+    def _recent_working_set(self, reason: str = "automatic", recent: list | None = None) -> int:
         """The tail kept verbatim rather than folded, as a share of the usable window so it scales with the model."""
         fraction = self._global_configuration.compaction.recent_working_set_fraction
         budget = int(self._usable_context() * fraction)
-        if reason != "manual":
+        if budget > 0 and reason != "manual":
             return budget
-        # Asked for deliberately, so the share is of what is there: a small conversation still has a tail to cut.
-        return min(budget, int(conversation_tokens(self._conversation) * fraction))
+        # Manual and overflow compaction must remain effective even if a provider failed to
+        # report its window. The current conversation is still an honest upper bound.
+        measured = int(
+            conversation_tokens(self._conversation if recent is None else recent) * fraction
+        )
+        return min(budget, measured) if budget > 0 else measured
 
-    def _at_folding_threshold(self) -> bool:
-        """Whether the live context has grown enough that folding is worth the prompt cache it throws away."""
+    @staticmethod
+    def _without_compaction_preparation(messages: list) -> list:
+        """Remove private preparation exchanges while retaining later user input accepted during a failed pass."""
+        retained: list = []
+        inside_preparation = False
+        for message in messages:
+            if message.additional_kwargs.get("compaction_preparation"):
+                inside_preparation = True
+                continue
+            if inside_preparation:
+                if not isinstance(message, HumanMessage) or message.additional_kwargs.get(
+                    "reminder"
+                ):
+                    continue
+                inside_preparation = False
+            retained.append(message)
+        return retained
+
+    def _compaction_state(
+        self, reason: str = "auto", *, context_tokens: int | None = None
+    ) -> CompactionState:
+        """Expose only the durable conversation to a caller-supplied compaction strategy."""
+        return CompactionState(
+            messages=self._without_compaction_preparation(self._conversation),
+            context_window=self._context_window,
+            context_tokens=(
+                self._latest_context_tokens if context_tokens is None else context_tokens
+            ),
+            reason=reason,
+        )
+
+    def _next_request_tokens(self, pending_message=None) -> int:
+        """Price the exact request being admitted, including a user message not yet appended."""
+        messages = self._build_turn_messages()
+        if pending_message is not None:
+            messages.append(pending_message)
+        return conversation_tokens(messages)
+
+    def _at_folding_threshold(self, pending_message=None) -> bool:
+        """Whether the next request is large enough that folding is worth its cache invalidation."""
         usable = self._usable_context()
-        return usable > 0 and self._latest_context_tokens >= (
+        current = self._next_request_tokens(pending_message)
+        return usable > 0 and max(self._latest_context_tokens, current) >= (
             self._global_configuration.compaction.reclaim_at_fraction * usable
         )
 
-    def _should_compact(self) -> bool:
+    def _should_compact(self, pending_message=None) -> bool:
         """The automatic trigger, measured against the usable window, unless a strategy answers it instead."""
+        next_request_tokens = max(
+            self._latest_context_tokens,
+            self._next_request_tokens(pending_message),
+        )
         if self._compaction is not None:
-            return bool(self._compaction.should_compact(self._compaction_state()))
+            return bool(
+                self._compaction.should_compact(
+                    self._compaction_state(context_tokens=next_request_tokens)
+                )
+            )
         compaction = self._global_configuration.compaction
-        if not compaction.automatic or not self._at_folding_threshold():
+        if not compaction.automatic or not self._at_folding_threshold(pending_message):
             return False
         return len(self._bounded_tail(self._conversation)) < len(self._conversation)
 
+    def _begin_compaction_preparation(self, *, reason: str, resume_after: bool) -> None:
+        """Append the one private handoff that asks the agent to preserve durable work before folding."""
+        self._conversation.append(
+            self._reminder_message(
+                self._prompt_loader.load("prepare_compaction", {}),
+                marks={"compaction_preparation": True},
+            )
+        )
+        self._compaction_control.begin(reason=reason, resume_after=resume_after)
+        self._mark_session_dirty()
+
+    def _fail_compaction_preparation(
+        self, error: str, *, error_code: str = "compaction_preparation_failed"
+    ) -> list[TurnEvent]:
+        """Make an incomplete recording handshake the same durable, visible blocker as a failed fold."""
+        messages = len(self._conversation)
+        tokens = conversation_tokens(self._conversation)
+        self._compaction_control.fail_preparation(error)
+        self.discard_pending_steering()
+        self._mark_session_dirty()
+        events: list[TurnEvent] = []
+        if not self._compaction_control.started:
+            # A failure that never reached the model call still gets a running start, so the
+            # interface never jumps straight from nothing to a failure without a visible phase.
+            self._compaction_control.started = True
+            events.append(
+                CompactionStarted(reason="preparation", messages_before=messages, tokens_before=tokens)
+            )
+        events.append(
+            CompactionDone(
+                reason="preparation",
+                ok=False,
+                messages_before=messages,
+                messages_after=messages,
+                tokens_before=tokens,
+                tokens_after=tokens,
+                error_code=error_code,
+            )
+        )
+        return events
+
     def _bounded_tail(self, recent: list, reason: str = "automatic") -> list:
         """The newest turns that fit the budget, taken whole: recency is not smallness, and none is cut in half."""
-        budget = self._recent_working_set(reason)
+        budget = self._recent_working_set(reason, recent)
         if budget <= 0 or not recent:
             return recent
+        return self._tail_within_budget(recent, budget)
+
+    @staticmethod
+    def _tail_within_budget(recent: list, budget: int) -> list:
+        """Return the newest complete messages within an exact token budget."""
+        if budget <= 0 or not recent:
+            return []
         # How many of the newest turns fit: running totals from the end, taken while they stay inside the budget.
         running = accumulate(message_tokens(message) for message in reversed(recent))
         fitting = sum(1 for _ in takewhile(lambda total: total <= budget, running))
@@ -277,307 +270,49 @@ class _CompactsContext:
             )
         return recent[keep_from:]
 
-    def _exchange_of(self, opening) -> str:
-        """What names an exchange: the message that opened it, so its entries can be matched to it later."""
-        return content_address(message_text(opening))
-
-    def _current_exchange(self) -> list:
-        """The unit just completed: the person's last message and everything the agent did after it."""
-        opening = next(
-            (
-                index
-                for index in range(len(self._conversation) - 1, -1, -1)
-                if _opens_an_exchange(self._conversation[index])
-            ),
-            None,
-        )
-        if opening is None:
-            return []
-        # The harness's own notes are cut out: the turn context, the confinement profile and the system
-        # reminders are scaffolding, and an observer given them records the scaffolding as a finding.
-        return [
-            message
-            for message in self._conversation[opening:]
-            if not message.additional_kwargs.get("reminder")
-            or message is self._conversation[opening]
-        ]
-
-    def observe_exchange_soon(self, *, interrupted: bool = False) -> None:
-        """Take the exchange now, before compaction can rewrite it, and fold it after the person has their answer."""
-        exchange = self._current_exchange()
-        if len(exchange) < (1 if interrupted else 2) or self._turn_store is None:
-            return
-        exchange_identifier = self._exchange_of(exchange[0])
-        self._observations_in_flight.add(exchange_identifier)
-        task = asyncio.create_task(
-            self._observe_exchange_after(
-                self._observation_tail,
-                exchange,
-                exchange_identifier,
-                interrupted,
-            )
-        )
-        self._observation_tail = task
-        task.add_done_callback(self._finish_observation)
-
-    def has_pending_observational_memory(self) -> bool:
-        """Whether an exchange is still being interpreted into findings or instructions."""
-        return self._observation_tail is not None
-
-    async def wait_for_observational_memory(self) -> None:
-        """Wait until every observation queued so far, including newly chained work, has settled."""
-        while self._observation_tail is not None:
-            pending = self._observation_tail
-            try:
-                await asyncio.shield(pending)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                pass
-            finally:
-                if self._observation_tail is pending and pending.done():
-                    self._observation_tail = None
-
-    async def _observe_exchange_after(
-        self,
-        earlier: asyncio.Task | None,
-        exchange: list,
-        exchange_identifier: str,
-        interrupted: bool,
-    ) -> None:
-        """Record one exchange after earlier observers, so every fold reads their completed entries."""
-        identifier = new_id("recording")
-        try:
-            await self._publish_memory_recording(identifier, True)
-            if earlier is not None:
-                await asyncio.gather(earlier, return_exceptions=True)
-            await self.observe_exchange(exchange, exchange_identifier, interrupted=interrupted)
-        finally:
-            self._observations_in_flight.discard(exchange_identifier)
-            await self._publish_memory_recording(identifier, False)
-
-    def _finish_observation(self, task: asyncio.Task) -> None:
-        """Retire the pipeline only when its tail finishes and surface an observer failure."""
-        if self._observation_tail is task:
-            self._observation_tail = None
-        error = None if task.cancelled() else task.exception()
-        if error is not None:
-            logger.error(
-                "could not record observational memory",
-                exc_info=(type(error), error, error.__traceback__),
-            )
-
-    async def _publish_memory_recording(self, identifier: str, active: bool) -> None:
-        """Publish whether one post-turn memory pass is active."""
-        publish = getattr(self._turn_store, "publish_event", None)
-        if publish is None:
-            return
-        try:
-            await publish(
-                {
-                    "session_id": self._session_id,
-                    "recording_memory": {"id": identifier, "active": active},
-                }
-            )
-        except Exception:  # noqa: BLE001 — feedback must not decide whether the record is written
-            logger.warning("could not publish memory recording state", exc_info=True)
-
-    async def observe_exchange(
-        self,
-        exchange: list | None = None,
-        exchange_identifier: str = "",
-        *,
-        interrupted: bool = False,
-    ) -> None:
-        """Record what the exchange established for the next complete memory snapshot."""
-        exchange = self._current_exchange() if exchange is None else exchange
-        if len(exchange) < (1 if interrupted else 2) or self._turn_store is None:
-            return
-        tag = exchange_identifier or self._exchange_of(exchange[0])
-        ledgers = await self._memory_snapshot()
-        recorded = ledgers["observations"]
-        asked = ledgers["directives"]
-        if any(entry.get("exchange") == tag for entry in [*recorded, *asked]):
-            return  # already observed: a turn can end more than once
-        await asyncio.gather(
-            self._fold_into_observations(
-                exchange,
-                recorded,
-                asked,
-                tag,
-                interrupted=interrupted,
-            ),
-            self._fold_into_directives(
-                exchange,
-                asked,
-                tag,
-                interrupted=interrupted,
-            ),
-        )
-
-    async def _memory_snapshot(self) -> dict[str, list[dict]]:
-        """Read both memory ledgers from one database snapshot."""
-        if self._turn_store is None:
-            return {"observations": [], "directives": []}
-        try:
-            return await self._turn_store.memory_entries(self._session_id)
-        except Exception:  # noqa: BLE001 — a record that cannot be read is not a turn that cannot run
-            logger.warning("could not read the memory ledgers", exc_info=True)
-            return {"observations": [], "directives": []}
-
-    async def _consolidate_observations_if_needed(self, observations: list[dict]) -> list[dict]:
-        """Consolidate an oversized live record only when the replacement is genuinely smaller."""
-        live = self._live(observations)
-        usable = self._usable_context()
-        if usable <= 0:
-            return live
-        before_tokens = count_tokens(lines(self._readable(live)))
-        limit = int(
-            usable * self._global_configuration.compaction.observational_memory_limit_fraction
-        )
-        if before_tokens <= limit:
-            return live
-        replacements = await self._consolidate_observations(live)
-        known_identifiers = {str(entry.get("id") or "") for entry in live}
-        replacements = [
-            entry
-            for entry in replacements
-            if str(entry.get("id") or "") not in known_identifiers
-            and entry.get("supersedes")
-            and {str(identifier) for identifier in entry.get("supersedes", [])}.issubset(
-                known_identifiers
-            )
-        ]
-        consolidated = self._live([*live, *replacements])
-        after_tokens = count_tokens(lines(self._readable(consolidated)))
-        if not replacements or after_tokens >= before_tokens:
-            logger.warning(
-                "observational memory consolidation did not reduce the live record",
-                extra=log_fields(before_tokens=before_tokens, after_tokens=after_tokens),
-            )
-            return live
-        await self._commit_memory(replacements, [])
-        return (await self._memory_snapshot())["observations"]
-
-    async def _commit_memory(self, observations: list[dict], directives: list[dict]) -> None:
-        """Write what a pass produced. The store is append-only, so this never revises and never deletes."""
-        store = getattr(self, "_turn_store", None)
-        session = getattr(self, "_session_id", "")
-        if store is None or not session:
-            return
-        try:
-            await store.append_memory(session, observations, directives)
-        except Exception:  # noqa: BLE001 — the fold has already happened; losing the durable copy must not undo it
-            logger.warning("could not append observational memory", exc_info=True)
-
-    async def _record_observation(self, observation, *, exchange_identifier: str) -> None:
-        """Identify and persist one completed observation while the rest of its batch is still streaming."""
-        identified = self._identified([observation])[0]
-        await self._commit_memory([{**identified, "exchange": exchange_identifier}], [])
-
-    async def _record_directive(self, directive, *, exchange_identifier: str) -> None:
-        """Identify and persist one completed directive while the rest of its batch is still streaming."""
-        identified = self._identified([directive])[0]
-        await self._commit_memory([], [{**identified, "exchange": exchange_identifier}])
-
-    async def _fold_into_observations(
-        self,
-        older: list,
-        existing: list[dict],
-        asked: list[dict],
-        exchange_identifier: str,
-        *,
-        interrupted: bool = False,
-    ) -> None:
-        """New entries from these messages, with both records shown so it writes neither what it nor the other holds."""
-        instructions = self._prompt_loader.load(
-            "observer",
-            {
-                "existing_observations": lines(self._claims(self._live(existing))),
-                # The other ledger too: an entry cannot be left to a record it was never shown.
-                "existing_directives": lines(self._claims(self._live(asked))),
-            },
-        )
-        await self._emit_observations(
-            [
-                SystemMessage(content=instructions),
-                *(
-                    [
-                        SystemMessage(
-                            content=self._prompt_loader.load("interrupted_exchange", {})
-                        )
-                    ]
-                    if interrupted
-                    else []
-                ),
-                *older,
-                HumanMessage(content=self._prompt_loader.load("observe_now", {})),
-            ],
-            on_observation=partial(
-                self._record_observation,
-                exchange_identifier=exchange_identifier,
-            ),
-        )
-
-    async def _fold_into_directives(
-        self,
-        older: list,
-        existing: list[dict],
-        exchange_identifier: str,
-        *,
-        interrupted: bool = False,
-    ) -> None:
-        """What the person asked for in these turns, in their meaning rather than their words."""
-        spoken = [
-            message
-            for message in older
-            if isinstance(message, HumanMessage) and not message.additional_kwargs.get("reminder")
-        ]
-        if not spoken:
-            return
-        shown = lines(self._claims(self._live(existing)))
-        instructions = self._prompt_loader.load("directives", {"existing_directives": shown})
-        await self._emit_batch(
-            DirectiveBatch,
-            [
-                SystemMessage(content=instructions),
-                *(
-                    [
-                        SystemMessage(
-                            content=self._prompt_loader.load("interrupted_exchange", {})
-                        )
-                    ]
-                    if interrupted
-                    else []
-                ),
-                *spoken,
-                HumanMessage(content=self._prompt_loader.load("directives_now", {})),
-            ],
-            "directive",
-            streamed_field="directives",
-            on_item=partial(
-                self._record_directive,
-                exchange_identifier=exchange_identifier,
-            ),
-        )
-
     async def compact(self, reason: str = "manual") -> AsyncIterator[TurnEvent]:
-        """Reclaim the window by dropping what is past the tail, which the exchange records have already captured."""
-        # A supplied strategy replaces the recording entirely, while the events around it stay the runtime's.
+        """Reclaim the window after the explicit observational-memory handoff has completed."""
+        if self._compaction_control.phase != "recorded":
+            for event in self._fail_compaction_preparation(
+                "Compaction requires a successful observational-memory checkpoint segment first."
+            ):
+                yield event
+            return
+        # A supplied strategy replaces only the discard policy; the recording handshake and
+        # visible success/failure boundary remain the runtime's.
         if self._compaction is not None:
             state = self._compaction_state(reason)
-            messages_before = len(self._conversation)
+            messages_before = len(state.messages)
             tokens_before = self._latest_context_tokens
+            original = list(self._conversation)
             yield CompactionStarted(
                 reason=reason,
                 messages_before=messages_before,
                 tokens_before=tokens_before,
             )
-            self._conversation[:] = _without_provider_reasoning(
-                await self._compaction.compact(state)
-            )
-            await self._replace_memory_records_with_snapshot()
-            self._latest_context_tokens = conversation_tokens(self._conversation)
+            try:
+                compacted = _without_provider_reasoning(await self._compaction.compact(state))
+                if len(compacted) >= messages_before:
+                    raise RuntimeError("The compaction strategy did not reclaim any messages.")
+                self._conversation[:] = compacted
+                self._latest_context_tokens = conversation_tokens(self._conversation)
+            except Exception as error:  # noqa: BLE001 — failure becomes durable, visible turn state
+                self._conversation[:] = original
+                self._latest_context_tokens = tokens_before
+                self._fail_compaction(str(error) or type(error).__name__)
+                yield CompactionDone(
+                    reason=reason,
+                    ok=False,
+                    messages_before=messages_before,
+                    messages_after=len(self._conversation),
+                    tokens_before=tokens_before,
+                    tokens_after=self._latest_context_tokens,
+                    error_code="compaction_strategy_failed",
+                )
+                return
+            self._compaction_control.clear()
+            self._mark_session_dirty()
+            self._cached_system_prompt = None
             yield CompactionDone(
                 reason=reason,
                 ok=True,
@@ -587,32 +322,68 @@ class _CompactsContext:
                 tokens_after=self._latest_context_tokens,
             )
             return
-        # Each exchange was recorded when it closed, so all that is left here is the discarding.
-        messages_before = len(self._conversation)
+        # The explicit handoff has committed. The fold itself only changes conversation state.
+        original = list(self._conversation)
+        foldable = self._without_compaction_preparation(original)
+        messages_before = len(foldable)
         tokens_before = self._latest_context_tokens
         yield CompactionStarted(
             reason=reason, messages_before=messages_before, tokens_before=tokens_before
         )
-        kept = self._bounded_tail(self._conversation, reason)
+        kept = self._bounded_tail(foldable, reason)
         if len(kept) >= messages_before:
-            # Everything already fits, so a deliberate request is answered rather than met with silence.
+            # A manual no-op is not a broken session. Automatic/overflow attempts that cannot
+            # reclaim space are failures and stop future input until the user retries.
+            ok = reason == "manual"
+            error = "" if ok else "Compaction could not reclaim any messages."
+            error_code = None if ok else "compaction_no_reclaim"
+            if error:
+                self._fail_compaction(error)
+            if ok:
+                try:
+                    self._conversation[:] = foldable
+                    self._latest_context_tokens = conversation_tokens(self._conversation)
+                except Exception as failure:  # noqa: BLE001 — represented as a retryable UI blocker
+                    self._conversation[:] = original
+                    self._latest_context_tokens = tokens_before
+                    error = str(failure) or type(failure).__name__
+                    error_code = "compaction_failed"
+                    self._fail_compaction(error)
+                    ok = False
+                else:
+                    self._compaction_control.clear()
+                    self._mark_session_dirty()
+                    self._cached_system_prompt = None
+            yield CompactionDone(
+                reason=reason,
+                ok=ok,
+                messages_before=messages_before,
+                messages_after=len(self._conversation) if ok else messages_before,
+                tokens_before=tokens_before,
+                tokens_after=self._latest_context_tokens,
+                error_code=error_code,
+            )
+            return
+        try:
+            self._conversation[:] = _without_provider_reasoning(kept)
+            self._latest_context_tokens = conversation_tokens(self._conversation)
+        except Exception as error:  # noqa: BLE001 — represented as a retryable UI blocker
+            self._conversation[:] = original
+            self._latest_context_tokens = tokens_before
+            self._fail_compaction(str(error) or type(error).__name__)
             yield CompactionDone(
                 reason=reason,
                 ok=False,
                 messages_before=messages_before,
-                messages_after=messages_before,
+                messages_after=len(self._conversation),
                 tokens_before=tokens_before,
-                tokens_after=tokens_before,
-                log_tokens=0,
+                tokens_after=self._latest_context_tokens,
+                error_code="compaction_failed",
             )
             return
-        self._conversation[:] = _without_provider_reasoning(kept)
-        self._latest_context_tokens = conversation_tokens(self._conversation)
-        recorded = (await self._memory_snapshot())["observations"]
-        if self._observation_tail is None:
-            recorded = await self._consolidate_observations_if_needed(recorded)
-        await self._replace_memory_records_with_snapshot()
-        self._latest_context_tokens = conversation_tokens(self._conversation)
+        self._compaction_control.clear()
+        self._mark_session_dirty()
+        self._cached_system_prompt = None
         yield CompactionDone(
             reason=reason,
             ok=True,
@@ -620,7 +391,6 @@ class _CompactsContext:
             messages_after=len(self._conversation),
             tokens_before=tokens_before,
             tokens_after=self._latest_context_tokens,
-            log_tokens=count_tokens(lines(self._readable(self._live(recorded)))),
         )
 
 

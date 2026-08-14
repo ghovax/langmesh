@@ -24,7 +24,7 @@ from langmesh.base.errors import log_fields
 
 logger = logging.getLogger(__name__)
 
-MCPEventCallback = Callable[[dict[str, Any]], Awaitable[None] | None]
+MCPServerEventCallback = Callable[[dict[str, Any]], Awaitable[None] | None]
 
 
 def _as_connection_failure(error: BaseException, server_name: str) -> BaseException:
@@ -37,7 +37,7 @@ def _as_connection_failure(error: BaseException, server_name: str) -> BaseExcept
     return ConnectionError(f"MCP server {server_name!r} closed the connection during setup")
 
 
-class MCPClientManager:
+class MCPServerManager:
     """A small client facade for configured servers, keeping initialized sessions open by default."""
 
     def __init__(self, servers: dict[str, MCPServerConfiguration]):
@@ -129,10 +129,10 @@ class MCPClientManager:
         server: str,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
-        event_callback: MCPEventCallback | None = None,
+        event_callback: MCPServerEventCallback | None = None,
     ) -> dict[str, Any]:
         if not server:
-            raise ValueError("server is required when calling an MCP tool")
+            raise ValueError("server is required when calling an MCP server tool")
         async with self._session(server, event_callback=event_callback) as session:
             result = await session.call_tool(
                 tool_name,
@@ -220,7 +220,7 @@ class MCPClientManager:
     async def _session(
         self,
         server_name: str,
-        event_callback: MCPEventCallback | None = None,
+        event_callback: MCPServerEventCallback | None = None,
     ) -> AsyncIterator[ClientSession]:
         configuration = self._servers.get(server_name)
         if configuration is None:
@@ -270,12 +270,12 @@ class _StatefulStdioSession:
         self._session: ClientSession | None = None
         self._connect_lock = asyncio.Lock()
         self._operation_lock = asyncio.Lock()
-        self._callbacks: set[MCPEventCallback] = set()
+        self._callbacks: set[MCPServerEventCallback] = set()
         self._pending_events: list[dict[str, Any]] = []
 
     @asynccontextmanager
     async def session(
-        self, event_callback: MCPEventCallback | None = None
+        self, event_callback: MCPServerEventCallback | None = None
     ) -> AsyncIterator[ClientSession]:
         # Bounded like the startup connect, so an endpoint that never completes its handshake cannot hold the caller.
         session = await asyncio.wait_for(
@@ -328,7 +328,7 @@ class _StatefulStdioSession:
         for callback in callbacks:
             await _emit_callback(callback, event)
 
-    async def _flush_pending_events(self, callback: MCPEventCallback) -> None:
+    async def _flush_pending_events(self, callback: MCPServerEventCallback) -> None:
         if not self._pending_events:
             return
         events = self._pending_events
@@ -349,12 +349,12 @@ class _StatefulStreamableHTTPSession:
         self._session: ClientSession | None = None
         self._connect_lock = asyncio.Lock()
         self._operation_lock = asyncio.Lock()
-        self._callbacks: set[MCPEventCallback] = set()
+        self._callbacks: set[MCPServerEventCallback] = set()
         self._pending_events: list[dict[str, Any]] = []
 
     @asynccontextmanager
     async def session(
-        self, event_callback: MCPEventCallback | None = None
+        self, event_callback: MCPServerEventCallback | None = None
     ) -> AsyncIterator[ClientSession]:
         # Bounded like the startup connect, so an endpoint that never completes its handshake cannot hold the caller.
         session = await asyncio.wait_for(
@@ -418,7 +418,7 @@ class _StatefulStreamableHTTPSession:
         for callback in callbacks:
             await _emit_callback(callback, event)
 
-    async def _flush_pending_events(self, callback: MCPEventCallback) -> None:
+    async def _flush_pending_events(self, callback: MCPServerEventCallback) -> None:
         if not self._pending_events:
             return
         events = self._pending_events
@@ -435,7 +435,7 @@ class _StatefulStreamableHTTPSession:
 async def _stateless_stdio_session(
     server_name: str,
     configuration: MCPServerConfiguration,
-    event_callback: MCPEventCallback | None,
+    event_callback: MCPServerEventCallback | None,
 ) -> AsyncIterator[ClientSession]:
     async with stdio_client(_stdio_parameters(configuration)) as (read_stream, write_stream):
         async with ClientSession(
@@ -451,7 +451,7 @@ async def _stateless_stdio_session(
 async def _stateless_streamable_http_session(
     server_name: str,
     configuration: MCPServerConfiguration,
-    event_callback: MCPEventCallback | None,
+    event_callback: MCPServerEventCallback | None,
 ) -> AsyncIterator[ClientSession]:
     async with _http_client(configuration) as http_client:
         async with streamable_http_client(
@@ -484,7 +484,7 @@ def _http_client(configuration: MCPServerConfiguration) -> httpx.AsyncClient:
     )
 
 
-def _message_handler(server_name: str, event_callback: MCPEventCallback | None):
+def _message_handler(server_name: str, event_callback: MCPServerEventCallback | None):
     async def handle(message: Any) -> None:
         event = _event_from_mcp_message(server_name, message)
         if event is not None and event_callback is not None:
@@ -496,7 +496,7 @@ def _message_handler(server_name: str, event_callback: MCPEventCallback | None):
 def _progress_callback(
     server: str,
     tool_name: str,
-    event_callback: MCPEventCallback | None,
+    event_callback: MCPServerEventCallback | None,
 ):
     if event_callback is None:
         return None
@@ -517,7 +517,7 @@ def _progress_callback(
     return progress
 
 
-async def _emit_callback(callback: MCPEventCallback, event: dict[str, Any]) -> None:
+async def _emit_callback(callback: MCPServerEventCallback, event: dict[str, Any]) -> None:
     result = callback(event)
     if result is not None:
         await result

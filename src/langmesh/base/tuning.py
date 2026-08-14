@@ -119,14 +119,13 @@ class Tunable(Enum):
     accessibility_messaging = Default(2.0, Scaling.TIME)
 
     goal_continuation_turns = Default(12, Scaling.NONE)
+    task_continuation_turns = Default(12, Scaling.NONE)
 
     goal_blocked_turns = Default(3, Scaling.NONE)
 
     # The control plane and the processes it supervises.
-    attach_snapshot_rows = Default(400, Scaling.NONE)
     session_title_attempts = Default(3, Scaling.NONE)
     permission_reviewer_attempts = Default(3, Scaling.NONE)
-    compaction_attempts = Default(3, Scaling.NONE)
     session_idle_sleep = Default(18000.0, Scaling.TIME)
     daemon_startup = Default(45.0, Scaling.TIME)
     control_plane_call = Default(60.0, Scaling.TIME)

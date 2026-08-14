@@ -25,6 +25,8 @@ export type DirectoryStatus = {
   gitUnstagedCount: number;
   gitUntrackedCount: number;
   gitConflictedCount: number;
+  gitInsertions: number;
+  gitDeletions: number;
 };
 
 const EMPTY_GIT = {
@@ -46,6 +48,8 @@ const EMPTY_GIT = {
   gitUnstagedCount: 0,
   gitUntrackedCount: 0,
   gitConflictedCount: 0,
+  gitInsertions: 0,
+  gitDeletions: 0,
 } as const;
 
 function fromValidation(path: string, result: DirectoryValidation): DirectoryStatus {
@@ -70,6 +74,8 @@ function fromValidation(path: string, result: DirectoryValidation): DirectorySta
     gitUnstagedCount: result.git_unstaged_count,
     gitUntrackedCount: result.git_untracked_count,
     gitConflictedCount: result.git_conflicted_count,
+    gitInsertions: result.git_insertions,
+    gitDeletions: result.git_deletions,
   };
 }
 

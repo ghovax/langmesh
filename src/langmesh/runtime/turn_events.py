@@ -21,6 +21,7 @@ class EventType(str, Enum):
     USAGE = "usage"
     DONE = "done"
     SUSPENDED = "suspended"
+    PERMISSION_REVIEWING = "permission_reviewing"
     CHECKPOINT = "checkpoint"
     ERROR = "error"
     DENIED_INJECTION = "denied_injection"
@@ -90,6 +91,8 @@ class ToolResult(TurnEvent):
     status: str = ""
     # Set when this result is a background job's completion, not a synchronous return.
     job_id: str = ""
+    # Model-facing guidance appended after the contiguous tool-result block, never serialized into result data.
+    model_guidance: str = ""
     # A tool result's payload is genuinely open, so it rides a typed envelope with an open tail.
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -118,6 +121,7 @@ class Usage(TurnEvent):
     cache_read_tokens: int = 0
     reasoning_tokens: int = 0
     context_window: int = 0
+    context_window_estimated: bool = False
     cumulative: dict[str, Any] = field(default_factory=dict)
     #: Whether every byte shared with the last request was unchanged, which is what makes the read figure readable.
     prefix_intact: bool = False
@@ -146,6 +150,13 @@ class Suspended(TurnEvent):
 
 
 @dataclass(frozen=True)
+class PermissionReviewing(TurnEvent):
+    TYPE = EventType.PERMISSION_REVIEWING
+    # Automatic-mode gates the reviewer is weighing, announced before the verdict so the call is visible.
+    interactions: list[SuspensionGate] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class Checkpoint(TurnEvent):
     TYPE = EventType.CHECKPOINT
 
@@ -157,6 +168,8 @@ class Error(TurnEvent):
     id: str = ""
     code: str = ""
     tool: str = ""
+    # Model-facing guidance appended after the contiguous tool-result block, never serialized into error data.
+    model_guidance: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -208,8 +221,8 @@ class CompactionDone(TurnEvent):
     tokens_before: int = 0
     # What the fold actually reclaimed, reported by every strategy including a supplied one.
     tokens_after: int = 0
-    # How large the memory itself has become, on which the whole schedule of a long session turns.
-    log_tokens: int = 0
+    # Present only on a failed fold; the client resolves it through its locale catalogue.
+    error_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -260,6 +273,7 @@ TurnEventUnion = Union[
     Usage,
     Done,
     Suspended,
+    PermissionReviewing,
     Checkpoint,
     Error,
     DeniedInjection,

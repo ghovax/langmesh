@@ -4,7 +4,8 @@ Most searches finish quickly and return their `web_search_completed` results fro
 
 Use this where you need current information: recent events, documentation that changes, standards, prices, schedules, or knowledge outside the training data. Use `fetch_url` where you already know the URL.
 
-Arguments:
-  - query: The search query.
-  - explanation: A short reason for the search, in the words the user reads.
-  - result_count: How many results to return, from 1 to 10. Defaults to 5.
+This call takes these arguments:
+
+- `query` — The search query.
+- `explanation` — A short reason for the search, in the words the user reads.
+- `result_count` — How many results to return, from 1 to 10. Defaults to 5.

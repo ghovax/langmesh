@@ -83,6 +83,7 @@ sandbox:
       - "~/.pyenv"
       - "~/.docker"
       - "~/.netrc"
+      - "~/Library/Keychains"
     # Writable. $WORKSPACE is the session's own directory; the rest is scratch.
     writable:
       - "$WORKSPACE"
@@ -109,18 +110,16 @@ workspace:
 
 # Keeping a long conversation alive
 
-# When the context fills, the older half is folded into a dense observation log and the recent
-# part is kept word for word, rather than the conversation being truncated.
+# At the recommended preparation boundary the agent updates the workspace registry through a
+# private Bash-only segment; then older messages are dropped and the recent part stays word for word.
 
 compaction:
   automatic: true
-  # When to fold. Late on purpose: a fold rewrites the conversation, which throws away the prompt
-  # cache the provider was holding, and held context is cheap by comparison while that cache lasts.
+  # Conservative scheduling estimate used only when a custom model reports no context capacity.
+  assumed_context_window: 128000
+  # Recommended preparation boundary. Late on purpose, with reserved room for the registry checkpoint.
   reclaim_at_fraction: 0.85
-  # The maximum share live observational memories may occupy before related findings are consolidated.
-  observational_memory_limit_fraction: 0.1
-  # Held back for the answer the model is about to write. Every other fraction here is a share of
-  # what is left after it.
+  # Safety space for the preparation segment and answer. Every other fraction is a share of what remains.
   output_reserve_fraction: 0.1
   # How much recent conversation stays verbatim. Tokens rather than turns, because an unattended
   # run is one instruction and several hundred tool results.

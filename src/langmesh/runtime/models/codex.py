@@ -41,9 +41,10 @@ from langmesh.runtime.cache_trace import (
     TOOLS,
     Piece,
     RequestTrace,
+    active_cache_lane,
     diagnose,
+    provider_cache_key,
     trace,
-    tracks_conversation_cache,
 )
 from langmesh.base.serialization import compact, upstream_detail
 from langmesh.base.subscription import (
@@ -82,7 +83,7 @@ class ChatCodexModel(BaseChatModel):
     timeout: Optional[float] = 300.0
 
     #: The last request's segment trace, declared rather than merely assigned so Pydantic will hold it.
-    _previous_trace: Optional[RequestTrace] = PrivateAttr(default=None)
+    _previous_traces: dict[str, RequestTrace] = PrivateAttr(default_factory=dict)
 
     @property
     def _llm_type(self) -> str:
@@ -228,7 +229,7 @@ class ChatCodexModel(BaseChatModel):
             payload["tools"] = [self._to_responses_tool(tool) for tool in tools]
         if self.session_id:
             # Which cache to look in, since the endpoint routes a lookup by hashing the prefix together with this key.
-            payload["prompt_cache_key"] = self.session_id
+            payload["prompt_cache_key"] = provider_cache_key(self.session_id)
         # Both unconditional, as in the Codex client: asking for the encrypted reasoning is what makes `store: false` workable.
         payload["reasoning"] = {
             "effort": self.reasoning_effort or None,
@@ -436,11 +437,13 @@ class ChatCodexModel(BaseChatModel):
     # Streaming generation (the path the harness actually uses).
 
     def _cache_diagnosis(self, current: RequestTrace) -> dict[str, object]:
-        """What this request kept from the last one, and remember it for the next."""
-        if not tracks_conversation_cache():
-            return diagnose(current, None)
-        diagnosis = diagnose(current, self._previous_trace)
-        self._previous_trace = current
+        """What this request kept from the previous request in its cache lane."""
+        lane = active_cache_lane()
+        previous = self._previous_traces.get(lane)
+        if previous is None and lane != "conversation":
+            previous = self._previous_traces.get("conversation")
+        diagnosis = diagnose(current, previous)
+        self._previous_traces[lane] = current
         return diagnosis
 
     async def _astream(

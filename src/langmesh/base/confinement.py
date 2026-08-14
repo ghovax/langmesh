@@ -177,6 +177,7 @@ class Grant:
 APPROVED_BY_PERSON = "person"
 APPROVED_BY_RULE = "rule"
 APPROVED_BY_REVIEWER = "reviewer"
+APPROVED_BY_APPROVER = "approver"
 
 
 def approved(
@@ -187,7 +188,12 @@ def approved(
     whole_disk: bool = False,
 ) -> Grant:
     """Mint a grant, the one place one is built. A site that cannot name its authority cannot widen anything."""
-    if by not in (APPROVED_BY_PERSON, APPROVED_BY_RULE, APPROVED_BY_REVIEWER):
+    if by not in (
+        APPROVED_BY_PERSON,
+        APPROVED_BY_RULE,
+        APPROVED_BY_REVIEWER,
+        APPROVED_BY_APPROVER,
+    ):
         raise ValueError(f"a grant must name its authority, not {by!r}")
     return Grant(
         reads=tuple(request.reads) if request is not None else (),
@@ -478,9 +484,13 @@ def _contained_in(
     ]
     kept = []
     for entry in paths:
-        candidate = Path(entry)
+        resolved = expand(entry, workspace=workspace)
+        if not resolved:
+            continue
+        candidate = Path(resolved)
         if any(candidate == root or candidate.is_relative_to(root) for root in allowed_paths):
-            kept.append(entry)
+            # Keep the canonical path so macOS aliases such as /var preserve narrowed Seatbelt grants.
+            kept.append(resolved)
     return tuple(dict.fromkeys(kept))
 
 

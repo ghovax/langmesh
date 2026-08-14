@@ -23,10 +23,10 @@ shutting_down = asyncio.Event()
 last_written_configuration_digest: Optional[str] = None
 
 # Shared connections, one of each per process, since neither can usefully be repeated.
-mcp_manager: Any = None
+mcp_server_manager: Any = None
 remote_agent_manager: Any = None
 composio_servers: dict = {}
-#: What `mcp_manager` was built from, so a write that leaves MCP alone leaves its connections alone.
+#: What `mcp_server_manager` was built from, so unchanged server configuration preserves its connections.
 mcp_server_fingerprint: Optional[str] = None
 # The agent profiles a session could be created with, rebuilt whenever their files change.
 agent_cards: dict = {}
@@ -38,13 +38,13 @@ worktree_manager: Any = None
 push_configuration_store: Any = None
 push_sender: Any = None
 terminal_manager: Any = None
+observation_registry_watcher: Any = None
 chatgpt_login_flow: Any = None
 cursor_login_flow: Any = None
 
 # Per-session liveness the daemon learns from the event stream rather than from the registry.
 _running_contexts: dict[str, int] = {}
 _awaiting_input_contexts: set[str] = set()
-_recording_memory_contexts: dict[str, set[str]] = {}
 # The goal each live session is working toward, as its worker last reported it.
 _session_goals: dict[str, dict] = {}
 
@@ -65,7 +65,6 @@ refresh_live_session_locations: Optional[Callable[[str], Awaitable[Any]]] = None
 
 async def session_deleted(session_id: str) -> None:
     """Tell the control plane a session's record has been deleted, if there is one."""
-    _recording_memory_contexts.pop(session_id, None)
     if on_session_deleted is None:
         return
     await on_session_deleted(session_id)
@@ -88,7 +87,6 @@ async def workspace_locations_changed(workspace_id: str) -> None:
 __all__ = [
     "Broadcaster",
     "_awaiting_input_contexts",
-    "_recording_memory_contexts",
     "_running_contexts",
     "_session_goals",
     "agent_cards",
@@ -104,7 +102,8 @@ __all__ = [
     "global_configuration",
     "last_written_configuration_digest",
     "main_loop",
-    "mcp_manager",
+    "mcp_server_manager",
+    "observation_registry_watcher",
     "on_session_deleted",
     "push_configuration_store",
     "push_sender",

@@ -15,7 +15,6 @@ class GoalReviewPhase(StrEnum):
     """The truthful phase between a working turn ending and its review message landing."""
 
     WAITING_FOR_BACKGROUND = "waiting_for_background"
-    WAITING_FOR_MEMORY = "waiting_for_memory"
     CHECKING = "checking"
 
 
@@ -53,7 +52,9 @@ class Goal(BaseModel):
     @model_validator(mode="after")
     def _link_review_message_to_its_transcript(self):
         if (self.review_message is None) != (self.review_id is None):
-            raise ValueError("A review continuation and its transcript id must be present together.")
+            raise ValueError(
+                "A review continuation and its transcript id must be present together."
+            )
         return self
 
     @property

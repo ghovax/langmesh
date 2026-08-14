@@ -12,6 +12,9 @@ PART_KIND = "kind"
 
 # Opens an on-demand compaction turn, which runs no model turn and so is modelled like an autonomous wake.
 COMPACTION_KIND = "compaction_request"
+COMPACTION_RESUME_KIND = "compaction_resume"
+COMPACTION_PREPARE_KIND = "compaction_prepare"
+RETRY_TURN_KIND = "retry_turn"
 
 # Opens an autonomous wake turn, modelled as an agent message since A2A has no harness role.
 AUTONOMOUS_RESUME_KIND = "autonomous_resume"
@@ -21,6 +24,8 @@ INPUT_RESPONSE_KIND = "input_response"
 
 # Opens a turn for a goal that is still unfinished, kept distinct because it carries the goal itself.
 GOAL_CONTINUATION_KIND = "goal_continuation"
+# Opens a hidden turn because the agent left tracked work unfinished.
+TASK_CONTINUATION_KIND = "task_continuation"
 
 # Opens a turn that exists only to remind a session it has not reported back to its creator.
 REPORT_REMINDER_KIND = "report_reminder"
@@ -38,8 +43,13 @@ class Metadata:
     # Marks a harness-initiated turn rather than user input.
     AUTONOMOUS_RESUME = "autonomousResume"
     COMPACTION = "compaction"
+    COMPACTION_RESUME = "compactionResume"
+    COMPACTION_PREPARE = "compactionPrepare"
+    RETRY_TURN = "retryTurn"
     REPORT_REMINDER = "reportReminder"
     GOAL_CONTINUATION = "goalContinuation"
+    # Also decorates a goal continuation when one turn carries both independent obligations.
+    TASK_CONTINUATION = "taskContinuation"
     GOAL_REVIEW_ID = "goalReviewId"
     # Set by a session sending another session a message, whose presence is what makes the turn a peer turn.
     PEER_SENDER = "peerSender"

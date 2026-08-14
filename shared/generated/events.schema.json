@@ -3,14 +3,27 @@
     "CompactionEvent": {
       "additionalProperties": false,
       "properties": {
+        "error_code": {
+          "anyOf": [
+            {
+              "enum": [
+                "compaction_failed",
+                "compaction_no_reclaim",
+                "compaction_preparation_failed",
+                "compaction_strategy_failed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "kind": {
           "const": "compaction",
           "default": "compaction",
           "type": "string"
-        },
-        "log_tokens": {
-          "default": 0,
-          "type": "integer"
         },
         "messages_after": {
           "default": 0,
@@ -114,6 +127,19 @@
       "properties": {
         "code": {
           "default": "turn_failed",
+          "enum": [
+            "authentication_failed",
+            "connection_failed",
+            "context_window_exceeded",
+            "image_unsupported",
+            "provider_unavailable",
+            "rate_limited",
+            "request_rejected",
+            "server_error",
+            "turn_failed",
+            "turn_interrupted",
+            "tool_error"
+          ],
           "type": "string"
         },
         "kind": {
@@ -121,9 +147,8 @@
           "default": "error",
           "type": "string"
         },
-        "message": {
-          "default": "",
-          "type": "string"
+        "parameters": {
+          "tsType": "Record<string, unknown>"
         },
         "status": {
           "anyOf": [
@@ -137,10 +162,6 @@
           "default": null
         },
         "timestamp": {
-          "type": "string"
-        },
-        "title": {
-          "default": "",
           "type": "string"
         },
         "tool_call_id": {
@@ -437,6 +458,35 @@
       ],
       "type": "object"
     },
+    "RetryEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "retry",
+          "default": "retry",
+          "type": "string"
+        },
+        "ok": {
+          "default": true,
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "started",
+            "done"
+          ],
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "kind"
+      ],
+      "type": "object"
+    },
     "StatusEvent": {
       "additionalProperties": false,
       "properties": {
@@ -535,6 +585,10 @@
         "context_window": {
           "default": 0,
           "type": "integer"
+        },
+        "context_window_estimated": {
+          "default": false,
+          "type": "boolean"
         },
         "cumulative": {
           "$ref": "#/$defs/CumulativeUsage"
@@ -765,7 +819,7 @@
     },
     "TurnContext": {
       "additionalProperties": false,
-      "description": "The per-turn context injected at the end of the message list: the time, the place, the goal, the tasks, the work.",
+      "description": "Session context in the static system prompt, refreshed when a context fold rebuilds it.",
       "properties": {
         "background": {
           "tsType": "Record<string, unknown>"
@@ -806,7 +860,7 @@
       "additionalProperties": false,
       "properties": {
         "code": {
-          "default": "",
+          "const": "image_metadata_only",
           "type": "string"
         },
         "kind": {
@@ -814,19 +868,15 @@
           "default": "warning",
           "type": "string"
         },
-        "message": {
-          "default": "",
-          "type": "string"
+        "parameters": {
+          "tsType": "Record<string, unknown>"
         },
         "timestamp": {
-          "type": "string"
-        },
-        "title": {
-          "default": "",
           "type": "string"
         }
       },
       "required": [
+        "code",
         "kind"
       ],
       "type": "object"
@@ -841,6 +891,7 @@
           "mcp_event": "#/$defs/McpEvent",
           "permission_request": "#/$defs/PermissionRequestEvent",
           "question": "#/$defs/QuestionEvent",
+          "retry": "#/$defs/RetryEvent",
           "status": "#/$defs/StatusEvent",
           "text": "#/$defs/TextEvent",
           "thinking": "#/$defs/ThinkingEvent",
@@ -882,6 +933,9 @@
         },
         {
           "$ref": "#/$defs/InboundMessageEvent"
+        },
+        {
+          "$ref": "#/$defs/RetryEvent"
         },
         {
           "$ref": "#/$defs/TokenUsageEvent"

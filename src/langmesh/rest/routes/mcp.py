@@ -5,7 +5,7 @@ from fastapi import APIRouter
 import langmesh.base.configuration as _configuration
 from langmesh.protocol.dtos import (
     MCPResourceReadRequest,
-    MCPToolCallRequest,
+    MCPServerToolCallRequest,
 )
 from langmesh.commons import state
 from langmesh.commons.brokers.mcp_servers import _ensure_mcp_servers_for
@@ -39,9 +39,9 @@ async def mcp_tools(server: str = "", working_directory: str = ""):
     else:
         configured = state.global_configuration.mcp.servers
     tools_by_server: dict[str, list] = {}
-    if state.mcp_manager is not None:
+    if state.mcp_server_manager is not None:
         # List the enabled servers and filter below: the manager raises for a name it does not hold.
-        listing = await state.mcp_manager.list_tools("")
+        listing = await state.mcp_server_manager.list_tools("")
         tools_by_server = {entry["name"]: entry["tools"] for entry in listing["servers"]}
     servers = [
         {
@@ -59,22 +59,24 @@ async def mcp_tools(server: str = "", working_directory: str = ""):
 @router.get("/mcp/resources")
 async def mcp_resources(server: str = ""):
     """List resources exposed by configured MCP servers."""
-    if state.mcp_manager is None:
+    if state.mcp_server_manager is None:
         return {"servers": []}
-    return await state.mcp_manager.list_resources(server)
+    return await state.mcp_server_manager.list_resources(server)
 
 
 @router.post("/mcp/tools/call")
-async def mcp_call_tool(request: MCPToolCallRequest):
+async def call_mcp_server_tool(request: MCPServerToolCallRequest):
     """Call a configured MCP server tool. Intended for smoke tests and UI discovery."""
-    if state.mcp_manager is None:
-        return {"error": "MCP is not configured."}
-    return await state.mcp_manager.call_tool(request.server, request.tool_name, request.arguments)
+    if state.mcp_server_manager is None:
+        return {"error": "No MCP server is configured."}
+    return await state.mcp_server_manager.call_tool(
+        request.server, request.tool_name, request.arguments
+    )
 
 
 @router.post("/mcp/resources/read")
 async def mcp_read_resource(request: MCPResourceReadRequest):
     """Read a configured MCP resource. Intended for smoke tests and UI discovery."""
-    if state.mcp_manager is None:
-        return {"error": "MCP is not configured."}
-    return await state.mcp_manager.read_resource(request.server, request.uri)
+    if state.mcp_server_manager is None:
+        return {"error": "No MCP server is configured."}
+    return await state.mcp_server_manager.read_resource(request.server, request.uri)

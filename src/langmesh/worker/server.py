@@ -33,26 +33,46 @@ def _message_parts(params: dict) -> list[Part]:
 
 
 async def _send(session, params: dict) -> dict:
-    """Drive a turn with this message, injecting it into a running turn rather than starting a second one."""
-    # A session parked on a decision takes no new turn, since starting one would discard the parked turn silently.
-    parked = await session.pending_decision()
-    if parked and not session.is_running:
-        return {"accepted": False, "awaiting_input": True, "waiting_on": parked}
-    if session.is_running:
-        text = "".join(
-            str(entry.get("text", ""))
-            for entry in (params.get("parts") or [])
-            if isinstance(entry, dict) and entry.get("kind") == "text"
-        ) or str(params.get("text", ""))
-        # The sender's own id for this message, so a client can recognise its own copy when the session echoes it.
-        message_id = str((params.get("metadata") or {}).get("messageId") or "")
-        # Who sent it, carried into the running turn, so a peer's report is not shown as the user's own words.
-        peer_sender = str((params.get("metadata") or {}).get(Metadata.PEER_SENDER) or "")
-        if session.inject(text, message_id, peer_sender):
-            return {"accepted": True, "injected": True}
-    # The turn ended between the check and the injection, so start a fresh one rather than dropping the message.
-    turn_id = await session.start_turn(_message_parts(params), dict(params.get("metadata") or {}))
-    return {"accepted": True, "injected": False, "turn_id": turn_id}
+    """Serialize intake, steering plain text in place and queueing structured messages intact."""
+    async with session.serialized_send():
+        compaction_error = await session.compaction_failure()
+        if compaction_error:
+            return {
+                "accepted": False,
+                "compaction_required": True,
+            }
+        # A session parked on a decision takes no new turn, since starting one would discard the parked turn silently.
+        parked = await session.pending_decision()
+        if parked and not session.is_running:
+            return {"accepted": False, "awaiting_input": True, "waiting_on": parked}
+        explicit_parts = params.get("parts")
+        has_structured_parts = isinstance(explicit_parts, list) and any(
+            isinstance(entry, dict) and entry.get("kind") != "text" for entry in explicit_parts
+        )
+        if session.is_running and not has_structured_parts:
+            text = "".join(
+                str(entry.get("text", ""))
+                for entry in (params.get("parts") or [])
+                if isinstance(entry, dict) and entry.get("kind") == "text"
+            ) or str(params.get("text", ""))
+            # The sender's own id for this message, so a client can recognise its own copy when the session echoes it.
+            message_id = str((params.get("metadata") or {}).get("messageId") or "")
+            # Who sent it, carried into the running turn, so a peer's report is not shown as the user's own words.
+            peer_sender = str((params.get("metadata") or {}).get(Metadata.PEER_SENDER) or "")
+            if await session.inject(text, message_id, peer_sender):
+                return {"accepted": True, "injected": True}
+            compaction_error = await session.compaction_failure()
+            if compaction_error:
+                return {
+                    "accepted": False,
+                    "compaction_required": True,
+                }
+        # The context lock serializes this with any active turn. Structured parts take this path
+        # deliberately because reducing an attachment-bearing message to steerable text would lose data.
+        turn_id = await session.start_turn(
+            _message_parts(params), dict(params.get("metadata") or {})
+        )
+        return {"accepted": True, "injected": False, "turn_id": turn_id}
 
 
 async def _respond(session, params: dict) -> dict:
@@ -63,10 +83,14 @@ async def _respond(session, params: dict) -> dict:
     data: dict[str, Any] = {"request_id": request_id}
     if params.get("declined"):
         data["declined"] = True
+        if params.get("reason"):
+            data["reason"] = str(params["reason"])
     elif params.get("answers") is not None:
         data["answers"] = params.get("answers")
     else:
         data["decision"] = str(params.get("decision") or "deny")
+        if params.get("reason"):
+            data["reason"] = str(params["reason"])
     resolved = await session.resolve_pending_input(data)
     return {"resolved": resolved}
 
@@ -94,6 +118,10 @@ async def _clear_goal(session, _params: dict) -> dict:
 
 async def _compact(session, _params: dict) -> dict:
     return await session.compact()
+
+
+async def _retry(session, _params: dict) -> dict:
+    return await session.retry_turn(session.session_id)
 
 
 async def _list_jobs(session, _params: dict) -> dict:
@@ -125,6 +153,16 @@ async def _reset(session, _params: dict) -> dict:
     return {"ok": True}
 
 
+async def _observation_registry(session, params: dict) -> dict:
+    """Refresh progressive-disclosure metadata and queue schema feedback when present."""
+    metadata = params.get("metadata")
+    session.note_observation_registry(
+        metadata if isinstance(metadata, dict) else {},
+        str(params["error"]) if params.get("error") else None,
+    )
+    return {"ok": True}
+
+
 # Every verb a session answers, in one table, as the control plane and the intake do.
 METHODS: dict[str, Callable[[Any, dict], Awaitable[dict]]] = {
     "message/send": _send,
@@ -134,9 +172,11 @@ METHODS: dict[str, Callable[[Any, dict], Awaitable[dict]]] = {
     "session/status": _status,
     "session/goal-clear": _clear_goal,
     "session/compact": _compact,
+    "session/retry": _retry,
     "session/locations": _set_locations,
     "session/permission-mode": _set_permission_mode,
     "session/reset": _reset,
+    "session/observation-registry": _observation_registry,
     "jobs/list": _list_jobs,
     "jobs/detach": _detach_job,
 }

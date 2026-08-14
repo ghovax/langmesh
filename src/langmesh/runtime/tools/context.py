@@ -22,7 +22,7 @@ class ToolContext:
 
     # Capability clients. Absent means unconfigured, which each tool reports in its own words.
     exa_client: Any = None
-    mcp_manager: Any = None
+    mcp_server_manager: Any = None
     firecrawl_client: Any = None
     jina_api_key: str = ""
     proxy_url: str = ""

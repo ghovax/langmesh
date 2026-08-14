@@ -748,8 +748,8 @@ export interface AttachmentSettings {
 export interface CompactionSettings {
   // Reclaiming context on its own as it fills (manual compaction always works).
   automatic: boolean;
+  assumed_context_window: number;
   reclaim_at_fraction: number;
-  observational_memory_limit_fraction: number;
   output_reserve_fraction: number;
   recent_working_set_fraction: number;
 }
@@ -794,14 +794,14 @@ const DEFAULT_SANDBOX: SandboxSettings = {
 const DEFAULT_ATTACHMENTS: AttachmentSettings = { inline_image_megabytes: 20 };
 
 const DEFAULT_COMPACTION: CompactionSettings = {
-  automatic: false,
+  automatic: true,
+  assumed_context_window: 128000,
   reclaim_at_fraction: 0.85,
-  observational_memory_limit_fraction: 0.1,
   output_reserve_fraction: 0.1,
   recent_working_set_fraction: 0.25,
 };
 
-// Persist the context-reclaiming settings and observational-memory limit.
+// Persist the context-reclaiming settings.
 export async function updateCompactionSettings(
   changes: Partial<CompactionSettings>,
 ): Promise<void> {
@@ -1128,8 +1128,9 @@ export async function saveSettings(settings: SaveSettingsPayload): Promise<void>
 }
 
 // The model catalog for the picker, with availability, and the provider registry.
-export async function fetchModels(): Promise<ModelsResponse> {
-  const response = await apiFetch(`/models`);
+// `refresh` tells the daemon to drop its TTL'd live subscription catalogs and re-fetch them, the retry path.
+export async function fetchModels(refresh = false): Promise<ModelsResponse> {
+  const response = await apiFetch(refresh ? `/models?refresh=1` : `/models`);
   if (!response.ok) return { models: [], providers: [] };
   return response.json();
 }
@@ -1278,7 +1279,7 @@ export async function fetchMcpTools(workingDirectory?: string): Promise<McpServe
     );
     return data.servers ?? [];
   } catch (caught) {
-    swallowed({ component: "api", operation: "list the MCP tools" }, caught);
+    swallowed({ component: "api", operation: "list MCP server tools" }, caught);
     return [];
   }
 }
@@ -1369,7 +1370,7 @@ export interface SessionGoal {
   blocker: string | null;
   evidence: string | null;
   // A transient phase before the next goal turn, absent while the working session itself is active.
-  review_phase?: "waiting_for_background" | "waiting_for_memory" | "checking";
+  review_phase?: "waiting_for_background" | "checking";
 }
 
 export interface SessionSummary {
@@ -1383,7 +1384,6 @@ export interface SessionSummary {
   // How an ended session finished: `exited` or `failed`. Empty while it is live.
   outcome: string;
   awaiting_input: boolean;
-  recording_memory: boolean;
   title: string;
   working_directory: string;
   workspace_id: string;
@@ -1495,12 +1495,14 @@ export interface SendOutcome {
   accepted: boolean;
   /** The session is parked on a human decision, which is why it took nothing. */
   awaitingInput: boolean;
-  /** What that decision is, as a sentence: "a permission decision for `cat …`". */
-  waitingOn: string;
+  /** What that decision is, localized by the client. */
+  waitingOn: { kind: "question" | "permission"; command?: string } | null;
   /** It reached a turn already in flight, at its next safe point, rather than starting one. */
   injected: boolean;
   /** The turn this started, when it started one. */
   taskId: string;
+  /** The session rejected input because its last context fold failed. */
+  compactionRequired: boolean;
 }
 
 // Drive a turn: an idle session starts one, a busy one takes it at the next safe point.
@@ -1516,14 +1518,19 @@ export async function sessionSend(
     waiting_on?: unknown;
     injected?: unknown;
     task_id?: string;
+    compaction_required?: unknown;
   }>("session.send", { id: sessionId, parts, metadata }, options);
   return {
     // Absent means accepted: only an explicit `false` is a refusal.
     accepted: data.accepted !== false,
     awaitingInput: data.awaiting_input === true,
-    waitingOn: typeof data.waiting_on === "string" ? data.waiting_on : "",
+    waitingOn:
+      data.waiting_on && typeof data.waiting_on === "object"
+        ? (data.waiting_on as SendOutcome["waitingOn"])
+        : null,
     injected: data.injected === true,
     taskId: data.task_id ?? "",
+    compactionRequired: data.compaction_required === true,
   };
 }
 
@@ -1571,12 +1578,6 @@ export async function fetchSessionTurns(
   return data.turns ?? [];
 }
 
-export interface SessionTurnsPage {
-  turns: A2ATurn[];
-  next_before_row_id: number | null;
-  has_more: boolean;
-}
-
 export async function fetchSessionDraft(sessionId: string): Promise<string> {
   const response = await apiFetch(`/sessions/${sessionId}/draft`);
   if (!response.ok) return "";
@@ -1601,50 +1602,59 @@ export interface RecordEntry {
   detail?: string;
   evidence?: string;
   occasion?: string;
+  files?: string[];
   standing?: "verified" | "reported" | "inferred";
   kind?: string;
   summary?: string;
-  still_binding?: boolean;
-  supersedes?: string[];
-  revision?: "correction" | "refinement" | "merge" | "retraction" | null;
-  written_at?: string;
+  updated_at?: string;
 }
 
-/** A session's memory, live entries only unless the whole chain is asked for. */
+export interface SessionRecordSnapshot {
+  entries: {
+    observations: RecordEntry[];
+    directives: RecordEntry[];
+  };
+  revision: number;
+  metadata: {
+    path?: string;
+    exists?: boolean;
+    revision?: number;
+    counts?: { observations?: number; directives?: number };
+    updated_at?: { earliest?: string | null; latest?: string | null };
+  };
+  error: string;
+}
+
+/** The active workspace's complete, revision-consistent observational-memory snapshot. */
 export async function fetchSessionRecord(
   sessionId: string,
-  ledger: "observations" | "directives",
   signal?: AbortSignal,
-  liveOnly = true,
-): Promise<RecordEntry[]> {
-  const response = await apiFetch(
-    `/sessions/${encodeURIComponent(sessionId)}/record?ledger=${ledger}&live_only=${liveOnly}`,
-    { signal },
-  );
+): Promise<SessionRecordSnapshot> {
+  const response = await apiFetch(`/sessions/${encodeURIComponent(sessionId)}/record`, { signal });
   if (!response.ok) throw new Error(`record request failed: ${response.status}`);
-  const data = (await response.json()) as { entries?: RecordEntry[] };
-  return data.entries ?? [];
+  return decodeSessionRecord(await response.json());
 }
 
-export async function fetchSessionTurnsPage(
-  sessionId: string,
-  beforeRowId?: number | null,
+/** The same registry snapshot resolved from a folder, before any session exists in it. */
+export async function fetchObservationRecord(
+  workingDirectory: string,
   signal?: AbortSignal,
-  limit = 400,
-): Promise<SessionTurnsPage> {
-  const data = await rpc<{
-    turns?: A2ATurn[];
-    next_before_row_id?: number | null;
-    has_more?: boolean;
-  }>(
-    "session.history",
-    { id: sessionId, limit, ...(beforeRowId != null ? { before_row_id: beforeRowId } : {}) },
-    { signal },
-  );
+): Promise<SessionRecordSnapshot> {
+  const query = new URLSearchParams({ working_directory: workingDirectory }).toString();
+  const response = await apiFetch(`/observations/record?${query}`, { signal });
+  if (!response.ok) throw new Error(`record request failed: ${response.status}`);
+  return decodeSessionRecord(await response.json());
+}
+
+function decodeSessionRecord(data: Partial<SessionRecordSnapshot>): SessionRecordSnapshot {
   return {
-    turns: data.turns ?? [],
-    next_before_row_id: data.next_before_row_id ?? null,
-    has_more: !!data.has_more,
+    entries: {
+      observations: data.entries?.observations ?? [],
+      directives: data.entries?.directives ?? [],
+    },
+    revision: Number(data.revision ?? 0),
+    metadata: data.metadata ?? {},
+    error: String(data.error ?? ""),
   };
 }
 
@@ -1727,14 +1737,29 @@ export interface CompactionResult {
   ok?: boolean;
   messages_before?: number;
   messages_after?: number;
+  error_code?:
+    | "compaction_failed"
+    | "compaction_no_reclaim"
+    | "compaction_preparation_failed"
+    | "compaction_strategy_failed";
 }
 
-export async function compactSession(sessionId: string): Promise<CompactionResult | null> {
+export async function compactSession(sessionId: string): Promise<CompactionResult> {
   try {
     return await rpc<CompactionResult>("session.compact", { id: sessionId });
   } catch (caught) {
     swallowed({ component: "api", operation: "compact a session" }, caught);
-    return null;
+    throw caught;
+  }
+}
+
+export async function retrySessionTurn(sessionId: string): Promise<boolean> {
+  try {
+    const result = await rpc<{ retried?: unknown }>("session.retry", { id: sessionId });
+    return result.retried === true;
+  } catch (caught) {
+    swallowed({ component: "api", operation: "retry a session turn" }, caught);
+    return false;
   }
 }
 
@@ -1813,6 +1838,8 @@ export interface DirectoryValidation {
   git_unstaged_count: number;
   git_untracked_count: number;
   git_conflicted_count: number;
+  git_insertions: number;
+  git_deletions: number;
   path: string;
 }
 
@@ -2043,20 +2070,46 @@ function openEventStream(
 
 // A live view of a session: a snapshot, then a part-granular tail, then `done` when the turn ends.
 export type SessionStreamFrame =
-  | { kind: "snapshot"; turns: A2ATurn[] }
+  | { kind: "ready" }
+  | {
+      kind: "snapshot";
+      through_seq?: number;
+      running: boolean;
+      /** True after transport recovery, when activity state replaces a possibly missed edge. */
+      reconnected: boolean;
+    }
+  // Complete compacted turns arrive newest-to-oldest, independently of the latency-critical live lane.
+  | { kind: "history"; turn: A2ATurn }
+  | { kind: "history_done" }
   // A single part as the session emitted it, so prose arrives as a run rather than an assembled message.
   | { kind: "live"; seq: number; part: A2APart }
+  | {
+      kind: "delta";
+      seq: number;
+      channel: "text" | "thinking";
+      block_id: string;
+      turn_id: string;
+      cursor: number;
+      chunks: string[];
+    }
   | { kind: "turn"; seq: number; running: boolean }
+  | { kind: "resync" }
   | { kind: "done" };
 
 function attachTranscript(
   path: string,
   onFrame: (frame: SessionStreamFrame) => void,
   onDone: () => void,
-): { abort: () => void } {
+): { abort: () => void; ready: Promise<boolean> } {
   let closed = false;
   let terminated = false;
+  let reconnectImmediately = false;
+  let snapshotSeen = false;
   let requestController: AbortController | null = null;
+  let markReady: (installed: boolean) => void = () => undefined;
+  const ready = new Promise<boolean>((resolve) => {
+    markReady = resolve;
+  });
   const connect = async () => {
     while (!closed && !terminated) {
       requestController = new AbortController();
@@ -2080,6 +2133,20 @@ function attachTranscript(
             } catch {
               return;
             }
+            if (frame.kind === "resync") {
+              reconnectImmediately = true;
+              return "stop";
+            }
+            if (frame.kind === "ready") {
+              markReady(true);
+              return;
+            }
+            if (frame.kind === "snapshot") {
+              const reconnected = snapshotSeen;
+              snapshotSeen = true;
+              onFrame({ ...frame, reconnected });
+              return;
+            }
             onFrame(frame);
             if (frame.kind === "done") {
               terminated = true;
@@ -2092,16 +2159,22 @@ function attachTranscript(
       }
       if (!closed && !terminated) {
         forgetDaemonEndpoint();
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (!reconnectImmediately) await new Promise((resolve) => setTimeout(resolve, 1000));
+        reconnectImmediately = false;
       }
     }
-    if (terminated) onDone();
+    if (terminated) {
+      markReady(false);
+      onDone();
+    }
   };
   void connect();
 
   return {
+    ready,
     abort: () => {
       closed = true;
+      markReady(false);
       requestController?.abort();
     },
   };
@@ -2111,7 +2184,7 @@ export function attachSession(
   sessionId: string,
   onFrame: (frame: SessionStreamFrame) => void,
   onDone: () => void,
-): { abort: () => void } {
+): { abort: () => void; ready: Promise<boolean> } {
   return attachTranscript(`/sessions/${encodeURIComponent(sessionId)}/attach`, onFrame, onDone);
 }
 
@@ -2119,7 +2192,7 @@ export function attachGoalReview(
   reviewId: string,
   onFrame: (frame: SessionStreamFrame) => void,
   onDone: () => void,
-): { abort: () => void } {
+): { abort: () => void; ready: Promise<boolean> } {
   return attachTranscript(`/goal-reviews/${encodeURIComponent(reviewId)}/attach`, onFrame, onDone);
 }
 

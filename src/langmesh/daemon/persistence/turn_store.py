@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import AsyncIterator, Optional, Sequence
 
 from sqlalchemy import (
     Column,
     DateTime,
-    Index,
     Integer,
     MetaData,
     String,
@@ -24,20 +25,44 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.engine import RowMapping
+
+from pydantic import ValidationError
 
 from a2a.server.context import ServerCallContext
 from a2a.server.tasks import TaskStore
-from a2a.types import DataPart, Message, Part, Role, Task, TaskState, TaskStatus
+from a2a.types import Message, Role, Task, TaskState, TaskStatus
 
 from langmesh.base.message_content import content_block_identifier
 from langmesh.base.serialization import compact, conversation_snapshot_id
-from langmesh.base.sqlite_lock import acquire_sqlite_write_lock, release_sqlite_write_lock
 from langmesh.protocol.turn_record import ReconcileAction, TurnRecord, reconcile_action
+from langmesh.protocol.events import ErrorEvent
+from langmesh.protocol.parts import _event_part
+from langmesh.protocol.metadata import part_payload, wrap_part_payload
+from langmesh.runtime.goal import Goal
 
 
 def _dump(model) -> str:
     """Serialize a model to JSON by field names, mirroring how the SDK's own store round-trips."""
     return json.dumps(model.model_dump(mode="json"))
+
+
+def _goal_from_persisted_state(raw: str | None) -> dict | None:
+    """The goal a persisted session state carries, as the interface shows it, or None when it has none."""
+    if not raw:
+        return None
+    try:
+        state = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    stored = state.get("goal") if isinstance(state, dict) else None
+    if not isinstance(stored, dict) or not str(stored.get("text", "") or "").strip():
+        return None
+    try:
+        return Goal.model_validate(stored).public()
+    except ValidationError:
+        # A stored goal that no longer validates is dropped rather than guessed at.
+        return None
 
 
 # Adjacent same-kind deltas merge into one message, so a replay re-reduces far fewer and larger rows.
@@ -73,9 +98,13 @@ def _sole_data(message: object, kind: str) -> dict | None:
     if not part or part.get("kind") != "data":
         return None
     data = part.get("data")
-    if not isinstance(data, dict) or data.get("kind") != kind:
+    if not isinstance(data, dict):
         return None
-    return data
+    payload = part_payload(data)
+    # Read the short-lived flat representation too, so histories written by either version converge.
+    if not payload and data.get("kind"):
+        payload = data
+    return payload if payload.get("kind") == kind else None
 
 
 def _path_key(data: dict) -> tuple:
@@ -84,82 +113,68 @@ def _path_key(data: dict) -> tuple:
     return tuple((segment.get("group_id"), segment.get("step_id")) for segment in path)
 
 
+@dataclass
+class _AdjacentTextRun:
+    """One semantic text run, owning both its identity and its one-time materialization."""
+
+    identity: tuple
+    part: dict
+    payload: dict | None
+    chunks: list[str] = field(default_factory=list)
+
+    def absorbs(self, other: "_AdjacentTextRun") -> bool:
+        if self.identity != other.identity:
+            return False
+        self.chunks.extend(other.chunks)
+        return True
+
+    def materialize(self) -> None:
+        text = "".join(self.chunks)
+        if self.payload is None:
+            self.part["text"] = text
+        else:
+            self.part["data"] = wrap_part_payload({**self.payload, "text": text})
+
+
+def _text_run(message: object) -> _AdjacentTextRun | None:
+    """The mergeable text identity carried by one stored message, if it has one."""
+    text = _agent_text(message)
+    if text is not None:
+        part = _agent_text_part(message)
+        block_identifier = (
+            content_block_identifier(part.get("metadata")) if part is not None else None
+        )
+        if part is not None and block_identifier is not None:
+            return _AdjacentTextRun(("agent", block_identifier), part, None, [text])
+        return None
+
+    for category in ("text", "thinking"):
+        payload = _sole_data(message, category)
+        if payload is None:
+            continue
+        part = _sole_part(message)
+        if part is None:
+            return None
+        identity = (category, *_path_key(payload), str(payload.get("block_id", "")))
+        return _AdjacentTextRun(identity, part, payload, [str(payload.get("text", ""))])
+    return None
+
+
 def _compact_history(messages: list) -> list:
-    """Merge adjacent same-kind single-part agent messages into one message each."""
+    """Merge adjacent same-kind messages in linear time, joining each semantic run once."""
     compacted: list = []
+    active_run: _AdjacentTextRun | None = None
+
     for message in messages:
-        text = _agent_text(message)
-        if text is not None:
-            last = compacted[-1] if compacted else None
-            current_part = _agent_text_part(message)
-            last_part = _agent_text_part(last) if last is not None else None
-            current_block_identifier = (
-                content_block_identifier(current_part.get("metadata"))
-                if current_part is not None
-                else None
-            )
-            last_block_identifier = (
-                content_block_identifier(last_part.get("metadata"))
-                if last_part is not None
-                else None
-            )
-            if (
-                last_part is not None
-                and current_part is not None
-                and current_block_identifier is not None
-                and current_block_identifier == last_block_identifier
-            ):
-                last_part["text"] = str(last_part.get("text", "")) + text
-                continue
-            compacted.append(message)
+        incoming_run = _text_run(message)
+        if incoming_run is not None and active_run is not None and active_run.absorbs(incoming_run):
             continue
-        sub = _sole_data(message, "text")
-        if sub is not None:
-            # An agent's text arrives path-tagged, so only adjacent events from the same path merge.
-            key = _path_key(sub)
-            last = compacted[-1] if compacted else None
-            last_sub = _sole_data(last, "text") if last is not None else None
-            if (
-                last_sub is not None
-                and _path_key(last_sub) == key
-                and str(last_sub.get("block_id", "")) == str(sub.get("block_id", ""))
-            ):
-                last["parts"] = [
-                    {
-                        "kind": "data",
-                        "data": {
-                            **last_sub,
-                            "text": str(last_sub.get("text", "")) + str(sub.get("text", "")),
-                        },
-                    }
-                ]  # type: ignore[index]
-                continue
-            compacted.append(message)
-            continue
-        thinking = _sole_data(message, "thinking")
-        if thinking is not None:
-            key = _path_key(thinking)
-            last = compacted[-1] if compacted else None
-            last_thinking = _sole_data(last, "thinking") if last is not None else None
-            if (
-                last_thinking is not None
-                and _path_key(last_thinking) == key
-                and str(last_thinking.get("block_id", "")) == str(thinking.get("block_id", ""))
-            ):
-                last["parts"] = [
-                    {
-                        "kind": "data",
-                        "data": {
-                            **last_thinking,
-                            "text": str(last_thinking.get("text", ""))
-                            + str(thinking.get("text", "")),
-                        },
-                    }
-                ]  # type: ignore[index]
-                continue
-            compacted.append(message)
-            continue
+        if active_run is not None:
+            active_run.materialize()
         compacted.append(message)
+        active_run = incoming_run
+    if active_run is not None:
+        active_run.materialize()
     return compacted
 
 
@@ -179,6 +194,23 @@ def _task_state_value(task: Task) -> str:
 
 def _is_terminal_task(task: Task) -> bool:
     return _task_state_value(task) in _TERMINAL_TASK_STATES
+
+
+def _stored_task(head_row, history_rows: list[str], artifact_rows: list[str]) -> Task:
+    """Decode and compact one immutable turn off the daemon's latency-critical event loop."""
+    return Task.model_validate(
+        {
+            "id": str(head_row["id"]),
+            "context_id": head_row["session_id"],
+            "kind": head_row["kind"] or "task",
+            "status": json.loads(head_row["status"]),
+            "metadata": json.loads(head_row["turn_metadata"])
+            if head_row["turn_metadata"]
+            else None,
+            "history": _compact_history([json.loads(message) for message in history_rows]),
+            "artifacts": [json.loads(artifact) for artifact in artifact_rows] or None,
+        }
+    )
 
 
 class AppendOnlyTaskStore(TaskStore):
@@ -216,29 +248,6 @@ class AppendOnlyTaskStore(TaskStore):
             Column("artifact", Text),
             UniqueConstraint("turn_id", "artifact_id", name="uq_task_artifact_id"),
         )
-        # The turn's durable resume checkpoint: the model-facing conversation, one row per context.
-        # Append-only, and the reason for the shape: an entry is never updated or deleted, so a correction
-        # is a later row naming the earlier one, and the whole chain stays readable after the fact.
-        self._ledger = Table(
-            "session_ledger",
-            self._metadata,
-            Column("row_id", Integer, primary_key=True, autoincrement=True),
-            Column("session_id", String),
-            Column("ledger", String),
-            Column("entry_id", String),
-            Column("entry", Text),
-            Column("supersedes", Text),
-            Column("written_at", String),
-            UniqueConstraint("session_id", "ledger", "entry_id", name="uq_session_ledger_entry"),
-            sqlite_autoincrement=True,
-        )
-        Index(
-            "idx_session_ledger_session",
-            self._ledger.c.session_id,
-            self._ledger.c.ledger,
-            self._ledger.c.row_id,
-        )
-
         self._checkpoint = Table(
             "turn_checkpoint",
             self._metadata,
@@ -289,36 +298,32 @@ class AppendOnlyTaskStore(TaskStore):
             Column("created_at", DateTime, server_default=func.now()),
         )
         self._initialized = False
-        # How many history rows are persisted per task, kept in memory under the write lock rather than re-counted.
+        # How many history rows are persisted per task, kept in memory rather than re-counted.
         self._persisted_counts: dict[str, int] = {}
         # Tasks whose history has been terminally compacted, so a stray later save is caught rather than duplicating rows.
         self._terminal_turns: set[str] = set()
 
     async def initialize(self) -> None:
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                await connection.run_sync(self._metadata.create_all)
-                await connection.exec_driver_sql(
-                    "CREATE INDEX IF NOT EXISTS idx_turn_head_session_id_id ON turn_head(session_id, id)"
-                )
-                await connection.exec_driver_sql(
-                    "CREATE INDEX IF NOT EXISTS idx_turn_history_turn_id_row_id ON turn_history(turn_id, row_id)"
-                )
-                await connection.exec_driver_sql(
-                    "CREATE INDEX IF NOT EXISTS idx_turn_artifacts_turn_id_row_id ON turn_artifacts(turn_id, row_id)"
-                )
-                await connection.exec_driver_sql(
-                    "CREATE INDEX IF NOT EXISTS idx_conversation_inheritance_snapshot_id ON conversation_inheritance(snapshot_id)"
-                )
-                await connection.exec_driver_sql(
-                    "CREATE INDEX IF NOT EXISTS idx_user_message_history_working_directory_created_at ON user_message_history(working_directory, created_at DESC)"
-                )
-                await connection.exec_driver_sql(
-                    "CREATE INDEX IF NOT EXISTS idx_goal_review_sessions_session_created ON goal_review_sessions(session_id, created_at DESC)"
-                )
-        finally:
-            release_sqlite_write_lock(write_lock)
+        async with self._engine.begin() as connection:
+            await connection.run_sync(self._metadata.create_all)
+            await connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_turn_head_session_id_id ON turn_head(session_id, id)"
+            )
+            await connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_turn_history_turn_id_row_id ON turn_history(turn_id, row_id)"
+            )
+            await connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_turn_artifacts_turn_id_row_id ON turn_artifacts(turn_id, row_id)"
+            )
+            await connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_conversation_inheritance_snapshot_id ON conversation_inheritance(snapshot_id)"
+            )
+            await connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_user_message_history_working_directory_created_at ON user_message_history(working_directory, created_at DESC)"
+            )
+            await connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS idx_goal_review_sessions_session_created ON goal_review_sessions(session_id, created_at DESC)"
+            )
         self._initialized = True
 
     async def _ensure_initialized(self) -> None:
@@ -328,63 +333,69 @@ class AppendOnlyTaskStore(TaskStore):
     async def reconcile_orphaned_turns(self) -> list[str]:
         """Restart reconciliation: a durable pause is restored, and anything else non-terminal is marked failed."""
         await self._ensure_initialized()
-        write_lock = await acquire_sqlite_write_lock()
         failed_task_ids: list[str] = []
         input_required = TaskState.input_required.value
-        try:
-            async with self._engine.begin() as connection:
-                head_rows = (await connection.execute(select(self._head))).mappings().all()
-                for head_row in head_rows:
-                    current_state = str(json.loads(head_row["status"]).get("state", ""))
-                    if current_state in _TERMINAL_TASK_STATES:
-                        continue
-                    metadata = (
-                        json.loads(head_row["turn_metadata"]) if head_row["turn_metadata"] else {}
-                    )
-                    kind = TurnRecord.from_metadata(metadata).kind
-                    if (
-                        reconcile_action(kind, current_state, input_required=input_required)
-                        is ReconcileAction.PRESERVE
-                    ):
-                        continue
-                    turn_id = str(head_row["id"])
-                    session_id = str(head_row["session_id"] or "")
-                    interrupted_message = Message(
-                        role=Role.agent,
-                        parts=[
-                            Part(
-                                root=DataPart(
-                                    data={
-                                        "kind": "error",
-                                        "code": "turn_interrupted",
-                                        "message": "This turn was interrupted because the daemon restarted.",
-                                    }
-                                )
-                            )
-                        ],
-                        message_id=uuid.uuid4().hex,
-                        task_id=turn_id,
-                        context_id=session_id or None,
-                    )
-                    interrupted_at = datetime.now(timezone.utc).isoformat()
-                    interrupted_status = TaskStatus(
-                        state=TaskState.failed,
-                        message=interrupted_message,
-                        timestamp=interrupted_at,
-                    )
+        async with self._engine.begin() as connection:
+            head_rows = (await connection.execute(select(self._head))).mappings().all()
+            for head_row in head_rows:
+                current_state = str(json.loads(head_row["status"]).get("state", ""))
+                if current_state in _TERMINAL_TASK_STATES:
+                    continue
+                metadata = (
+                    json.loads(head_row["turn_metadata"]) if head_row["turn_metadata"] else {}
+                )
+                kind = TurnRecord.from_metadata(metadata).kind
+                if (
+                    reconcile_action(kind, current_state, input_required=input_required)
+                    is ReconcileAction.PRESERVE
+                ):
+                    continue
+                turn_id = str(head_row["id"])
+                session_id = str(head_row["session_id"] or "")
+                interrupted_message = Message(
+                    role=Role.agent,
+                    parts=[_event_part(ErrorEvent(code="turn_interrupted"))],
+                    message_id=uuid.uuid4().hex,
+                    task_id=turn_id,
+                    context_id=session_id or None,
+                )
+                interrupted_at = datetime.now(timezone.utc).isoformat()
+                interrupted_status = TaskStatus(
+                    state=TaskState.failed,
+                    message=interrupted_message,
+                    timestamp=interrupted_at,
+                )
+                await connection.execute(
+                    update(self._head)
+                    .where(self._head.c.id == turn_id)
+                    .values(status=_dump(interrupted_status))
+                )
+                await connection.execute(
+                    update(self._goal_reviews)
+                    .where(self._goal_reviews.c.review_id == session_id)
+                    .values(status=TaskState.failed.value, completed_at=interrupted_at)
+                )
+                stored_state = (
                     await connection.execute(
-                        update(self._head)
-                        .where(self._head.c.id == turn_id)
-                        .values(status=_dump(interrupted_status))
+                        select(self._session_state.c.state).where(
+                            self._session_state.c.session_id == session_id
+                        )
                     )
-                    await connection.execute(
-                        update(self._goal_reviews)
-                        .where(self._goal_reviews.c.review_id == session_id)
-                        .values(status=TaskState.failed.value, completed_at=interrupted_at)
+                ).scalar()
+                retryable_state = json.loads(stored_state) if stored_state else {}
+                retryable_state["turn_recovery"] = "retryable"
+                state_insert = sqlite_insert(self._session_state).values(
+                    session_id=session_id,
+                    state=json.dumps(retryable_state),
+                    updated_at=interrupted_at,
+                )
+                await connection.execute(
+                    state_insert.on_conflict_do_update(
+                        index_elements=[self._session_state.c.session_id],
+                        set_={"state": state_insert.excluded.state, "updated_at": interrupted_at},
                     )
-                    failed_task_ids.append(turn_id)
-        finally:
-            release_sqlite_write_lock(write_lock)
+                )
+                failed_task_ids.append(turn_id)
         return failed_task_ids
 
     async def save_turn_state(
@@ -400,71 +411,67 @@ class AppendOnlyTaskStore(TaskStore):
         if not session_id:
             return
         now = datetime.now(timezone.utc).isoformat()
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                checkpoint_insert = sqlite_insert(self._checkpoint).values(
+        async with self._engine.begin() as connection:
+            checkpoint_insert = sqlite_insert(self._checkpoint).values(
+                session_id=session_id,
+                turn_id=turn_id,
+                messages=json.dumps(messages),
+                updated_at=now,
+            )
+            await connection.execute(
+                checkpoint_insert.on_conflict_do_update(
+                    index_elements=[self._checkpoint.c.session_id],
+                    set_={
+                        "turn_id": turn_id,
+                        "messages": checkpoint_insert.excluded.messages,
+                        "updated_at": now,
+                    },
+                )
+            )
+            detached = False
+            if inherited_snapshot_id:
+                snapshot_exists = (
+                    await connection.execute(
+                        select(self._conversation_snapshot.c.snapshot_id).where(
+                            self._conversation_snapshot.c.snapshot_id == inherited_snapshot_id
+                        )
+                    )
+                ).scalar()
+                if snapshot_exists is None:
+                    raise ValueError(
+                        f"Unknown inherited conversation snapshot {inherited_snapshot_id!r}"
+                    )
+                inheritance_insert = sqlite_insert(self._conversation_inheritance).values(
                     session_id=session_id,
-                    turn_id=turn_id,
-                    messages=json.dumps(messages),
+                    snapshot_id=inherited_snapshot_id,
+                )
+                await connection.execute(
+                    inheritance_insert.on_conflict_do_update(
+                        index_elements=[self._conversation_inheritance.c.session_id],
+                        set_={"snapshot_id": inheritance_insert.excluded.snapshot_id},
+                    )
+                )
+            else:
+                result = await connection.execute(
+                    delete(self._conversation_inheritance).where(
+                        self._conversation_inheritance.c.session_id == session_id
+                    )
+                )
+                detached = bool(result.rowcount)
+            if session_state is not None:
+                state_insert = sqlite_insert(self._session_state).values(
+                    session_id=session_id,
+                    state=json.dumps(session_state),
                     updated_at=now,
                 )
                 await connection.execute(
-                    checkpoint_insert.on_conflict_do_update(
-                        index_elements=[self._checkpoint.c.session_id],
-                        set_={
-                            "turn_id": turn_id,
-                            "messages": checkpoint_insert.excluded.messages,
-                            "updated_at": now,
-                        },
+                    state_insert.on_conflict_do_update(
+                        index_elements=[self._session_state.c.session_id],
+                        set_={"state": state_insert.excluded.state, "updated_at": now},
                     )
                 )
-                detached = False
-                if inherited_snapshot_id:
-                    snapshot_exists = (
-                        await connection.execute(
-                            select(self._conversation_snapshot.c.snapshot_id).where(
-                                self._conversation_snapshot.c.snapshot_id == inherited_snapshot_id
-                            )
-                        )
-                    ).scalar()
-                    if snapshot_exists is None:
-                        raise ValueError(
-                            f"Unknown inherited conversation snapshot {inherited_snapshot_id!r}"
-                        )
-                    inheritance_insert = sqlite_insert(self._conversation_inheritance).values(
-                        session_id=session_id,
-                        snapshot_id=inherited_snapshot_id,
-                    )
-                    await connection.execute(
-                        inheritance_insert.on_conflict_do_update(
-                            index_elements=[self._conversation_inheritance.c.session_id],
-                            set_={"snapshot_id": inheritance_insert.excluded.snapshot_id},
-                        )
-                    )
-                else:
-                    result = await connection.execute(
-                        delete(self._conversation_inheritance).where(
-                            self._conversation_inheritance.c.session_id == session_id
-                        )
-                    )
-                    detached = bool(result.rowcount)
-                if session_state is not None:
-                    state_insert = sqlite_insert(self._session_state).values(
-                        session_id=session_id,
-                        state=json.dumps(session_state),
-                        updated_at=now,
-                    )
-                    await connection.execute(
-                        state_insert.on_conflict_do_update(
-                            index_elements=[self._session_state.c.session_id],
-                            set_={"state": state_insert.excluded.state, "updated_at": now},
-                        )
-                    )
-                if detached:
-                    await self._delete_unreferenced_conversation_snapshots(connection)
-        finally:
-            release_sqlite_write_lock(write_lock)
+            if detached:
+                await self._delete_unreferenced_conversation_snapshots(connection)
 
     async def seed_inherited_conversation(self, session_id: str, messages: list[dict]) -> str:
         """Point a new child at a shared snapshot and start its local checkpoint empty."""
@@ -473,40 +480,34 @@ class AppendOnlyTaskStore(TaskStore):
             return ""
         snapshot_id = conversation_snapshot_id(messages)
         now = datetime.now(timezone.utc).isoformat()
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                await connection.execute(
-                    sqlite_insert(self._conversation_snapshot)
-                    .values(snapshot_id=snapshot_id, messages=compact(messages))
-                    .on_conflict_do_nothing(
-                        index_elements=[self._conversation_snapshot.c.snapshot_id]
-                    )
+        async with self._engine.begin() as connection:
+            await connection.execute(
+                sqlite_insert(self._conversation_snapshot)
+                .values(snapshot_id=snapshot_id, messages=compact(messages))
+                .on_conflict_do_nothing(index_elements=[self._conversation_snapshot.c.snapshot_id])
+            )
+            checkpoint_insert = sqlite_insert(self._checkpoint).values(
+                session_id=session_id,
+                turn_id="",
+                messages="[]",
+                updated_at=now,
+            )
+            await connection.execute(
+                checkpoint_insert.on_conflict_do_update(
+                    index_elements=[self._checkpoint.c.session_id],
+                    set_={"turn_id": "", "messages": "[]", "updated_at": now},
                 )
-                checkpoint_insert = sqlite_insert(self._checkpoint).values(
-                    session_id=session_id,
-                    turn_id="",
-                    messages="[]",
-                    updated_at=now,
+            )
+            inheritance_insert = sqlite_insert(self._conversation_inheritance).values(
+                session_id=session_id,
+                snapshot_id=snapshot_id,
+            )
+            await connection.execute(
+                inheritance_insert.on_conflict_do_update(
+                    index_elements=[self._conversation_inheritance.c.session_id],
+                    set_={"snapshot_id": snapshot_id},
                 )
-                await connection.execute(
-                    checkpoint_insert.on_conflict_do_update(
-                        index_elements=[self._checkpoint.c.session_id],
-                        set_={"turn_id": "", "messages": "[]", "updated_at": now},
-                    )
-                )
-                inheritance_insert = sqlite_insert(self._conversation_inheritance).values(
-                    session_id=session_id,
-                    snapshot_id=snapshot_id,
-                )
-                await connection.execute(
-                    inheritance_insert.on_conflict_do_update(
-                        index_elements=[self._conversation_inheritance.c.session_id],
-                        set_={"snapshot_id": snapshot_id},
-                    )
-                )
-        finally:
-            release_sqlite_write_lock(write_lock)
+            )
         return snapshot_id
 
     async def _delete_unreferenced_conversation_snapshots(self, connection) -> None:
@@ -523,72 +524,64 @@ class AppendOnlyTaskStore(TaskStore):
         if not session_id:
             return
         now = datetime.now(timezone.utc).isoformat()
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                state_insert = sqlite_insert(self._session_state).values(
-                    session_id=session_id,
-                    state=json.dumps(session_state),
-                    updated_at=now,
+        async with self._engine.begin() as connection:
+            state_insert = sqlite_insert(self._session_state).values(
+                session_id=session_id,
+                state=json.dumps(session_state),
+                updated_at=now,
+            )
+            await connection.execute(
+                state_insert.on_conflict_do_update(
+                    index_elements=[self._session_state.c.session_id],
+                    set_={"state": state_insert.excluded.state, "updated_at": now},
                 )
-                await connection.execute(
-                    state_insert.on_conflict_do_update(
-                        index_elements=[self._session_state.c.session_id],
-                        set_={"state": state_insert.excluded.state, "updated_at": now},
-                    )
-                )
-        finally:
-            release_sqlite_write_lock(write_lock)
+            )
 
     async def create_goal_review(
         self, review_id: str, session_id: str, goal: str, created_at: str
     ) -> None:
         """Register one review session before its first transcript event is saved."""
         await self._ensure_initialized()
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                await connection.execute(
-                    sqlite_insert(self._goal_reviews).values(
-                        review_id=review_id,
-                        session_id=session_id,
-                        goal=goal,
-                        status="working",
-                        standing=None,
-                        created_at=created_at,
-                        completed_at=None,
-                    )
+        async with self._engine.begin() as connection:
+            await connection.execute(
+                sqlite_insert(self._goal_reviews).values(
+                    review_id=review_id,
+                    session_id=session_id,
+                    goal=goal,
+                    status="working",
+                    standing=None,
+                    created_at=created_at,
+                    completed_at=None,
                 )
-        finally:
-            release_sqlite_write_lock(write_lock)
+            )
 
     async def finish_goal_review(
         self, review_id: str, status: str, standing: str | None, completed_at: str
     ) -> None:
         """Settle one review session while preserving its linked transcript."""
         await self._ensure_initialized()
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                await connection.execute(
-                    update(self._goal_reviews)
-                    .where(self._goal_reviews.c.review_id == review_id)
-                    .values(status=status, standing=standing, completed_at=completed_at)
-                )
-        finally:
-            release_sqlite_write_lock(write_lock)
+        async with self._engine.begin() as connection:
+            await connection.execute(
+                update(self._goal_reviews)
+                .where(self._goal_reviews.c.review_id == review_id)
+                .values(status=status, standing=standing, completed_at=completed_at)
+            )
 
     async def goal_reviews_for_session(self, session_id: str) -> list[dict]:
         """List a session's review sessions newest first."""
         await self._ensure_initialized()
         async with self._engine.connect() as connection:
             rows = (
-                await connection.execute(
-                    select(self._goal_reviews)
-                    .where(self._goal_reviews.c.session_id == session_id)
-                    .order_by(self._goal_reviews.c.created_at.desc())
+                (
+                    await connection.execute(
+                        select(self._goal_reviews)
+                        .where(self._goal_reviews.c.session_id == session_id)
+                        .order_by(self._goal_reviews.c.created_at.desc())
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return [dict(row) for row in rows]
 
     async def goal_review(self, review_id: str) -> dict | None:
@@ -596,12 +589,16 @@ class AppendOnlyTaskStore(TaskStore):
         await self._ensure_initialized()
         async with self._engine.connect() as connection:
             row = (
-                await connection.execute(
-                    select(self._goal_reviews).where(
-                        self._goal_reviews.c.review_id == review_id
+                (
+                    await connection.execute(
+                        select(self._goal_reviews).where(
+                            self._goal_reviews.c.review_id == review_id
+                        )
                     )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         return dict(row) if row is not None else None
 
     async def load_checkpoint(self, session_id: str) -> dict:
@@ -667,6 +664,27 @@ class AppendOnlyTaskStore(TaskStore):
         except (json.JSONDecodeError, TypeError):
             return {}
 
+    async def session_goals(self, session_ids: Sequence[str]) -> dict[str, dict]:
+        """The goals persisted beside each session's checkpoint, keyed by session, for those that have one."""
+        await self._ensure_initialized()
+        session_ids = [identifier for identifier in session_ids if identifier]
+        if not session_ids:
+            return {}
+        async with self._engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    select(self._session_state.c.session_id, self._session_state.c.state).where(
+                        self._session_state.c.session_id.in_(session_ids)
+                    )
+                )
+            ).all()
+        goals: dict[str, dict] = {}
+        for session_id, raw in rows:
+            goal = _goal_from_persisted_state(raw)
+            if goal is not None:
+                goals[session_id] = goal
+        return goals
+
     async def _persisted_count(self, connection, turn_id: str) -> int:
         """How many history rows are already persisted, so a save appends only the suffix not yet stored."""
         cached = self._persisted_counts.get(turn_id)
@@ -718,70 +736,61 @@ class AppendOnlyTaskStore(TaskStore):
             raise ValueError(
                 f"non-terminal save for already-terminal task {task.id}: a terminal save must be the last save for a task"
             )
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                # Head: tiny upsert of the latest status + metadata.
-                head_values = {
-                    "id": task.id,
-                    "session_id": task.context_id,
-                    "kind": task.kind,
-                    "status": _dump(task.status),
-                    "turn_metadata": json.dumps(task.metadata)
-                    if task.metadata is not None
-                    else None,
-                }
-                head_insert = sqlite_insert(self._head).values(**head_values)
+        async with self._engine.begin() as connection:
+            # Head: tiny upsert of the latest status + metadata.
+            head_values = {
+                "id": task.id,
+                "session_id": task.context_id,
+                "kind": task.kind,
+                "status": _dump(task.status),
+                "turn_metadata": json.dumps(task.metadata) if task.metadata is not None else None,
+            }
+            head_insert = sqlite_insert(self._head).values(**head_values)
+            await connection.execute(
+                head_insert.on_conflict_do_update(
+                    index_elements=[self._head.c.id],
+                    set_={
+                        "session_id": head_values["session_id"],
+                        "kind": head_values["kind"],
+                        "status": head_values["status"],
+                        "turn_metadata": head_values["turn_metadata"],
+                    },
+                )
+            )
+
+            # Insert only the messages not yet persisted, since the list only ever grows.
+            persisted = await self._persisted_count(connection, task.id)
+            new_messages = history[persisted:]
+            if new_messages:
                 await connection.execute(
-                    head_insert.on_conflict_do_update(
-                        index_elements=[self._head.c.id],
-                        set_={
-                            "session_id": head_values["session_id"],
-                            "kind": head_values["kind"],
-                            "status": head_values["status"],
-                            "turn_metadata": head_values["turn_metadata"],
-                        },
+                    self._history.insert(),
+                    [{"turn_id": task.id, "message": _dump(message)} for message in new_messages],
+                )
+                self._persisted_counts[task.id] = persisted + len(new_messages)
+
+            if terminal:
+                # Compact in place with no new row ids, and record the terminal count so a stray save is caught.
+                compacted_count = await self._compact_persisted_history(connection, task.id)
+                self._persisted_counts[task.id] = compacted_count
+                self._terminal_turns.add(task.id)
+
+            # Artifacts: upsert each by id (replace-in-place is safe and bounded).
+            for artifact in artifacts:
+                artifact_json = _dump(artifact)
+                artifact_insert = sqlite_insert(self._artifacts).values(
+                    turn_id=task.id,
+                    artifact_id=artifact.artifact_id,
+                    artifact=artifact_json,
+                )
+                await connection.execute(
+                    artifact_insert.on_conflict_do_update(
+                        index_elements=[
+                            self._artifacts.c.turn_id,
+                            self._artifacts.c.artifact_id,
+                        ],
+                        set_={"artifact": artifact_json},
                     )
                 )
-
-                # Insert only the messages not yet persisted, since the list only ever grows.
-                persisted = await self._persisted_count(connection, task.id)
-                new_messages = history[persisted:]
-                if new_messages:
-                    await connection.execute(
-                        self._history.insert(),
-                        [
-                            {"turn_id": task.id, "message": _dump(message)}
-                            for message in new_messages
-                        ],
-                    )
-                    self._persisted_counts[task.id] = persisted + len(new_messages)
-
-                if terminal:
-                    # Compact in place with no new row ids, and record the terminal count so a stray save is caught.
-                    compacted_count = await self._compact_persisted_history(connection, task.id)
-                    self._persisted_counts[task.id] = compacted_count
-                    self._terminal_turns.add(task.id)
-
-                # Artifacts: upsert each by id (replace-in-place is safe and bounded).
-                for artifact in artifacts:
-                    artifact_json = _dump(artifact)
-                    artifact_insert = sqlite_insert(self._artifacts).values(
-                        turn_id=task.id,
-                        artifact_id=artifact.artifact_id,
-                        artifact=artifact_json,
-                    )
-                    await connection.execute(
-                        artifact_insert.on_conflict_do_update(
-                            index_elements=[
-                                self._artifacts.c.turn_id,
-                                self._artifacts.c.artifact_id,
-                            ],
-                            set_={"artifact": artifact_json},
-                        )
-                    )
-        finally:
-            release_sqlite_write_lock(write_lock)
 
     async def get(self, turn_id: str, context: ServerCallContext | None = None) -> Optional[Task]:
         await self._ensure_initialized()
@@ -815,7 +824,6 @@ class AppendOnlyTaskStore(TaskStore):
                 .scalars()
                 .all()
             )
-
         data = {
             "id": head_row["id"],
             "context_id": head_row["session_id"],
@@ -898,323 +906,211 @@ class AppendOnlyTaskStore(TaskStore):
             turns.append(Task.model_validate(data))
         return turns
 
-    async def turn_page_for_session(
+    async def control_records_for_session(self, session_id: str) -> list[tuple[str, TurnRecord]]:
+        """Turn control metadata newest-first, without loading transcript or artifact payloads."""
+        await self._ensure_initialized()
+        async with self._engine.connect() as connection:
+            rows = (
+                (
+                    await connection.execute(
+                        select(self._head.c.id, self._head.c.turn_metadata)
+                        .where(self._head.c.session_id == session_id)
+                        .order_by(self._head.c.id.desc())
+                    )
+                )
+                .all()
+            )
+        return [
+            (
+                str(turn_id),
+                TurnRecord.from_metadata(json.loads(metadata) if metadata else None),
+            )
+            for turn_id, metadata in rows
+        ]
+
+    async def latest_history_row_id(self, session_id: str) -> int:
+        """The durable high-water mark for one context, used to cut history cleanly from its live suffix."""
+        await self._ensure_initialized()
+        turn_ids = select(self._head.c.id).where(self._head.c.session_id == session_id)
+        async with self._engine.connect() as connection:
+            value = await connection.scalar(
+                select(func.max(self._history.c.row_id)).where(
+                    self._history.c.turn_id.in_(turn_ids)
+                )
+            )
+        return int(value or 0)
+
+    async def stream_turns_for_session(
         self,
         session_id: str,
         *,
-        before_row_id: int | None = None,
-        limit: int = 400,
-    ) -> dict:
-        """A newest-first page of persisted history, returning task fragments carrying only this page's rows."""
+        through_row_id: int,
+        exclude_turn_id: str = "",
+    ) -> AsyncIterator[Task]:
+        """Yield immutable complete turns newest-to-oldest through one durable high-water mark.
+
+        A turn is the protocol's natural consistency unit: yielding whole compacted turns means the
+        browser can prepend each result without holding raw history or repairing half a tool lifecycle.
+        No conversation-size policy appears here; iteration continues until the durable cut is exhausted.
+        """
         await self._ensure_initialized()
-        page_limit = max(1, min(limit, 1000))
         async with self._engine.connect() as connection:
             head_rows = (
                 (
                     await connection.execute(
-                        select(self._head).where(self._head.c.session_id == session_id)
+                        select(
+                            self._head,
+                            func.max(self._history.c.row_id).label("last_row_id"),
+                        )
+                        .outerjoin(self._history, self._history.c.turn_id == self._head.c.id)
+                        .where(self._head.c.session_id == session_id)
+                        .group_by(self._head.c.id)
+                        .order_by(func.max(self._history.c.row_id).desc())
                     )
                 )
                 .mappings()
                 .all()
             )
-            if not head_rows:
-                return {"turns": [], "next_before_row_id": None, "has_more": False}
-
-            head_by_id = {str(row["id"]): row for row in head_rows}
-            turn_ids: list[str] = []
-            related_head_rows: list = []
+            main_turn_ids: list[str] = []
+            related_rows: list[RowMapping] = []
             for row in head_rows:
+                turn_id = str(row["id"])
+                if turn_id == exclude_turn_id:
+                    continue
                 metadata = json.loads(row["turn_metadata"]) if row["turn_metadata"] else None
                 if TurnRecord.from_metadata(metadata).reference_task_ids:
-                    related_head_rows.append(row)
-                    continue
-                turn_ids.append(str(row["id"]))
-            related_tasks = []
-            if before_row_id is None:
-                related_tasks = [
-                    Task.model_validate(
-                        {
-                            "id": str(row["id"]),
-                            "context_id": row["session_id"],
-                            "kind": row["kind"] or "task",
-                            "status": json.loads(row["status"]),
-                            "metadata": json.loads(row["turn_metadata"])
-                            if row["turn_metadata"]
-                            else None,
-                            "history": [],
-                            "artifacts": None,
-                        }
+                    related_rows.append(row)
+                else:
+                    main_turn_ids.append(turn_id)
+            head_by_id = {str(row["id"]): row for row in head_rows}
+            ordered_turn_ids = [
+                turn_id
+                for turn_id in main_turn_ids
+                if head_by_id[turn_id]["last_row_id"] is not None
+                and int(head_by_id[turn_id]["last_row_id"]) <= through_row_id
+            ]
+            if ordered_turn_ids:
+                history_rows = (
+                    await connection.execute(
+                        select(self._history.c.turn_id, self._history.c.message)
+                        .where(
+                            self._history.c.turn_id.in_(ordered_turn_ids),
+                            self._history.c.row_id <= through_row_id,
+                        )
+                        .order_by(self._history.c.turn_id, self._history.c.row_id)
                     )
-                    for row in related_head_rows
-                ]
-            if not turn_ids:
-                return {"turns": related_tasks, "next_before_row_id": None, "has_more": False}
+                ).all()
+                artifact_rows = (
+                    await connection.execute(
+                        select(self._artifacts.c.turn_id, self._artifacts.c.artifact)
+                        .where(self._artifacts.c.turn_id.in_(ordered_turn_ids))
+                        .order_by(self._artifacts.c.turn_id, self._artifacts.c.row_id)
+                    )
+                ).all()
+            else:
+                history_rows = []
+                artifact_rows = []
 
-            history_query = (
-                select(self._history.c.row_id, self._history.c.turn_id, self._history.c.message)
-                .where(self._history.c.turn_id.in_(turn_ids))
-                .order_by(self._history.c.row_id.desc())
-                .limit(page_limit + 1)
-            )
-            if before_row_id is not None:
-                history_query = history_query.where(self._history.c.row_id < before_row_id)
-            fetched_rows = (await connection.execute(history_query)).all()
-            has_more = len(fetched_rows) > page_limit
-            page_rows = fetched_rows[:page_limit]
-            if not page_rows:
-                return {"turns": related_tasks, "next_before_row_id": None, "has_more": False}
-
-            first_row_by_turn: dict[str, int] = {}
-            for row in page_rows:
-                turn_id = str(row.turn_id)
-                first_row_by_turn[turn_id] = min(
-                    first_row_by_turn.get(turn_id, int(row.row_id)), int(row.row_id)
-                )
-            page_turn_ids = sorted(first_row_by_turn, key=first_row_by_turn.__getitem__)
-            maximum_row_rows = (
-                await connection.execute(
-                    select(self._history.c.turn_id, func.max(self._history.c.row_id))
-                    .where(self._history.c.turn_id.in_(page_turn_ids))
-                    .group_by(self._history.c.turn_id)
-                )
-            ).all()
-            maximum_row_by_turn = {
-                str(turn_id): int(maximum_row)
-                for turn_id, maximum_row in maximum_row_rows
-                if maximum_row is not None
-            }
-            artifact_rows = (
-                await connection.execute(
-                    select(self._artifacts.c.turn_id, self._artifacts.c.artifact)
-                    .where(self._artifacts.c.turn_id.in_(page_turn_ids))
-                    .order_by(self._artifacts.c.turn_id, self._artifacts.c.row_id)
-                )
-            ).all()
-
-        histories: dict[str, list[tuple[int, str]]] = {turn_id: [] for turn_id in page_turn_ids}
-        # A turn's tail — its trailing status message and its artifacts — belongs to whichever page holds
-        # its last row. Repeating either on every page would deliver the same final answer once per page.
-        holds_turn_tail: dict[str, bool] = {turn_id: False for turn_id in page_turn_ids}
-        for row in sorted(page_rows, key=lambda value: value.row_id):
-            turn_id = str(row.turn_id)
-            histories[turn_id].append((int(row.row_id), row.message))
-            if int(row.row_id) == maximum_row_by_turn.get(turn_id):
-                holds_turn_tail[turn_id] = True
-
-        artifacts: dict[str, list[str]] = {turn_id: [] for turn_id in page_turn_ids}
+        histories: dict[str, list[str]] = {turn_id: [] for turn_id in ordered_turn_ids}
+        artifacts: dict[str, list[str]] = {turn_id: [] for turn_id in ordered_turn_ids}
+        for turn_id, message in history_rows:
+            histories[str(turn_id)].append(message)
         for turn_id, artifact in artifact_rows:
             artifacts[str(turn_id)].append(artifact)
 
-        tasks: list[Task] = []
-        for turn_id in page_turn_ids:
-            head_row = head_by_id[turn_id]
-            status = json.loads(head_row["status"])
-            if not holds_turn_tail[turn_id] and isinstance(status, dict):
-                status = {key: value for key, value in status.items() if key != "message"}
-            data = {
-                "id": turn_id,
-                "context_id": head_row["session_id"],
-                "kind": head_row["kind"] or "task",
-                "status": status,
-                "metadata": json.loads(head_row["turn_metadata"])
-                if head_row["turn_metadata"]
-                else None,
-                "history": _compact_history(
-                    [json.loads(message) for _, message in histories[turn_id]]
-                ),
-                "artifacts": ([json.loads(artifact) for artifact in artifacts[turn_id]] or None)
-                if holds_turn_tail[turn_id]
-                else None,
-            }
-            tasks.append(Task.model_validate(data))
+        # All database work is complete before the SSE consumer receives the first turn, so browser
+        # backpressure cannot pin a connection. Each turn's CPU-heavy decode still leaves the event loop.
+        for turn_id in ordered_turn_ids:
+            yield await asyncio.to_thread(
+                _stored_task,
+                head_by_id[turn_id],
+                histories[turn_id],
+                artifacts[turn_id],
+            )
 
-        tasks.extend(related_tasks)
-
-        next_before_row_id = min(int(row.row_id) for row in page_rows)
-        return {"turns": tasks, "next_before_row_id": next_before_row_id, "has_more": has_more}
-
-    async def append_memory(
-        self, session_id: str, observations: list[dict], directives: list[dict]
-    ) -> dict[str, list[dict]]:
-        """Commit entries atomically and return only the rows this transaction inserted."""
-        entries = [("observations", entry) for entry in observations] + [
-            ("directives", entry) for entry in directives
-        ]
-        if not entries:
-            return {"observations": [], "directives": []}
-        await self._ensure_initialized()
-        written = datetime.now(timezone.utc).isoformat()
-        rows_by_identity = {
-            (ledger, str(entry.get("id") or "")): {
-                "session_id": session_id,
-                "ledger": ledger,
-                "entry_id": str(entry.get("id") or ""),
-                "entry": json.dumps(entry, ensure_ascii=False),
-                "supersedes": json.dumps(list(entry.get("supersedes") or []), ensure_ascii=False),
-                "written_at": written,
-            }
-            for ledger, entry in entries
-            if entry.get("id")
-        }
-        rows = list(rows_by_identity.values())
-        if not rows:
-            return {"observations": [], "directives": []}
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                insert_result = await connection.execute(
-                    sqlite_insert(self._ledger)
-                    .on_conflict_do_nothing(
-                        index_elements=["session_id", "ledger", "entry_id"]
-                    )
-                    .returning(self._ledger.c.ledger, self._ledger.c.entry_id),
-                    rows,
-                )
-                inserted_identities = [
-                    (str(ledger), str(entry_identifier))
-                    for ledger, entry_identifier in insert_result.all()
-                ]
-        finally:
-            release_sqlite_write_lock(write_lock)
-        appended: dict[str, list[dict]] = {"observations": [], "directives": []}
-        for identity in inserted_identities:
-            row = rows_by_identity[identity]
-            entry = json.loads(row["entry"])
-            entry["id"] = identity[1]
-            entry["written_at"] = written
-            appended[identity[0]].append(entry)
-        return appended
-
-    async def memory_entries(
-        self, session_id: str, *, live_only: bool = True
-    ) -> dict[str, list[dict]]:
-        """Read both memory ledgers with one statement, so they always describe one committed revision."""
-        await self._ensure_initialized()
-        async with self._engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    select(
-                        self._ledger.c.ledger,
-                        self._ledger.c.entry_id,
-                        self._ledger.c.entry,
-                        self._ledger.c.supersedes,
-                        self._ledger.c.written_at,
-                    )
-                    .where(
-                        self._ledger.c.session_id == session_id,
-                        self._ledger.c.ledger.in_(("observations", "directives")),
-                    )
-                    .order_by(self._ledger.c.row_id)
-                )
-            ).all()
-        entries: dict[str, list[dict]] = {"observations": [], "directives": []}
-        replaced: dict[str, set[str]] = {"observations": set(), "directives": set()}
-        for ledger, entry_id, payload, supersedes, written_at in rows:
-            try:
-                entry = json.loads(payload)
-            except ValueError:
-                continue
-            entry["id"] = str(entry_id)
-            entry["written_at"] = str(written_at or "")
-            entries[str(ledger)].append(entry)
-            try:
-                replaced[str(ledger)].update(json.loads(supersedes or "[]"))
-            except ValueError:
-                pass
-        if not live_only:
-            return entries
-        return {
-            ledger: [entry for entry in values if entry["id"] not in replaced[ledger]]
-            for ledger, values in entries.items()
-        }
-
-    async def ledger_entries(
-        self, session_id: str, ledger: str, *, live_only: bool = True
-    ) -> list[dict]:
-        """A session's ledger in the order it was written; live entries are those nothing later replaces."""
-        if ledger not in {"observations", "directives"}:
-            return []
-        return (await self.memory_entries(session_id, live_only=live_only))[ledger]
+        # Reference-only task heads carry metadata but no transcript rows. They follow the durable
+        # turns and are harmless to renderers that intentionally filter them from the main timeline.
+        for row in related_rows:
+            yield Task.model_validate(
+                {
+                    "id": str(row["id"]),
+                    "context_id": row["session_id"],
+                    "kind": row["kind"] or "task",
+                    "status": json.loads(row["status"]),
+                    "metadata": json.loads(row["turn_metadata"])
+                    if row["turn_metadata"]
+                    else None,
+                    "history": [],
+                    "artifacts": None,
+                }
+            )
 
     async def delete(self, turn_id: str, context: ServerCallContext | None = None) -> None:
         await self._ensure_initialized()
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
+        async with self._engine.begin() as connection:
+            await connection.execute(
+                delete(self._history).where(self._history.c.turn_id == turn_id)
+            )
+            await connection.execute(
+                delete(self._artifacts).where(self._artifacts.c.turn_id == turn_id)
+            )
+            await connection.execute(delete(self._head).where(self._head.c.id == turn_id))
+        self._persisted_counts.pop(turn_id, None)
+        self._terminal_turns.discard(turn_id)
+
+    async def delete_session(self, session_id: str) -> None:
+        """Drop every durable trace of a context, so session deletion does not need to know this store's tables."""
+        await self._ensure_initialized()
+        async with self._engine.begin() as connection:
+            review_ids = list(
+                (
+                    await connection.execute(
+                        select(self._goal_reviews.c.review_id).where(
+                            self._goal_reviews.c.session_id == session_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            context_ids = [session_id, *review_ids]
+            turn_ids = (
+                (
+                    await connection.execute(
+                        select(self._head.c.id).where(self._head.c.session_id.in_(context_ids))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for turn_id in turn_ids:
                 await connection.execute(
                     delete(self._history).where(self._history.c.turn_id == turn_id)
                 )
                 await connection.execute(
                     delete(self._artifacts).where(self._artifacts.c.turn_id == turn_id)
                 )
-                await connection.execute(delete(self._head).where(self._head.c.id == turn_id))
-            self._persisted_counts.pop(turn_id, None)
-            self._terminal_turns.discard(turn_id)
-        finally:
-            release_sqlite_write_lock(write_lock)
-
-    async def delete_session(self, session_id: str) -> None:
-        """Drop every durable trace of a context, so session deletion does not need to know this store's tables."""
-        await self._ensure_initialized()
-        write_lock = await acquire_sqlite_write_lock()
-        try:
-            async with self._engine.begin() as connection:
-                review_ids = list(
-                    (
-                        await connection.execute(
-                            select(self._goal_reviews.c.review_id).where(
-                                self._goal_reviews.c.session_id == session_id
-                            )
-                        )
-                    )
-                    .scalars()
-                    .all()
+            await connection.execute(
+                delete(self._head).where(self._head.c.session_id.in_(context_ids))
+            )
+            await connection.execute(
+                delete(self._checkpoint).where(self._checkpoint.c.session_id.in_(context_ids))
+            )
+            await connection.execute(
+                delete(self._conversation_inheritance).where(
+                    self._conversation_inheritance.c.session_id.in_(context_ids)
                 )
-                context_ids = [session_id, *review_ids]
-                turn_ids = (
-                    (
-                        await connection.execute(
-                            select(self._head.c.id).where(self._head.c.session_id.in_(context_ids))
-                        )
-                    )
-                    .scalars()
-                    .all()
-                )
-                for turn_id in turn_ids:
-                    await connection.execute(
-                        delete(self._history).where(self._history.c.turn_id == turn_id)
-                    )
-                    await connection.execute(
-                        delete(self._artifacts).where(self._artifacts.c.turn_id == turn_id)
-                    )
-                await connection.execute(
-                    delete(self._head).where(self._head.c.session_id.in_(context_ids))
-                )
-                await connection.execute(
-                    delete(self._checkpoint).where(self._checkpoint.c.session_id.in_(context_ids))
-                )
-                await connection.execute(
-                    delete(self._conversation_inheritance).where(
-                        self._conversation_inheritance.c.session_id.in_(context_ids)
-                    )
-                )
-                await self._delete_unreferenced_conversation_snapshots(connection)
-                await connection.execute(
-                    delete(self._session_state).where(
-                        self._session_state.c.session_id.in_(context_ids)
-                    )
-                )
-                await connection.execute(
-                    delete(self._goal_reviews).where(
-                        self._goal_reviews.c.session_id == session_id
-                    )
-                )
-            for turn_id in turn_ids:
-                self._persisted_counts.pop(str(turn_id), None)
-                self._terminal_turns.discard(str(turn_id))
-        finally:
-            release_sqlite_write_lock(write_lock)
+            )
+            await self._delete_unreferenced_conversation_snapshots(connection)
+            await connection.execute(
+                delete(self._session_state).where(self._session_state.c.session_id.in_(context_ids))
+            )
+            await connection.execute(
+                delete(self._goal_reviews).where(self._goal_reviews.c.session_id == session_id)
+            )
+        for turn_id in turn_ids:
+            self._persisted_counts.pop(str(turn_id), None)
+            self._terminal_turns.discard(str(turn_id))
 
     async def input_required_session_ids(self) -> list[str]:
         """Context ids whose persisted task is input-required, so the awaiting-input marker survives a restart."""

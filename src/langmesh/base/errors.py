@@ -5,7 +5,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-__all__ = ["describe", "log_fields", "summary"]
+__all__ = ["CompactionBlockedError", "describe", "log_fields", "summary"]
+
+
+class CompactionBlockedError(RuntimeError):
+    """A session cannot accept more work until its failed context fold is retried."""
+
 
 #: The attributes a record already carries, which `extra=` is forbidden to overwrite.
 _RESERVED = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {

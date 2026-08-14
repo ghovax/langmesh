@@ -389,7 +389,7 @@ def client_message_kv(kv_id: int, result_field: int, result: bytes) -> bytes:
 
 
 def mcp_success_result(body: str, is_error: bool) -> bytes:
-    """A successful MCP result as one text item, where `is_error` means the call ran and the tool reported failure."""
+    """A successful MCP server result as one text item, where `is_error` means the call ran and the tool reported failure."""
     content_item = blob(
         1, text(1, body)
     )  # McpToolResultContentItem.text carries McpTextContent.text
@@ -459,7 +459,7 @@ def refused_result(builtin: BuiltinExec, arguments: list[str], reason: str) -> b
 
 @dataclass
 class ToolCall:
-    """An MCP tool call the model made: the tool name, its arguments, and the id our result is matched to."""
+    """An MCP server tool call the model made: the tool name, its arguments, and the id our result is matched to."""
 
     call_id: str
     tool_name: str

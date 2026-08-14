@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from datetime import datetime, timezone
 from langmesh.base import telemetry as _telemetry
 from langmesh.base.identifiers import new_id
@@ -21,10 +20,13 @@ from langmesh.runtime.internals import (
     _ToolPlan,
     _maybe_json,
     conversation_tokens,
+    message_tokens,
     settled_arguments,
 )
 from langmesh.runtime.prompt.environment import probe_local_environment, probe_user_context
+from langmesh.runtime.cache_trace import cache_lane
 from langmesh.protocol.events import TurnContext
+from langmesh.protocol.turn_record import PermissionAnswer
 from langmesh.base.instructions import instructions_payload
 from langmesh.base.memories import memories_payload
 from langmesh.base.message_content import (
@@ -39,10 +41,13 @@ from langmesh.base.skills import enabled_skills, skills_for_agent, skills_payloa
 from langmesh.base.confinement import Denial
 from langmesh.runtime.turn_events import (
     Checkpoint,
+    CompactionStarted,
     Done,
+    Error,
     RetryRequested,
     Steering,
     Suspended,
+    PermissionReviewing,
     SuspensionGate,
     Status,
     TextChunk,
@@ -90,16 +95,11 @@ def _chunk_advances_model_response(chunk: Any) -> bool:
         or getattr(message, "chunk_position", None) == "last"
     ):
         return True
-    return any(
-        block.get("text") or block.get("reasoning") for block in message.content_blocks
-    )
+    return any(block.get("text") or block.get("reasoning") for block in message.content_blocks)
 
 
 class _RunsTurns:
     """The turn itself: what the model is told, what comes back, and when it is over."""
-
-    #: The checklist for this turn, cleared as soon as the one request that carries it is built.
-    _pending_checklist: Optional[HumanMessage] = None
 
     def _locations_summary(self) -> list[dict]:
         """The locations as the model sees them: the URI to pass, and enough to choose the right one."""
@@ -115,16 +115,29 @@ class _RunsTurns:
         ]
 
     def _build_static_system_prompt(self) -> str:
-        """The static half of the system prompt, cached across calls, so every session shares one baseline."""
+        """Build the session prompt once, then rebuild it only at an explicit refresh boundary."""
         if self._cached_system_prompt is None:
             all_skills = enabled_skills(list(self._catalogue.skills()))
             agent_skills = skills_for_agent(all_skills, self._agent_configuration.skills)
             memories = list(self._catalogue.memories())
             worktree_root, is_git_repo = _detect_workspace(self._working_directory)
-            context_json = compact(
+            context = TurnContext(
+                now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                pwd=self._working_directory or str(Path.cwd()),
+                goal=self._goal.for_model() if self._goal is not None else {},
+                tasks=self._task_manager.to_dict_list(),
+                background={
+                    "running": self._background.active_by_context_key(),
+                    "active_count": self._background.active_count(),
+                    "recent_events": self._execution_history[-20:],
+                },
+                screen=self._screen_context(),
+                locations=self._locations_summary(),
+                confinement=self._confinement_summary(),
+            ).model_dump(exclude_defaults=True)
+            context.update(
                 {
                     "session": self._session_id,
-                    # Present only where another session created this one: somebody is waiting for an answer.
                     **({"parent_session": self._parent_session} if self._parent_session else {}),
                     "working_directory": self._working_directory,
                     "project_directory": self._project_directory,
@@ -133,9 +146,16 @@ class _RunsTurns:
                     "session_worktree_strategy": self._global_configuration.workspace.strategy,
                     "platform": platform.system(),
                     "today_date": datetime.now().strftime("%Y-%m-%d"),
-                    # `locations` is absent: it can change mid-session, and anything changeable rewrites every request.
+                    "machine": _maybe_json(probe_local_environment(self._child_path())),
                 }
             )
+            if self._user_context_enabled():
+                user_context = _maybe_json(
+                    probe_user_context(self._global_configuration.user_context.refresh_hours)
+                )
+                if isinstance(user_context, dict) and user_context:
+                    context["user_context"] = user_context
+            context_json = compact(context)
             # Conditional, since it asserts "you are running as a session", which a library runtime is not.
             parent_report = (
                 self._prompt_loader.load("parent_report", {"parent": self._parent_session})
@@ -170,7 +190,9 @@ class _RunsTurns:
                 else ""
             )
             mcp_servers = (
-                self._prompt_loader.load("mcp_servers", {}) if "call_mcp_tool" in available else ""
+                self._prompt_loader.load("mcp_servers", {})
+                if "call_mcp_server_tool" in available
+                else ""
             )
             # Whole documents, each laid out by its own template: metadata as JSON, the document as itself.
             instruction_files = "".join(
@@ -196,13 +218,17 @@ class _RunsTurns:
             self._cached_system_prompt = self._prompt_loader.load(
                 "system_prompt",
                 {
-                    "system_prompt": self._system_prompt,
+                    "agent_prompt": self._system_prompt,
                     "thinking_language": thinking_language,
                     "context": context_json,
                     "user_environment": user_environment,
                     "instructions": instructions,
                     "skills": lines(skills_payload(agent_skills)),
                     "memories": lines(memories_payload(memories)),
+                    "observational_memory": self._prompt_loader.load(
+                        "observational_memory",
+                        {"metadata": compact(self._observation_registry_metadata)},
+                    ).strip(),
                     "agent_context": agent_context,
                     "computer_control_guidance": computer_control_guidance,
                     "toolbox": toolbox,
@@ -215,61 +241,6 @@ class _RunsTurns:
     def _user_context_enabled(self) -> bool:
         user_context = getattr(self._global_configuration, "user_context", None)
         return user_context is not None and bool(user_context.enabled)
-
-    def _ensure_environment_note(self) -> None:
-        """Put the machine snapshot in once, at the first message, since a machine does not change mid-conversation."""
-        if any(message.additional_kwargs.get("environment_note") for message in self._conversation):
-            return
-        # Described with the `PATH` a tool child is given, not this process's, which no command runs in.
-        snapshot = _maybe_json(probe_local_environment(self._child_path()))
-        payload: dict[str, Any] = {"machine": snapshot if isinstance(snapshot, dict) else {}}
-        if self._user_context_enabled():
-            user_context = _maybe_json(
-                probe_user_context(self._global_configuration.user_context.refresh_hours)
-            )
-            if isinstance(user_context, dict) and user_context:
-                payload["user_context"] = user_context
-        note = self._reminder_message(compact(payload))
-        note.additional_kwargs["environment_note"] = True
-        self._conversation.append(note)
-
-    def _append_turn_context(self) -> None:
-        """Append this turn's context when it says something new, so the cached prefix keeps extending."""
-        context = json.loads(self._build_dynamic_context())
-        previous: dict[str, Any] = {}
-        for message in reversed(self._conversation):
-            recorded = message.additional_kwargs.get("turn_context")
-            if isinstance(recorded, dict):
-                previous = recorded
-                break
-
-        def without_the_clock(picture: dict[str, Any]) -> dict[str, Any]:
-            return {key: value for key, value in picture.items() if key != "now"}
-
-        if previous and without_the_clock(previous) == without_the_clock(context):
-            return
-        note = self._reminder_message(compact(context))
-        note.additional_kwargs["turn_context"] = context
-        self._conversation.append(note)
-
-    def _build_dynamic_context(self) -> str:
-        """The per-turn context: the time, the place, the goal, the tasks, the background work, the locations."""
-        context = TurnContext(
-            now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            pwd=self._working_directory or str(Path.cwd()),
-            # The goal as the agent stated it, without the bookkeeping it would start pacing itself against.
-            goal=self._goal.for_model() if self._goal is not None else {},
-            tasks=self._task_manager.to_dict_list(),
-            background={
-                "running": self._background.active_by_context_key(),
-                "active_count": self._background.active_count(),
-                "recent_events": self._execution_history[-20:],
-            },
-            screen=self._screen_context(),
-            locations=self._locations_summary(),
-            confinement=self._confinement_summary(),
-        )
-        return context.model_dump_json(exclude_defaults=True)
 
     def _child_path(self) -> list[str]:
         """The `PATH` a tool child is actually given, split into entries."""
@@ -373,9 +344,11 @@ class _RunsTurns:
     async def _drain_steering_messages(self) -> list[TurnEvent]:
         events: list[TurnEvent] = []
         while not self._steering_messages.empty():
-            message, message_id, peer_sender = self._steering_messages.get_nowait()
+            message, message_id, peer_sender, accepted = self._steering_messages.get_nowait()
             self._conversation.append(HumanMessage(content=message))
             events.append(Steering(text=message, message_id=message_id, peer_sender=peer_sender))
+            if not accepted.done():
+                accepted.set_result(True)
         if self._steering_messages.empty():
             self._steering_available.clear()
         return events
@@ -396,22 +369,32 @@ class _RunsTurns:
             if verdict is None:
                 continue
             if gate.kind == "question":
-                answers[gate.request_id] = verdict.answers if verdict.allow else None
+                answers[gate.request_id] = (
+                    verdict.answers
+                    if verdict.allow
+                    else {
+                        "__declined__": True,
+                        "__reason__": verdict.reason,
+                        "__actor__": "configured approver",
+                    }
+                )
             else:
-                answers[gate.request_id] = "allow" if verdict.allow else "deny"
+                answers[gate.request_id] = PermissionAnswer(
+                    allow=verdict.allow,
+                    reason=verdict.reason,
+                    actor="approver",
+                ).model_dump()
         return answers
 
     def _reminder_message(
         self,
         content: str,
         image_blocks: list[dict] | None = None,
-        transient: bool = False,
         marks: dict[str, Any] | None = None,
     ) -> HumanMessage:
-        """Something neither party said, as a user-role message, which keeps the conversation append-only."""
+        """Append harness guidance once; provider adapters preserve its instruction role without moving it."""
         text = self._prompt_loader.load("reminder", {"content": content.strip()}).strip()
-        # `transient` marks a note assembled for one request and never appended, so no cache breakpoint sits on it.
-        tags = {"reminder": True, **({"transient": True} if transient else {}), **(marks or {})}
+        tags = {"reminder": True, **(marks or {})}
         if image_blocks:
             return HumanMessage(
                 content=[{"type": "text", "text": text}, *image_blocks], additional_kwargs=tags
@@ -449,6 +432,16 @@ class _RunsTurns:
         async for event in self.stream("", resume_plans=plans, resume_answers=answers):
             yield event
 
+    async def continue_stream(self) -> AsyncIterator[TurnEvent]:
+        """Continue an already-recorded user turn after a failed compaction was retried successfully."""
+        async for event in self.stream("", continue_existing=True):
+            yield event
+
+    async def prepare_compaction_stream(self) -> AsyncIterator[TurnEvent]:
+        """Run the private recording segment and fold, without inventing a user turn afterward."""
+        async for event in self.stream("", continue_existing=True, stop_after_compaction=True):
+            yield event
+
     async def stream(
         self,
         user_message: str | list,
@@ -457,17 +450,25 @@ class _RunsTurns:
         opens_exchange: bool = False,
         resume_plans: Optional[dict[str, dict]] = None,
         resume_answers: Optional[dict[str, Any]] = None,
+        continue_existing: bool = False,
+        stop_after_compaction: bool = False,
     ) -> AsyncIterator[TurnEvent]:
+        from langmesh.base.errors import CompactionBlockedError
+
+        if self._compaction_control.failure and not continue_existing:
+            raise CompactionBlockedError(
+                f"Context compaction failed: {self._compaction_control.failure} Retry compaction before sending more work."
+            )
         self._abort_event.clear()
-        deferred_memory_exchanges = (
-            set(self._observations_in_flight) if resume_plans is None else set()
-        )
-        first_model_opening = True
+        # The person's words are held until the request is assembled, so every part sent with them reads first.
+        pending_user_message = None
         # A turn runs until the model is done or the user interrupts: an unfinished goal outlives this loop.
         turn_tool_calls_log: list[dict] = []
         turn_tool_results_log: list[dict] = []
 
-        if resume_plans is not None:
+        if continue_existing:
+            recorded_user_message = ""
+        elif resume_plans is not None:
             # Resume: the checkpoint is already at the tail, so run its batch and fall into the loop.
             recorded_user_message = ""
             response = self._conversation[-1] if self._conversation else None
@@ -491,10 +492,11 @@ class _RunsTurns:
             ):
                 yield event
             self._append_tool_results(response, resume_outcomes)
+            if self._resource_sync is not None:
+                await self._resource_sync()
             yield Checkpoint()
         else:
             # A superseded suspension leaves dangling calls; close them so appending this turn stays valid.
-            self._ensure_environment_note()
             self._close_dangling_tool_calls()
             # Usually prose, but an attachment turn carries a content list so a vision model sees the pixels.
             turn_message = (
@@ -504,27 +506,19 @@ class _RunsTurns:
                 if as_system_note and isinstance(user_message, str)
                 else HumanMessage(content=user_message)
             )
-            self._conversation.append(turn_message)
-            # Only when the user speaks: a tool-result hop is the same instruction, and repeating it buys nothing.
-            self._pending_checklist = self._reminder_message(
-                self._prompt_loader.load("turn_checklist", {}),
-                transient=True,
-            )
             # The event-log recorder only wants prose from LangChain's standard blocks.
             recorded_user_message = message_text(turn_message)
-        # After the turn's message, so the freshest picture is read last, and once per turn rather than per hop.
-        self._append_turn_context()
+            # Held until compaction has had a chance to reclaim the existing conversation.
+            pending_user_message = turn_message
         self._turn_started_at = datetime.now(timezone.utc)
 
         while True:
             if self._abort_event.is_set():
                 if self._has_queued_steering():
                     self._abort_event.clear()
-                    for steering_event in await self._drain_steering_messages():
-                        yield steering_event
-                    continue
-                yield Done(text="", stop_reason="cancelled")
-                return
+                else:
+                    yield Done(text="", stop_reason="cancelled")
+                    return
 
             background_events = self._background_result_events()
             if background_events:
@@ -532,21 +526,98 @@ class _RunsTurns:
                     yield background_event
                 continue
 
-            # Background work no longer holds the turn open: the resume pump wakes the agent when it lands.
-            for steering_event in await self._drain_steering_messages():
-                yield steering_event
-
-            await self._append_unseen_memory(
-                deferred_memory_exchanges if first_model_opening else None
-            )
-
-            # Drop old turns once the configured window threshold is reached.
-            if not (first_model_opening and deferred_memory_exchanges) and self._should_compact():
-                async for compaction_event in self.compact(reason="auto"):
+            # The threshold is a preparation boundary, not a hard cut. The reserved window
+            # gives the agent room for one private recording batch before the fold happens.
+            should_compact = self._should_compact(pending_user_message)
+            if should_compact and self._compaction_control.phase == "none":
+                self._begin_compaction_preparation(reason="auto", resume_after=True)
+            if (
+                self._compaction_control.phase == "waiting"
+                and self._compaction_control.registry_revision is None
+            ):
+                try:
+                    self._compaction_control.registry_revision = (
+                        await self._observation_store.revision()
+                    )
+                    self._mark_session_dirty()
+                except Exception as error:  # noqa: BLE001 — becomes the visible retryable blocker
+                    # The private segment knows how to atomically repair an invalid registry.
+                    # Zero is the minimum accepted replacement baseline; verification below
+                    # still requires a complete valid registry whose revision is positive.
+                    logger.warning(
+                        "observation registry requires repair before compaction: %s", error
+                    )
+                    self._compaction_control.registry_revision = 0
+                    self._mark_session_dirty()
+            if (
+                self._compaction_control.phase == "waiting"
+                and self._compaction_control.registry_revision is not None
+            ):
+                recorded_revision = self._compaction_control.registry_revision
+                try:
+                    current_registry_revision = await self._observation_store.revision()
+                except Exception:  # noqa: BLE001 — the private segment is responsible for repair
+                    current_registry_revision = recorded_revision
+                if current_registry_revision > recorded_revision:
+                    # The write may have committed just before a process stopped or a checkpoint
+                    # was persisted. Its revision is the durable acknowledgement; do not ask the
+                    # model to repeat a side effect merely because the in-memory state was lost.
+                    self._record_compaction_preparation()
+            if self._compaction_control.phase == "waiting" and not self._compaction_control.started:
+                # The indicator opens when the recording handoff begins, not when the fold finally
+                # runs: preparation is the long phase, and a session restart must not drop it.
+                self._compaction_control.started = True
+                self._mark_session_dirty()
+                yield CompactionStarted(
+                    reason=self._compaction_control.reason,
+                    messages_before=len(self._without_compaction_preparation(self._conversation)),
+                    tokens_before=conversation_tokens(self._conversation),
+                )
+            if self._compaction_control.phase == "recorded":
+                fold_reason = self._compaction_control.reason
+                try:
+                    self._observation_registry_metadata = await self._observation_store.describe()
+                except Exception as error:  # noqa: BLE001 — the fold verification below remains authoritative
+                    self.note_observation_registry({}, str(error) or type(error).__name__)
+                async for compaction_event in self.compact(reason=fold_reason):
                     yield compaction_event
+                if self.compaction_failure:
+                    # The send was already accepted. Keep its user message in the durable
+                    # conversation, but do not continue into a model call until retry succeeds.
+                    if pending_user_message is not None:
+                        self._conversation.append(pending_user_message)
+                        pending_user_message = None
+                    return
+                if stop_after_compaction:
+                    return
+                continue
+
+            # The person's words join the request exactly once, after any needed fold.
+            if pending_user_message is not None and self._compaction_control.phase != "waiting":
+                self._conversation.append(pending_user_message)
+                pending_user_message = None
+
+            # Steering accepted while a new message was waiting belongs after that message. During
+            # preparation it remains queued until the private segment has folded away.
+            if self._compaction_control.phase != "waiting":
+                for steering_event in await self._drain_steering_messages():
+                    yield steering_event
+
+                registry_error = self._take_observation_registry_feedback()
+            else:
+                registry_error = ""
 
             messages = self._build_turn_messages()
-            first_model_opening = False
+            if registry_error:
+                # Feedback is request-local: it reaches the next model opening but never becomes
+                # user history or a stale reminder after another process repairs the registry.
+                messages.append(
+                    self._reminder_message(
+                        self._prompt_loader.load(
+                            "observation_registry_error", {"error": registry_error}
+                        )
+                    )
+                )
 
             # The model call: yields the stream and hands back the assembled response, or a terminal condition.
             call = _ModelCallOutcome()
@@ -570,13 +641,37 @@ class _RunsTurns:
                     self._latest_context_tokens = max(
                         self._latest_context_tokens, overflow.tokens or window
                     )
-                self.observe_exchange_soon(interrupted=True)
+                if self._compaction_control.phase != "recorded":
+                    self._compaction_control.reason = "overflow"
+                    self._compaction_control.resume_after = True
+                    for compaction_event in self._fail_compaction_preparation(
+                        "The provider exhausted the context window before the observational-memory preparation segment could run."
+                    ):
+                        yield compaction_event
+                    return
                 async for compaction_event in self.compact(reason="overflow"):
                     yield compaction_event
-                if overflow is error:
-                    raise
-                raise overflow from error
+                if self.compaction_failure:
+                    return
+                # The same accepted turn retries against the newly compacted conversation;
+                # asking the user to resend would duplicate it in frontend and backend state.
+                continue
             if call.cancelled:
+                # The user's message was already appended before the provider call. Close the
+                # exchange explicitly so the next request cannot inherit a dangling instruction
+                # and finish the work that Stop just canceled.
+                self._conversation.append(
+                    AIMessage(content="", additional_kwargs={"langmesh_cancelled": True})
+                )
+                self._record_turn(
+                    recorded_user_message, turn_tool_calls_log, turn_tool_results_log, ""
+                )
+                await self._record_transcript_turn(
+                    recorded_user_message,
+                    "",
+                    "canceled",
+                    turn_tool_calls_log,
+                )
                 return
             if call.aborted_for_steering:
                 for steering_event in await self._drain_steering_messages():
@@ -604,11 +699,40 @@ class _RunsTurns:
                     step,
                 ):
                     yield event
+                if self.compaction_failure:
+                    if pending_user_message is not None:
+                        self._conversation.append(pending_user_message)
+                        pending_user_message = None
+                    return
                 if step.directive == _STOP:
                     return
                 continue
 
             # Calls to make: run the batch behind its checkpoint, then honour a Stop that landed during it.
+            preparing_compaction = self._compaction_control.phase == "waiting"
+            preparation_call_is_valid = bool(response.tool_calls) and all(
+                call.get("name") == "bash"
+                and not str((call.get("args") or {}).get("location") or "").strip()
+                and not bool((call.get("args") or {}).get("background"))
+                for call in response.tool_calls
+            )
+            if preparing_compaction and not preparation_call_is_valid:
+                self._conversation.append(response)
+                refusal = self._prompt_loader.load("compaction_preparation_violation", {})
+                for call_data in response.tool_calls:
+                    identifier = str(call_data.get("id") or "")
+                    yield Error(
+                        id=identifier,
+                        tool=str(call_data.get("name") or ""),
+                        code="compaction_preparation_violation",
+                        message=refusal,
+                    )
+                    self._conversation.append(ToolMessage(content=refusal, tool_call_id=identifier))
+                for event in self._fail_compaction_preparation(refusal):
+                    yield event
+                if pending_user_message is not None:
+                    self._conversation.append(pending_user_message)
+                return
             step = _StepOutcome()
             async for event in self._run_tool_batch(
                 response,
@@ -618,6 +742,30 @@ class _RunsTurns:
                 step,
             ):
                 yield event
+            if self._compaction_control.phase == "waiting":
+                recorded_revision = self._compaction_control.registry_revision
+                if recorded_revision is None:
+                    raise RuntimeError("compaction preparation has no recorded registry revision")
+                try:
+                    revision = await self._observation_store.revision()
+                except Exception as error:  # noqa: BLE001 — becomes the visible retryable blocker
+                    logger.debug("observational-memory checkpoint is not valid yet: %s", error)
+                    revision = recorded_revision
+                if revision > recorded_revision:
+                    self._record_compaction_preparation()
+            if self.compaction_failure:
+                if pending_user_message is not None:
+                    self._conversation.append(pending_user_message)
+                    pending_user_message = None
+                return
+            if self._compaction_control.phase == "recorded":
+                # The successful recording call is the terminal action of this model segment.
+                # The next loop iteration folds and resumes the already-accepted work.
+                continue
+            if preparing_compaction:
+                # Inspection, repair, and recording may need several foreground Bash batches.
+                # The segment ends only when a valid revision advances or the model stops.
+                continue
             if step.directive == _STOP:
                 return
             if step.directive == _CONTINUE:
@@ -627,20 +775,31 @@ class _RunsTurns:
                 yield steering_event
 
     def _build_turn_messages(self) -> list:
-        """This iteration's messages: the static prompt, the conversation, and the turn context appended once."""
-        messages = [SystemMessage(content=self._build_static_system_prompt())] + self._conversation
-        if self._pending_checklist is None:
-            return messages
-        # Last, and only ever last: it never joins the conversation, so anywhere else its absence next time rewrites the prefix.
-        checklist = self._pending_checklist
-        self._pending_checklist = None
-        return messages + [checklist]
+        """This iteration's messages: the static prompt and the whole conversation."""
+        system_message = SystemMessage(content=self._build_static_system_prompt())
+        conversation = self._conversation
+        if self._compaction_control.phase == "waiting":
+            # Normally the output reserve leaves the complete conversation enough room for
+            # its recording handoff. A restored or provider-rejected oversized session is the
+            # exceptional case: give the handoff the largest recent view that can actually run,
+            # while retaining the untouched full conversation until the fold commits.
+            preparation_budget = self._usable_context() - message_tokens(system_message)
+            if conversation_tokens([system_message, *conversation]) > self._usable_context():
+                handoff = conversation[-1:]
+                older_budget = preparation_budget - sum(
+                    message_tokens(message) for message in handoff
+                )
+                conversation = [
+                    *self._tail_within_budget(conversation[:-1], older_budget),
+                    *handoff,
+                ]
+        return [system_message, *conversation]
 
     def _refuse_if_over_window(self, messages: list) -> None:
         """Refuse a request that cannot fit before sending it, with numbers, since the harness knows the window."""
         window = self._context_window
-        if window <= 0:
-            return  # the catalogue is cold; it says nothing about room
+        if self._context_window_estimated:
+            return  # an estimate may schedule a safe fold, but it must never impersonate a provider limit
         tokens = conversation_tokens(messages)
         if not over_context_window(tokens, window):
             return
@@ -657,9 +816,6 @@ class _RunsTurns:
         self, messages: list, outcome: _ModelCallOutcome
     ) -> AsyncIterator[TurnEvent]:
         """One streamed model call, writing the assembled response or a terminal condition into ``outcome``."""
-        yield Thinking()
-        thinking_started_at = time.monotonic()
-        thinking_done_emitted = False
         response_chunks: list[AIMessageChunk] = []
         # Calls already announced from the stream, so the completed message does not announce them twice.
         announced_tool_calls: set[str] = set()
@@ -679,13 +835,25 @@ class _RunsTurns:
         if not self._hooks.empty:
             messages = await self._hooks.before_model(messages)
         self._refuse_if_over_window(messages)
-        # Said out loud, because the wait that follows is the provider's and the turn would otherwise look idle.
+        # This is the truthful phase boundary: hooks and local validation have completed, and
+        # the next awaited operation starts the provider stream. The client opens its Thinking
+        # row from this status, so no optimistic or timer-driven model activity is fabricated.
+        thinking_started_at = time.monotonic()
+        thinking_done_emitted = False
         yield Status(code="awaiting_model")
-        model_stream = self._bound_model.astream(messages)
-        abort_waiter = asyncio.ensure_future(self._abort_event.wait())
-        silence_limit = active_tuning().duration(Tunable.model_silence_give_up)
-        progress_deadline = asyncio.get_running_loop().time() + silence_limit
+        # The fold checkpoint is a protocol capability: even a profile that omits ordinary shell
+        # access must be able to maintain its workspace-owned registry inside the same sandbox.
+        bound_model = self._bound_model
+        model_stream = None
+        abort_waiter = None
+        cache_scope = ExitStack()
         try:
+            if self._compaction_control.phase == "waiting":
+                cache_scope.enter_context(cache_lane("compaction"))
+            model_stream = bound_model.astream(messages)
+            abort_waiter = asyncio.ensure_future(self._abort_event.wait())
+            silence_limit = active_tuning().duration(Tunable.model_silence_give_up)
+            progress_deadline = asyncio.get_running_loop().time() + silence_limit
             while True:
                 chunk_future = asyncio.ensure_future(_stream_next(model_stream))
                 completed, _ = await asyncio.wait(
@@ -709,8 +877,6 @@ class _RunsTurns:
                         self._abort_event.clear()
                         aborted_for_steering = True
                         break
-                    # Stopped, not undone: what these turns established is worth as much as if they had finished.
-                    self.observe_exchange_soon()
                     yield Done(text="", stop_reason="cancelled")
                     outcome.cancelled = True
                     return
@@ -794,11 +960,13 @@ class _RunsTurns:
                             block_id=content_delta.block_identifier,
                         )
         finally:
+            cache_scope.close()
             _telemetry.end_span(generation_span)
-            abort_waiter.cancel()
+            if abort_waiter is not None:
+                abort_waiter.cancel()
             # Close the HTTP stream, so an aborted turn never leaks a provider connection.
             with suppress(BaseException):
-                stream_closer = getattr(model_stream, "aclose", None)
+                stream_closer = getattr(model_stream, "aclose", None) if model_stream else None
                 if stream_closer is not None:
                     await stream_closer()
         # A tool-only turn produces no answer text, so close the phase here.
@@ -807,6 +975,12 @@ class _RunsTurns:
                 duration_milliseconds=int((time.monotonic() - thinking_started_at) * 1000),
             )
         if aborted_for_steering:
+            if response_chunks:
+                # These chunks were already visible in the chat. Persist that exact assistant
+                # prefix before the steering message, or replay would reorder what the user saw.
+                self._conversation.append(
+                    add_ai_message_chunks(response_chunks[0], *response_chunks[1:])
+                )
             outcome.aborted_for_steering = True
             return
         outcome.response = (
@@ -837,6 +1011,15 @@ class _RunsTurns:
             step.directive = _CONTINUE
             return
 
+        if self._compaction_control.phase == "waiting":
+            self._conversation.append(response)
+            for event in self._fail_compaction_preparation(
+                "The agent ended compaction preparation without advancing observational memory."
+            ):
+                yield event
+            step.directive = _CONTINUE
+            return
+
         # No tool calls, so the turn ends: the resume pump wakes the agent when the next result lands.
         final_text = message_text(response)
         self._conversation.append(response)
@@ -859,8 +1042,6 @@ class _RunsTurns:
             "completed",
             turn_tool_calls_log,
         )
-        # The exchange is complete, so it is taken now, while its turns are whole.
-        self.observe_exchange_soon()
         yield Done(text=final_text, stop_reason="completed")
         step.directive = _STOP
 
@@ -904,8 +1085,20 @@ class _RunsTurns:
         if not self._abort_event.is_set():
             plans, pending = await self._preflight_permissions(tool_calls)
             gates = [SuspensionGate(**gate.to_dict()) for gate in pending]
-            answered = await self._answer_gates(gates)
-            if gates and len(answered) < len(gates):
+            # Automatic-mode gates are announced first, then weighed by the reviewer, so the call
+            # is visible while the decision is pending instead of appearing only once it is made.
+            auto_gates = [gate for gate in pending if gate.automatic_review]
+            reviewed: dict[str, str] = {}
+            if auto_gates:
+                yield PermissionReviewing(
+                    interactions=[SuspensionGate(**gate.to_dict()) for gate in auto_gates]
+                )
+                for gate in auto_gates:
+                    reviewed[gate.request_id] = await self._review_auto_gate(gate)
+                gates = [gate for gate in gates if not gate.automatic_review]
+            interactive_answers = await self._answer_gates(gates)
+            answered = {**reviewed, **interactive_answers}
+            if gates and len(interactive_answers) < len(gates):
                 # One suspend event per turn, and a durable pause, so a session waiting on a person survives a restart.
                 yield Suspended(
                     interactions=[gate for gate in gates if gate.request_id not in answered],
@@ -974,6 +1167,8 @@ class _RunsTurns:
                 ):
                     yield event
         self._append_tool_results(response, outcomes)
+        if self._resource_sync is not None:
+            await self._resource_sync()
         yield Checkpoint()
 
         if self._abort_event.is_set():
@@ -984,6 +1179,5 @@ class _RunsTurns:
                 step.directive = _CONTINUE
                 return
             self._record_turn(recorded_user_message, turn_tool_calls_log, turn_tool_results_log, "")
-            self.observe_exchange_soon()
             yield Done(text="", stop_reason="cancelled")
             step.directive = _STOP

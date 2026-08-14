@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Awaitable, Callable, assert_never
 
 
@@ -34,6 +33,7 @@ from langmesh.runtime.turn_events import (
     Status,
     Steering,
     Suspended,
+    PermissionReviewing,
     SuspensionGate,
     TextChunk,
     Thinking,
@@ -45,26 +45,18 @@ from langmesh.runtime.turn_events import (
 )
 
 
-class _TextPartBuffer:
-    """Coalesce adjacent text chunks onto the display's clock: 60 a second, which is what the browser can draw."""
+class _ContentBlockAccumulator:
+    """Send raw deltas live and collapse each semantic block to one durable A2A message."""
 
     def __init__(
         self,
         emit: Callable[[tuple[str, ...], str], Awaitable[None]],
-        *,
-        flush_interval: float = 0.016667,
-        flush_size: int = 512,
+        emit_delta: Callable[[tuple[str, ...], str], None],
     ):
         self._emit = emit
-        self._flush_interval = flush_interval
-        self._flush_size = flush_size
+        self._emit_delta = emit_delta
         self._key: tuple[str, ...] | None = None
         self._chunks: list[str] = []
-        self._length = 0
-        # The block whose opening chunk has already been drawn, so only the first of each is sent at once.
-        self._opened: tuple[str, ...] | None = None
-        # The pending trailing flush. Its existence is what makes a pause end in an emission rather than a wait.
-        self._timer: asyncio.Task | None = None
 
     async def push(self, text: str, key: tuple[str, ...] = ()) -> None:
         if not text:
@@ -74,55 +66,20 @@ class _TextPartBuffer:
         if not self._chunks:
             self._key = key
         self._chunks.append(text)
-        self._length += len(text)
-        # A block's first chunk is drawn at once, so a reply appears on its first token rather than a frame later.
-        if key != self._opened:
-            self._opened = key
-            await self.flush(force=True)
-            return
-        if self._length >= self._flush_size:
-            await self.flush(force=True)
-            return
-        self._schedule()
-
-    def _schedule(self) -> None:
-        """Promise a flush one frame from now, so text buffered before a pause is not held by the pause."""
-        if self._timer is not None and not self._timer.done():
-            return
-
-        async def later() -> None:
-            try:
-                await asyncio.sleep(self._flush_interval)
-                await self.flush(force=True)
-            except asyncio.CancelledError:
-                raise
-
-        self._timer = asyncio.get_running_loop().create_task(later())
-
-    def _cancel_timer(self) -> None:
-        if self._timer is not None and not self._timer.done():
-            self._timer.cancel()
-        self._timer = None
+        self._emit_delta(key, text)
 
     async def flush(self, force: bool = False) -> None:
         if not self._chunks or self._key is None:
             return
-        if not force and self._length < self._flush_size:
-            self._schedule()
-            return
-        self._cancel_timer()
         key = self._key
         text = "".join(self._chunks)
         self._key = None
         self._chunks = []
-        self._length = 0
         await self._emit(key, text)
 
     async def aclose(self) -> None:
-        """Emit whatever is held and stop promising more, for a turn that is over."""
-        self._cancel_timer()
+        """Emit the one durable representation of whatever content block is still open."""
         await self.flush(force=True)
-        self._opened = None
 
 
 class _TurnEventSink:
@@ -132,6 +89,7 @@ class _TurnEventSink:
         self,
         *,
         emit: Callable[..., Awaitable[None]],
+        emit_delta: Callable[[str, str, str], None],
         save_conversation: Callable[[], Awaitable[None]],
         suspend: Callable[[list[SuspensionGate], dict], Awaitable[bool]],
         telemetry_span: Any,
@@ -142,24 +100,35 @@ class _TurnEventSink:
         self._suspend = suspend
         self._span = telemetry_span
         self._model_identifier = model_identifier
-        self._text = _TextPartBuffer(self._emit_text)
-        # Reasoning is buffered on the same terms as prose, because every emitted part becomes its own row.
-        self._thinking = _TextPartBuffer(self._emit_thinking)
+        self._emit_delta = emit_delta
+        self._text = _ContentBlockAccumulator(self._emit_text, self._emit_text_delta)
+        self._thinking = _ContentBlockAccumulator(self._emit_thinking, self._emit_thinking_delta)
         self.final_text = ""
         self.stop_reason = ""
 
     async def _emit_text(self, key: tuple[str, ...], text: str) -> None:
         if not key:
             raise ValueError("Buffered assistant text is missing its content-block identity.")
-        await self._emit(_text_part(text, key[0]))
+        # The live lane already carried every delta; this is the single durable representation.
+        await self._emit(_text_part(text, key[0]), publish_stream_event=False)
+
+    def _emit_text_delta(self, key: tuple[str, ...], text: str) -> None:
+        if not key:
+            raise ValueError("Buffered assistant text is missing its content-block identity.")
+        self._emit_delta("text", key[0], text)
 
     async def _emit_thinking(self, key: tuple[str, ...], text: str) -> None:
-        await self._emit(_event_part(ThinkingEvent(text=text, block_id=key[0] if key else "")))
+        await self._emit(
+            _event_part(ThinkingEvent(text=text, block_id=key[0] if key else "")),
+            publish_stream_event=False,
+        )
+
+    def _emit_thinking_delta(self, key: tuple[str, ...], text: str) -> None:
+        self._emit_delta("thinking", key[0] if key else "", text)
 
     async def flush(self, force: bool = True) -> None:
-        # Each buffer is drained in the order its content was produced, so a turn ending mid-thought is not reordered.
+        # Each accumulator is drained in production order before a structural boundary or turn end.
         if force:
-            # A turn that is over promises nothing further, so the timers stop with it.
             await self._text.aclose()
             await self._thinking.aclose()
             return
@@ -190,7 +159,7 @@ class _TurnEventSink:
                         messages_after=event.messages_after,
                         tokens_before=event.tokens_before,
                         tokens_after=event.tokens_after,
-                        log_tokens=event.log_tokens,
+                        error_code=event.error_code,
                     )
                 )
             )
@@ -271,6 +240,7 @@ class _TurnEventSink:
                             input_tokens=event.input_tokens,
                             output_tokens=event.output_tokens,
                             context_window=event.context_window,
+                            context_window_estimated=event.context_window_estimated,
                             cache_read_tokens=event.cache_read_tokens,
                             reasoning_tokens=event.reasoning_tokens,
                             prefix_intact=event.prefix_intact,
@@ -323,14 +293,31 @@ class _TurnEventSink:
                             )
                         )
                 return await self._suspend(interactions, plans)
+            case PermissionReviewing():
+                # The reviewer is weighing automatic-mode gates: surface each one so the call is
+                # visible while the decision is pending, exactly as a suspended gate would be.
+                for gate in event.interactions:
+                    await self._emit(
+                        _event_part(
+                            PermissionRequestEvent(
+                                request_id=gate.request_id,
+                                tool_call_id=gate.tool_call_id,
+                                tool_name=gate.tool_name,
+                                arguments=gate.arguments,
+                                command=gate.command,
+                                explanation=gate.explanation,
+                                reason=gate.reason,
+                            )
+                        )
+                    )
             case Error():
                 await self.flush()
                 await self._emit(
                     _event_part(
                         ErrorEvent(
-                            message=event.message or "error",
                             tool_call_id=event.id,
                             tool_name=event.tool,
+                            code="tool_error",
                         )
                     )
                 )

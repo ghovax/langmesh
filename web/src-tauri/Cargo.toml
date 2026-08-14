@@ -29,7 +29,7 @@ tauri-build = { version = "2", features = [] }
 # the native website-preview webview inside the main window.
 tauri = { version = "2", features = ["tray-icon", "unstable", "image-png"] }
 # The front-end-local store (saved connection profiles, UI prefs) lives in its own
-# SQLite database, separate from the harness server's history.db.
+# SQLite database, separate from the harness server's history.sqlite.
 # The native file picker — lets the user attach a local file by its real OS path so it
 # can be referenced in place (no copy). Drag-drop needs no plugin (webview core event).
 tauri-plugin-dialog = "2"

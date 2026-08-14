@@ -6,69 +6,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from langmesh.base.credentials import is_signed_in
 from langmesh.base.cursor_credentials import is_signed_in as cursor_is_signed_in
-from langmesh.base.configuration import Configuration, PromptLoader
+from langmesh.base.configuration import Configuration
 from langmesh.protocol.events import tool_status_from_result, ToolStatus
 from langmesh.base.providers import resolve_api_key
+from langmesh.base.models import find_model
 from langmesh.base.tuning import active_tuning, clip_to_tokens, count_tokens, Tunable
 from langchain_core.messages import AIMessageChunk
-from langchain_core.output_parsers.openai_tools import JsonOutputToolsParser
 from pathlib import Path
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_validator
-from typing import Any, AsyncIterator, Awaitable, Callable, Literal, Optional, get_args
+from typing import Any, AsyncIterator, Optional
 import json
-import logging
-from langmesh.base.serialization import compact, content_address
-from langmesh.runtime.cache_trace import auxiliary_model_call
-from langmesh.runtime.goal import NonBlankText
-
-
-_logger = logging.getLogger(__name__)
-
-
-#: The kinds an entry can be, each answering a different question the next reader will have.
-ENTRY_CATEGORY = Literal["fact", "decision", "constraint", "failure", "artifact", "open"]
-#: How well an entry is established, stated rather than left for the reader to guess.
-ENTRY_STANDING = Literal["verified", "reported", "inferred"]
-#: What a superseding entry does to what it supersedes, so a chain reads as changes and not as a pile of claims.
-ENTRY_REVISION = Literal["correction", "refinement", "merge", "retraction"]
-
-#: What each field means, written where prose belongs rather than wedged into the model.
-_FIELDS = PromptLoader(Path(__file__).parent / "descriptions")
-
-
-def says(name: str) -> str:
-    """One field's description, from its own file, so the wording is edited as prose and not as code."""
-    text = _FIELDS.load(name, {}).strip()
-    if not text:
-        raise RuntimeError(f"No description file for {name} in runtime/descriptions.")
-    return text
-
-
-class Observation(BaseModel):
-    """One immutable finding in the ledger. A correction is a new entry naming the old, never an edit."""
-
-    category: ENTRY_CATEGORY = Field(description=says("observation_category"))
-    claim: NonBlankText = Field(description=says("observation_claim"))
-    detail: NonBlankText = Field(description=says("observation_detail"))
-    evidence: NonBlankText | None = Field(default=None, description=says("observation_evidence"))
-    standing: ENTRY_STANDING = Field(description=says("observation_standing"))
-    supersedes: list[str] = Field(default_factory=list, description=says("observation_supersedes"))
-    revision: ENTRY_REVISION | None = Field(default=None, description=says("entry_revision"))
-
-    @model_validator(mode="after")
-    def _require_a_complete_revision(self):
-        return _complete_revision(self)
-
-    def identity(self) -> str:
-        """Addressed by what it says, not by when it was written, so the same finding twice is one entry."""
-        return content_address(self.model_dump(exclude={"supersedes", "revision"}))
-
-
-def _complete_revision(entry):
-    """A revision and the entries it supersedes exist together or not at all."""
-    if bool(entry.supersedes) != (entry.revision is not None):
-        raise ValueError("revision and supersedes must be provided together")
-    return entry
+from langmesh.base.serialization import compact
 
 
 def settled_arguments(parsed: dict, raw: str) -> dict:
@@ -78,197 +25,6 @@ def settled_arguments(parsed: dict, raw: str) -> dict:
     except ValueError:
         return dict(list(parsed.items())[:-1])
     return parsed
-
-
-def _settled_structured_items(
-    parsed_items: list,
-    item_adapter: TypeAdapter,
-) -> list[BaseModel]:
-    """Validate the completed prefix while withholding the partial parser's growing tail."""
-    settled_items: list[BaseModel] = []
-    for parsed_item in parsed_items[:-1]:
-        try:
-            settled_items.append(item_adapter.validate_python(parsed_item))
-        except ValidationError:
-            break
-    return settled_items
-
-
-async def _emit_streamed_structured(
-    structured_model,
-    schema,
-    request: list,
-    operation_name: str,
-    attempts: int,
-    field_name: str,
-    on_item: Callable[[BaseModel], Awaitable[None]],
-):
-    """Stream one list-valued structured call and deliver every completed item exactly once."""
-    field_annotation = schema.model_fields[field_name].annotation
-    item_types = get_args(field_annotation)
-    if len(item_types) != 1:
-        raise TypeError(f"{schema.__name__}.{field_name} must be a list with one item type.")
-    item_adapter = TypeAdapter(item_types[0])
-    expected_tool_name = schema.model_config.get("title") or schema.__name__
-    published_items: dict[str, BaseModel] = {}
-
-    async def publish(items: list[BaseModel]) -> None:
-        for item in items:
-            identity = getattr(item, "identity", None)
-            item_identifier = (
-                str(identity()) if callable(identity) else compact(item.model_dump(mode="json"))
-            )
-            if item_identifier in published_items:
-                continue
-            await on_item(item)
-            published_items[item_identifier] = item
-
-    for attempt in range(1, attempts + 1):
-        parsed_arguments: dict | None = None
-        parser = JsonOutputToolsParser(first_tool_only=True)
-        try:
-            async for parsed_call in parser.atransform(structured_model.astream(request)):
-                if not isinstance(parsed_call, dict):
-                    continue
-                if parsed_call.get("type") != expected_tool_name:
-                    continue
-                arguments = parsed_call.get("args")
-                if not isinstance(arguments, dict):
-                    continue
-                parsed_arguments = arguments
-                parsed_items = parsed_arguments.get(field_name)
-                if isinstance(parsed_items, list):
-                    await publish(_settled_structured_items(parsed_items, item_adapter))
-        except Exception:  # noqa: BLE001 — completed items survive a provider stream that loses its tail
-            _logger.warning(
-                "the %s pass stream failed (attempt %d of %d)",
-                operation_name,
-                attempt,
-                attempts,
-                exc_info=True,
-            )
-            if published_items:
-                return schema.model_validate({field_name: list(published_items.values())})
-            continue
-
-        if parsed_arguments is None:
-            _logger.warning(
-                "the %s pass answered without recording anything (attempt %d of %d)",
-                operation_name,
-                attempt,
-                attempts,
-            )
-            if published_items:
-                return schema.model_validate({field_name: list(published_items.values())})
-            continue
-        try:
-            batch = schema.model_validate(parsed_arguments)
-        except ValidationError:
-            _logger.warning(
-                "the %s pass did not fit its schema (attempt %d of %d)",
-                operation_name,
-                attempt,
-                attempts,
-                exc_info=True,
-            )
-            if published_items:
-                return schema.model_validate({field_name: list(published_items.values())})
-            continue
-        await publish(list(getattr(batch, field_name)))
-        return batch
-    return None
-
-
-async def emit_structured(
-    model,
-    schema,
-    request: list,
-    operation_name: str,
-    attempts: int,
-    *,
-    streamed_field: str = "",
-    on_item: Callable[[BaseModel], Awaitable[None]] | None = None,
-):
-    """One structured call: offered rather than forced, insisted on by the prompt, retried, and validated."""
-    # The tool is offered and the prompt insists on it: forcing it, a thinking model behind a gateway refuses.
-    structured_model = model.bind_tools([schema], tool_choice="auto")
-    with auxiliary_model_call():
-        if streamed_field and on_item is not None:
-            return await _emit_streamed_structured(
-                structured_model,
-                schema,
-                request,
-                operation_name,
-                attempts,
-                streamed_field,
-                on_item,
-            )
-        for attempt in range(1, attempts + 1):
-            try:
-                response = await structured_model.ainvoke(request)
-            except Exception:  # noqa: BLE001 — one dropped call is not the end of the pass
-                _logger.warning(
-                    "the %s pass could not be reached (attempt %d of %d)",
-                    operation_name,
-                    attempt,
-                    attempts,
-                    exc_info=True,
-                )
-                continue
-            if response is None or not response.tool_calls:
-                _logger.warning(
-                    "the %s pass answered without recording anything (attempt %d of %d)",
-                    operation_name,
-                    attempt,
-                    attempts,
-                )
-                continue
-            try:
-                return schema.model_validate(response.tool_calls[0]["args"])
-            except ValidationError:
-                _logger.warning(
-                    "the %s pass did not fit its schema (attempt %d of %d)",
-                    operation_name,
-                    attempt,
-                    attempts,
-                    exc_info=True,
-                )
-                continue
-    return None
-
-
-class ObservationBatch(BaseModel):
-    """Everything one pass appends to the ledger. Nothing is ever removed from it."""
-
-    observations: list[Observation] = Field(
-        default_factory=list, description=says("observation_batch")
-    )
-
-
-class Directive(BaseModel):
-    """Something the person asked for, kept because an instruction outlives the turn that carried it."""
-
-    kind: Literal["requirement", "preference"] = Field(description=says("directive_kind"))
-    summary: NonBlankText = Field(description=says("directive_summary"))
-    detail: NonBlankText | None = Field(default=None, description=says("directive_detail"))
-    occasion: NonBlankText | None = Field(default=None, description=says("directive_occasion"))
-    still_binding: bool = Field(default=True, description=says("directive_still_binding"))
-    supersedes: list[str] = Field(default_factory=list, description=says("directive_supersedes"))
-    revision: ENTRY_REVISION | None = Field(default=None, description=says("entry_revision"))
-
-    @model_validator(mode="after")
-    def _require_a_complete_revision(self):
-        return _complete_revision(self)
-
-    def identity(self) -> str:
-        """Addressed by the instruction and whether it binds, since a lifting restates it and is not the same fact."""
-        return content_address(self.model_dump(exclude={"supersedes", "revision"}))
-
-
-class DirectiveBatch(BaseModel):
-    """Everything one pass appends to the directive ledger."""
-
-    directives: list[Directive] = Field(default_factory=list, description=says("directive_batch"))
 
 
 # What ``_stream_next`` returns at the end, since a StopAsyncIteration inside a Task is mishandled.
@@ -295,6 +51,9 @@ def model_is_authorized(
         return cursor_is_signed_in()
     if provider_identifier == "custom":
         return True
+    # models.dev providers are registered while the catalogue is resolved. Authorization must
+    # trigger the same ordered discovery as model construction on a cold worker.
+    find_model(model_identifier)
     return bool(
         resolve_api_key(provider_identifier, global_configuration.configured_provider_keys())
     )
@@ -315,7 +74,7 @@ _BACKGROUND_HANDLE_PREFIXES = {
 
 
 def _coerce_mcp_arguments(value: Any) -> dict:
-    """An MCP call's `arguments` as a dict, since models often emit the object as a JSON string."""
+    """An MCP server call's `arguments` as a dict, since models often emit the object as a JSON string."""
     if isinstance(value, dict):
         return value
     if isinstance(value, str) and value.strip():
@@ -429,38 +188,6 @@ def _tool_timing_metadata(
     if background_job_id:
         metadata["background_job_id"] = background_job_id
     return metadata
-
-
-_MODEL_PROMPT_LOADER = PromptLoader(Path(__file__).parent / "prompts")
-
-
-def _model_visible_tool_result(
-    content: str,
-    metadata: dict[str, Any],
-    status: str,
-    code: str | None = None,
-    *,
-    kind: str = "tool_result",
-) -> str:
-    """A model-facing tool result: a one-line JSON header, a blank line, then the tool's output as-is."""
-    header: dict[str, Any] = {
-        "kind": kind,
-        "tool_name": metadata.get("tool_name", ""),
-        "tool_call_id": metadata.get("tool_call_id", ""),
-        "status": status,
-        "code": code,
-    }
-    for key in ("started_at", "completed_at", "duration_milliseconds", "background_job_id"):
-        value = metadata.get(key)
-        if value is not None:
-            header[key] = value
-    return _MODEL_PROMPT_LOADER.load(
-        "model_tool_result",
-        {
-            "header": compact(header),
-            "content": content,
-        },
-    )
 
 
 def _model_result_status(content: str, *, ok: bool, backgrounded: bool) -> tuple[str, str | None]:
@@ -582,6 +309,8 @@ class _PreflightGate:
     is_bash: bool = False
     # The model-facing error if the gate is answered no.
     deny_message: str = ""
+    # Who supplied an approval. Empty until resolution; interactive answers default to the person.
+    approved_by: str = ""
     # For an egress gate, the remote agent name (an "always allow" is remembered).
     egress_agent: str = ""
     # The widening asked for, carried so approving records exactly what the planner worked out.
@@ -594,6 +323,8 @@ class _PreflightGate:
     refused_result: Any = None
     # Whether approving this lets a screen script call the primitives that change something.
     grants_screen_mutations: bool = False
+    # Whether the reviewer decides this one without a person; announced before the review.
+    automatic_review: bool = False
 
     def to_dict(self) -> dict:
         """Every field as plain data: this dict crosses to a client and into the durable plan, so an omission disappears."""
@@ -617,6 +348,7 @@ class _PreflightGate:
             "denial_evidence": self.denial_evidence,
             "refused_result": self.refused_result,
             "grants_screen_mutations": self.grants_screen_mutations,
+            "automatic_review": self.automatic_review,
         }
 
     @classmethod
@@ -640,6 +372,7 @@ class _PreflightGate:
             denial_evidence=str(data.get("denial_evidence", "")),
             refused_result=data.get("refused_result"),
             grants_screen_mutations=bool(data.get("grants_screen_mutations", False)),
+            automatic_review=bool(data.get("automatic_review", False)),
         )
 
 

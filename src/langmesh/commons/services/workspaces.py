@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from langmesh.base.sqlite_lock import sqlite_write_lock
 from langmesh.locations import ssh_hosts as _ssh_hosts
 from langmesh.protocol.dtos import LocationInput, WorkspaceCreateRequest
 from pathlib import Path
 from typing import Any
 import subprocess
-import uuid
+from langmesh.base.identifiers import new_id
 from langmesh.commons import state
 from langmesh.commons.database import LocationRecord, WorkspaceRecord, SessionRecord
 from langmesh.commons.services.locations import (
@@ -62,73 +61,70 @@ def _create_workspace(request: WorkspaceCreateRequest) -> dict[str, Any]:
     )
     if conflict:
         raise ValueError(conflict)
-    with sqlite_write_lock():
-        database_session = state.session_factory()
-        try:
-            now = _iso_now()
-            workspace = WorkspaceRecord(
-                id=str(uuid.uuid4()),
-                created_at=now,
-                updated_at=now,
-            )
-            database_session.add(workspace)
-            for location in request.locations:
-                _add_location_row(database_session, workspace.id, location)
-            database_session.commit()
-            return _serialize_workspace(workspace, database_session)
-        except Exception:
-            database_session.rollback()
-            raise
-        finally:
-            database_session.close()
+    database_session = state.session_factory()
+    try:
+        now = _iso_now()
+        workspace = WorkspaceRecord(
+            id=new_id("workspace"),
+            created_at=now,
+            updated_at=now,
+        )
+        database_session.add(workspace)
+        for location in request.locations:
+            _add_location_row(database_session, workspace.id, location)
+        database_session.commit()
+        return _serialize_workspace(workspace, database_session)
+    except Exception:
+        database_session.rollback()
+        raise
+    finally:
+        database_session.close()
 
 
 def _ensure_default_project() -> None:
     """Guarantee a location-backed grouping on a fresh install, and a no-op once any workspace exists."""
     assert state.session_factory is not None
-    with sqlite_write_lock():
-        database_session = state.session_factory()
-        try:
-            if database_session.query(WorkspaceRecord).count() > 0:
-                return
-            now = _iso_now()
-            workspace = WorkspaceRecord(
-                id=str(uuid.uuid4()),
-                created_at=now,
-                updated_at=now,
-            )
-            database_session.add(workspace)
-            _add_location_row(
-                database_session,
-                workspace.id,
-                LocationInput(kind="local", base_directory=str(Path.home())),
-            )
-            database_session.commit()
-        except Exception:
-            database_session.rollback()
-            raise
-        finally:
-            database_session.close()
+    database_session = state.session_factory()
+    try:
+        if database_session.query(WorkspaceRecord).count() > 0:
+            return
+        now = _iso_now()
+        workspace = WorkspaceRecord(
+            id=new_id("workspace"),
+            created_at=now,
+            updated_at=now,
+        )
+        database_session.add(workspace)
+        _add_location_row(
+            database_session,
+            workspace.id,
+            LocationInput(kind="local", base_directory=str(Path.home())),
+        )
+        database_session.commit()
+    except Exception:
+        database_session.rollback()
+        raise
+    finally:
+        database_session.close()
 
 
 def _remember_last_session(workspace_id: str, session_id: str) -> bool:
     """Record where a workspace was last opened, checking the session belongs to it rather than trusting."""
     assert state.session_factory is not None
-    with sqlite_write_lock():
-        database_session = state.session_factory()
-        try:
-            workspace = database_session.get(WorkspaceRecord, workspace_id)
-            if workspace is None:
+    database_session = state.session_factory()
+    try:
+        workspace = database_session.get(WorkspaceRecord, workspace_id)
+        if workspace is None:
+            return False
+        if session_id:
+            session = database_session.get(SessionRecord, session_id)
+            if session is None or session.workspace_id != workspace_id:
                 return False
-            if session_id:
-                session = database_session.get(SessionRecord, session_id)
-                if session is None or session.workspace_id != workspace_id:
-                    return False
-            workspace.last_session_id = session_id
-            database_session.commit()
-            return True
-        finally:
-            database_session.close()
+        workspace.last_session_id = session_id
+        database_session.commit()
+        return True
+    finally:
+        database_session.close()
 
 
 def _workspace_count() -> int:
@@ -164,112 +160,108 @@ def _open_full_disk_access_settings() -> None:
 def _delete_workspace(workspace_id: str) -> bool:
     """Delete a workspace and everything under it: locations, sessions, and worktree records."""
     assert state.session_factory is not None
-    with sqlite_write_lock():
-        database_session = state.session_factory()
-        try:
-            workspace = database_session.get(WorkspaceRecord, workspace_id)
-            if workspace is None:
-                return False
-            database_session.query(LocationRecord).filter(
-                LocationRecord.workspace_id == workspace_id
-            ).delete()
-            database_session.query(SessionRecord).filter(
-                SessionRecord.workspace_id == workspace_id
-            ).delete()
-            database_session.delete(workspace)
-            database_session.commit()
-            return True
-        except Exception:
-            database_session.rollback()
-            raise
-        finally:
-            database_session.close()
+    database_session = state.session_factory()
+    try:
+        workspace = database_session.get(WorkspaceRecord, workspace_id)
+        if workspace is None:
+            return False
+        database_session.query(LocationRecord).filter(
+            LocationRecord.workspace_id == workspace_id
+        ).delete()
+        database_session.query(SessionRecord).filter(
+            SessionRecord.workspace_id == workspace_id
+        ).delete()
+        database_session.delete(workspace)
+        database_session.commit()
+        return True
+    except Exception:
+        database_session.rollback()
+        raise
+    finally:
+        database_session.close()
 
 
 def _create_location(workspace_id: str, request: LocationInput) -> dict[str, Any] | None:
     assert state.session_factory is not None
-    with sqlite_write_lock():
-        database_session = state.session_factory()
-        try:
-            workspace = database_session.get(WorkspaceRecord, workspace_id)
-            if workspace is None:
-                return None
-            conflict = _locations_conflict_message(
-                _existing_location_entries(database_session, workspace_id)
-                + [(request.kind, request.host_alias, request.base_directory)]
-            )
-            if conflict:
-                raise ValueError(conflict)
-            record = _add_location_row(database_session, workspace_id, request)
-            workspace.updated_at = _iso_now()
-            database_session.commit()
-            return _serialize_location(record)
-        except Exception:
-            database_session.rollback()
-            raise
-        finally:
-            database_session.close()
+    database_session = state.session_factory()
+    try:
+        workspace = database_session.get(WorkspaceRecord, workspace_id)
+        if workspace is None:
+            return None
+        conflict = _locations_conflict_message(
+            _existing_location_entries(database_session, workspace_id)
+            + [(request.kind, request.host_alias, request.base_directory)]
+        )
+        if conflict:
+            raise ValueError(conflict)
+        record = _add_location_row(database_session, workspace_id, request)
+        workspace.updated_at = _iso_now()
+        database_session.commit()
+        return _serialize_location(record)
+    except Exception:
+        database_session.rollback()
+        raise
+    finally:
+        database_session.close()
 
 
 def _update_location(location_id: str, request: LocationInput) -> dict[str, Any] | None:
     assert state.session_factory is not None
-    with sqlite_write_lock():
-        database_session = state.session_factory()
-        try:
-            record = database_session.get(LocationRecord, location_id)
-            if record is None:
-                return None
-            next_kind = request.kind if request.kind in ("local", "remote") else record.kind
-            next_base_directory = request.base_directory.strip() or record.base_directory
-            next_host_alias = (request.host_alias or "").strip()
-            conflict = _locations_conflict_message(
-                _existing_location_entries(
-                    database_session, record.workspace_id, exclude_id=location_id
-                )
-                + [(next_kind, next_host_alias, next_base_directory)]
+    database_session = state.session_factory()
+    try:
+        record = database_session.get(LocationRecord, location_id)
+        if record is None:
+            return None
+        next_kind = request.kind if request.kind in ("local", "remote") else record.kind
+        next_base_directory = request.base_directory.strip() or record.base_directory
+        next_host_alias = (request.host_alias or "").strip()
+        conflict = _locations_conflict_message(
+            _existing_location_entries(
+                database_session, record.workspace_id, exclude_id=location_id
             )
-            if conflict:
-                raise ValueError(conflict)
-            record.kind = next_kind
-            record.host_alias = next_host_alias
-            record.base_directory = next_base_directory
-            # The name follows the connection, so re-derive it whenever the connection changes.
-            record.name = _derive_location_name(
-                database_session,
-                record.workspace_id,
-                record.kind,
-                record.base_directory,
-                record.host_alias,
-                exclude_id=record.id,
-            )
-            workspace = database_session.get(WorkspaceRecord, record.workspace_id)
-            if workspace is not None:
-                workspace.updated_at = _iso_now()
-            database_session.commit()
-            return _serialize_location(record) if workspace is not None else None
-        except Exception:
-            database_session.rollback()
-            raise
-        finally:
-            database_session.close()
+            + [(next_kind, next_host_alias, next_base_directory)]
+        )
+        if conflict:
+            raise ValueError(conflict)
+        record.kind = next_kind
+        record.host_alias = next_host_alias
+        record.base_directory = next_base_directory
+        # The name follows the connection, so re-derive it whenever the connection changes.
+        record.name = _derive_location_name(
+            database_session,
+            record.workspace_id,
+            record.kind,
+            record.base_directory,
+            record.host_alias,
+            exclude_id=record.id,
+        )
+        workspace = database_session.get(WorkspaceRecord, record.workspace_id)
+        if workspace is not None:
+            workspace.updated_at = _iso_now()
+        database_session.commit()
+        return _serialize_location(record) if workspace is not None else None
+    except Exception:
+        database_session.rollback()
+        raise
+    finally:
+        database_session.close()
 
 
 def _delete_location(location_id: str) -> bool:
     assert state.session_factory is not None
-    with sqlite_write_lock():
-        database_session = state.session_factory()
-        try:
-            record = database_session.get(LocationRecord, location_id)
-            if record is None:
-                return False
-            database_session.delete(record)
-            database_session.commit()
-            return True
-        except Exception:
-            database_session.rollback()
-            raise
-        finally:
-            database_session.close()
+    database_session = state.session_factory()
+    try:
+        record = database_session.get(LocationRecord, location_id)
+        if record is None:
+            return False
+        database_session.delete(record)
+        database_session.commit()
+        return True
+    except Exception:
+        database_session.rollback()
+        raise
+    finally:
+        database_session.close()
 
 
 def _hosts_payload() -> dict[str, list[dict[str, Any]]]:

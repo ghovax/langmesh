@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 async def open_shared_resources() -> None:
     """Build what the daemon holds for everyone, in dependency order."""
     from langmesh.commons.brokers.composio import composio_mcp_servers
-    from langmesh.base.mcp_client import MCPClientManager
+    from langmesh.base.mcp_client import MCPServerManager
     from langmesh.commons.brokers.remote_agents import _remote_agent_dataclasses
     from langmesh.daemon.persistence.push_store import (
         PersistentPushNotificationConfigurationStore,
@@ -72,12 +72,12 @@ async def open_shared_resources() -> None:
     commons_state.composio_servers = composio_mcp_servers(configuration.composio)
     configuration.mcp.servers.update(commons_state.composio_servers)
     mcp_servers = configuration.mcp.enabled_servers()
-    commons_state.mcp_manager = MCPClientManager(mcp_servers) if mcp_servers else None
+    commons_state.mcp_server_manager = MCPServerManager(mcp_servers) if mcp_servers else None
     # Recorded here too, or the first write after every boot reconnects everything to learn what it already knows.
     commons_state.mcp_server_fingerprint = _mcp_server_fingerprint(mcp_servers)
-    if commons_state.mcp_manager is not None:
+    if commons_state.mcp_server_manager is not None:
         # Connected in the background, so a slow or hung server never delays the daemon's boot.
-        state._mcp_start_task = asyncio.create_task(commons_state.mcp_manager.start())
+        state._mcp_start_task = asyncio.create_task(commons_state.mcp_server_manager.start())
 
     signing_root = data_directory()
     commons_state.file_url_signer = FileUrlSigner(
@@ -133,9 +133,9 @@ async def close_shared_resources() -> None:
     if commons_state.terminal_manager is not None:
         with contextlib.suppress(Exception):
             await commons_state.terminal_manager.close_all()
-    if commons_state.mcp_manager is not None:
+    if commons_state.mcp_server_manager is not None:
         with contextlib.suppress(Exception):
-            await commons_state.mcp_manager.aclose()
+            await commons_state.mcp_server_manager.aclose()
     for client in (state.__dict__.get("_push_client"), state.proxy_client):
         if client is not None:
             with contextlib.suppress(Exception):

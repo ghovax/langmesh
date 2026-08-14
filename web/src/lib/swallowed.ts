@@ -54,5 +54,7 @@ export function swallowed(site: FaultSite, error: unknown, detail: FaultDetail =
 
 /** A failure that is a normal outcome here, silent by design, with `why` recording that it was considered. */
 export function expected(_why: string, _error?: unknown): void {
-  // Nothing. The argument is the documentation.
+  // Nothing. The arguments are the documentation, and consuming them keeps that intent explicit to the checker.
+  void _why;
+  void _error;
 }

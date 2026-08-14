@@ -6,7 +6,7 @@
 
 A coding agent needs more than a model. Something has to write the system prompt, give the model its tools, decide what it may run without asking, and keep the conversation from overflowing. That layer is the harness, and it decides more about the result than the model does. In most products it is closed. In LangMesh it is the code you are reading, and you can change it.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![Platform: macOS (Apple Silicon)](https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-black) ![Built with Tauri, Next.js, LangChain](https://img.shields.io/badge/built%20with-Tauri%2C%20Next.js%2C%20LangChain-6E56CF)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![Platform: macOS (Apple Silicon)](<https://img.shields.io/badge/platform-macOS%20(Apple%20Silicon)-black>) ![Built with Tauri, Next.js, LangChain](https://img.shields.io/badge/built%20with-Tauri%2C%20Next.js%2C%20LangChain-6E56CF)
 
 ## What it is
 
@@ -28,7 +28,6 @@ The harness writes the system prompt, defines the tools, manages context, and se
 - **Tune the guardrails.** Permission modes and per-command rules are configuration. The engine that enforces them is open code. When the settings are not enough, you can change how permissioning works ([Permissions](documentation/configuration.md#permission-modes)).
 - **The agent can work on LangMesh itself.** Its prompt says that it runs LangMesh. Open the LangMesh repository as the project. The agent then reads and edits the harness, and you rebuild ([Architecture](documentation/architecture.md)).
 - **The agent can start with context about you** — an opt-in snapshot of your machine and habits, off by default ([What it sends](SECURITY.md#what-the-agent-sends-to-your-model-provider)).
-
 
 ## Install
 
@@ -68,7 +67,7 @@ async def main() -> None:
         directory="/srv/checkout",
         providers={"anthropic": "sk-ant-…"},
     ) as session:
-        print(await session.ask("What would break if I removed the retry loop in the fetcher?"))
+        answer = await session.ask("What would break if I removed the retry loop in the fetcher?")
 
 asyncio.run(main())
 ```
@@ -80,10 +79,46 @@ from langchain_anthropic import ChatAnthropic
 
 async with Session(reviewer, directory="/srv/checkout", model=ChatAnthropic(model="claude-opus-4-5")) as session:
     async for event in session.stream("Summarise what the test suite covers."):
-        print(event)
+        ...  # Consume each typed event as it arrives.
 ```
 
-Every durable thing is a seam: `checkpoints`, `jobs`, `transcript`, `approvals`, `observer`, `sandbox`, `catalogue`, and `peers`. Each one defaults to something a library may safely do, which for anything durable means *in memory*.
+Every durable runtime concern is a seam: `checkpoints`, `jobs`, `transcript`, `approvals`, `observer`, `sandbox`, `catalogue`, `peers`, and `resources`. The resource seam is a small structural interface implemented by `WorkspaceResources`, which delegates filesystem protocols, mapping adapters, and transactions to [fsspec](https://filesystem-spec.readthedocs.io/). A local directory is the default; memory, object storage, SSH, archives, and third-party filesystems use their established fsspec implementations. Path-native tools receive a leased local materialization, and LangMesh synchronizes its changes at completed tool-batch boundaries and session close.
+
+```python
+from langmesh import Session, WorkspaceResources
+
+resources = WorkspaceResources.memory({"README.md": "# Virtual workspace\n"})
+async with Session(reviewer, resources=resources, providers={"anthropic": "sk-ant-…"}) as session:
+    answer = await session.ask("Add a short usage section to the README.")
+assert b"usage" in (await resources.read("README.md") or b"").lower()
+```
+
+Observational memory belongs to those workspace resources, not the session: the agent maintains `.agents/observations.sqlite` through Bash, Git can track it, and LangMesh reads it for presentation, fold verification, and a constant-sized progressive-disclosure descriptor in the system prompt. The descriptor contains only path, revision, counts, and timestamp extent; the agent retrieves relevant entries on demand rather than receiving an ever-growing prompt block.
+
+Library callers can read or subscribe to the same validated current-state registry without starting a daemon or polling:
+
+```python
+from langmesh import ObservationRegistry, WorkspaceResources
+
+resources = WorkspaceResources.local("/srv/checkout")
+registry = ObservationRegistry(resources)
+snapshot = await registry.load()
+for observation in snapshot["entries"]["observations"]:
+    observation_id = observation["id"]
+    claim = observation["claim"]
+
+descriptor = await registry.describe()  # path, revision, counts, and timestamp extent only
+
+async for changed in registry.watch():
+    revision = changed["revision"]
+    entries = changed["entries"]
+```
+
+The same configured `ObservationRegistry(resources)` object works with a virtual backend. Watching requires a push-based `ResourceChangeSource`: local resources use watchdog, in-memory resources publish after each committed write, and remote adapters provide their provider's native notifications. LangMesh never substitutes a busy loop. A configured `Session` exposes this same object as `session.observations`, so code already driving an agent does not configure the resource boundary twice.
+
+All three methods are read-only and create nothing. `describe()` supports progressive disclosure without loading any entry payload: it validates storage integrity and returns the resolved path, existence, revision, per-ledger counts, and earliest/latest update timestamps. `load()` and `watch()` additionally validate every payload and timestamp. A malformed registry raises `ObservationRegistryError`; the app also shows that failure and privately gives it to the agent at the next model-call boundary so it can repair the file through the documented Bash protocol.
+
+Pass `configuration=custom_configuration` when constructing the registry if the configured project `.agents` root is somewhere other than its default relative location.
 
 Three more sit around the turn: bound it, wrap its tools, decide how its history folds. Each one is an object with a method or two, so your own is as short as the ones that ship:
 
@@ -118,16 +153,16 @@ async with Session(
 
 A hook narrows and can never widen: `before_tools` runs after the permission barrier, so it sees only calls the rules already allowed. [As a library](documentation/library.md) has the rest.
 
-A program that *is* running on someone's machine can ask for that machine's agents deliberately, through `langmesh.daemon.machine`. [As a library](documentation/library.md) is the reference: the full seam table, a worked Redis checkpoint store, and what you give up by not using the daemon.
+A program that _is_ running on someone's machine can ask for that machine's agents deliberately, through `langmesh.daemon.machine`. [As a library](documentation/library.md) is the reference: the full seam table, a worked Redis checkpoint store, and what you give up by not using the daemon.
 
 ### From the terminal
 
-| Command | What it does |
-|---|---|
-| `langmesh create --agent general-assistant --directory ~/code/project` | Creates a session and prints its id |
-| `langmesh send <id> "What does this project do?" --wait` | Sends it work and waits for the answer |
-| `langmesh ps` | Shows what runs, and what waits on you |
-| `langmesh attach <id>` | Follows it live |
+| Command                                                                | What it does                           |
+| ---------------------------------------------------------------------- | -------------------------------------- |
+| `langmesh create --agent general-assistant --directory ~/code/project` | Creates a session and prints its id    |
+| `langmesh send <id> "What does this project do?" --wait`               | Sends it work and waits for the answer |
+| `langmesh ps`                                                          | Shows what runs, and what waits on you |
+| `langmesh attach <id>`                                                 | Follows it live                        |
 
 A session composes over the API, not over this command. `create_session` makes a peer and gives it a brief, `message_session` reaches a session in either direction, and `end_session` stops one.
 
@@ -150,13 +185,13 @@ The screen-control tools need a one-time Accessibility grant and Chrome's remote
 
 The closest tools are [Claude Code](https://code.claude.com) and [OpenAI Codex](https://github.com/openai/codex). Both are more mature than LangMesh. In 2026 both also drive a real browser and control native macOS apps. Codex is open source too, and it runs on models that are not OpenAI's. This table compares approaches. It does not list things that only LangMesh does.
 
-| | LangMesh | Claude Code | OpenAI Codex |
-|---|---|---|---|
-| **License** | Open source (MIT) | Proprietary | Open-source CLI (Apache-2.0); cloud and models are OpenAI's |
-| **Models** | Any provider, or a ChatGPT or Cursor login, per session — the screen tools included | Claude first; third-party providers for coding on the CLI and VS Code, but its browser and computer use need an Anthropic plan | GPT-5 Codex by default; the CLI can also point at OpenRouter, Ollama, LM Studio, or any compatible endpoint |
-| **Where it runs** | A harness you self-host — local, a VM, a container, or over SSH — with a native app pointed at it | Proprietary client; long tasks run on Anthropic's cloud | Local CLI, IDEs, and a desktop app; async tasks run on OpenAI's cloud |
-| **Screen control** | Native macOS apps and your own Chrome, read as ranked accessibility/DOM elements from a plain-language search — screenshots only when you ask | Your real Chrome session, plus macOS computer use driven by downscaled screenshots (research preview, Pro/Max) | In-app and Chrome-extension browser, plus background macOS computer use driven by screenshots |
-| **Reach** | Terminal-first (`langmesh`), plus a desktop app over the same API; every session is scriptable and attachable | Terminal, VS Code, JetBrains, desktop, web, mobile, Slack, CI, GitHub review; macOS and Windows | CLI, IDEs, desktop, cloud/web, Chrome, GitHub review; macOS and Windows |
+|                    | LangMesh                                                                                                                                      | Claude Code                                                                                                                    | OpenAI Codex                                                                                                |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| **License**        | Open source (MIT)                                                                                                                             | Proprietary                                                                                                                    | Open-source CLI (Apache-2.0); cloud and models are OpenAI's                                                 |
+| **Models**         | Any provider, or a ChatGPT or Cursor login, per session — the screen tools included                                                           | Claude first; third-party providers for coding on the CLI and VS Code, but its browser and computer use need an Anthropic plan | GPT-5 Codex by default; the CLI can also point at OpenRouter, Ollama, LM Studio, or any compatible endpoint |
+| **Where it runs**  | A harness you self-host — local, a VM, a container, or over SSH — with a native app pointed at it                                             | Proprietary client; long tasks run on Anthropic's cloud                                                                        | Local CLI, IDEs, and a desktop app; async tasks run on OpenAI's cloud                                       |
+| **Screen control** | Native macOS apps and your own Chrome, read as ranked accessibility/DOM elements from a plain-language search — screenshots only when you ask | Your real Chrome session, plus macOS computer use driven by downscaled screenshots (research preview, Pro/Max)                 | In-app and Chrome-extension browser, plus background macOS computer use driven by screenshots               |
+| **Reach**          | Terminal-first (`langmesh`), plus a desktop app over the same API; every session is scriptable and attachable                                 | Terminal, VS Code, JetBrains, desktop, web, mobile, Slack, CI, GitHub review; macOS and Windows                                | CLI, IDEs, desktop, cloud/web, Chrome, GitHub review; macOS and Windows                                     |
 
 Three design choices distinguish LangMesh:
 
@@ -184,7 +219,7 @@ The OS clears the runtime directory when you log out. A crashed daemon therefore
 
 Only the holder of a session's handle can reach it. `create` mints a capability token. Every call to a session's socket must present that token. The daemon guards its own API the same way, with a token that it writes 0600 into the runtime directory.
 
-That token does not say *which* session is calling. A session runs as the same user and could read the file. So on the unix socket the daemon asks the kernel for the peer's pid. It resolves the pid to a session through the process session that every worker leads. A call is therefore attributed to whoever made it.
+That token does not say _which_ session is calling. A session runs as the same user and could read the file. So on the unix socket the daemon asks the kernel for the peer's pid. It resolves the pid to a session through the process session that every worker leads. A call is therefore attributed to whoever made it.
 
 > [!NOTE]
 > A session's permission mode can be changed while it runs, and the change reaches the turn already in flight — a conversation that starts under manual approvals and earns trust does not have to be restarted to run under a looser mode. A child gets a mode no looser than its parent's, and tightening a session tightens everything it created. There is no bypass mode and no standing "always allow"; the only decisions at runtime are allow-once and deny. See the [Security notes](SECURITY.md).

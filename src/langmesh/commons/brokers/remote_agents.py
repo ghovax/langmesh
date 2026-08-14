@@ -8,7 +8,7 @@ from langmesh.commons import state
 
 
 def _remote_agent_dataclasses() -> dict[str, RemoteAgentConfiguration]:
-    """Convert the loaded ``remote-agents.json`` config into the manager's dataclasses."""
+    """Convert the loaded ``remote-agents.json`` configuration into the manager's dataclasses."""
     assert state.global_configuration is not None
     result: dict[str, RemoteAgentConfiguration] = {}
     for name, configuration in state.global_configuration.remote_agents.enabled_agents().items():

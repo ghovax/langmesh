@@ -11,6 +11,7 @@ from pydantic import Field, ValidationError, create_model
 from langmesh.base.configuration import PromptLoader
 from langmesh.base.serialization import compact
 from langmesh.runtime.tools import context as tool_context
+from langmesh.runtime.tools.output import ToolOutput
 from langmesh.runtime.tools.registry import EXPLANATION, tool_description as _description
 
 # The prompts these tools speak with. What they tell the *model* is a description, and lives with every other one.
@@ -83,7 +84,7 @@ async def _create_session(
     )
 
 
-async def _message_session(session: str, message: str, explanation: str) -> str:
+async def _message_session(session: str, message: str, explanation: str) -> str | ToolOutput:
     """Hand a session a message, reporting a peer parked on a decision as an error rather than a delivery."""
     access = tool_context.current().session_access
     if access is None:
@@ -101,18 +102,27 @@ async def _message_session(session: str, message: str, explanation: str) -> str:
         )
     # A peer parked on a decision does not take the message, and saying so is the point.
     if isinstance(outcome, dict) and outcome.get("awaiting_input"):
-        return compact(
-            {
+        waiting = outcome.get("waiting_on") if isinstance(outcome.get("waiting_on"), dict) else {}
+        waiting_kind = str(waiting.get("kind") or "permission")
+        command = str(waiting.get("command") or "")
+        waiting_on = (
+            "an answer to the session's question"
+            if waiting_kind == "question"
+            else f"a permission decision for `{command}`"
+            if command
+            else "a permission decision"
+        )
+        return ToolOutput(
+            result={
                 "code": "session_awaiting_input",
                 "status": "error",
                 "session": session,
-                "message": _PROMPTS.load(
-                    "session_awaiting_input",
-                    {
-                        "waiting_on": str(outcome.get("waiting_on") or "a decision from the user"),
-                    },
-                ).strip(),
-            }
+                "waiting": {"kind": waiting_kind, "command": command or None},
+            },
+            model_guidance=_PROMPTS.load(
+                "session_awaiting_input",
+                {"waiting_on": waiting_on},
+            ).strip(),
         )
     return compact({"code": "message_sent", "status": "ok", "session": session})
 
@@ -295,7 +305,7 @@ _TOOLS_BY_NAME: dict[str, Any] = {
 }
 
 
-async def invoke(tool_name: str, tool_arguments: dict, create_tool: BaseTool | None) -> str:
+async def invoke(tool_name: str, tool_arguments: dict, create_tool: BaseTool | None) -> Any:
     """Run one session tool by name, with the create tool passed in because its schema is per-runtime."""
     if tool_name == "create_session":
         if create_tool is None:

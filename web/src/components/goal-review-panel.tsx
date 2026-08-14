@@ -1,6 +1,6 @@
 "use client";
 
-import { Badge, Box, Button, Flex, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Box, Flex, VStack } from "@chakra-ui/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LuClipboardCheck } from "react-icons/lu";
 import { useTranslations } from "next-intl";
@@ -9,8 +9,9 @@ import { PanelBody, PanelCard, PanelEmptyState, PanelHeader } from "@/components
 import { timelineItems } from "@/lib/chat-timeline";
 import {
   appendTranscriptPart,
+  appendTranscriptDelta,
   createTranscriptState,
-  replayTurns,
+  TranscriptHistoryBuffer,
   type ChatMessage,
   type TranscriptState,
 } from "@/lib/use-chat";
@@ -28,34 +29,66 @@ function GoalReviewTranscript({ review }: { review: GoalReviewSession }) {
   const [running, setRunning] = useState(review.status === "working");
   const [observedStatus, setObservedStatus] = useState(review.status);
   const transcriptRef = useRef<TranscriptState>(createTranscriptState());
+  const historyBufferRef = useRef(new TranscriptHistoryBuffer());
+  const newestHistorySeenRef = useRef(false);
 
   useEffect(() => {
+    let paint: number | null = null;
+    const renderTranscript = () => {
+      if (paint !== null) return;
+      paint = window.requestAnimationFrame(() => {
+        paint = null;
+        historyBufferRef.current.drainInto(transcriptRef.current);
+        setMessages([...transcriptRef.current.messages]);
+      });
+    };
     const attachment = attachGoalReview(
       review.review_id,
       (frame) => {
         if (frame.kind === "snapshot") {
-          transcriptRef.current = replayTurns(frame.turns);
-          setMessages([...transcriptRef.current.messages]);
-          const snapshotStatus = frame.turns.at(-1)?.status?.state;
+          if (paint !== null) window.cancelAnimationFrame(paint);
+          paint = null;
+          transcriptRef.current = createTranscriptState();
+          historyBufferRef.current.reset();
+          newestHistorySeenRef.current = false;
+          setMessages([]);
+          setRunning(frame.running);
+        } else if (frame.kind === "history") {
+          if (historyBufferRef.current.append(frame.turn, String(frame.turn.id ?? "review"))) {
+            renderTranscript();
+          }
+          const snapshotStatus = frame.turn.status?.state;
           if (
-            snapshotStatus === "working" ||
-            snapshotStatus === "completed" ||
-            snapshotStatus === "canceled" ||
-            snapshotStatus === "failed"
+            !newestHistorySeenRef.current &&
+            (snapshotStatus === "working" ||
+              snapshotStatus === "completed" ||
+              snapshotStatus === "canceled" ||
+              snapshotStatus === "failed")
           ) {
+            newestHistorySeenRef.current = true;
             setObservedStatus(snapshotStatus);
             setRunning(snapshotStatus === "working");
           }
         } else if (frame.kind === "live") {
+          historyBufferRef.current.drainInto(transcriptRef.current);
           appendTranscriptPart(transcriptRef.current, frame.part);
-          setMessages([...transcriptRef.current.messages]);
+          renderTranscript();
+        } else if (frame.kind === "delta") {
+          historyBufferRef.current.drainInto(transcriptRef.current);
+          appendTranscriptDelta(transcriptRef.current, frame);
+          renderTranscript();
         } else if (frame.kind === "turn") {
+          historyBufferRef.current.drainInto(transcriptRef.current);
+          renderTranscript();
           setRunning(frame.running);
         }
       },
       () => undefined,
     );
-    return attachment.abort;
+    return () => {
+      if (paint !== null) window.cancelAnimationFrame(paint);
+      attachment.abort();
+    };
   }, [review.review_id]);
 
   const timeline = useMemo(
@@ -71,37 +104,26 @@ function GoalReviewTranscript({ review }: { review: GoalReviewSession }) {
   const status = review.status === "working" ? observedStatus : review.status;
   const isRunning = status === "working" && running;
   return (
-    <>
-      <Flex align="center" gap={2} px={3} py={2} borderYWidth="1px" borderColor="border.muted">
-        {isRunning ? <Spinner size="xs" /> : null}
-        <Text fontSize="xs" color="fg.muted" truncate flex={1}>
-          {review.goal}
-        </Text>
-        <Badge size="sm" colorPalette="purple" variant="subtle">
-          {translation(review.standing ?? status)}
-        </Badge>
-      </Flex>
-      <VStack align="stretch" gap={2.5} px={4} py={3}>
-        {timeline.map((item, index) =>
-          item.kind === "tool_group" ? (
-            <ChatToolGroup
-              key={item.id}
-              messages={item.messages}
-              thinkingTurns={item.thinkingTurns}
-              keepOpen={isRunning && index === timeline.length - 1}
-              pendingLabel={translation("reviewing")}
+    <VStack align="stretch" gap={2.5} px={4} py={3}>
+      {timeline.map((item, index) =>
+        item.kind === "tool_group" ? (
+          <ChatToolGroup
+            key={item.id}
+            messages={item.messages}
+            thinkingTurns={item.thinkingTurns}
+            keepOpen={isRunning && index === timeline.length - 1}
+            pendingLabel={translation("reviewing")}
+          />
+        ) : (
+          <Box key={item.message.id} display="flex" flexDirection="column">
+            <ChatMessageItem
+              message={item.message}
+              streaming={isRunning && index === timeline.length - 1}
             />
-          ) : (
-            <Box key={item.message.id} display="flex" flexDirection="column">
-              <ChatMessageItem
-                message={item.message}
-                streaming={isRunning && index === timeline.length - 1}
-              />
-            </Box>
-          ),
-        )}
-      </VStack>
-    </>
+          </Box>
+        ),
+      )}
+    </VStack>
   );
 }
 
@@ -169,20 +191,6 @@ export function GoalReviewPanel({
           />
         ) : (
           <Flex direction="column" minH="100%">
-            <Flex gap={1.5} px={2} pb={2} overflowX="auto" flexShrink={0}>
-              {reviews.map((review, index) => (
-                <Button
-                  key={review.review_id}
-                  size="xs"
-                  variant={review.review_id === selectedReviewId ? "solid" : "subtle"}
-                  colorPalette="purple"
-                  flexShrink={0}
-                  onClick={() => onSelectedReviewChange(review.review_id)}
-                >
-                  {translation("reviewNumber", { number: reviews.length - index })}
-                </Button>
-              ))}
-            </Flex>
             {selectedReview ? (
               <GoalReviewTranscript key={selectedReview.review_id} review={selectedReview} />
             ) : null}

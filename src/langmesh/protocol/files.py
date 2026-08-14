@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import asynccontextmanager
 import hashlib
 import mimetypes
 import os
@@ -28,6 +29,16 @@ DEFAULT_MAXIMUM_FILE_BYTES = 50 * 1024 * 1024
 
 # A small file is emitted inline as bytes, so it reaches the peer even if it cannot fetch back.
 DEFAULT_INLINE_MAXIMUM_BYTES = 256 * 1024
+
+
+@asynccontextmanager
+async def _http_client(client: Optional[httpx.AsyncClient]):
+    """Borrow a supplied client or own a short-lived one without a cleanup flag."""
+    if client is not None:
+        yield client
+        return
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as created:
+        yield created
 
 
 def _uploads_root(home_directory: Path) -> Path:
@@ -112,23 +123,19 @@ async def ingest_file_part(
             fetch_url, headers, extensions = file.uri, {}, {}
         else:
             fetch_url, headers, extensions = pin_to_ip(file.uri, ips[0], hostname)
-        owns_client = client is None
-        client = client or httpx.AsyncClient(timeout=30.0, follow_redirects=False)
-        try:
-            raw = bytearray()
-            async with client.stream(
-                "GET", fetch_url, headers=headers, extensions=extensions
-            ) as response:
-                response.raise_for_status()
-                async for chunk in response.aiter_bytes():
-                    raw.extend(chunk)
-                    if len(raw) > maximum_bytes:
-                        return None  # abort mid-stream; never buffer the whole hostile body
-        except Exception:
-            return None
-        finally:
-            if owns_client:
-                await client.aclose()
+        async with _http_client(client) as active_client:
+            try:
+                raw = bytearray()
+                async with active_client.stream(
+                    "GET", fetch_url, headers=headers, extensions=extensions
+                ) as response:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_bytes():
+                        raw.extend(chunk)
+                        if len(raw) > maximum_bytes:
+                            return None  # abort mid-stream; never buffer the whole hostile body
+            except Exception:
+                return None
         return _attachment(
             _store_bytes(bytes(raw), suffix, home_directory), name, mime_type, len(raw)
         )

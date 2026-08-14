@@ -8,13 +8,11 @@ from typing import Optional
 
 from a2a.types import DataPart, FilePart, Part, TextPart
 
-from langmesh.base.configuration import PromptLoader
 from langmesh.base.message_content import content_block_metadata
 from langmesh.base.models import find_model
 from langmesh.base.paths import uploads_directory
 from langmesh.base.serialization import compact
 from langmesh.protocol.events import (
-    ToolCallEvent,
     ToolMetadata,
     ToolResultEvent,
     ToolStatus,
@@ -102,17 +100,11 @@ def _model_supports_vision(model_identifier: str) -> bool:
     return model.vision
 
 
-#: What a notice says, read from `notices/*.md` so the wording is edited as prose rather than as code.
-_NOTICES = PromptLoader(Path(__file__).parent / "notices")
-
-
 def _attachment_warning_event(image_count: int, model_identifier: str) -> WarningEvent:
-    """The notice a person reads when their image could not be shown to the model, worded in its own files."""
-    said = {"count": str(image_count), "model": model_identifier or "The session model"}
+    """A localized notice that images reached a text-only model as file metadata."""
     return WarningEvent(
         code="image_metadata_only",
-        title=_NOTICES.load("image_metadata_only_title", said).strip(),
-        message=_NOTICES.load("image_metadata_only", said).strip(),
+        parameters={"count": image_count, "model": model_identifier},
     )
 
 
@@ -176,32 +168,6 @@ def _text_part(text: str, block_identifier: str) -> Part:
 def _event_part(event: _EventBase) -> Part:
     """A validated wire-event part, so a misnamed field fails at the emit site rather than in a client."""
     return Part(root=DataPart(data=wrap_part_payload(event.model_dump(mode="json"))))
-
-
-def _work_habits_acknowledgement_parts(job_id: str) -> tuple[Part, Part]:
-    acknowledgement_identifier = f"work-habits-{job_id}"
-    metadata = {
-        "tool_name": "work_habits",
-        "tool_call_id": acknowledgement_identifier,
-    }
-    return (
-        _event_part(
-            ToolCallEvent(
-                tool_name="work_habits",
-                tool_call_id=acknowledgement_identifier,
-                arguments={"explanation": "Loading your work habits"},
-            )
-        ),
-        _event_part(
-            ToolResultEvent(
-                tool_name="work_habits",
-                tool_call_id=acknowledgement_identifier,
-                status=ToolStatus.OK,
-                display=None,
-                metadata=ToolMetadata(**metadata),
-            )
-        ),
-    )
 
 
 def _tool_result_part(tool_name: str, tool_call_id: str, result: object, status: str) -> Part:

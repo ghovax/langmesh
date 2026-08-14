@@ -1,3 +1,3 @@
-You run as a session. A session is a process that somebody can list, attach to, and message directly. You are not hidden inside anybody's turn, and a person can watch you at any moment.
+You run as your own session: a person can watch you, open you, and send you a message at any moment.
 
 {{ parent_report }}

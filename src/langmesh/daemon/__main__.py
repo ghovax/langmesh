@@ -144,8 +144,8 @@ def _announcing_server_class():
     class AnnouncingServer(uvicorn.Server):
         """A uvicorn server that sets an event once it is accepting connections, so nothing has to poll for readiness."""
 
-        def __init__(self, config) -> None:  # noqa: ANN001 — matches uvicorn's signature
-            super().__init__(config)
+        def __init__(self, configuration) -> None:  # noqa: ANN001 — matches uvicorn's type
+            super().__init__(configuration)
             self.ready = asyncio.Event()
 
         async def startup(self, sockets=None) -> None:  # noqa: ANN001
@@ -305,6 +305,13 @@ async def _serve() -> int:
     state.registry = SessionRegistry(store=commons_state.session_store)
     restored = await asyncio.to_thread(commons_state.session_store.load_all)
     state.registry.restore(restored)
+    # Goals are durable beside the checkpoint, so a restart brings them back even before any worker reports one.
+    if commons_state.turn_store is not None:
+        persisted_goals = await commons_state.turn_store.session_goals(
+            [record.id for record in restored]
+        )
+        for session_id, goal in persisted_goals.items():
+            commons_state._session_goals[session_id] = goal
     live = [record for record in restored if record.is_live]
     if live:
         logger.info(
@@ -323,6 +330,14 @@ async def _serve() -> int:
         state.registry,
         state.host,
         on_change=lambda: state.broadcaster.publish({"type": "sessions_changed"}),
+    )
+    from langmesh.daemon.observation_watcher import ObservationRegistryWatcher
+
+    commons_state.observation_registry_watcher = ObservationRegistryWatcher(
+        state.registry,
+        state.host,
+        state.broadcaster,
+        commons_state.global_configuration,
     )
     # The two places a workspace change has a supervision consequence, filled in only where there is a control plane to tell.
     from langmesh.daemon.pending_input import settle_and_reap
@@ -428,6 +443,8 @@ async def _serve() -> int:
         resume_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await resume_task
+        with contextlib.suppress(Exception):
+            await commons_state.observation_registry_watcher.aclose()
         # Sessions must not outlive their supervisor, which can no longer persist anything for them.
         with contextlib.suppress(Exception):
             await state.lifecycle.aclose()
@@ -444,13 +461,11 @@ async def _open_stores() -> None:
     from sqlalchemy.orm import sessionmaker
 
     from langmesh.base.paths import database_file_path
-    from langmesh.base.sqlite_lock import configure_sqlite_lock, sqlite_write_lock
     from langmesh.commons import state as commons_state
     from langmesh.commons.database import create_history_schema
     from langmesh.daemon.persistence.turn_store import AppendOnlyTaskStore
 
     database_path = database_file_path()
-    configure_sqlite_lock(database_path)
     sync_engine = create_engine(f"sqlite:///{database_path}")
 
     @event.listens_for(sync_engine, "connect")
@@ -462,8 +477,7 @@ async def _open_stores() -> None:
         cursor.close()
 
     def _initialize() -> None:
-        with sqlite_write_lock():
-            create_history_schema(sync_engine)
+        create_history_schema(sync_engine)
 
     await asyncio.to_thread(_initialize)
     commons_state.session_factory = sessionmaker(bind=sync_engine)

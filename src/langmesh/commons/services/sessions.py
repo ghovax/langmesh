@@ -5,25 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from fastapi import HTTPException
 from langmesh.base.worktrees import SessionWorktree, WorktreeStrategy
-from langmesh.base.sqlite_lock import sqlite_write_lock
 from pathlib import Path
 from typing import Any, cast
 from langmesh.commons import state
 from langmesh.commons.database import SessionRecord
 from langmesh.commons.services.broadcast import _publish_broadcast
-
-
-def claim_work_habits_acknowledgement(session_id: str) -> bool:
-    """Claim the one-time work-habits acknowledgement, durably because a worker is per activation."""
-    if state.session_store is None:
-        return False
-    return state.session_store.claim_work_habits_acknowledgement(session_id)
-
-
-def _reset_work_habits_acknowledgements() -> None:
-    """Allow one fresh acknowledgement after the work-habits setting changes."""
-    if state.session_store is not None:
-        state.session_store.reset_work_habits_acknowledgements()
 
 
 def _normalize_permission_mode(mode: str) -> str:
@@ -98,49 +84,48 @@ def _ensure_session_workspace(
             error="Session workspace manager is not initialized.",
         )
 
-    with sqlite_write_lock():
-        database_session = state.session_factory()
-        try:
-            record = database_session.get(SessionRecord, session_id)
-            if record is not None:
-                if not record.runtime_working_directory:
-                    record.runtime_working_directory = workspace.runtime_working_directory
-                    record.worktree_strategy = workspace.strategy
-                    record.worktree_path = workspace.worktree_path
-                    record.worktree_branch = workspace.worktree_branch
-                    record.source_repository_root = workspace.source_repository_root
-                    record.runtime_repository_root = workspace.runtime_repository_root
-                    record.worktree_head = workspace.head
-                    record.worktree_error = workspace.error
-                    database_session.commit()
-                return _session_worktree_from_record(record)
-            # No title yet: the session names itself once it has read its first message.
-            database_session.add(
-                SessionRecord(
-                    id=session_id,
-                    agent=agent,
-                    workspace_id=workspace_id,
-                    working_directory=workspace.source_working_directory,
-                    runtime_working_directory=workspace.runtime_working_directory,
-                    worktree_strategy=workspace.strategy,
-                    worktree_path=workspace.worktree_path,
-                    worktree_branch=workspace.worktree_branch,
-                    source_repository_root=workspace.source_repository_root,
-                    runtime_repository_root=workspace.runtime_repository_root,
-                    worktree_head=workspace.head,
-                    worktree_error=workspace.error,
-                    permission_mode=_normalize_permission_mode(permission_mode),
-                    input_draft="",
-                    title="",
-                    created_at=datetime.now(timezone.utc).isoformat(),
-                )
+    database_session = state.session_factory()
+    try:
+        record = database_session.get(SessionRecord, session_id)
+        if record is not None:
+            if not record.runtime_working_directory:
+                record.runtime_working_directory = workspace.runtime_working_directory
+                record.worktree_strategy = workspace.strategy
+                record.worktree_path = workspace.worktree_path
+                record.worktree_branch = workspace.worktree_branch
+                record.source_repository_root = workspace.source_repository_root
+                record.runtime_repository_root = workspace.runtime_repository_root
+                record.worktree_head = workspace.head
+                record.worktree_error = workspace.error
+                database_session.commit()
+            return _session_worktree_from_record(record)
+        # No title yet: the session names itself once it has read its first message.
+        database_session.add(
+            SessionRecord(
+                id=session_id,
+                agent=agent,
+                workspace_id=workspace_id,
+                working_directory=workspace.source_working_directory,
+                runtime_working_directory=workspace.runtime_working_directory,
+                worktree_strategy=workspace.strategy,
+                worktree_path=workspace.worktree_path,
+                worktree_branch=workspace.worktree_branch,
+                source_repository_root=workspace.source_repository_root,
+                runtime_repository_root=workspace.runtime_repository_root,
+                worktree_head=workspace.head,
+                worktree_error=workspace.error,
+                permission_mode=_normalize_permission_mode(permission_mode),
+                input_draft="",
+                title="",
+                created_at=datetime.now(timezone.utc).isoformat(),
             )
-            database_session.commit()
-        except Exception:
-            database_session.rollback()
-            raise
-        finally:
-            database_session.close()
+        )
+        database_session.commit()
+    except Exception:
+        database_session.rollback()
+        raise
+    finally:
+        database_session.close()
 
     _publish_broadcast({"type": "sessions_changed"})
     return workspace
@@ -148,20 +133,19 @@ def _ensure_session_workspace(
 
 def _set_session_title(session_id: str, title: str) -> bool:
     assert state.session_factory is not None
-    with sqlite_write_lock():
-        database_session = state.session_factory()
-        try:
-            record = database_session.get(SessionRecord, session_id)
-            if record is None or record.title == title:
-                return False
-            record.title = title
-            database_session.commit()
-            return True
-        except Exception:
-            database_session.rollback()
+    database_session = state.session_factory()
+    try:
+        record = database_session.get(SessionRecord, session_id)
+        if record is None or record.title == title:
             return False
-        finally:
-            database_session.close()
+        record.title = title
+        database_session.commit()
+        return True
+    except Exception:
+        database_session.rollback()
+        return False
+    finally:
+        database_session.close()
 
 
 def _activity_of(session_id: str, lifecycle: str) -> str:
@@ -213,7 +197,6 @@ def _sessions_payload() -> dict[str, list[dict[str, Any]]]:
                     ),
                     "running": row.id in state._running_contexts,
                     "awaiting_input": row.id in state._awaiting_input_contexts,
-                    "recording_memory": bool(state._recording_memory_contexts.get(row.id)),
                     # What this session is working toward, read from the live map because a goal belongs to its process.
                     "goal": state._session_goals.get(row.id),
                     # What the session is doing, which its lifecycle deliberately does not say.
@@ -239,21 +222,20 @@ def _session_draft(session_id: str) -> str:
 
 
 def _update_session_draft(session_id: str, input_draft: str) -> None:
-    """A synchronous draft write, which must run off the event loop because it takes the history write lock."""
+    """A synchronous draft write, which must run off the event loop so it never stalls the interface."""
     assert state.session_factory is not None
-    with sqlite_write_lock():
-        database_session = state.session_factory()
-        try:
-            record = database_session.get(SessionRecord, session_id)
-            if record is None:
-                raise HTTPException(status_code=404, detail="Session not found.")
-            record.input_draft = input_draft
-            database_session.commit()
-        except Exception:
-            database_session.rollback()
-            raise
-        finally:
-            database_session.close()
+    database_session = state.session_factory()
+    try:
+        record = database_session.get(SessionRecord, session_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Session not found.")
+        record.input_draft = input_draft
+        database_session.commit()
+    except Exception:
+        database_session.rollback()
+        raise
+    finally:
+        database_session.close()
 
 
 def _remove_upload_file(path_string: str, uploads_root: str) -> None:

@@ -56,7 +56,6 @@ import { ModelSelect, modelSupportsVision } from "./model-select";
 import type { TokenUsage } from "@/lib/use-chat";
 import { InlineField } from "./ui/display";
 import { richTags } from "@/lib/i18n/rich-tags";
-import { CONTROL_ICON_SIZE } from "./session-controls";
 import { swallowed } from "@/lib/swallowed";
 import { useFittedRow } from "@/lib/use-fitted-row";
 import { errorMessage } from "@/lib/errors";
@@ -85,6 +84,8 @@ interface ChatInputProps {
   // The active agent's configured model, driving the chip and the attachment gates for every session running that agent.
   agentModel?: string;
   onAgentModelChange: (modelIdentifier: string) => void | Promise<void>;
+  // Re-fetches the model catalog through the daemon, the retry path for a failed initial load.
+  onRetryModels?: () => void | Promise<void>;
   // The session's permission mode and its change handler, surfaced here so it is adjustable inline.
   permissionMode?: PermissionMode;
   onPermissionModeChange?: (mode: PermissionMode) => void;
@@ -251,7 +252,13 @@ function ContextUsageChip({
         </InlineField>
         {hasContext && (
           <InlineField label={translation("window")}>
-            <Text>{tokenUsage.contextWindow.toLocaleString()}</Text>
+            <Text>
+              {tokenUsage.contextWindowEstimated
+                ? translation("estimatedWindow", {
+                    value: tokenUsage.contextWindow.toLocaleString(),
+                  })
+                : tokenUsage.contextWindow.toLocaleString()}
+            </Text>
           </InlineField>
         )}
       </Flex>
@@ -302,14 +309,9 @@ function ContextUsageChip({
             )}
           </>
         )}
-        <Box
-          data-fit-label="context-detail"
-          data-fit-hidden={hidden.has("context-detail") ? "" : undefined}
-          display="flex"
-          alignItems="center"
-          flexShrink={0}
-        >
-          <LuCoins size={CONTROL_ICON_SIZE} />
+        {/* The tokens icon is the chip's fallback: it stays when the numbers are shed, so the chip is never an empty box. */}
+        <Box display="flex" alignItems="center" flexShrink={0}>
+          <LuCoins size={14} />
         </Box>
         <Text
           data-fit-label="context-detail"
@@ -318,7 +320,9 @@ function ContextUsageChip({
           whiteSpace="nowrap"
         >
           {tokenUsage.contextTokens.toLocaleString()}
-          {hasContext ? ` / ${tokenUsage.contextWindow.toLocaleString()}` : ""}
+          {hasContext
+            ? ` / ${tokenUsage.contextWindowEstimated ? "~" : ""}${tokenUsage.contextWindow.toLocaleString()}`
+            : ""}
         </Text>
       </Flex>
     </Tooltip>
@@ -341,6 +345,49 @@ function ComposerIcon({ draw, children }: { draw: number; children: ReactNode })
   );
 }
 
+function StopTurnButton({
+  onAbort,
+  isCompacting,
+}: {
+  onAbort: () => void | Promise<void>;
+  isCompacting: boolean;
+}) {
+  const translation = useTranslations("ChatInput");
+  const [pending, setPending] = useState(false);
+
+  async function stop() {
+    setPending(true);
+    try {
+      await onAbort();
+    } catch {
+      // The cancel call itself failed; the turn is untouched, so the control releases at once.
+      setPending(false);
+      return;
+    }
+    // Last resort: a stop that never reaches the stream must not wedge the button forever.
+    window.setTimeout(() => setPending(false), 15_000);
+  }
+
+  return (
+    <Button
+      onClick={stop}
+      size="sm"
+      colorPalette="red"
+      variant="solid"
+      loading={pending}
+      loadingText={translation("stopping")}
+      // Not while the conversation is being folded, since Stop would describe something the model is not doing.
+      disabled={pending || isCompacting}
+      title={isCompacting ? translation("stopUnavailableWhileCompacting") : undefined}
+    >
+      <ComposerIcon draw={18}>
+        <LuSquare />
+      </ComposerIcon>
+      {translation("stop")}
+    </Button>
+  );
+}
+
 export function ChatInput({
   onSend,
   onAbort,
@@ -360,6 +407,7 @@ export function ChatInput({
   recentModels = [],
   agentModel = "",
   onAgentModelChange,
+  onRetryModels,
   permissionMode = "ask",
   onPermissionModeChange,
   sandboxEnforce = "required",
@@ -386,7 +434,6 @@ export function ChatInput({
   const persistedDraftKeyRef = useRef("");
   const latestInputValueRef = useRef("");
   const [sendPending, setSendPending] = useState(false);
-  const [stopPending, setStopPending] = useState(false);
   const [compactConfirmOpen, setCompactConfirmOpen] = useState(false);
   const { rowRef: selectorsRowRef, hidden: hiddenLabels } = useFittedRow(COMPOSER_FIT_ORDER);
   // Dictation is absent rather than disabled until it is turned on, and `recording` holds the take a toggle can stop.
@@ -645,45 +692,32 @@ export function ChatInput({
     if (!trimmed) return;
     if (!directoryAvailable) return;
     if (uploadingCount > 0) return;
-    const startedAt = performance.now();
     setSendPending(true);
     const sendText = trimmed;
     const dataParts = attachments.length > 0 ? [{ kind: "attachments", attachments }] : [];
-    try {
-      // While the agent is busy this enqueues for the next turn (handled upstream).
-      await onSend(sendText, dataParts);
-      setHistoryIndex(-1);
-      setInputValue("");
-      latestInputValueRef.current = "";
-      onDraftChange?.("");
-      setAttachments([]);
-      // Persist to backend and prepend to local list for immediate recall.
-      if (trimmed) {
-        setMessageHistory((previous) => [trimmed, ...previous]);
-        if (workingDirectory) {
-          saveMessageHistory(workingDirectory, trimmed).catch((caught) =>
-            swallowed({ component: "chat-input", operation: "save the message history" }, caught),
-          );
-        }
+    // The message is committed the moment Enter is pressed: the optimistic transcript row and the
+    // outbox card both show it, so the composer must not hold the same text until the daemon accepts
+    // the send, or the message appears in two places at once.
+    setHistoryIndex(-1);
+    setInputValue("");
+    latestInputValueRef.current = "";
+    onDraftChange?.("");
+    setAttachments([]);
+    // Persist to backend and prepend to local list for immediate recall.
+    if (trimmed) {
+      setMessageHistory((previous) => [trimmed, ...previous]);
+      if (workingDirectory) {
+        saveMessageHistory(workingDirectory, trimmed).catch((caught) =>
+          swallowed({ component: "chat-input", operation: "save the message history" }, caught),
+        );
       }
-    } finally {
-      window.setTimeout(
-        () => setSendPending(false),
-        Math.max(0, 450 - (performance.now() - startedAt)),
-      );
     }
-  }
-
-  async function handleAbortClick() {
-    const startedAt = performance.now();
-    setStopPending(true);
     try {
-      await onAbort();
+      // While the agent is busy this enqueues for the next turn (handled upstream). Still awaited so
+      // a refusal or failure settles through the queue and keeps the send gated.
+      await onSend(sendText, dataParts);
     } finally {
-      window.setTimeout(
-        () => setStopPending(false),
-        Math.max(0, 450 - (performance.now() - startedAt)),
-      );
+      setSendPending(false);
     }
   }
 
@@ -720,7 +754,21 @@ export function ChatInput({
   }
 
   return (
-    <Box position="relative" pb={2}>
+    <fieldset
+      disabled={composerClosed}
+      aria-disabled={composerClosed}
+      style={{
+        position: "relative",
+        padding: 0,
+        paddingBottom: "var(--chakra-spacing-2)",
+        margin: 0,
+        border: 0,
+        minWidth: 0,
+        opacity: composerClosed ? 0.55 : 1,
+        filter: composerClosed ? "grayscale(1)" : undefined,
+        transition: "opacity 120ms ease",
+      }}
+    >
       <ConfirmDialog
         open={compactConfirmOpen}
         onOpenChange={setCompactConfirmOpen}
@@ -826,8 +874,8 @@ export function ChatInput({
               fieldSizing="content"
               maxH="44"
               overflowY="auto"
-              borderColor={dragActive ? "blue.muted" : directoryAvailable ? "border" : "red.muted"}
-              bg="bg.panel"
+              borderColor={dragActive ? "blue.muted" : "border"}
+              bg={composerClosed ? "bg.muted" : "bg.panel"}
               resize="none"
             />
           </Box>
@@ -896,22 +944,7 @@ export function ChatInput({
               </IconButton>
             </Tooltip>
             {isStreaming ? (
-              <Button
-                onClick={handleAbortClick}
-                size="sm"
-                colorPalette="red"
-                variant="solid"
-                loading={stopPending}
-                loadingText={translation("stopping")}
-                // Not while the conversation is being folded, since Stop would describe something the model is not doing.
-                disabled={stopPending || isCompacting}
-                title={isCompacting ? translation("stopUnavailableWhileCompacting") : undefined}
-              >
-                <ComposerIcon draw={18}>
-                  <LuSquare />
-                </ComposerIcon>
-                {translation("stop")}
-              </Button>
+              <StopTurnButton onAbort={onAbort} isCompacting={isCompacting} />
             ) : (
               <Button
                 onClick={() => void handleSubmit()}
@@ -967,6 +1000,7 @@ export function ChatInput({
           value={agentModel}
           onChange={onAgentModelChange}
           fallbackModelId={agentModel}
+          onRetryModels={onRetryModels}
           compact
           fitted
           providerHidden={hiddenLabels.has("model-provider")}
@@ -1011,9 +1045,9 @@ export function ChatInput({
               }
             >
               {isCompacting ? (
-                <Spinner boxSize={`${CONTROL_ICON_SIZE}px`} borderWidth="1.5px" />
+                <Spinner boxSize={`${14}px`} borderWidth="1.5px" />
               ) : (
-                <LuFoldVertical size={CONTROL_ICON_SIZE} />
+                <LuFoldVertical size={14} />
               )}
               <Text
                 data-fit-label="compact"
@@ -1030,6 +1064,6 @@ export function ChatInput({
           />
         </Flex>
       </Flex>
-    </Box>
+    </fieldset>
   );
 }

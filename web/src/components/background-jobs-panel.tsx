@@ -44,6 +44,8 @@ interface ShellJob {
   toolCallId: string;
   name: string;
   arguments: Record<string, unknown>;
+  // Whether the arguments are the finished set; ToolCall renders nothing without this.
+  argumentsComplete: boolean;
   // Absent when the event carried none, since an unknown status is not a finished job.
   status?: ToolEventStatus;
   result: unknown;
@@ -65,6 +67,8 @@ function shellJobsFromMessages(messages: ChatMessage[]): ShellJob[] {
       toolCallId: String(meta.toolCallId ?? message.id),
       name: message.content,
       arguments: (meta.arguments as Record<string, unknown> | undefined) ?? {},
+      // The transcript only marks a call complete once its arguments settled; absent means finished.
+      argumentsComplete: meta.argumentsComplete !== false,
       status,
       result: meta.result,
       timestamp: message.timestamp,
@@ -89,6 +93,7 @@ function shellJobsFromBackgroundJobs(jobs: BackgroundJob[]): ShellJob[] {
     toolCallId: job.tool_call_id || job.job_id,
     name: job.kind,
     arguments: job.arguments ?? {},
+    argumentsComplete: true,
     status: "running" as ToolEventStatus,
     result: startedResultForJob(job),
     timestamp: job.started_at,
@@ -151,6 +156,7 @@ function RunningTaskRow({ task, sessionId }: { task: ShellJob; sessionId: string
     <ToolCall
       name={task.name}
       arguments={task.arguments}
+      argumentsComplete={task.argumentsComplete}
       result={task.result}
       status={task.status}
       toolCallId={task.toolCallId}
@@ -501,6 +507,7 @@ export function BackgroundJobsPanel({
                         key={task.toolCallId}
                         name={task.name}
                         arguments={task.arguments}
+                        argumentsComplete={task.argumentsComplete}
                         result={task.result}
                         status={task.status}
                         toolCallId={task.toolCallId}
