@@ -84,12 +84,10 @@ Middleware may rewrite `call.arguments`, short-circuit, retry, or translate an e
 
 `PromptComposer` receives every cache-stable system-prompt layer as a named `PromptLayer`. Use it to select, order, wrap, or relocate application guidance without forking the runtime.
 
-```python
-from langmesh.base.configuration import PromptLoader
+The prompt lives in its own file, `prompts/system_prompt.md`:
 
-
-class ApplicationPrompt:
-    template = """{{ agent_prompt }}
+```markdown
+{{ agent_prompt }}
 
 {{ instructions }}
 
@@ -97,17 +95,28 @@ class ApplicationPrompt:
 
 {{ skills }}
 
-{{ memories }}"""
+{{ memories }}
+```
+
+It places one `{{ layer_name }}` placeholder per layer, and the renderer drops any placeholder that resolves empty. Headings and other markdown belong in that file, never generated in code.
+
+```python
+from langmesh.base.configuration import PromptLoader
+
+
+class ApplicationPrompt:
+    def __init__(self, prompts_directory):
+        self._prompts = PromptLoader(prompts_directory)
 
     def compose(self, layers):
         available = {layer.name: layer.content for layer in layers}
-        return PromptLoader.render(self.template, available)
+        return self._prompts.load("system_prompt", available)
 
 
-components = SessionComponents(prompt_composer=ApplicationPrompt())
+components = SessionComponents(prompt_composer=ApplicationPrompt("prompts"))
 ```
 
-The template places one `{{ layer_name }}` placeholder per layer, and the renderer drops any placeholder that resolves empty. Headings and other markdown belong in the template, never generated in code. The default composer already renders the catalogue's `system_prompt` template over the same layers; this composer only changes what reaches it. `BeforeModelHook` remains the final seam for changing the exact message list of one provider request; using it to rewrite the first system message intentionally invalidates that request's provider-cache prefix.
+The default composer already renders the catalogue's `system_prompt` template over the same layers; this composer only changes what reaches it. `BeforeModelHook` remains the final seam for changing the exact message list of one provider request; using it to rewrite the first system message intentionally invalidates that request's provider-cache prefix.
 
 ## Attachments
 
