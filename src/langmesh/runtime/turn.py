@@ -448,7 +448,7 @@ class _RunsTurns:
                         continue
                     if identifier not in by_identifier:
                         by_identifier[identifier] = ToolMessage(
-                            content="Tool call aborted.",
+                            content="Tool call aborted by the user; if any, read their newest request first.",
                             tool_call_id=identifier,
                         )
                         changed = True

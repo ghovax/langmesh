@@ -1030,6 +1030,8 @@ class AgentRuntime(
 
     def abort(self) -> None:
         # Stop tears down the live turn only: detached work and peer sessions have their own lifecycles.
+        # A queued steering message is superseded by the Stop: deliver its false and never let it keep the cancelled turn waiting.
+        self.discard_pending_steering()
         self._abort_event.set()
         self._background.cancel_foreground()
         for task in list(self._active_tool_tasks.values()):
