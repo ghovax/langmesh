@@ -453,10 +453,15 @@ class SessionExecutor(AgentExecutor):
             # Exactly one release for the plan hold, whichever obligation opened the next turn.
             self._notify_turn_state(session_id, False)
 
-    def clear_goal(self, session_id: str) -> bool:
+    async def clear_goal(self, session_id: str) -> bool:
         """The person calling the goal off: a live one is stopped and kept, a resolved one is dropped from view."""
         state = self._contexts.get(session_id)
         runtime = state.runtime if state is not None else None
+        if runtime is None:
+            # A woken session has no runtime until its first turn, but the goal is durable
+            # beside the checkpoint. Build the runtime so calling the goal off also works
+            # from the parked/asleep state, instead of silently answering "nothing to clear".
+            runtime = await self._runtime_for(session_id, self._workspace())
         goal = runtime.goal if runtime is not None else None
         if runtime is None or goal is None:
             return False

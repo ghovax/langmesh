@@ -105,6 +105,9 @@ class _TurnEventSink:
         self._thinking = _ContentBlockAccumulator(self._emit_thinking, self._emit_thinking_delta)
         self.final_text = ""
         self.stop_reason = ""
+        # How many tool results this turn emitted, so a no-op continuation turn is
+        # distinguishable from one that actually worked.
+        self.tool_results = 0
 
     async def _emit_text(self, key: tuple[str, ...], text: str) -> None:
         if not key:
@@ -200,6 +203,7 @@ class _TurnEventSink:
                     )
                 )
             case ToolResult():
+                self.tool_results += 1
                 await self.flush()
                 await self._emit(
                     _tool_result_part(event.name, event.id, event.result, event.status)

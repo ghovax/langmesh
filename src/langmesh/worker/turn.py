@@ -817,6 +817,14 @@ class _TurnRunner:
         if runtime is None or runtime.has_pending_jobs():
             return _ContinuationPlan()
         goal = runtime.goal
+        # A goal-continuation turn that produced neither prose nor tool work answered the
+        # review with nothing; immediately re-reviewing would only spin the review loop,
+        # so the goal parks instead and waits for a person.
+        if (
+            self._mode is _TurnMode.GOAL_CONTINUATION
+            and not (self._sink.final_text.strip() or self._sink.tool_results)
+        ):
+            return _ContinuationPlan()
         return _ContinuationPlan(
             goal=bool(
                 goal is not None and goal.is_open and runtime.should_continue_goal()

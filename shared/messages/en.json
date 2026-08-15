@@ -321,7 +321,8 @@
     "stopTitle": "Stop working toward this goal?",
     "waitingForBackground": "Waiting for background work",
     "waiting": "Waiting for you",
-    "working": "Working toward"
+    "working": "Working toward",
+    "viewReview": "View review"
   },
   "LocationForm": {
     "local": "Local",

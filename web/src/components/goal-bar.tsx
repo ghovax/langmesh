@@ -3,14 +3,22 @@
 import { Box, Button, Flex, List, Span, Spinner, Text } from "@chakra-ui/react";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { LuCircleCheck, LuCircleSlash, LuDot, LuSquare, LuTarget, LuX } from "react-icons/lu";
+import { LuCircleCheck, LuCircleSlash, LuClipboardCheck, LuDot, LuSquare, LuTarget, LuX } from "react-icons/lu";
 import { Tooltip } from "./ui/tooltip";
 import { ConfirmDialog } from "./ui/confirm-dialog";
 import { InlineMarkdown, MarkdownContent } from "./markdown-content";
 import type { SessionGoal } from "@/lib/api";
 
 // What the session is working toward, above the composer because it is a state rather than an event.
-export function GoalBar({ goal, onClear }: { goal: SessionGoal; onClear: () => void }) {
+export function GoalBar({
+  goal,
+  onClear,
+  onOpenReview,
+}: {
+  goal: SessionGoal;
+  onClear: () => void;
+  onOpenReview: () => void;
+}) {
   const translation = useTranslations("GoalBar");
   const [confirming, setConfirming] = useState(false);
   const text = (goal.text ?? "").trim();
@@ -155,6 +163,24 @@ export function GoalBar({ goal, onClear }: { goal: SessionGoal; onClear: () => v
             </Box>
           </Flex>
         </Tooltip>
+        {/* A review in progress (or the parked state it left behind) is worth opening: the
+            transcript panel shows the reviewer's reasoning and verdict as they happen. */}
+        {(reviewPhase || status === "parked") && (
+          <Button
+            title={translation("viewReview")}
+            size="2xs"
+            variant="plain"
+            px={1}
+            flexShrink={0}
+            color="fg.subtle"
+            onClick={onOpenReview}
+          >
+            <LuClipboardCheck size={13} />
+            <Span textStyle="xs" display={{ base: "none", sm: "inline" }}>
+              {translation("viewReview")}
+            </Span>
+          </Button>
+        )}
         {/* Named as well as drawn: the one control here ends the thing the bar is about, so it says which. */}
         <Button
           title={translation(resolved ? "dismiss" : "stop")}
