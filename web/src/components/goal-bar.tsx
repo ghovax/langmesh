@@ -172,7 +172,7 @@ export function GoalBar({
             variant="plain"
             px={1}
             flexShrink={0}
-            color="fg.subtle"
+            color="blue.fg"
             onClick={onOpenReview}
           >
             <LuClipboardCheck size={13} />

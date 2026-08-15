@@ -411,6 +411,13 @@ export function ChatPanel({
     [setSidePanelOpen],
   );
 
+  // The goal bar means the review taking place now: reset the selection so the panel follows the
+  // newest review, since a stale selection would otherwise keep it on an older transcript.
+  const openCurrentReview = useCallback(() => {
+    setSelectedGoalReviewId(null);
+    setSidePanelOpen("reviews", true);
+  }, [setSidePanelOpen]);
+
   // A review opening is the cue to surface its transcript: the panel follows the newest review automatically.
   const seenReviewIds = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -1331,7 +1338,7 @@ export function ChatPanel({
                   <GoalBar
                     goal={activeGoal}
                     onClear={handleClearGoal}
-                    onOpenReview={() => setSidePanelOpen("reviews", true)}
+                    onOpenReview={openCurrentReview}
                   />
                 )}
                 <ChatInput
