@@ -284,6 +284,15 @@ class CompactionConfiguration(Section):
     reclaim_at_fraction: float = Field(0.85)
     output_reserve_fraction: float = Field(0.1)
     recent_working_set_fraction: float = Field(0.15)
+    # How many times the hidden summarizer may be asked again after reviewing but not submitting.
+    summary_attempts: int = Field(3)
+
+    @field_validator("summary_attempts")
+    @classmethod
+    def _summary_attempts(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("summary_attempts must be at least 1")
+        return value
 
     @field_validator(
         "reclaim_at_fraction",
@@ -294,6 +303,20 @@ class CompactionConfiguration(Section):
     def _fraction(cls, value: float) -> float:
         if not 0 < value < 1:
             raise ValueError("compaction fractions must be greater than 0 and less than 1")
+        return value
+
+
+class GoalReviewConfiguration(Section):
+    """How an independent goal review is driven, including how hard it is pushed to submit."""
+
+    # How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset.
+    maximum_attempts: int = Field(3)
+
+    @field_validator("maximum_attempts")
+    @classmethod
+    def _maximum_attempts(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("goal_review.maximum_attempts must be at least 1")
         return value
 
 
@@ -548,6 +571,7 @@ class Configuration(Section):
     sandbox: SandboxConfiguration = Field(default_factory=SandboxConfiguration)
     workspace: WorkspaceConfiguration = Field(default_factory=WorkspaceConfiguration)
     compaction: CompactionConfiguration = Field(default_factory=CompactionConfiguration)
+    goal_review: GoalReviewConfiguration = Field(default_factory=GoalReviewConfiguration)
     attachments: AttachmentsConfiguration = Field(default_factory=AttachmentsConfiguration)
     user_context: UserContextConfiguration = Field(default_factory=UserContextConfiguration)
     computer_control: ComputerControlConfiguration = Field(

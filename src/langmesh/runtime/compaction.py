@@ -19,7 +19,13 @@ from langmesh.runtime.internals import (
     conversation_tokens,
     message_tokens,
 )
-from langmesh.runtime.turn_events import CompactionDone, CompactionStarted, TurnEvent, Usage
+from langmesh.runtime.turn_events import (
+    CompactionDone,
+    CompactionStarted,
+    Done,
+    TurnEvent,
+    Usage,
+)
 from langmesh.base.ports import CompactionState, CompactionSummaryState
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.base.tuning import Tunable, active_tuning
@@ -30,6 +36,10 @@ from langmesh.runtime.values import ToolStatus
 
 
 logger = logging.getLogger(__name__)
+
+
+class CompactionSummaryExhausted(RuntimeError):
+    """The summarizer never submitted within its configured attempts; the fold cannot proceed without it."""
 
 
 class CompactionSummary(BaseModel):
@@ -430,7 +440,36 @@ class _CompactsContext:
             )
             return
         older = compactable[: len(compactable) - len(kept)]
-        summary = await self._summarize_compacted(older, compactable) if older else None
+        try:
+            summary = await self._summarize_compacted(older, compactable) if older else None
+        except CompactionSummaryExhausted as error:
+            # The summary is the durable memory the tail resumes from: without it the fold must not
+            # proceed, and the session stays blocked until the user retries the compaction.
+            self._conversation[:] = original
+            self._latest_context_tokens = tokens_before
+            self._fail_compaction(str(error))
+            yield CompactionDone(
+                reason=reason,
+                ok=False,
+                messages_before=messages_before,
+                messages_after=len(self._conversation),
+                tokens_before=tokens_before,
+                tokens_after=self._latest_context_tokens,
+                error_code="compaction_summary_failed",
+            )
+            return
+        if self._abort_event.is_set():
+            # The person stopped the fold mid-summary; report a terminal, non-blocking cancellation.
+            yield CompactionDone(
+                reason=reason,
+                ok=False,
+                messages_before=messages_before,
+                messages_after=len(self._conversation),
+                tokens_before=tokens_before,
+                tokens_after=self._latest_context_tokens,
+                error_code="compaction_cancelled",
+            )
+            return
         retained = (
             [self._summary_message(summary), *kept] if summary else list(kept)
         )
@@ -489,15 +528,40 @@ class _CompactsContext:
         with TemporaryDirectory(prefix="langmesh-compaction-summary-") as scratch_directory:
             summarizer = self._compaction_summarizer_runtime(scratch_directory)
             try:
+                attempts = 0
+                last_text = ""
                 while not self._abort_event.is_set():
-                    last_usage = None
-                    with cache_lane("compaction-summary"):
-                        async for _event in summarizer.stream(
-                            instruction, as_system_note=True, opens_exchange=True
-                        ):
-                            # The hidden session is private: nothing here is published.
-                            if isinstance(_event, Usage):
-                                last_usage = _event
+                    streamed: dict[str, Any] = {"last_text": "", "last_usage": None}
+
+                    async def _consume() -> None:
+                        with cache_lane("compaction-summary"):
+                            async for _event in summarizer.stream(
+                                instruction, as_system_note=False, opens_exchange=True
+                            ):
+                                # The hidden session is private: nothing here is published.
+                                if isinstance(_event, Done):
+                                    streamed["last_text"] = _event.text
+                                if isinstance(_event, Usage):
+                                    streamed["last_usage"] = _event
+
+                    stream_task = asyncio.create_task(_consume())
+                    abort_waiter = asyncio.create_task(self._abort_event.wait())
+                    try:
+                        finished, _ = await asyncio.wait(
+                            {stream_task, abort_waiter},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if abort_waiter in finished and not stream_task.done():
+                            summarizer.abort()
+                            await stream_task
+                    finally:
+                        abort_waiter.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await abort_waiter
+                    if self._abort_event.is_set():
+                        break
+                    last_text = streamed["last_text"] or last_text
+                    last_usage = streamed["last_usage"]
                     submitted = summarizer._submitted_compaction_summary
                     if submitted is not None:
                         if last_usage is not None:
@@ -512,11 +576,26 @@ class _CompactsContext:
                                 last_usage.output_tokens,
                             )
                         return str(submitted.summary or "").strip() or None
+                    attempts += 1
+                    summary_attempts = self._global_configuration.compaction.summary_attempts
+                    if attempts >= summary_attempts:
+                        logger.error(
+                            "compaction summarizer did not submit after %d attempts; last text: %r",
+                            attempts,
+                            last_text,
+                        )
+                        raise CompactionSummaryExhausted(
+                            f"The compaction summarizer did not submit a summary after {attempts} attempts, so the conversation was not compacted."
+                        )
                     logger.warning(
-                        "the compaction summarizer stopped without submitting its summary; continuing it"
+                        "the compaction summarizer stopped without submitting its summary (attempt %d/%d); continuing it",
+                        attempts,
+                        summary_attempts,
                     )
                     self._require_compaction_summary_submission(summarizer)
                     instruction = self._prompt_loader.load("compaction_summary_missing", {})
+            except CompactionSummaryExhausted:
+                raise
             except Exception as error:  # noqa: BLE001 — a failed summary never blocks the compaction
                 logger.exception("compaction summary failed; compacting without one: %s", error)
                 return None
@@ -526,12 +605,14 @@ class _CompactsContext:
 
     @staticmethod
     def _require_compaction_summary_submission(summarizer) -> None:
-        """Constrain a summarizer that already reviewed the conversation to its one accepted verdict tool."""
+        """Constrain a summarizer that already reviewed the conversation to its one accepted verdict tool, including what the model is bound to."""
         summary_tool = next(
             tool for tool in summarizer._tools if tool.name == "submit_compaction_summary"
         )
         summarizer._tools = [summary_tool]
         summarizer._tool_schemas = {summary_tool.name: summary_tool.args_schema}
+        summarizer._model_tools = [summary_tool]
+        summarizer._bound_model = summarizer._model.bind_tools([summary_tool])
 
     def _compaction_summarizer_runtime(self, scratch_directory: str):
         """The hidden session that produces the compaction summary, mirroring the goal reviewer."""

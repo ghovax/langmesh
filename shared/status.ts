@@ -30,7 +30,6 @@ export const STATUS_PALETTE: Record<StatusKind, string> = {
 export const STATUS_GLYPH: Partial<Record<StatusKind, GlyphName>> = {
   input_required: "circle-alert",
   failed: "circle-x",
-  background: "moon",
 };
 
 /** A live tool call's status — and whether it was pushed to the background — as a kind. */

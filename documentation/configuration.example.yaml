@@ -122,6 +122,13 @@ compaction:
   # How much recent conversation stays verbatim. Tokens rather than turns, because an unattended
   # run is one instruction and several hundred tool results.
   recent_working_set_fraction: 0.15
+  # How many times the hidden summarizer may be asked again after reviewing but not submitting.
+  summary_attempts: 3
+
+# How an independent goal review is driven.
+goal_review:
+  # How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset.
+  maximum_attempts: 3
 
 # What a file the person attaches may cost the conversation it rides in
 attachments:

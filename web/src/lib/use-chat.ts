@@ -89,10 +89,12 @@ export interface MessageMeta {
   messagesBefore?: number;
   messagesAfter?: number;
   compactionErrorCode?:
+    | "compaction_cancelled"
     | "compaction_failed"
     | "compaction_no_reclaim"
     | "compaction_preparation_failed"
-    | "compaction_strategy_failed";
+    | "compaction_strategy_failed"
+    | "compaction_summary_failed";
   retrying?: boolean;
   retryFailed?: boolean;
   durationMs?: number;
@@ -1943,6 +1945,7 @@ export function useChat(
       .then(async (result) => {
         const failed =
           result.compacted === false || result.status !== "done" || result.ok === false;
+        const cancelled = result.error_code === "compaction_cancelled";
         // The persisted transcript is authoritative: it carries the compaction events the
         // backend wrote, with the exact reason, counts and error code, and removes whatever
         // history the compaction actually reclaimed. Replaying it also settles the local marker
@@ -1988,7 +1991,10 @@ export function useChat(
           }
           flushNow();
         }
-        if (failed) {
+        if (cancelled) {
+          // A stopped compaction is terminal but not a failure: it must not hold the queue.
+          outboxRef.current?.compactionRecovered();
+        } else if (failed) {
           toaster.create({
             type: "error",
             title: translation("compactFailedTitle"),

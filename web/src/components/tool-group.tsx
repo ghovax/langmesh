@@ -208,6 +208,25 @@ export const ToolGroup = memo(function ToolGroup({
         {statusChips.map(({ kind, count, title }) => {
           const palette = STATUS_PALETTE[kind];
           const ChipIcon = STATUS_ICON[kind];
+          if (kind === "background") {
+            // A detached call reads as a label, not a glyph, so the state is unambiguous at a glance.
+            return (
+              <motion.div
+                key={kind}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.12, ease: "easeOut" }}
+                style={{ display: "inline-flex", alignItems: "center" }}
+              >
+                <Pill colorPalette={palette} title={title}>
+                  {count > 1
+                    ? translation("runningDetachedCount", { count })
+                    : translation("runningDetached")}
+                </Pill>
+              </motion.div>
+            );
+          }
           return (
             <motion.div
               key={kind}

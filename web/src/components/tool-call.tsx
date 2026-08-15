@@ -234,7 +234,9 @@ export function ToolCall({
               <ToolStatusBadge status={status} />
             ) : null}
             {background ? (
-              <Pill colorPalette={STATUS_PALETTE.background}>{translation("background")}</Pill>
+              <Pill colorPalette={STATUS_PALETTE.background}>
+                {translation("runningDetached")}
+              </Pill>
             ) : null}
           </>
         ) : undefined

@@ -42,8 +42,7 @@ export type GlyphName =
   | "mic-off"
   // The status chips draw from it too, for the same reason.
   | "circle-alert"
-  | "circle-x"
-  | "moon";
+  | "circle-x";
 
 /** What a call claims about changing things, which is three answers and not two. */
 export type MutationClaim = "reads" | "writes" | "undeclared";

@@ -223,6 +223,10 @@ compaction:
   reclaim_at_fraction: 0.85
   output_reserve_fraction: 0.1
   recent_working_set_fraction: 0.15
+  summary_attempts: 3
+
+goal_review:
+  maximum_attempts: 3
 ```
 
 When a conversation reaches its recommended preparation threshold, LangMesh appends one private pre-compaction notice inside the reserved context buffer. The segment exposes only local Bash. The agent must atomically bring the active workspace's current-state `.agents/observations.sqlite` up to date and advance `registry_meta.revision`, including a revision-only acknowledgement when nothing durable changed. LangMesh captures the prior revision and verifies that it advanced, then appends a private compaction instruction to the existing conversation and asks the model to return the summary through `submit_compaction_summary`. That request keeps the conversation's cache prefix intact; once the summary is collected, the older turns are dropped and the session continues with the system prompt, the summary, and the recent working set word for word. The threshold is a recommendation rather than a hard limit; the reserve exists so this checkpoint can finish cleanly. A failed preparation or compaction becomes a visible blocking event, and no later message is accepted until retry succeeds:
@@ -230,6 +234,9 @@ When a conversation reaches its recommended preparation threshold, LangMesh appe
 - `output_reserve_fraction` is held back for the answer the model is about to write; everything else here is a share of what remains, so a fraction means what it says.
 - `reclaim_at_fraction` is the recommended preparation boundary, not a hard cutoff. The output reserve is the safety space in which the agent updates or explicitly acknowledges durable observations before compaction.
 - `recent_working_set_fraction` is how much stays verbatim. Measured in tokens rather than turns, because an unattended run is one instruction and several hundred tool results, and a turn count reads that as nothing worth compacting.
+- `summary_attempts` is how many times the hidden summarizer may be asked again after reviewing but not submitting; once exhausted, the compaction stops and the conversation is left unchanged until it is retried.
+
+`goal_review.maximum_attempts` is the same bound for the independent goal reviewer: after a reviewer that investigated but never submitted, it is asked again on a narrowed toolset up to this many times, then the goal carries unchanged.
 
 Observations are workspace/location-owned current state and explicit. Agents retrieve and maintain them through Bash using the `observational-memory` skill. Semantic retrieval exports minified JSONL into a temporary directory and searches it with a fresh disposable Semble index; exact retrieval uses SQLite. Consolidation happens only when the user invokes the project skill `consolidate-observations`.
 

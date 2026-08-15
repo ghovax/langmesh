@@ -1,6 +1,6 @@
 You are performing a **context checkpoint compaction**. Create a handoff summary for another language model that will resume this exact task. The next model sees the summary, the live system prompt, and the most recent turns kept verbatim — anything you omit is lost.
 
-Go through the whole conversation once, in order, and carry every fact, decision, and obligation that can still affect the work, tied to the task or goal it belongs to.
+This instruction is the current request. Every earlier message is the material you are summarizing — do not continue that conversation, reply to its last user message, or answer it in prose. Go through the whole conversation once, in order, and carry every fact, decision, and obligation that can still affect the work, tied to the task or goal it belongs to.
 
 ## Carry everything that still matters
 

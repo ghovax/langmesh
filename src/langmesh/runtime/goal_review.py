@@ -22,6 +22,7 @@ from langmesh.runtime.values import ToolStatus
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.goal import Goal, NonBlankText
 from langmesh.runtime.turn_events import (
+    Done,
     GoalReviewFinished,
     GoalReviewProgress,
     GoalReviewStarted,
@@ -265,8 +266,10 @@ class _ReviewsGoal:
         async def run() -> None:
             with cache_lane(f"goal-review/{review_id}"):
                 async for event in reviewer.stream(
-                    instruction, as_system_note=True, opens_exchange=True
+                    instruction, as_system_note=False, opens_exchange=True
                 ):
+                    if isinstance(event, Done):
+                        reviewer._last_review_text = event.text
                     if publish is not None:
                         await publish(GoalReviewProgress(review_id=review_id, event=event))
                     if self._goal_review_journal is not None:
@@ -326,10 +329,12 @@ class _ReviewsGoal:
 
     @staticmethod
     def _require_review_submission(reviewer) -> None:
-        """Constrain a reviewer that already investigated to its one accepted verdict tool."""
+        """Constrain a reviewer that already investigated to its one accepted verdict tool, including what the model is bound to."""
         review_tool = next(tool for tool in reviewer._tools if tool.name == "submit_goal_review")
         reviewer._tools = [review_tool]
         reviewer._tool_schemas = {review_tool.name: review_tool.args_schema}
+        reviewer._model_tools = [review_tool]
+        reviewer._bound_model = reviewer._model.bind_tools([review_tool])
 
     async def review_goal(
         self, publish: Callable[[TurnEvent], Awaitable[None]] | None = None
@@ -409,6 +414,7 @@ class _ReviewsGoal:
             reviewer = self._goal_reviewer(scratch_directory)
             try:
                 instruction = instructions
+                attempts = 0
                 while not self._abort_event.is_set():
                     if not await self._run_goal_review_turn(
                         reviewer, instruction, review_id, publish
@@ -420,8 +426,20 @@ class _ReviewsGoal:
                         review._review_id = review_id
                         await finish_transcript("completed", review)
                         return review
+                    attempts += 1
+                    maximum_attempts = self._global_configuration.goal_review.maximum_attempts
+                    if attempts >= maximum_attempts:
+                        logger.error(
+                            "goal reviewer did not submit after %d attempts; last text: %r",
+                            attempts,
+                            getattr(reviewer, "_last_review_text", ""),
+                        )
+                        await finish_transcript("failed")
+                        return None
                     logger.warning(
-                        "the goal reviewer stopped without submitting its verdict; continuing it"
+                        "the goal reviewer stopped without submitting its verdict (attempt %d/%d); continuing it",
+                        attempts,
+                        maximum_attempts,
                     )
                     self._require_review_submission(reviewer)
                     instruction = self._prompt_loader.load("goal_review_missing", {})

@@ -64,6 +64,8 @@ How conversation history is compacted as it grows.
 | `compaction.reclaim_at_fraction`         | number  | `0.85`   | Recommended preparation boundary. A private local-Bash segment first updates the current observational registry and advances its revision; compaction follows only after validation succeeds. |
 | `compaction.output_reserve_fraction`     | number  | `0.1`    | Share held back as safety space for the preparation segment and the answer. The rest is the usable window every other fraction here is measured against.                                   |
 | `compaction.recent_working_set_fraction` | number  | `0.15`   | Share of the usable window kept verbatim after older history is discarded. Sized in tokens rather than turns because an unattended run can be one turn with hundreds of tool results.      |
+| `compaction.summary_attempts`            | integer | `3`      | How many times the hidden summarizer may be asked again after reviewing but not submitting; once exhausted, the compaction stops and the conversation is left unchanged until it is retried. |
+| `goal_review.maximum_attempts`           | integer | `3`      | How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset before the goal carries unchanged.                                                    |
 
 ## User snapshot
 

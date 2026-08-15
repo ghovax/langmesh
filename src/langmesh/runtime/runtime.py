@@ -1066,8 +1066,7 @@ class AgentRuntime(
         accepted = asyncio.get_running_loop().create_future()
         self._steering_messages.put_nowait((text, message_id, peer_sender, accepted))
         self._steering_available.set()
-        # Interrupt an active provider read at its next safe boundary. Any prefix already
-        # streamed is persisted before this user message is appended, so both surfaces agree.
+        # Interrupt an active provider read only at a safe boundary: never while a tool call is streaming or executing; the steering waits for the call to finish and inserts after its result.
         # Preparation is an atomic private segment: steering waits at its boundary and is
         # appended immediately before the compaction, then reaches the resumed model call.
         if self._compaction_control.phase not in {"waiting", "recorded"}:

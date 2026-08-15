@@ -150,6 +150,7 @@ class CompactionUpdateRequest(BaseModel):
     reclaim_at_fraction: float | None = None
     output_reserve_fraction: float | None = None
     recent_working_set_fraction: float | None = None
+    summary_attempts: int | None = None
 
 
 class MCPServerToolCallRequest(BaseModel):
