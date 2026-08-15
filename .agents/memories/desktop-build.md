@@ -35,7 +35,7 @@ macOS caches `AXIsProcessTrusted` per process, so after granting, the **daemon m
 
 ## The self-signed codesign identity (stable across rebuilds)
 
-Ad-hoc signing changes the cdhash every build, which invalidates the TCC grant. Instead `packaging/create-signing-cert.sh` makes a persistent self-signed identity **"LangMesh Local Codesign"** in the login keychain. Gotcha: use **`/usr/bin/openssl`** (LibreSSL) for the p12 — openssl 3.x writes a MAC that `security import` rejects ("MAC verification failed"). Import with `security import -A -T /usr/bin/codesign`.
+Ad-hoc signing changes the cdhash every build, which invalidates the TCC grant. Instead `packaging/create-signing-certificate.sh` makes a persistent self-signed identity **"LangMesh Local Codesign"** in the login keychain. Gotcha: use **`/usr/bin/openssl`** (LibreSSL) for the p12 — openssl 3.x writes a MAC that `security import` rejects ("MAC verification failed"). Import with `security import -A -T /usr/bin/codesign`.
 
 `packaging/sign-app.sh` takes one or both artifacts. The daemon gets `--deep` plus `packaging/Entitlements.plist` (its dylibs, its Apple Events); the app signs plain, having neither nested code nor those needs. Each bundle takes its identifier from its own Info.plist (both `com.ghovax.langmesh`); no hardened runtime, so PyInstaller's dylibs still load.
 

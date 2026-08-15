@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sign the two LangMesh artifacts with the local self-signed identity
-# (packaging/create-signing-cert.sh), so the daemon has a STABLE code identity across rebuilds.
+# (packaging/create-signing-certificate.sh), so the daemon has a STABLE code identity across rebuilds.
 #
 # There are two now, and only one of them matters for permissions. The daemon — not the desktop
 # app — is the process that calls the macOS Accessibility API, because every session runs inside it and is a
