@@ -525,6 +525,7 @@ class _TurnRunner:
         # A turn opened from outside means the session is wanted working, so lift any prior Stop suppression.
         if resolved.ingested.from_outside:
             self._executor._context(task.context_id).aborted = False
+            runtime.clear_stop()
         if self._track_steerable_turn:
             self._executor._context(task.context_id).running = True
 
@@ -635,7 +636,13 @@ class _TurnRunner:
             # Goal review prose stays visible, while an independent task obligation rides inside its reminder.
             self._turn_input = self._user_text
             if prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
-                self._turn_input = f"{self._turn_input}\n\n{self._task_continuation_note(runtime)}"
+                self._turn_input = _PROMPTS.load(
+                    "goal_and_task_continuation",
+                    {
+                        "goal_review": self._user_text,
+                        "task_continuation": self._task_continuation_note(runtime),
+                    },
+                ).strip()
         elif mode is _TurnMode.TASK_CONTINUATION:
             self._turn_input = self._task_continuation_note(runtime)
         elif mode is _TurnMode.REPORT_REMINDER:

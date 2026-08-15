@@ -834,7 +834,28 @@ class BashToolConfiguration(BaseModel):
         return segments
 
     @staticmethod
+    def _canonical_rm_segment(segment: str) -> str:
+        """Fold `rm`'s short flags into one canonical token, so `rm -Rf` and `rm -f -r`
+        are judged exactly like the `rm -rf` the destructive defaults name. Only the
+        plain short-flag spelling is folded; long options pass through untouched."""
+        parts = segment.split()
+        if not parts or parts[0] != "rm" or len(parts) < 2:
+            return segment
+        flag_tokens = [part for part in parts[1:] if part.startswith("-") and not part.startswith("--")]
+        if not flag_tokens:
+            return segment
+        flags = "".join(part.lstrip("-") for part in flag_tokens)
+        if not flags:
+            return segment
+        canonical = "".join(dict.fromkeys(flags.lower()))
+        if "r" in canonical and "f" in canonical:
+            canonical = "rf"
+        rest = [part for part in parts[1:] if not (part.startswith("-") and not part.startswith("--"))]
+        return " ".join(["rm", f"-{canonical}", *rest])
+
+    @staticmethod
     def _segment_matches(segment: str, pattern: str) -> bool:
+        segment = BashToolConfiguration._canonical_rm_segment(segment)
         if pattern.endswith("*"):
             keyword = pattern[:-1].rstrip()
             if segment.startswith(keyword):

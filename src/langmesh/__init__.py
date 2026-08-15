@@ -759,6 +759,8 @@ class Session:
     ) -> AsyncIterator[TurnEventUnion]:
         """Drive a turn, yielding each event, and keep driving turns while a goal the agent set is still open."""
         async with self._turn_lock:
+            # A fresh user turn starts clean: no stop from before is owed.
+            self.runtime.clear_stop()
             if not self._restored:
                 await self.restore()
             await self._ensure_observation_metadata()
@@ -777,8 +779,11 @@ class Session:
             self.runtime.abandon_turn_retry()
             self.runtime.restore_goal_allowance()
             self.runtime.restore_task_allowance()
+            cancelled = False
             try:
                 async for event in self.runtime.stream(self._compose(message, attachments)):
+                    if isinstance(event, Done) and event.stop_reason == "cancelled":
+                        cancelled = True
                     if isinstance(event, Suspended):
                         self._pending = PendingTurn(
                             interactions=tuple(event.interactions),
@@ -788,6 +793,9 @@ class Session:
                         self._phase = SessionPhase.SUSPENDED
                     yield event
                 if self.runtime.compaction_failure:
+                    return
+                # A turn the person stopped opens no follow-up work of its own.
+                if cancelled:
                     return
                 async for event in self._continue_work():
                     yield event
@@ -806,6 +814,8 @@ class Session:
     ) -> AsyncIterator[TurnEventUnion]:
         """Resume a suspended turn after explicit decisions for every interaction."""
         async with self._turn_lock:
+            # A fresh user turn starts clean: no stop from before is owed.
+            self.runtime.clear_stop()
             if not self._restored:
                 await self.restore()
             await self._ensure_observation_metadata()
@@ -841,8 +851,11 @@ class Session:
                     }
             self._pending = None
             self._phase = SessionPhase.RUNNING
+            cancelled = False
             try:
                 async for event in self.runtime.resume_stream(dict(pending.plans), answers):
+                    if isinstance(event, Done) and event.stop_reason == "cancelled":
+                        cancelled = True
                     if isinstance(event, Suspended):
                         self._pending = PendingTurn(
                             interactions=tuple(event.interactions),
@@ -852,6 +865,9 @@ class Session:
                         self._phase = SessionPhase.SUSPENDED
                     yield event
                 if self.runtime.compaction_failure:
+                    return
+                # A turn the person stopped opens no follow-up work of its own.
+                if cancelled:
                     return
                 async for event in self._continue_work():
                     yield event
@@ -867,7 +883,8 @@ class Session:
     async def _continue_work(self) -> AsyncIterator[TurnEventUnion]:
         """Review goals and reopen actionable tracked work through one continuation turn."""
         while True:
-            if self.runtime.has_pending_jobs():
+            # A stop is owed (or just landed): continuation turns must not erase it.
+            if self.runtime.has_pending_jobs() or self.runtime.stop_requested:
                 return
             goal = self.runtime.goal
             continue_goal = self.runtime.should_continue_goal()
@@ -876,7 +893,8 @@ class Session:
                 self.runtime.park_goal()
             if not continue_goal and not continue_tasks:
                 return
-            continuation_parts: list[str] = []
+            goal_review_message = ""
+            task_note = ""
             opens_exchange = False
             if continue_goal:
                 review_events: asyncio.Queue[TurnEventUnion] = asyncio.Queue()
@@ -908,19 +926,25 @@ class Session:
                             await review_task
                 goal = self.runtime.apply_goal_review(review)
                 if goal is not None and goal.is_open and goal.review_message:
-                    continuation_parts.append(goal.review_message)
+                    goal_review_message = goal.review_message
                     self.runtime.note_goal_continuation()
                     opens_exchange = True
             if continue_tasks and self.runtime.should_continue_tasks():
-                continuation_parts.append(self.runtime.task_continuation_message())
+                task_note = self.runtime.task_continuation_message()
                 self.runtime.note_task_continuation()
-            if not continuation_parts:
+            if not goal_review_message and not task_note:
                 return
+            cancelled_continuation = False
             async for event in self.runtime.stream(
-                "\n\n".join(continuation_parts),
+                self.runtime.continuation_content(
+                    goal_review=goal_review_message,
+                    task_continuation=task_note,
+                ),
                 as_system_note=True,
                 opens_exchange=opens_exchange,
             ):
+                if isinstance(event, Done) and event.stop_reason == "cancelled":
+                    cancelled_continuation = True
                 if isinstance(event, Suspended):
                     self._pending = PendingTurn(
                         interactions=tuple(event.interactions),
@@ -929,7 +953,7 @@ class Session:
                     )
                     self._phase = SessionPhase.SUSPENDED
                 yield event
-            if self._pending is not None:
+            if self._pending is not None or cancelled_continuation or self.runtime.stop_requested:
                 return
 
     async def ask(self, message: str, *, attachments: Sequence[str | Path] = ()) -> str:
@@ -949,6 +973,8 @@ class Session:
     async def compact(self) -> AsyncIterator[TurnEventUnion]:
         """Prepare and compact the conversation now, retrying the exact failed phase when necessary."""
         async with self._turn_lock:
+            # A fresh user turn starts clean: no stop from before is owed.
+            self.runtime.clear_stop()
             if not self._restored:
                 await self.restore()
             await self._ensure_observation_metadata()
@@ -983,6 +1009,8 @@ class Session:
     async def retry(self) -> AsyncIterator[TurnEventUnion]:
         """Continue the last failed turn from its durable conversation state."""
         async with self._turn_lock:
+            # A fresh user turn starts clean: no stop from before is owed.
+            self.runtime.clear_stop()
             if not self._restored:
                 await self.restore()
             await self._ensure_observation_metadata()
