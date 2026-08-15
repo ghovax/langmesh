@@ -270,12 +270,22 @@ class _DispatchesTools:
         try:
             while True:
                 if self._abort_event.is_set():
+                    if self._has_queued_steering():
+                        # Steering waits for this batch: the running calls finish, then it is inserted at the safe boundary.
+                        event = await queue.get()
+                        if event is None:
+                            break
+                        yield event
+                        continue
                     break
                 # Race the next event against the abort, so a Stop is honoured even when every tool is parked.
                 get_future = asyncio.ensure_future(queue.get())
                 await asyncio.wait({get_future, abort_waiter}, return_when=asyncio.FIRST_COMPLETED)
                 if not get_future.done():
                     get_future.cancel()
+                    if self._has_queued_steering():
+                        # Steering landed mid-batch: wait for the running calls to finish instead of cancelling them.
+                        continue
                     break
                 event = get_future.result()
                 if event is None:

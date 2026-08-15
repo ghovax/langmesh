@@ -131,10 +131,12 @@
     "compactingContext": "会話を圧縮中…",
     "contextCompacted": "会話を圧縮しました",
     "compactionErrors": {
+      "compaction_cancelled": "圧縮は完了する前に停止されました。",
       "compaction_failed": "畳み込みを完了できませんでした。続行する前に再試行してください。",
       "compaction_no_reclaim": "畳み込みで会話領域を解放できませんでした。",
       "compaction_preparation_failed": "観察メモリのチェックポイントが完了しなかったため、履歴は削除されませんでした。",
-      "compaction_strategy_failed": "設定された圧縮戦略が失敗し、会話は変更されませんでした。"
+      "compaction_strategy_failed": "設定された圧縮戦略が失敗し、会話は変更されませんでした。",
+      "compaction_summary_failed": "要約が生成されなかったため、会話は変更されていません。続行する前に圧縮を再試行してください。"
     },
     "retry": "再試行",
     "copied": "コピーしました",
@@ -730,7 +732,12 @@
       "automatic": "自動で圧縮",
       "reclaim_at_fraction": "圧縮を始める割合",
       "output_reserve_fraction": "回答用に確保する割合",
-      "recent_working_set_fraction": "そのまま残す割合"
+      "recent_working_set_fraction": "そのまま残す割合",
+      "summary_attempts": "要約の再試行回数"
+    },
+    "goal_review": {
+      "_": "目標レビュー",
+      "maximum_attempts": "最大レビュー試行回数"
     }
   },
   "SettingsAbout": {
@@ -938,7 +945,12 @@
       "automatic": "会話が埋まってきたら自動で圧縮します。手動の圧縮はどちらの設定でも使えます。",
       "reclaim_at_fraction": "使用可能なウィンドウ内で準備を始める目安です。古い履歴を破棄する前にエージェントが永続的な知識を記録できるよう、予約領域は最後のセグメントのために残されます。",
       "output_reserve_fraction": "現在の回答と圧縮前の記録セグメントのために、使用可能領域の外側へ確保する安全バッファです。",
-      "recent_working_set_fraction": "古い履歴を破棄した後もそのまま残す、使用可能ウィンドウの割合です。1 ターンに多数のツール結果が含まれることがあるため、トークン量で測ります。"
+      "recent_working_set_fraction": "古い履歴を破棄した後もそのまま残す、使用可能ウィンドウの割合です。1 ターンに多数のツール結果が含まれることがあるため、トークン量で測ります。",
+      "summary_attempts": "隠れた要約エージェントがレビュー後に提出しなかった場合に再試行する回数。上限に達すると圧縮は停止し、再試行するまで会話は変更されません。"
+    },
+    "goal_review": {
+      "_": "独立した目標レビューの進め方。",
+      "maximum_attempts": "調査したのに提出しなかったレビュアーに、ツールを絞って再度求める回数。上限に達すると目標は変更されずに継続します。"
     }
   },
   "SettingsChoices": {
@@ -1077,7 +1089,7 @@
     "notConnectedDescription": "ターミナルが再接続するまで入力を送信できません。"
   },
   "ToolCall": {
-    "background": "バックグラウンド",
+    "runningDetached": "分離して実行中",
     "submittingVerdict": "独立した目標レビューを提出中"
   },
   "ToolCard": {
@@ -1095,6 +1107,8 @@
     "thinking": "思考中",
     "failed": "エラーが返されました",
     "failedCount": "{count, plural, other {# 件エラー}}",
+    "runningDetached": "分離して実行中",
+    "runningDetachedCount": "{count, plural, other {# 件が分離して実行中}}",
     "backgroundCount": "{count, plural, other {バックグラウンド #}}"
   },
   "ToolViews": {

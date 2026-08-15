@@ -751,6 +751,8 @@ export interface CompactionSettings {
   reclaim_at_fraction: number;
   output_reserve_fraction: number;
   recent_working_set_fraction: number;
+  // How many times the hidden summarizer may be asked again after reviewing but not submitting.
+  summary_attempts: number;
 }
 
 export interface Settings {
@@ -797,6 +799,7 @@ const DEFAULT_COMPACTION: CompactionSettings = {
   reclaim_at_fraction: 0.85,
   output_reserve_fraction: 0.1,
   recent_working_set_fraction: 0.15,
+  summary_attempts: 3,
 };
 
 // Persist the context-reclaiming settings.
@@ -1736,10 +1739,12 @@ export interface CompactionResult {
   messages_before?: number;
   messages_after?: number;
   error_code?:
+    | "compaction_cancelled"
     | "compaction_failed"
     | "compaction_no_reclaim"
     | "compaction_preparation_failed"
-    | "compaction_strategy_failed";
+    | "compaction_strategy_failed"
+    | "compaction_summary_failed";
 }
 
 export async function compactSession(sessionId: string): Promise<CompactionResult> {

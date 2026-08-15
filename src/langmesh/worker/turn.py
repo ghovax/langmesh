@@ -42,7 +42,7 @@ from langmesh.protocol.parts import (
 from langmesh.protocol.turn_record import TurnKind, TurnRecord
 from langmesh.runtime.goal import GoalReviewPhase
 from langmesh.runtime.runtime import AgentRuntime
-from langmesh.runtime.turn_events import SuspensionGate
+from langmesh.runtime.turn_events import CompactionDone, SuspensionGate
 from langmesh.worker.sink import _TurnEventSink
 
 if TYPE_CHECKING:
@@ -598,10 +598,21 @@ class _TurnRunner:
         """A manual compaction runs no model turn: it compacts the older history and emits the compaction parts."""
         if prepared.resolved.ingested.mode is not _TurnMode.COMPACTION:
             return None
-        async for compaction_event in prepared.runtime.compact(
-            reason=prepared.runtime.pending_compaction_reason
-        ):
-            await prepared.sink.emit_compaction(compaction_event)
+        try:
+            async for compaction_event in prepared.runtime.compact(
+                reason=prepared.runtime.pending_compaction_reason
+            ):
+                await prepared.sink.emit_compaction(compaction_event)
+        except asyncio.CancelledError:
+            # A stop that lands mid-compaction must still close the UI's running indicator.
+            await prepared.sink.emit_compaction(
+                CompactionDone(
+                    reason=prepared.runtime.pending_compaction_reason,
+                    ok=False,
+                    error_code="compaction_cancelled",
+                )
+            )
+            raise
         await self._save_runtime_conversation()
         await self._updater.complete()
         return self._DONE

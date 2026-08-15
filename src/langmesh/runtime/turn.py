@@ -417,23 +417,51 @@ class _RunsTurns:
             },
         )
 
-    def _close_dangling_tool_calls(self) -> None:
-        """Close tool calls left dangling by a suspended turn that a new message superseded, so history stays valid."""
+    def _repair_dangling_tool_calls(self, *, protect_tail_batch: bool = False) -> None:
+        """Make every assistant tool-call batch adjacent to the tool messages answering it, so history is valid for the provider."""
         if not self._conversation:
             return
-        last = self._conversation[-1]
-        if isinstance(last, AIMessage) and getattr(last, "tool_calls", None):
-            for tool_call in last.tool_calls:
-                self._conversation.append(
-                    ToolMessage(
-                        content="(superseded: a new message was sent before this was answered)",
-                        tool_call_id=tool_call["id"],
-                    )
-                )
+        protected: set[str] = set()
+        if protect_tail_batch and isinstance(self._conversation[-1], AIMessage):
+            protected = {
+                call["id"]
+                for call in getattr(self._conversation[-1], "tool_calls", None) or []
+                if call.get("id")
+            }
+        by_identifier = {
+            message.tool_call_id: message
+            for message in self._conversation
+            if isinstance(message, ToolMessage) and message.tool_call_id
+        }
+        repaired: list = []
+        consumed: set[str] = set()
+        changed = False
+        for message in self._conversation:
+            if isinstance(message, ToolMessage) and message.tool_call_id in consumed:
+                changed = True  # already re-emitted beside its assistant message
+                continue
+            repaired.append(message)
+            if isinstance(message, AIMessage):
+                for call in getattr(message, "tool_calls", None) or []:
+                    identifier = call.get("id")
+                    if not identifier or identifier in protected:
+                        continue
+                    if identifier not in by_identifier:
+                        by_identifier[identifier] = ToolMessage(
+                            content="Tool call aborted.",
+                            tool_call_id=identifier,
+                        )
+                        changed = True
+                    if identifier not in consumed:
+                        repaired.append(by_identifier[identifier])
+                        consumed.add(identifier)
+        if len(repaired) != len(self._conversation) or changed:
+            self._conversation[:] = repaired
+            self._mark_session_dirty()
 
     def abandon_suspension(self) -> None:
         """Close a parked tool batch without executing it, leaving valid append-only conversation state."""
-        self._close_dangling_tool_calls()
+        self._repair_dangling_tool_calls()
 
     async def resume_stream(
         self, plans: dict[str, dict], answers: dict[str, Any]
@@ -476,6 +504,9 @@ class _RunsTurns:
         turn_tool_calls_log: list[dict] = []
         turn_tool_results_log: list[dict] = []
 
+        # Every request leaves from valid history: a resume protects its pending batch, every other path closes unanswered tool calls.
+        self._repair_dangling_tool_calls(protect_tail_batch=resume_plans is not None)
+
         if continue_existing:
             recorded_user_message = ""
         elif resume_plans is not None:
@@ -506,8 +537,6 @@ class _RunsTurns:
                 await self._resource_sync()
             yield Checkpoint()
         else:
-            # A superseded suspension leaves dangling calls; close them so appending this turn stays valid.
-            self._close_dangling_tool_calls()
             # Usually prose, but an attachment turn carries a content list so a vision model sees the pixels.
             turn_message = (
                 self._reminder_message(
@@ -853,33 +882,59 @@ class _RunsTurns:
             abort_waiter = asyncio.ensure_future(self._abort_event.wait())
             silence_limit = active_tuning().duration(Tunable.model_silence_give_up)
             progress_deadline = asyncio.get_running_loop().time() + silence_limit
+            pending_chunk = None
             while True:
-                chunk_future = asyncio.ensure_future(_stream_next(model_stream))
+                if self._abort_event.is_set():
+                    if self._has_queued_steering():
+                        if any(
+                            getattr(chunk, "tool_call_chunks", None)
+                            or getattr(chunk, "tool_calls", None)
+                            or getattr(chunk, "invalid_tool_calls", None)
+                            for chunk in response_chunks
+                        ):
+                            # A tool call is already streaming: keep reading so the call completes; the steering is inserted after its result.
+                            self._abort_event.clear()
+                            abort_waiter = asyncio.ensure_future(self._abort_event.wait())
+                        else:
+                            # Safe boundary: only a text prefix has been shown, so interrupting here cannot orphan a tool call.
+                            if pending_chunk is not None:
+                                pending_chunk.cancel()
+                                with suppress(BaseException):
+                                    await pending_chunk
+                                pending_chunk = None
+                            self._abort_event.clear()
+                            aborted_for_steering = True
+                            break
+                    else:
+                        # A real stop: drop the pending read and stop consuming the stream.
+                        if pending_chunk is not None:
+                            pending_chunk.cancel()
+                            with suppress(BaseException):
+                                await pending_chunk
+                            pending_chunk = None
+                        yield Done(text="", stop_reason="cancelled")
+                        outcome.cancelled = True
+                        return
+
+                if pending_chunk is None:
+                    pending_chunk = asyncio.ensure_future(_stream_next(model_stream))
                 completed, _ = await asyncio.wait(
-                    {chunk_future, abort_waiter},
+                    {pending_chunk, abort_waiter},
                     timeout=max(0.0, progress_deadline - asyncio.get_running_loop().time()),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 if not completed:
-                    chunk_future.cancel()
+                    pending_chunk.cancel()
                     with suppress(BaseException):
-                        await chunk_future
+                        await pending_chunk
+                    pending_chunk = None
                     raise TimeoutError(
                         f"The model stream made no meaningful progress for {silence_limit:g} seconds."
                     )
-                if self._abort_event.is_set():
-                    # Stop won the race: drop the pending read and stop consuming the stream.
-                    chunk_future.cancel()
-                    with suppress(BaseException):
-                        await chunk_future
-                    if self._has_queued_steering():
-                        self._abort_event.clear()
-                        aborted_for_steering = True
-                        break
-                    yield Done(text="", stop_reason="cancelled")
-                    outcome.cancelled = True
-                    return
-                chunk = chunk_future.result()
+                if abort_waiter in completed and not pending_chunk.done():
+                    continue  # the top of the loop decides what this interrupt means
+                chunk = pending_chunk.result()
+                pending_chunk = None
                 if chunk is _STREAM_EXHAUSTED:
                     break
                 if not _chunk_advances_model_response(chunk):
@@ -1079,6 +1134,10 @@ class _RunsTurns:
         self._conversation.append(response)
         tool_calls = cast(list[dict], response.tool_calls)
         outcomes: dict[str, dict] = {}
+        if self._abort_event.is_set() and self._has_queued_steering():
+            # A steering message waits for this batch: run every call to completion, then insert
+            # the steering at the safe boundary after the results land.
+            self._abort_event.clear()
         if not self._abort_event.is_set():
             plans, pending = await self._preflight_permissions(tool_calls)
             gates = [SuspensionGate(**gate.to_dict()) for gate in pending]
