@@ -321,7 +321,8 @@
     "stopTitle": "この目標に向けた作業を中止しますか？",
     "waitingForBackground": "バックグラウンド処理の完了待ち",
     "waiting": "確認待ち",
-    "working": "取り組み中"
+    "working": "取り組み中",
+    "viewReview": "レビューを見る"
   },
   "LocationForm": {
     "local": "ローカル",

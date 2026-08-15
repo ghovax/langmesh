@@ -1277,7 +1277,7 @@ export function ChatPanel({
                 {/* A fixed icon slot, so spinner and arrow share a box and the label never shifts; the spinner is
                     shrunk inside it because the arrow glyph fills only ~2/3 of its box, so a full-size ring reads too big. */}
                 <Flex align="center" justify="center" boxSize="4" flexShrink={0}>
-                  {isStreaming ? <Spinner boxSize="2.5" borderWidth="2px" /> : <LuArrowDown />}
+                  {isStreaming ? <Spinner boxSize="3" borderWidth="2px" /> : <LuArrowDown />}
                 </Flex>
                 {translation(isStreaming ? "jumpToProgress" : "jumpToLatest")}
               </Button>
@@ -1327,7 +1327,13 @@ export function ChatPanel({
             >
               <Box w="full" maxW="80rem" mx="auto">
                 {/* Above the composer, because a session with a goal is one the person typing should see and be able to end. */}
-                {activeGoal && <GoalBar goal={activeGoal} onClear={handleClearGoal} />}
+                {activeGoal && (
+                  <GoalBar
+                    goal={activeGoal}
+                    onClear={handleClearGoal}
+                    onOpenReview={() => setSidePanelOpen("reviews", true)}
+                  />
+                )}
                 <ChatInput
                   onSend={handleSend}
                   onAbort={abort}

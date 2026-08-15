@@ -113,7 +113,7 @@ async def _abort_input(session, _params: dict) -> dict:
 
 async def _clear_goal(session, _params: dict) -> dict:
     """The person called the goal off, which is what stops the session opening further turns for itself."""
-    return {"cleared": session.clear_goal(session.session_id)}
+    return {"cleared": await session.clear_goal(session.session_id)}
 
 
 async def _compact(session, _params: dict) -> dict:
