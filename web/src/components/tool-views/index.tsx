@@ -800,16 +800,6 @@ function SubmitGoalReviewCallView({ args }: { args: Record<string, unknown> }) {
   );
 }
 
-// `wait_for` is entirely its own duration, which the heading already states, so its arguments render as nothing.
-function WaitForResultView({ data }: { data: Record<string, unknown> }) {
-  const translation = useTranslations("ToolDisplay");
-  const seconds = Number(data.seconds);
-  const interrupted = asString(data.code) === "interrupted";
-  if (interrupted) return <EmptyHint>{translation("waitInterrupted")}</EmptyHint>;
-  if (!Number.isFinite(seconds)) return null;
-  return <EmptyHint>{translation("waited", { seconds })}</EmptyHint>;
-}
-
 /** The goal that is now set: setting one is the only outcome this tool has. */
 function UpdateGoalResultView({ data }: { data: Record<string, unknown> }) {
   const translation = useTranslations("ToolViews");
@@ -869,9 +859,6 @@ export function ToolCallView({ name, args }: { name: string; args?: Record<strin
         return <UpdateGoalCallView args={args} />;
       case "submit_goal_review":
         return <SubmitGoalReviewCallView args={args} />;
-      // Its only argument is the duration, and the heading is already that duration.
-      case "wait_for":
-        return null;
       default: {
         // The explanation is already the collapsed heading, so it is stripped from the expanded body.
         const rest = { ...args };
@@ -1210,7 +1197,6 @@ export function ToolResultView({
     // `message_session` reports only that it was accepted; the reply arrives as its own message in the transcript.
     if (name === "message_session") return null;
     if (name === "update_goal") return <UpdateGoalResultView data={data} />;
-    if (name === "wait_for") return <WaitForResultView data={data} />;
     return <GenericView data={data} />;
   }
 

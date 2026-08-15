@@ -745,15 +745,15 @@ class _TurnRunner:
             self._runtime.mark_turn_failed()
         if self._mode is _TurnMode.RETRY:
             await self._emit(_event_part(RetryEvent(status="done", ok=False)))
-        await self._updater.failed(
-            self._updater.new_agent_message(
-                [
-                    _event_part(
-                        ErrorEvent(**_safe_turn_error(exception, had_images=self._turn_has_images))
-                    )
-                ]
-            )
+        error_part = _event_part(
+            ErrorEvent(**_safe_turn_error(exception, had_images=self._turn_has_images))
         )
+        # Publish the error on the live lane as well as persisting it in the failed status.
+        # Without the publish, the chat's error panel only appears after a reload re-reads
+        # the history, because the turn-end activity alone carries no error part.
+        if self._executor._on_stream_event is not None:
+            self._executor._on_stream_event(self._task.context_id, error_part)
+        await self._updater.failed(self._updater.new_agent_message([error_part]))
 
     async def _teardown(self) -> None:
         task = self._task

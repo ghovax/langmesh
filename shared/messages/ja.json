@@ -1100,10 +1100,7 @@
     "modifying": "変更中",
     "requestingAccess": "アクセスをリクエスト中"
   },
-  "ToolDisplay": {
-    "waited": "{seconds}秒待機しました",
-    "waitInterrupted": "停止により待機を中断しました"
-  },
+  "ToolDisplay": {},
   "ToolGroup": {
     "thinking": "思考中",
     "failed": "エラーが返されました",

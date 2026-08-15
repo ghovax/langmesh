@@ -52,7 +52,6 @@ const NEVER_MUTATES: ReadonlySet<string> = new Set([
   "search_web",
   "fetch_url",
   "read_turn",
-  "wait_for",
   "list_mcp_tools",
   "list_mcp_resources",
   "read_mcp_resource",
@@ -147,7 +146,6 @@ const TOOL_GLYPHS: Record<string, { glyph: GlyphName; tint: string }> = {
   // The internal reviewer's verdict: it changes only what the record holds about the goal it was asked to read.
   submit_goal_review: { glyph: "badge-check", tint: "purple.fg" },
   // A wait is the one call doing nothing on purpose, so it reads that way in the muted tint.
-  wait_for: { glyph: "clock", tint: "fg.muted" },
   read_turn: { glyph: "history", tint: "blue.fg" },
   call_mcp_server_tool: { glyph: "plug", tint: "purple.fg" },
   list_mcp_tools: { glyph: "plug-zap", tint: "purple.fg" },

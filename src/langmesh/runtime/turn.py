@@ -498,6 +498,7 @@ class _RunsTurns:
                 f"Context compaction failed: {self._compaction_control.failure} Retry compaction before sending more work."
             )
         self._abort_event.clear()
+        self._response_nudged = False
         # The person's words are held until the request is assembled, so every part sent with them reads first.
         pending_user_message = None
         # A turn runs until the model is done or the user interrupts: an unfinished goal outlives this loop.
@@ -690,9 +691,12 @@ class _RunsTurns:
                 self.discard_pending_steering()
                 # The user's message was already appended before the provider call. Close the
                 # exchange explicitly so the next request cannot inherit a dangling instruction
-                # and finish the work that Stop just canceled.
+                # and finish the work that Stop just canceled. Keep whatever partial response the
+                # provider already saw, or the prefix cache would be invalidated by the stop.
                 self._conversation.append(
-                    AIMessage(content="", additional_kwargs={"langmesh_cancelled": True})
+                    call.response
+                    if call.response is not None
+                    else AIMessage(content="", additional_kwargs={"langmesh_cancelled": True})
                 )
                 self._record_turn(
                     recorded_user_message, turn_tool_calls_log, turn_tool_results_log, ""
@@ -914,6 +918,14 @@ class _RunsTurns:
                             with suppress(BaseException):
                                 await pending_chunk
                             pending_chunk = None
+                        # The provider already saw these chunks. Keep them in the conversation so the
+                        # next request's prefix stays cache-stable, instead of replacing them with a
+                        # placeholder that would invalidate the cache at this exact point.
+                        if response_chunks:
+                            outcome.response = add_ai_message_chunks(
+                                response_chunks[0], *response_chunks[1:]
+                            )
+                            outcome.response.additional_kwargs["langmesh_cancelled"] = True
                         yield Done(text="", stop_reason="cancelled")
                         outcome.cancelled = True
                         return
@@ -1079,6 +1091,15 @@ class _RunsTurns:
         # No tool calls, so the turn ends: the resume pump wakes the agent when the next result lands.
         final_text = message_text(response)
         self._conversation.append(response)
+        # A response with no prose (thinking only) is a no-op: prompt the model once to actually
+        # answer, so the exchange cannot end silently. A second no-op ends the turn for real.
+        if not final_text and not self._response_nudged:
+            self._response_nudged = True
+            self._conversation.append(
+                self._reminder_message(self._prompt_loader.load("response_required", {}))
+            )
+            step.directive = _CONTINUE
+            return
         steering_events = await self._drain_steering_messages()
         if steering_events:
             for steering_event in steering_events:
