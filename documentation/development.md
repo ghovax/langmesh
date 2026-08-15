@@ -132,7 +132,7 @@ The screen-control tools (`control_screen`) need the macOS **Accessibility** gra
 Create the self-signed identity in your login keychain once:
 
 ```shell
-packaging/create-signing-cert.sh
+packaging/create-signing-certificate.sh
 ```
 
 Then sign after each build, either artifact or both:

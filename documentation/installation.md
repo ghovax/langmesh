@@ -43,7 +43,7 @@ You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv`
 | 3 | `uv sync` | Creates `.venv` with the project **and the dev group**, so PyInstaller arrives here | Resolution and install log | ~1 min |
 | 4 | `cd web && bun install && cd ..` | UI dependencies | | ~1 min |
 | 5 | `packaging/build-daemon.sh` | Freezes the harness, then smoke-tests it in an isolated set of XDG directories | `freezing the harness…`, then `ok: langmeshd answers on its own socket`, then the install commands it prints | **several minutes** |
-| 6 | `packaging/create-signing-cert.sh` — **once per machine** | Makes the persistent identity "LangMesh Local Codesign" | A keychain prompt | seconds |
+| 6 | `packaging/create-signing-certificate.sh` — **once per machine** | Makes the persistent identity "LangMesh Local Codesign" | A keychain prompt | seconds |
 | 7 | `packaging/sign-app.sh "packaging/dist/LangMesh Computer Use.app"` | Signs the daemon `--deep` with its entitlements | `signed …`, then `Identifier=` and `Authority=` | seconds |
 | 8 | `ditto "packaging/dist/LangMesh Computer Use.app" "/Applications/LangMesh Computer Use.app"` | Installs the harness | | seconds |
 | 9 | `ln -sf "/Applications/LangMesh Computer Use.app/Contents/MacOS/langmesh" /usr/local/bin/langmesh` | Puts `langmesh` and `langmeshd` on your `PATH` | May need `sudo` | seconds |
