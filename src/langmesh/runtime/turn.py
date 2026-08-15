@@ -552,8 +552,8 @@ class _RunsTurns:
         self._turn_started_at = datetime.now(timezone.utc)
 
         while True:
-            if self._abort_event.is_set():
-                if self._has_queued_steering():
+            if self._abort_event.is_set() or self._stop_requested:
+                if self._has_queued_steering() and not self._stop_requested:
                     self._abort_event.clear()
                 else:
                     yield Done(text="", stop_reason="cancelled")
@@ -685,6 +685,9 @@ class _RunsTurns:
                 # asking the user to resend would duplicate it in frontend and backend state.
                 continue
             if call.cancelled:
+                # Steering queued behind a cancelled read is superseded by the Stop: answer its
+                # sender now rather than leaving the accepted future pending forever.
+                self.discard_pending_steering()
                 # The user's message was already appended before the provider call. Close the
                 # exchange explicitly so the next request cannot inherit a dangling instruction
                 # and finish the work that Stop just canceled.
@@ -884,8 +887,8 @@ class _RunsTurns:
             progress_deadline = asyncio.get_running_loop().time() + silence_limit
             pending_chunk = None
             while True:
-                if self._abort_event.is_set():
-                    if self._has_queued_steering():
+                if self._abort_event.is_set() or self._stop_requested:
+                    if self._has_queued_steering() and not self._stop_requested:
                         if any(
                             getattr(chunk, "tool_call_chunks", None)
                             or getattr(chunk, "tool_calls", None)
@@ -1135,8 +1138,12 @@ class _RunsTurns:
         self._conversation.append(response)
         tool_calls = cast(list[dict], response.tool_calls)
         outcomes: dict[str, dict] = {}
-        steering_waits = self._abort_event.is_set() and self._has_queued_steering()
-        if not self._abort_event.is_set() or steering_waits:
+        steering_waits = (
+            self._abort_event.is_set()
+            and self._has_queued_steering()
+            and not self._stop_requested
+        )
+        if (not self._abort_event.is_set() and not self._stop_requested) or steering_waits:
             plans, pending = await self._preflight_permissions(tool_calls)
             gates = [SuspensionGate(**gate.to_dict()) for gate in pending]
             # Automatic-mode gates are announced first, then weighed by the reviewer, so the call
@@ -1225,8 +1232,8 @@ class _RunsTurns:
             await self._resource_sync()
         yield Checkpoint()
 
-        if self._abort_event.is_set():
-            if self._has_queued_steering():
+        if self._abort_event.is_set() or self._stop_requested:
+            if self._has_queued_steering() and not self._stop_requested:
                 self._abort_event.clear()
                 for steering_event in await self._drain_steering_messages():
                     yield steering_event

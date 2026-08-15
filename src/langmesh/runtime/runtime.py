@@ -645,6 +645,8 @@ class AgentRuntime(
         self._system_prompt = agent_configuration.system_prompt
         # Files read this session, by location and path with their hash, so a stale edit is rejected.
         self._abort_event = asyncio.Event()
+        # A stop is owed until a genuinely fresh turn clears it; steering must not erase it.
+        self._stop_requested = False
         # Running token totals, summed from the usage each model call reports.
         self._token_usage: dict[str, int] = {
             "input_tokens": 0,
@@ -1032,13 +1034,24 @@ class AgentRuntime(
         # Stop tears down the live turn only: detached work and peer sessions have their own lifecycles.
         # A queued steering message is superseded by the Stop: deliver its false and never let it keep the cancelled turn waiting.
         self.discard_pending_steering()
+        self._stop_requested = True
         self._abort_event.set()
         self._background.cancel_foreground()
         for task in list(self._active_tool_tasks.values()):
             task.cancel()
 
+    def clear_stop(self) -> None:
+        """A genuinely fresh user turn begins: no stop is owed from before."""
+        self._stop_requested = False
+
+    @property
+    def stop_requested(self) -> bool:
+        """Whether a stop is still owed, which continuation work must not erase."""
+        return self._stop_requested
+
     def interrupt_for_restart(self) -> None:
         """Stop live work while leaving its durable job records for startup recovery."""
+        self._stop_requested = True
         self._abort_event.set()
         self._background.cancel_all()
         for task in list(self._active_tool_tasks.values()):
@@ -1123,6 +1136,14 @@ class AgentRuntime(
             "task_continuation_note",
             {"tasks": compact(self.unfinished_tasks())},
         )
+
+    def continuation_content(self, *, goal_review: str = "", task_continuation: str = "") -> str:
+        """The one message a continuation turn carries: the goal review's prose and the
+        task note, composed by the shared template rather than joined in Python."""
+        return self._prompt_loader.load(
+            "goal_and_task_continuation",
+            {"goal_review": goal_review, "task_continuation": task_continuation},
+        ).strip()
 
     @property
     def task_continuations(self) -> int:

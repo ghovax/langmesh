@@ -737,6 +737,28 @@ class AppendOnlyTaskStore(TaskStore):
                 f"non-terminal save for already-terminal task {task.id}: a terminal save must be the last save for a task"
             )
         async with self._engine.begin() as connection:
+            # The in-memory terminal guard does not survive a restart, so the durable
+            # head is consulted when the task is new to this process: a non-terminal
+            # save of a task whose head is already terminal must still be refused.
+            if not terminal and task.id not in self._terminal_turns and self._persisted_counts.get(task.id) is None:
+                stored_status = (
+                    await connection.execute(
+                        select(self._head.c.status).where(self._head.c.id == task.id)
+                    )
+                ).scalar()
+                if stored_status is not None and _is_terminal_task(
+                    Task.model_validate(
+                        {
+                            "id": task.id,
+                            "context_id": task.context_id,
+                            "status": json.loads(stored_status),
+                            "history": [],
+                        }
+                    )
+                ):
+                    raise ValueError(
+                        f"non-terminal save for already-terminal task {task.id}: a terminal save must be the last save for a task"
+                    )
             # Head: tiny upsert of the latest status + metadata.
             head_values = {
                 "id": task.id,
@@ -769,9 +791,22 @@ class AppendOnlyTaskStore(TaskStore):
                 self._persisted_counts[task.id] = persisted + len(new_messages)
 
             if terminal:
-                # Compact in place with no new row ids, and record the terminal count so a stray save is caught.
-                compacted_count = await self._compact_persisted_history(connection, task.id)
-                self._persisted_counts[task.id] = compacted_count
+                # The terminal history is the canonical compacted form. Rewriting the rows
+                # wholesale keeps a repeated terminal save idempotent even after a restart,
+                # when the in-memory terminal guard and persisted-count cache are cold:
+                # a fresh store would otherwise re-insert the messages the merge folded away.
+                await connection.execute(
+                    delete(self._history).where(self._history.c.turn_id == task.id)
+                )
+                # `history` holds A2A Message objects; compaction merges the serialized form.
+                compacted = _compact_history([json.loads(_dump(message)) for message in history])
+                if compacted:
+                    await connection.execute(
+                        self._history.insert(),
+                        # The compacted items are already serialized dicts.
+                        [{"turn_id": task.id, "message": json.dumps(message)} for message in compacted],
+                    )
+                self._persisted_counts[task.id] = len(compacted)
                 self._terminal_turns.add(task.id)
 
             # Artifacts: upsert each by id (replace-in-place is safe and bounded).
@@ -832,7 +867,7 @@ class AppendOnlyTaskStore(TaskStore):
             "metadata": json.loads(head_row["turn_metadata"])
             if head_row["turn_metadata"]
             else None,
-            "history": [json.loads(message) for message in history_rows],
+            "history": _compact_history([json.loads(message) for message in history_rows]),
             "artifacts": [json.loads(artifact) for artifact in artifact_rows] or None,
         }
         return Task.model_validate(data)
