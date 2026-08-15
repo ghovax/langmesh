@@ -185,7 +185,7 @@ class _DispatchesTools:
                 elif isinstance(event, DeniedInjection):
                     denied_commands.append(event.command)
         except asyncio.CancelledError:
-            result_content = "Tool call aborted."
+            result_content = "Tool call aborted by the user; if any, read their newest request first."
             yield Error(
                 id=tool_call_identifier,
                 message=result_content,
@@ -266,33 +266,31 @@ class _DispatchesTools:
                     await queue.put(None)
 
         tasks = [asyncio.create_task(runner(call)) for call in tool_calls]
-        abort_waiter = asyncio.ensure_future(self._abort_event.wait())
+        all_done = asyncio.gather(*tasks, return_exceptions=True)
         try:
             while True:
-                if self._abort_event.is_set():
-                    if self._has_queued_steering():
-                        # Steering waits for this batch: the running calls finish, then it is inserted at the safe boundary.
-                        event = await queue.get()
-                        if event is None:
-                            break
-                        yield event
-                        continue
+                running = [task for task in tasks if not task.done()]
+                if self._abort_event.is_set() and not (running and self._has_queued_steering()):
+                    # Stop won, or the steering batch already finished: nothing more to wait for.
                     break
-                # Race the next event against the abort, so a Stop is honoured even when every tool is parked.
+                # Steering waits for the running calls to finish; a Stop cancels them and breaks.
                 get_future = asyncio.ensure_future(queue.get())
-                await asyncio.wait({get_future, abort_waiter}, return_when=asyncio.FIRST_COMPLETED)
-                if not get_future.done():
+                done, _ = await asyncio.wait(
+                    {get_future, all_done}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if get_future in done:
+                    event = get_future.result()
+                    if event is None:
+                        break
+                    yield event
+                else:
+                    # The batch ended (cancelled or finished) without a queue terminator; stop waiting.
                     get_future.cancel()
-                    if self._has_queued_steering():
-                        # Steering landed mid-batch: wait for the running calls to finish instead of cancelling them.
-                        continue
+                    with suppress(BaseException):
+                        await get_future
                     break
-                event = get_future.result()
-                if event is None:
-                    break
-                yield event
         finally:
-            abort_waiter.cancel()
+            all_done.cancel()
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
