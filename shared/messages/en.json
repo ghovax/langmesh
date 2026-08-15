@@ -1100,10 +1100,7 @@
     "modifying": "Modifying",
     "requestingAccess": "Requesting access"
   },
-  "ToolDisplay": {
-    "waited": "Waited {seconds}s",
-    "waitInterrupted": "Wait interrupted by a stop"
-  },
+  "ToolDisplay": {},
   "ToolGroup": {
     "thinking": "Thinking",
     "failed": "Error returned",

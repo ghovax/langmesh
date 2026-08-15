@@ -1070,51 +1070,6 @@ class _DispatchesTools:
             result=_maybe_json(result),
         )
 
-    async def _tool_wait_for(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        """A cancellable inline wait: the model's polling primitive, which wakes the instant a Stop arrives."""
-        raw_seconds = tool_arguments.get("seconds", 0)
-        try:
-            seconds = max(0.0, float(raw_seconds))
-        except (TypeError, ValueError):
-            yield ToolResult(
-                id=tool_call_identifier,
-                name=tool_name,
-                result={
-                    "code": "invalid_arguments",
-                    "status": ToolStatus.ERROR.value,
-                    "message": "'seconds' must be a number.",
-                },
-            )
-            return
-        interrupted = False
-        if seconds > 0:
-            try:
-                await asyncio.wait_for(self._abort_event.wait(), timeout=seconds)
-                interrupted = True  # a Stop fired before the wait elapsed
-            except asyncio.TimeoutError:
-                interrupted = False  # the full wait elapsed normally
-        yield ToolResult(
-            id=tool_call_identifier,
-            name=tool_name,
-            result={
-                "code": "interrupted" if interrupted else "waited",
-                "seconds": seconds,
-                "message": (
-                    "Wait interrupted by a stop request."
-                    if interrupted
-                    else f"Waited {seconds:g}s; continue."
-                ),
-            },
-        )
-
     async def _tool_ask_user(
         self,
         tool_name: str,

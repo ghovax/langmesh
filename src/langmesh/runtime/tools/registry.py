@@ -421,16 +421,6 @@ async def read_mcp_resource(
 
 
 @tool
-async def wait_for(
-    *,
-    explanation: str = Field(..., description=EXPLANATION),
-    seconds: float,
-) -> str:
-    """Dispatched by AgentRuntime._execute_tool; described in descriptions/wait_for.md."""
-    raise NotImplementedError("Dispatched by AgentRuntime._execute_tool.")
-
-
-@tool
 def read_turn(*, explanation: str = Field(..., description=EXPLANATION), turn_id: str = "") -> str:
     """Dispatched by AgentRuntime._execute_tool; described in descriptions/read_turn.md."""
     raise NotImplementedError("Dispatched by AgentRuntime._execute_tool.")
@@ -538,7 +528,6 @@ _DESCRIBED = (
     call_mcp_server_tool,
     list_mcp_resources,
     read_mcp_resource,
-    wait_for,
     read_turn,
     set_tasks,
     update_tasks,

@@ -935,6 +935,8 @@ class Session:
             if not goal_review_message and not task_note:
                 return
             cancelled_continuation = False
+            noop_continuation = False
+            saw_tool_result = False
             async for event in self.runtime.stream(
                 self.runtime.continuation_content(
                     goal_review=goal_review_message,
@@ -945,6 +947,17 @@ class Session:
             ):
                 if isinstance(event, Done) and event.stop_reason == "cancelled":
                     cancelled_continuation = True
+                if isinstance(event, ToolResult):
+                    saw_tool_result = True
+                if (
+                    isinstance(event, Done)
+                    and opens_exchange
+                    and not event.text.strip()
+                    and not saw_tool_result
+                ):
+                    # A goal continuation answered the review with nothing: do not
+                    # immediately re-review, or the review loop would spin.
+                    noop_continuation = True
                 if isinstance(event, Suspended):
                     self._pending = PendingTurn(
                         interactions=tuple(event.interactions),
@@ -953,7 +966,12 @@ class Session:
                     )
                     self._phase = SessionPhase.SUSPENDED
                 yield event
-            if self._pending is not None or cancelled_continuation or self.runtime.stop_requested:
+            if (
+                self._pending is not None
+                or cancelled_continuation
+                or noop_continuation
+                or self.runtime.stop_requested
+            ):
                 return
 
     async def ask(self, message: str, *, attachments: Sequence[str | Path] = ()) -> str:
