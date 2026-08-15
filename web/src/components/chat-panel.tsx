@@ -1274,7 +1274,11 @@ export function ChatPanel({
                 px={2}
                 onClick={scrollToBottom}
               >
-                {isStreaming ? <Spinner boxSize="1em" borderWidth="2px" /> : <LuArrowDown />}
+                {/* A fixed icon slot, so spinner and arrow share a box and the label never shifts; the spinner is
+                    shrunk inside it because the arrow glyph fills only ~2/3 of its box, so a full-size ring reads too big. */}
+                <Flex align="center" justify="center" boxSize="4" flexShrink={0}>
+                  {isStreaming ? <Spinner boxSize="2.5" borderWidth="2px" /> : <LuArrowDown />}
+                </Flex>
                 {translation(isStreaming ? "jumpToProgress" : "jumpToLatest")}
               </Button>
             )}
