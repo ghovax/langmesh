@@ -525,7 +525,6 @@ class _TurnRunner:
         # A turn opened from outside means the session is wanted working, so lift any prior Stop suppression.
         if resolved.ingested.from_outside:
             self._executor._context(task.context_id).aborted = False
-            runtime.clear_stop()
         if self._track_steerable_turn:
             self._executor._context(task.context_id).running = True
 
@@ -539,6 +538,7 @@ class _TurnRunner:
         self._runtime = runtime
         if resolved.ingested.from_outside:
             runtime.abandon_turn_retry()
+            runtime.clear_stop()
         self._executor._aborts[task.id] = runtime
         runtime.set_a2a_turn_id(task.id)
 

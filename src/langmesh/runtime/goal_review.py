@@ -357,9 +357,6 @@ class _ReviewsGoal:
                     }
                 ),
                 "previous_review_message": goal.review_message,
-                "blocked_turns": active_tuning().amount(Tunable.goal_blocked_turns),
-                "blocked_available": goal.continuations
-                >= active_tuning().amount(Tunable.goal_blocked_turns),
             },
         )
         review_id = new_id("review")
