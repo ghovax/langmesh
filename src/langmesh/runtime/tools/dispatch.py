@@ -267,6 +267,7 @@ class _DispatchesTools:
 
         tasks = [asyncio.create_task(runner(call)) for call in tool_calls]
         all_done = asyncio.gather(*tasks, return_exceptions=True)
+        abort_waiter = asyncio.ensure_future(self._abort_event.wait())
         try:
             while True:
                 running = [task for task in tasks if not task.done()]
@@ -275,14 +276,18 @@ class _DispatchesTools:
                     break
                 # Steering waits for the running calls to finish; a Stop cancels them and breaks.
                 get_future = asyncio.ensure_future(queue.get())
+                steering_held = self._abort_event.is_set() and self._has_queued_steering()
                 done, _ = await asyncio.wait(
-                    {get_future, all_done}, return_when=asyncio.FIRST_COMPLETED
+                    {get_future, all_done, abort_waiter} if not steering_held else {get_future, all_done},
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
                 if get_future in done:
                     event = get_future.result()
                     if event is None:
                         break
                     yield event
+                elif abort_waiter in done:
+                    continue  # the top of the loop decides what this interrupt means
                 else:
                     # The batch ended (cancelled or finished) without a queue terminator; stop waiting.
                     get_future.cancel()
@@ -291,6 +296,7 @@ class _DispatchesTools:
                     break
         finally:
             all_done.cancel()
+            abort_waiter.cancel()
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)

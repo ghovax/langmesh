@@ -892,9 +892,8 @@ class _RunsTurns:
                             or getattr(chunk, "invalid_tool_calls", None)
                             for chunk in response_chunks
                         ):
-                            # A tool call is already streaming: keep reading so the call completes; the steering is inserted after its result.
-                            self._abort_event.clear()
-                            abort_waiter = asyncio.ensure_future(self._abort_event.wait())
+                            # Keep reading so the in-flight call completes; the abort stays set so the steering drains right after its result, not at turn end.
+                            pass
                         else:
                             # Safe boundary: only a text prefix has been shown, so interrupting here cannot orphan a tool call.
                             if pending_chunk is not None:
@@ -918,8 +917,10 @@ class _RunsTurns:
 
                 if pending_chunk is None:
                     pending_chunk = asyncio.ensure_future(_stream_next(model_stream))
+                # While steering is held behind an in-flight tool call, read this call to its end without letting the set abort waiter spin the loop.
+                steering_held = self._abort_event.is_set() and self._has_queued_steering()
                 completed, _ = await asyncio.wait(
-                    {pending_chunk, abort_waiter},
+                    {pending_chunk, abort_waiter} if not steering_held else {pending_chunk},
                     timeout=max(0.0, progress_deadline - asyncio.get_running_loop().time()),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
@@ -931,7 +932,7 @@ class _RunsTurns:
                     raise TimeoutError(
                         f"The model stream made no meaningful progress for {silence_limit:g} seconds."
                     )
-                if abort_waiter in completed and not pending_chunk.done():
+                if pending_chunk not in completed:
                     continue  # the top of the loop decides what this interrupt means
                 chunk = pending_chunk.result()
                 pending_chunk = None
@@ -1134,11 +1135,8 @@ class _RunsTurns:
         self._conversation.append(response)
         tool_calls = cast(list[dict], response.tool_calls)
         outcomes: dict[str, dict] = {}
-        if self._abort_event.is_set() and self._has_queued_steering():
-            # A steering message waits for this batch: run every call to completion, then insert
-            # the steering at the safe boundary after the results land.
-            self._abort_event.clear()
-        if not self._abort_event.is_set():
+        steering_waits = self._abort_event.is_set() and self._has_queued_steering()
+        if not self._abort_event.is_set() or steering_waits:
             plans, pending = await self._preflight_permissions(tool_calls)
             gates = [SuspensionGate(**gate.to_dict()) for gate in pending]
             # Automatic-mode gates are announced first, then weighed by the reviewer, so the call
