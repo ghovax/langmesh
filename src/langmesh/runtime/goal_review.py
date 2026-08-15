@@ -17,7 +17,6 @@ from langmesh.base.configuration import PermissionEvaluator, PromptLoader
 from langmesh.base.ports import GoalReviewContext, GoalReviewOutcome
 from langmesh.base.identifiers import new_id
 from langmesh.base.serialization import compact
-from langmesh.base.tuning import Tunable, active_tuning
 from langmesh.runtime.values import ToolStatus
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.goal import Goal, NonBlankText
@@ -144,24 +143,15 @@ class _ReviewsGoal:
                 {"tool_name": tool_name},
             )
         else:
-            review = GoalReview.model_validate(tool_arguments)
-            goal = self.goal
-            blocked_available = goal is not None and goal.continuations >= active_tuning().amount(
-                Tunable.goal_blocked_turns
-            )
-            if review.standing == "blocked" and not blocked_available:
-                result = {
-                    "code": "goal_review_blocked_too_soon",
-                    "status": ToolStatus.ERROR.value,
-                }
-                model_guidance = self._prompt_loader.load("goal_review_blocked_too_soon", {})
-            else:
-                self._submitted_goal_review = review
-                self._abort_event.set()
-                result = {
-                    "code": "goal_review_submitted",
-                    "status": ToolStatus.OK.value,
-                }
+            # A genuine impasse is accepted on any review: the reviewer's own standards gate blocked,
+            # not a turn count, so a goal that cannot proceed (a user-only step, an impossibility) can
+            # be marked blocked the first time it is truly stuck.
+            self._submitted_goal_review = GoalReview.model_validate(tool_arguments)
+            self._abort_event.set()
+            result = {
+                "code": "goal_review_submitted",
+                "status": ToolStatus.OK.value,
+            }
         yield ToolResult(
             id=tool_call_identifier,
             name=tool_name,

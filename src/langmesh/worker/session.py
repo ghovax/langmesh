@@ -377,6 +377,9 @@ class SessionExecutor(AgentExecutor):
         if workflow is None or workflow.done() or workflow is asyncio.current_task():
             return False
         workflow.cancel()
+        # The superseded review belongs to the old goal state: stop it rather than letting it
+        # run out a verdict nobody is waiting for.
+        state.continuation.cancel_review()
         with contextlib.suppress(asyncio.CancelledError):
             await workflow
         if state is not None:
@@ -569,6 +572,10 @@ class SessionExecutor(AgentExecutor):
         if state.continuation.workflow is not None:
             if not state.continuation.workflow.done():
                 state.continuation.workflow.cancel()
+            handled = True
+        # A stop is a halt for the review too: cancel it outright rather than waiting for the
+        # reviewer's current model call to finish, so the linked review session stops now.
+        if state.continuation.cancel_review():
             handled = True
         if state.continuation.clear():
             self._notify_turn_state(session_id, False)

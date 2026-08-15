@@ -56,6 +56,9 @@ export interface ToolEvent {
 
 /** Whether a call has a complete explanation and may enter the transcript. */
 export function toolCallReady(event: ToolEvent): boolean {
+  // The reviewer's verdict is the one call with no model-supplied explanation: it is complete the
+  // moment it is called, and its own line names it (ToolCallLabel falls back for it).
+  if (event.name === "submit_goal_review") return true;
   const explanation = event.arguments?.explanation;
   // The explanation is what the row is made of; the arguments may still be streaming, so the
   // line appears the moment the model finishes writing its intent rather than when the call is whole.

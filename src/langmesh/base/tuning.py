@@ -121,7 +121,6 @@ class Tunable(Enum):
     goal_continuation_turns = Default(12, Scaling.NONE)
     task_continuation_turns = Default(12, Scaling.NONE)
 
-    goal_blocked_turns = Default(3, Scaling.NONE)
 
     # The control plane and the processes it supervises.
     session_title_attempts = Default(3, Scaling.NONE)
