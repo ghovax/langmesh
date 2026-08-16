@@ -44,7 +44,7 @@ session = Session(
     components=SessionComponents(
         features=[
             GoalReviewFeature(journal=journal),
-            Compaction(strategy=my_strategy),
+            Compaction(strategy=custom_strategy),
         ],
     ),
 )
@@ -66,14 +66,14 @@ class MyFeature(Feature):
         self._port = some_port
 
     def compose_context(self, context: dict) -> None:
-        context["my_thing"] = {"value": self._port}
+        context["custom_thing"] = {"value": self._port}
 ```
 
 A feature that wants to hear what others publish subscribes in `attach`:
 
 ```python
     def attach(self, context: PluginContext, host=None) -> None:
-        context.bus.subscribe(MyEvent, self._on_my_event)
+        context.bus.subscribe(CustomEvent, self._on_custom_event)
 ```
 
 The library's own plugins additionally receive the internal `PluginHost` — grouped views of the

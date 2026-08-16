@@ -116,6 +116,10 @@ class Feature:
         """The events this feature has finished producing since the last drain."""
         return []
 
+    def blocks_input(self) -> str | None:
+        """Why new input must be refused (a failed fold, an unrepaired registry), or ``None``."""
+        return None
+
     def snapshot(self) -> dict | None:
         """This feature's durable state to persist beside the checkpoint, or ``None``."""
         return None
@@ -263,6 +267,14 @@ class Features:
     def restore(self, snapshot: dict) -> None:
         for feature in self._instances:
             feature.restore(snapshot)
+
+    def blocked_reason(self) -> str | None:
+        """Why new input must be refused, per the first feature that blocks it."""
+        for feature in self._instances:
+            reason = feature.blocks_input()
+            if reason:
+                return reason
+        return None
 
 
 def feature_prompts(name: str, catalogue: Any) -> PromptLoader:

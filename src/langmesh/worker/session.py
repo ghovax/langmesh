@@ -18,6 +18,7 @@ from a2a.server.tasks import TaskUpdater
 from a2a.types import DataPart, Message, MessageSendParams, Part, Role, Task, TaskState, TextPart
 from langchain_core.messages import messages_from_dict
 
+from langmesh.runtime.features import access as _features
 from langmesh.base.catalogue import machine_catalogue
 from langmesh.base.tuning import Tunable, active_tuning
 from langmesh.base.file_leases import FileLeaseManager
@@ -250,7 +251,7 @@ class SessionExecutor(AgentExecutor):
             runtime = getattr(context, "runtime", None)
             if runtime is None:
                 continue
-            if runtime.has_pending_jobs() or runtime.has_completed_undelivered_jobs():
+            if _features.has_pending_jobs(runtime) or _features.has_completed_undelivered_jobs(runtime):
                 return True
         return False
 
@@ -278,9 +279,9 @@ class SessionExecutor(AgentExecutor):
                     runtime = state.runtime if state is not None else None
                     if runtime is None:
                         runtime = await self._runtime_for(session_id, self._workspace())
-                retry_operation = runtime.retry_compaction()
+                retry_operation = _features.retry_compaction(runtime)
                 if retry_operation == "prepare":
-                    should_resume = runtime.resumes_after_compaction
+                    should_resume = _features.resumes_after_compaction(runtime)
                     result = await self._drive_self_sent_turn(
                         session_id,
                         COMPACTION_RESUME_KIND if should_resume else COMPACTION_PREPARE_KIND,
@@ -293,7 +294,7 @@ class SessionExecutor(AgentExecutor):
                     )
                     return {"compacted": result is not None, **(result or {})}
                 if retry_operation == "compact":
-                    should_resume = runtime.resumes_after_compaction
+                    should_resume = _features.resumes_after_compaction(runtime)
                     result = await self._run_compaction_turn(session_id)
                     if should_resume and result and result.get("ok") is not False:
                         await self._drive_self_sent_turn(
@@ -302,7 +303,7 @@ class SessionExecutor(AgentExecutor):
                             metadata_flags={Metadata.COMPACTION_RESUME: True},
                         )
                     return {"compacted": result is not None, **(result or {})}
-                if runtime.awaiting_compaction_recording:
+                if _features.awaiting_compaction_recording(runtime):
                     result = await self._drive_self_sent_turn(
                         session_id,
                         COMPACTION_PREPARE_KIND,
@@ -310,7 +311,7 @@ class SessionExecutor(AgentExecutor):
                         result_event_kind="compaction",
                     )
                     return {"compacted": result is not None, **(result or {})}
-                if not runtime.compaction_failure and runtime.begin_compaction_preparation():
+                if not _features.compaction_failure(runtime) and _features.begin_compaction_preparation(runtime):
                     result = await self._drive_self_sent_turn(
                         session_id,
                         COMPACTION_PREPARE_KIND,
@@ -318,7 +319,7 @@ class SessionExecutor(AgentExecutor):
                         result_event_kind="compaction",
                     )
                     return {"compacted": result is not None, **(result or {})}
-                should_resume = runtime.resumes_after_compaction
+                should_resume = _features.resumes_after_compaction(runtime)
                 result = await self._run_compaction_turn(session_id)
                 if should_resume and result and result.get("ok") is not False:
                     await self._drive_self_sent_turn(
@@ -340,7 +341,7 @@ class SessionExecutor(AgentExecutor):
                 runtime = state.runtime if state is not None else None
                 if runtime is None:
                     runtime = await self._runtime_for(session_id, self._workspace())
-                if runtime.compaction_failure:
+                if _features.compaction_failure(runtime):
                     return {"retried": False, "reason": "compaction_required"}
                 if not runtime.begin_turn_retry():
                     return {"retried": False, "reason": "not_retryable"}
@@ -473,27 +474,27 @@ class SessionExecutor(AgentExecutor):
             return
         review_phase_active = False
         try:
-            goal = runtime.goal
+            goal = _features.goal(runtime)
             if plan.goal and goal is not None and goal.is_open:
                 self._notify_goal_state(session_id, goal, review_phase=GoalReviewPhase.CHECKING)
                 review_phase_active = True
-                review = asyncio.create_task(runtime.review_goal())
+                review = asyncio.create_task(_features.review_goal(runtime))
                 state.continuation.attach_review(review)
                 try:
-                    runtime.apply_goal_review(await review)
+                    _features.apply_goal_review(runtime, await review)
                 except asyncio.CancelledError:
                     # Clearing the goal cancels only its review; stopping cancels the owning workflow too.
-                    if runtime.goal is not None and runtime.goal.status == Goal.CLEARED:
+                    if _features.goal(runtime) is not None and _features.goal(runtime).status == Goal.CLEARED:
                         pass
                     else:
                         raise
                 finally:
                     state.continuation.detach_review(review)
-                    self._notify_goal_state(session_id, runtime.goal)
+                    self._notify_goal_state(session_id, _features.goal(runtime))
                     review_phase_active = False
                 # Written before the turn opens: a verdict held only in memory is one a restart would lose.
                 await self._persist_session_state(session_id, runtime)
-            goal = runtime.goal
+            goal = _features.goal(runtime)
             if goal is not None and goal.is_open and goal.review_message:
                 await self._drive_self_sent_turn(
                     session_id,
@@ -513,7 +514,7 @@ class SessionExecutor(AgentExecutor):
                 )
         finally:
             if review_phase_active:
-                self._notify_goal_state(session_id, runtime.goal)
+                self._notify_goal_state(session_id, _features.goal(runtime))
             # Exactly one release for the plan hold, whichever obligation opened the next turn.
             self._notify_turn_state(session_id, False)
 
@@ -526,11 +527,11 @@ class SessionExecutor(AgentExecutor):
             # beside the checkpoint. Build the runtime so calling the goal off also works
             # from the parked/asleep state, instead of silently answering "nothing to clear".
             runtime = await self._runtime_for(session_id, self._workspace())
-        goal = runtime.goal if runtime is not None else None
+        goal = _features.goal(runtime) if runtime is not None else None
         if runtime is None or goal is None:
             return False
         state.continuation.cancel_review()
-        runtime.write_goal(
+        _features.write_goal(runtime, 
             goal.updated(status=Goal.CLEARED, review_message=None, review_id=None)
             if goal.is_open
             else None
@@ -648,8 +649,8 @@ class SessionExecutor(AgentExecutor):
             handled = True
         if state.runtime is not None:
             state.runtime.abort()
-            if state.runtime.goal is not None and state.runtime.goal.is_open:
-                state.runtime.park_goal()
+            if _features.goal(state.runtime) is not None and _features.goal(state.runtime).is_open:
+                _features.park_goal(state.runtime)
                 asyncio.create_task(self._persist_session_state(session_id, state.runtime))
             handled = True
         return handled
@@ -658,19 +659,19 @@ class SessionExecutor(AgentExecutor):
         state = self._contexts.get(session_id)
         if state is None or state.runtime is None:
             return False
-        return state.runtime.abort_tool(tool_call_identifier)
+        return _features.abort_tool(state.runtime, tool_call_identifier)
 
     def send_tool_to_background(self, session_id: str, tool_call_identifier: str) -> bool:
         state = self._contexts.get(session_id)
         if state is None or state.runtime is None:
             return False
-        return state.runtime.send_tool_to_background(tool_call_identifier)
+        return _features.send_tool_to_background(state.runtime, tool_call_identifier)
 
     def background_snapshots(self, session_id: str) -> list[dict]:
         state = self._contexts.get(session_id)
         if state is None or state.runtime is None:
             return []
-        return state.runtime.background_snapshots()
+        return _features.background_snapshots(state.runtime)
 
     def set_locations(self, locations: Optional[list[dict]]) -> int:
         """Adopt the workspace's environments after an edit, so a session already open sees the new set."""
@@ -714,7 +715,7 @@ class SessionExecutor(AgentExecutor):
             for gate in list(pending.gates):
                 if gate.request_id in pending.answers:
                     continue
-                verdict = await runtime.reconsider_gate(gate)
+                verdict = await _features.reconsider_gate(runtime, gate)
                 if not verdict:
                     continue
                 await self.resolve_pending_input({"request_id": gate.request_id, **verdict})
@@ -784,7 +785,7 @@ class SessionExecutor(AgentExecutor):
         if state is None or not state.pending_reset:
             return
         continuation_running = state.continuation.running
-        runtime_busy = state.runtime is not None and state.runtime.has_pending_jobs()
+        runtime_busy = state.runtime is not None and _features.has_pending_jobs(state.runtime)
         if state.running or continuation_running or runtime_busy:
             return
         state.runtime = None
@@ -822,7 +823,7 @@ class SessionExecutor(AgentExecutor):
         if state is None or state.aborted:
             return
         runtime = runtime or state.runtime
-        if runtime is None or not runtime.has_pending_jobs():
+        if runtime is None or not _features.has_pending_jobs(runtime):
             return
         if state.runtime is None:
             state.runtime = runtime
@@ -837,9 +838,9 @@ class SessionExecutor(AgentExecutor):
             while True:
                 state = self._contexts.get(session_id)
                 runtime = state.runtime if state is not None else None
-                if runtime is None or not runtime.has_pending_jobs():
+                if runtime is None or not _features.has_pending_jobs(runtime):
                     return
-                await runtime.wait_for_jobs()
+                await _features.wait_for_jobs(runtime)
                 # A result landed: drive a turn to deliver it. A concurrent user turn that drained it makes this a no-op.
                 await self._run_autonomous_turn(session_id)
         except asyncio.CancelledError:
@@ -861,12 +862,12 @@ class SessionExecutor(AgentExecutor):
         # Nothing left to deliver, so mint no task; the executor re-checks under the lock either way.
         state = self._contexts.get(session_id)
         runtime = state.runtime if state is not None else None
-        has_live_result = runtime is not None and runtime.has_completed_undelivered_jobs()
+        has_live_result = runtime is not None and _features.has_completed_undelivered_jobs(runtime)
         has_stored_result = self._job_store.has_undelivered_jobs(session_id, self._agent_name)
         if not has_live_result and not has_stored_result:
             return
-        if runtime is not None and runtime.goal is not None:
-            self._notify_goal_state(session_id, runtime.goal)
+        if runtime is not None and _features.goal(runtime) is not None:
+            self._notify_goal_state(session_id, _features.goal(runtime))
         # An agent-authored resume, so no consumer sees a user message the user never sent.
         await self._drive_self_sent_turn(
             session_id, AUTONOMOUS_RESUME_KIND, metadata_flags={Metadata.AUTONOMOUS_RESUME: True}
@@ -941,7 +942,7 @@ class SessionExecutor(AgentExecutor):
             conversation=conversation,
         )
         if self._observation_registry_metadata or self._observation_registry_error:
-            runtime.note_observation_registry(
+            _features.note_observation_registry(runtime, 
                 self._observation_registry_metadata,
                 self._observation_registry_error,
             )
@@ -1031,7 +1032,7 @@ class SessionExecutor(AgentExecutor):
             if session_state:
                 runtime.restore_session(session_state)
                 # Announce the restored goal here: `restore_session` deliberately does not, being the write that changes nothing.
-                self._notify_goal_state(session_id, runtime.goal)
+                self._notify_goal_state(session_id, _features.goal(runtime))
             state.runtime = runtime
             # Replay background results the store holds but never delivered, so the model sees them at once.
             self._replay_stored_background_results(session_id, runtime)
@@ -1041,7 +1042,7 @@ class SessionExecutor(AgentExecutor):
     def _replay_stored_background_results(self, session_id: str, runtime: AgentRuntime) -> None:
         store = self._job_store
         for job in store.undelivered_jobs(session_id, self._agent_name):
-            runtime.inject_stored_background_result(
+            _features.inject_stored_background_result(runtime, 
                 kind=job["kind"],
                 identifier=job["job_id"],
                 tool_call_identifier=job["tool_call_id"],
@@ -1324,7 +1325,7 @@ class SessionExecutor(AgentExecutor):
         self._observation_registry_error = error.strip() if error else None
         state = self._contexts.get(self._session_id)
         if state is not None and state.runtime is not None:
-            state.runtime.note_observation_registry(
+            _features.note_observation_registry(state.runtime, 
                 self._observation_registry_metadata,
                 self._observation_registry_error,
             )
@@ -1384,7 +1385,7 @@ class SessionExecutor(AgentExecutor):
         """The durable compaction failure that forbids accepting another user message."""
         state = self._contexts.get(self._session_id)
         if state is not None and state.runtime is not None:
-            return state.runtime.compaction_failure
+            return _features.compaction_failure(state.runtime)
         snapshot = await self._turn_store.load_session_state(self._session_id)
         compaction = (snapshot or {}).get("compaction")
         if not isinstance(compaction, dict) or not compaction.get("failure"):

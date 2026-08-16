@@ -18,6 +18,7 @@ from a2a.types import Message, Part, Task, TaskState
 from a2a.utils import new_task
 from langchain_core.messages import messages_to_dict
 
+from langmesh.runtime.features import access as _features
 from langmesh.base import telemetry as _telemetry
 from langmesh.base.configuration import PromptLoader
 from langmesh.base.serialization import compact, conversation_snapshot_id
@@ -503,7 +504,7 @@ class _TurnRunner:
             existing_state = self._executor._contexts.get(task.context_id)
             existing_runtime = existing_state.runtime if existing_state is not None else None
             has_live_result = (
-                existing_runtime is not None and existing_runtime.has_completed_undelivered_jobs()
+                existing_runtime is not None and _features.has_completed_undelivered_jobs(existing_runtime)
             )
             has_stored_result = self._executor._job_store.has_undelivered_jobs(
                 task.context_id, self._executor._agent_name
@@ -578,21 +579,21 @@ class _TurnRunner:
         """Settle the goal against what opened this turn, now the runtime is built and the goal restored."""
         runtime = prepared.runtime
         if prepared.resolved.ingested.mode is _TurnMode.GOAL_CONTINUATION:
-            goal = runtime.goal
+            goal = _features.goal(runtime)
             if goal is None or not goal.is_open:
                 if not prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
                     await self._updater.complete()
                     return self._DONE
             else:
-                runtime.note_goal_continuation()
+                _features.note_goal_continuation(runtime)
         if prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
-            if not runtime.has_actionable_tasks():
+            if not _features.has_actionable_tasks(runtime):
                 await self._updater.complete()
                 return self._DONE
-            runtime.note_task_continuation()
+            _features.note_task_continuation(runtime)
         if prepared.resolved.ingested.from_outside:
-            runtime.restore_goal_allowance()
-            runtime.restore_task_allowance()
+            _features.restore_goal_allowance(runtime)
+            _features.restore_task_allowance(runtime)
         return None
 
     async def _run_compaction_turn(self, prepared: _Prepared) -> object | None:
@@ -600,15 +601,15 @@ class _TurnRunner:
         if prepared.resolved.ingested.mode is not _TurnMode.COMPACTION:
             return None
         try:
-            async for compaction_event in prepared.runtime.compact(
-                reason=prepared.runtime.pending_compaction_reason
+            async for compaction_event in _features.compact(prepared.runtime, 
+                reason=_features.pending_compaction_reason(prepared.runtime)
             ):
                 await prepared.sink.emit_compaction(compaction_event)
         except asyncio.CancelledError:
             # A stop that lands mid-compaction must still close the UI's running indicator.
             await prepared.sink.emit_compaction(
                 CompactionDone(
-                    reason=prepared.runtime.pending_compaction_reason,
+                    reason=_features.pending_compaction_reason(prepared.runtime),
                     ok=False,
                     error_code="compaction_cancelled",
                 )
@@ -690,7 +691,7 @@ class _TurnRunner:
     def _task_continuation_note(runtime: AgentRuntime) -> str:
         return _PROMPTS.load(
             "task_continuation_note",
-            {"tasks": compact(runtime.unfinished_tasks())},
+            {"tasks": compact(_features.unfinished_tasks(runtime, ))},
         )
 
     async def _stream_and_finalize(self, composed: _ComposedTurn) -> None:
@@ -793,7 +794,7 @@ class _TurnRunner:
         elif self._goal_waits_for_background():
             self._executor._notify_goal_state(
                 task.context_id,
-                self._runtime.goal,
+                _features.goal(self._runtime),
                 review_phase=GoalReviewPhase.WAITING_FOR_BACKGROUND,
             )
         if self._track_context_activity and self._on_turn_state is not None:
@@ -814,9 +815,9 @@ class _TurnRunner:
         if state is None or state.aborted:
             return _ContinuationPlan()
         runtime = self._runtime
-        if runtime is None or runtime.has_pending_jobs():
+        if runtime is None or _features.has_pending_jobs(runtime):
             return _ContinuationPlan()
-        goal = runtime.goal
+        goal = _features.goal(runtime)
         # A goal-continuation turn that produced neither prose nor tool work answered the
         # review with nothing; immediately re-reviewing would only spin the review loop,
         # so the goal parks instead and waits for a person.
@@ -827,25 +828,25 @@ class _TurnRunner:
             return _ContinuationPlan()
         return _ContinuationPlan(
             goal=bool(
-                goal is not None and goal.is_open and runtime.should_continue_goal()
+                goal is not None and goal.is_open and _features.should_continue_goal(runtime)
             ),
             tasks=bool(
-                runtime.has_actionable_tasks() and runtime.should_continue_tasks()
+                _features.has_actionable_tasks(runtime) and _features.should_continue_tasks(runtime)
             ),
         )
 
     def _goal_waits_for_background(self) -> bool:
         if not self._completed or self._mode is _TurnMode.COMPACTION or self._runtime is None:
             return False
-        goal = self._runtime.goal
-        return bool(goal is not None and goal.is_open and self._runtime.has_pending_jobs())
+        goal = _features.goal(self._runtime)
+        return bool(goal is not None and goal.is_open and _features.has_pending_jobs(self._runtime))
 
     async def _settle_uncontinued_goal(self, continues: bool) -> None:
         """Park an open goal only when continuation is stopped or its allowance is spent."""
         if continues:
             return
         runtime = self._runtime
-        goal = runtime.goal if runtime is not None else None
+        goal = _features.goal(runtime) if runtime is not None else None
         state = self._executor._contexts.get(self._task.context_id)
         if goal is None or not goal.is_open or runtime is None:
             return
@@ -854,11 +855,11 @@ class _TurnRunner:
             return
         # A stopped turn hands the work back, so the goal waits; read off the abort, which "not completed" is not.
         stopped = state is not None and state.aborted
-        spent = not runtime.should_continue_goal()
-        if not stopped and (state is None or runtime.has_pending_jobs() or not spent):
+        spent = not _features.should_continue_goal(runtime)
+        if not stopped and (state is None or _features.has_pending_jobs(runtime) or not spent):
             return
         # Written now: parking is what stops the session, and a stop only in memory is one a restart undoes.
-        runtime.park_goal()
+        _features.park_goal(runtime)
         await self._executor._persist_session_state(self._task.context_id, runtime)
 
     def _maybe_nudge_to_report(self) -> None:

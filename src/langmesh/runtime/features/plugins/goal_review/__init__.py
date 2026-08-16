@@ -490,7 +490,11 @@ class GoalReviewFeature(Feature):
                 raise
             finally:
                 reviewer.abort()
-                reviewer.background_jobs.cancel_all()
+                from langmesh.runtime.features import access as _access
+
+                runner = _access.background_jobs(reviewer)
+                if runner is not None:
+                    runner.cancel_all()
                 if not transcript_finished:
                     await finish_transcript("canceled")
         return None

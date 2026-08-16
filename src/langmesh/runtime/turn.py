@@ -491,9 +491,9 @@ class _RunsTurns:
     ) -> AsyncIterator[TurnEvent]:
         from langmesh.base.errors import CompactionBlockedError
 
-        if self.compaction_failure and not continue_existing:
+        if self._features.blocked_reason() and not continue_existing:
             raise CompactionBlockedError(
-                f"Context compaction failed: {self.compaction_failure} Retry compaction before sending more work."
+                f"Context compaction failed: {self._features.blocked_reason()} Retry compaction before sending more work."
             )
         self._abort_event.clear()
         # A turn's own bookkeeping: the no-op nudge happens once, and the start time feeds the transcript.
@@ -587,7 +587,7 @@ class _RunsTurns:
                     reason=self._features.maintenance_reason()
                 ):
                     yield fold_event
-                if self.compaction_failure:
+                if self._features.blocked_reason():
                     # The send was already accepted. Keep its user message in the durable
                     # conversation, but do not continue into a model call until retry succeeds.
                     if pending_user_message is not None:
@@ -646,7 +646,7 @@ class _RunsTurns:
                     return
                 async for fold_event in self._features.run_maintenance(reason="overflow"):
                     yield fold_event
-                if self.compaction_failure:
+                if self._features.blocked_reason():
                     return
                 # The same accepted turn retries against the newly compacted conversation;
                 # asking the user to resend would duplicate it in frontend and backend state.
@@ -703,7 +703,7 @@ class _RunsTurns:
                     response_nudged,
                 ):
                     yield event
-                if self.compaction_failure:
+                if self._features.blocked_reason():
                     if pending_user_message is not None:
                         self._conversation.append(pending_user_message)
                         pending_user_message = None
@@ -743,7 +743,7 @@ class _RunsTurns:
                 step,
             ):
                 yield event
-            if self.compaction_failure:
+            if self._features.blocked_reason():
                 if pending_user_message is not None:
                     self._conversation.append(pending_user_message)
                     pending_user_message = None
