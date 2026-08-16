@@ -1,13 +1,13 @@
-"""The observational-memory ledger: watcher metadata, its failure, and the feedback the model owes."""
+"""The observational-memory plugin: watcher metadata, its failure, and the feedback the model owes."""
 
 from __future__ import annotations
 
-
 from langmesh.base.serialization import compact
-from langmesh.runtime.features.base import FeatureServices, feature_prompts
+from langmesh.runtime.features import Feature, PluginContext, PluginHost
+from langmesh.runtime.features.events import MemoryHandoffFailed, MemoryHandoffVerified
 
 
-class ObservationMemory:
+class ObservationMemory(Feature):
     """The registry's reported picture and what the model must be told when it is broken.
 
     A watcher reports its metadata and any schema failure. The picture is given to the model and
@@ -15,12 +15,24 @@ class ObservationMemory:
     opening hears about it exactly once, without it becoming user history.
     """
 
-    def __init__(self, services: FeatureServices) -> None:
-        self._services = services
-        self._prompts = feature_prompts("observations", services.catalogue)
+
+    def __init__(self) -> None:
         self._metadata: dict = {}
         self._error: str | None = None
         self._pending_feedback: str | None = None
+
+    def attach(self, context: PluginContext, host: PluginHost) -> None:
+        self._context = context
+        self._host = host
+        self._prompts = context.prompts("observations")
+        context.bus.subscribe(MemoryHandoffVerified, self._on_handoff_verified)
+        context.bus.subscribe(MemoryHandoffFailed, self._on_handoff_failed)
+
+    def _on_handoff_verified(self, event) -> None:
+        self.adopt(event.metadata)
+
+    def _on_handoff_failed(self, event) -> None:
+        self.note({}, event.error)
 
     @property
     def metadata(self) -> dict:
@@ -52,12 +64,22 @@ class ObservationMemory:
         self._pending_feedback = None
         return message
 
-    def system_variable(self) -> str:
-        """The prompt section carrying the registry's metadata to the model."""
-        return self._prompts.load(
+    def compose_prompt(self, variables: dict[str, str]) -> None:
+        """The memory panel's metadata section for this session's model prompt."""
+        variables["observational_memory"] = self._prompts.load(
             "observational_memory", {"metadata": compact(self._metadata)}
         ).strip()
 
-    def error_request_message(self, error: str) -> str:
-        """The request-local note that tells the model its memory registry needs repair."""
-        return self._prompts.load("observation_registry_error", {"error": error})
+    def prepare_request(self, messages: list) -> list:
+        """A pending registry failure rides on the next model opening as a request-local note."""
+        if self._host.turn.maintenance_active():
+            return messages
+        message = self.take_feedback()
+        if not message:
+            return messages
+        return [
+            *messages,
+            self._host.turn.reminder_message(
+                self._prompts.load("observation_registry_error", {"error": message})
+            ),
+        ]

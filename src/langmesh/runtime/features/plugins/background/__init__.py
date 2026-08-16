@@ -18,19 +18,24 @@ from langmesh.runtime.internals import (
     _tool_timing_metadata,
 )
 from langmesh.runtime.turn_events import ToolResult, TurnEvent
-from langmesh.runtime.features.base import FeatureServices
+from langmesh.runtime.features import Feature, PluginContext, PluginHost
 
 
-class BackgroundJobsFeature:
+class BackgroundJobsFeature(Feature):
     """One background-job runner and the delivery of its finished work to the model."""
 
-    def __init__(self, services: FeatureServices) -> None:
-        self._services = services
-        self._prompts = services.catalogued_prompts("background")
+
+    def __init__(self, *, store: Any = None) -> None:
+        self._store = store
+
+    def attach(self, context: PluginContext, host: PluginHost) -> None:
+        self._context = context
+        self._host = host
+        self._prompts = context.prompts("background")
         self._runner = BackgroundJobs(
-            session_id=services.session_id,
-            agent_name=services.agent_configuration.identifier,
-            store=services.job_store,
+            session_id=context.session_id,
+            agent_name=context.agent_configuration.identifier,
+            store=self._store,
         )
 
     @property
@@ -38,7 +43,14 @@ class BackgroundJobsFeature:
         """The runner the executor's resume pump and the tools read."""
         return self._runner
 
-    def drain_events(self) -> list[TurnEvent]:
+    def compose_context(self, context: dict) -> None:
+        """The in-flight jobs the turn context groups by kind."""
+        context["background"] = {
+            "running": self._runner.active_by_context_key(),
+            "active_count": self._runner.active_count(),
+        }
+
+    def drain(self) -> list[TurnEvent]:
         """Every finished job as the turn events the loop yields, delivered and removed."""
         events: list[TurnEvent] = []
         for completion in self._runner.drain_completed():
@@ -81,7 +93,7 @@ class BackgroundJobsFeature:
             completion_event_data: dict[str, Any] = {"job_id": completion.identifier}
             if background_include_result(completion.kind):
                 completion_event_data["result"] = capped_result
-            self._services.record_event(
+            self._host.bookkeeping.record_event(
                 background_completion_event(completion.kind), completion_event_data
             )
         return events
@@ -110,8 +122,8 @@ class BackgroundJobsFeature:
         code: str | None,
     ) -> None:
         """Append background data first and any actionable guidance second."""
-        self._services.conversation.append(
-            self._services.reminder_message(
+        self._host.conversation.messages.append(
+            self._host.turn.reminder_message(
                 self._result_message(content, metadata, status, code),
                 marks={"background_result": metadata, "status": status, "code": code},
             )
@@ -119,8 +131,8 @@ class BackgroundJobsFeature:
         result_data = _maybe_json(content)
         result_code = str(result_data.get("code") or "") if isinstance(result_data, dict) else ""
         if result_code.endswith("_interrupted"):
-            self._services.conversation.append(
-                self._services.reminder_message(
+            self._host.conversation.messages.append(
+                self._host.turn.reminder_message(
                     self._prompts.load(
                         "background_interrupted",
                         {"kind": str(metadata.get("tool_name") or "tool")},
@@ -150,13 +162,3 @@ class BackgroundJobsFeature:
                 "content": content,
             },
         )
-
-    def active_by_context_key(self) -> dict[str, list[str]]:
-        """In-flight job identifiers grouped by their turn-context key, with empty groups omitted."""
-        return self._runner.active_by_context_key()
-
-    def active_count(self) -> int:
-        return self._runner.active_count()
-
-
-__all__ = ["BackgroundJobsFeature"]

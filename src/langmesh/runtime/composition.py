@@ -66,7 +66,7 @@ class RuntimeComponents:
     related_turns: Callable[[str], Awaitable[Any]] | None = None
     goal_listener: Callable[[Any], None] | None = None
     goal_review_journal: Any = None
-    features: Any = None
+    features: Sequence[Any] | None = None
 
     def __post_init__(self) -> None:
         if self.supplied_tool_gate not in {"ask", "none"}:

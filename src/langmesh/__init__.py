@@ -51,6 +51,7 @@ from langmesh.runtime.compaction import (
     ObservationCompactionPreparation,
 )
 from langmesh.runtime.continuation import TuningContinuationPolicy
+from langmesh.runtime.features.battery import default_features
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile, SessionComponents
 from langmesh.runtime.hooks import MaximumToolCalls
 from langmesh.runtime.locations import Location
@@ -518,6 +519,11 @@ class Session:
                         self._materialized_resources.sync
                         if self._materialized_resources is not None
                         else None
+                    ),
+                    features=(
+                        self._components.features
+                        if self._components.features is not None
+                        else default_features(self._components)
                     ),
                 ),
             )

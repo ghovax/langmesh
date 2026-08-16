@@ -11,9 +11,10 @@ from langchain_core.messages import (
     messages_to_dict,
 )
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, SecretStr, ValidationError
+from pydantic import SecretStr
 
 
+from langmesh.base.confinement import Grant
 from langmesh.base.configuration import (
     AgentConfiguration,
     Configuration,
@@ -56,6 +57,12 @@ from langmesh.base.serialization import compact
 from langmesh.base.toolbox import toolbox_for
 from langmesh.runtime.goal import Goal
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
+from langmesh.runtime.features.plugins.continuation import Continuation
+from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
+from langmesh.runtime.features.plugins.compaction import Compaction
+from langmesh.runtime.features.plugins.permissions import PermissionReview
+from langmesh.runtime.features.plugins.background import BackgroundJobsFeature
+from langmesh.runtime.features.plugins.observations import ObservationMemory
 from langmesh.runtime.internals import (
     _utc_timestamp,
     conversation_tokens,
@@ -212,110 +219,6 @@ def _build_tool_context(
     )
 
 
-class TaskItem(BaseModel):
-    identifier: str = ""
-    # One short phrase naming the task, like a tool call's explanation; the description says what to do.
-    title: str = ""
-    description: str
-    status: str = "pending"
-    dependencies: list[str] = []
-
-
-class TaskManager:
-    def __init__(self):
-        self._tasks: list[TaskItem] = []
-        self._by_identifier: dict[str, TaskItem] = {}
-        self._next_identifier: int = 1
-
-    def add_tasks(self, task_definitions: list[dict]) -> list[str]:
-        created = []
-        for definition in task_definitions:
-            # The identifier is the task's index: the model addresses a task by number, never by a prefixed id.
-            identifier = str(self._next_identifier)
-            self._next_identifier += 1
-            task = TaskItem(
-                identifier=identifier,
-                title=definition.get("title", ""),
-                description=definition.get("description", ""),
-                dependencies=definition.get("dependencies", []),
-            )
-            self._tasks.append(task)
-            self._by_identifier[identifier] = task
-            created.append(identifier)
-        return created
-
-    # What an update may say. A key outside this set is reported rather than silently matching nothing.
-    UPDATE_KEYS = frozenset({"task_id", "status"})
-    STATUSES = ("pending", "in_progress", "completed", "blocked")
-
-    def update_tasks(self, updates: list[dict]) -> tuple[list[str], list[str]]:
-        """Apply each update, returning the ids that changed and a complaint for each that did not."""
-        updated_ids: list[str] = []
-        complaints: list[str] = []
-        known = self._by_identifier
-        for update in updates:
-            unknown = sorted(set(update) - self.UPDATE_KEYS)
-            if unknown:
-                complaints.append(
-                    f"{', '.join(unknown)} is not part of an update; use {', '.join(sorted(self.UPDATE_KEYS))}."
-                )
-            task_id = update.get("task_id", "")
-            status = update.get("status", "")
-            if status not in self.STATUSES:
-                complaints.append(
-                    f"{status!r} is not a status; use one of {', '.join(self.STATUSES)}."
-                )
-                continue
-            if task_id not in known:
-                complaints.append(
-                    f"There is no task {task_id!r}. Current ids: {', '.join(sorted(known)) or 'none'}."
-                )
-                continue
-            known[task_id].status = status
-            updated_ids.append(task_id)
-        return updated_ids, complaints
-
-    def render_json(self) -> str:
-        if not self._tasks:
-            return ""
-        return compact([task.model_dump() for task in self._tasks])
-
-    def to_dict_list(self) -> list[dict]:
-        return [task.model_dump() for task in self._tasks]
-
-    def unfinished(self) -> list[dict]:
-        """Tracked work that still needs action; blocked items remain visible but do not spin a turn."""
-        return [task.model_dump() for task in self._tasks if task.status != "completed"]
-
-    def actionable(self) -> list[dict]:
-        """Unfinished work that is neither explicitly blocked nor waiting on unfinished work."""
-        completed = {task.identifier for task in self._tasks if task.status == "completed"}
-        return [
-            task.model_dump()
-            for task in self._tasks
-            if task.status not in {"completed", "blocked"}
-            and all(dependency in completed for dependency in task.dependencies)
-        ]
-
-    def snapshot(self) -> dict:
-        """The manager's durable state, so a rebuilt runtime restores the tasks and keeps minting fresh ids."""
-        return {"tasks": self.to_dict_list(), "next_identifier": self._next_identifier}
-
-    def restore(self, snapshot: dict) -> None:
-        """Rehydrate from :meth:`snapshot`, tolerating a missing or partial one by staying empty."""
-        self._tasks = [TaskItem.model_validate(task) for task in snapshot.get("tasks", [])]
-        self._by_identifier = {task.identifier: task for task in self._tasks}
-        if len(self._by_identifier) != len(self._tasks):
-            raise ValueError("task snapshot contains duplicate identifiers")
-        numeric_identifiers = [
-            int(task.identifier.removeprefix("task-"))
-            for task in self._tasks
-            if task.identifier.removeprefix("task-").isdigit()
-        ]
-        stored_next = int(snapshot.get("next_identifier", 1))
-        self._next_identifier = max(stored_next, max(numeric_identifiers, default=0) + 1)
-
-
 class _GoalAccess:
     """The goal as a tool handler sees it: read the current one, write a new one."""
 
@@ -382,7 +285,6 @@ class AgentRuntime(
         self._prompt_composer = components.prompt_composer
         self._hooks = HookRunner(components.hooks)
         self._pipeline = ToolPipeline(components.middleware)
-        self._compaction = components.compaction
         self._resource_sync = components.synchronize_resources
         self._session_id = session_id
         # The session that created this one, empty when a person did. Reporting back needs its id.
@@ -471,7 +373,6 @@ class AgentRuntime(
         self._model_tools = list(configured_tools)
         self._tool_schemas: dict[str, Any] = {tool.name: tool.args_schema for tool in self._tools}
         self._bound_model = self._model.bind_tools(self._model_tools)
-        self._compaction_summarizer = components.compaction_summarizer
         # The evaluator's own `tools_enabled` gate refuses what the profile did not declare.
         self._permissions = (
             permissions
@@ -480,18 +381,8 @@ class AgentRuntime(
         )
         # Where the audit trail goes, and who answers a gate. Both absent by default.
         self._observer = observer
-        from langmesh.runtime.compaction import DirectCompactionPreparation
-
-        self._compaction_preparation = (
-            components.compaction_preparation or DirectCompactionPreparation()
-        )
-        from langmesh.runtime.continuation import TuningContinuationPolicy
-
-        self._continuations = components.continuations or TuningContinuationPolicy()
         self._approvals = approvals
         self._transcript = transcript
-        # The daemon's event publisher is optional; the registry reader is used only for compaction verification.
-        self._goal_review_journal = components.goal_review_journal
         # The conversation and the prompt this runtime runs with.
 
         self._conversation: list = conversation if conversation is not None else []
@@ -524,7 +415,6 @@ class AgentRuntime(
         for grant in self._tool_grants:
             self._conversation.append(self._tool_grant_message(grant.tool))
         self._cached_system_prompt: str | None = None
-        self._task_manager = TaskManager()
         self._session_revision = 0
         self._persisted_session_revision = 0
         self._execution_history: list[dict] = []
@@ -554,103 +444,117 @@ class AgentRuntime(
             conversation_snapshot=self._peer_conversation_snapshot,
             mcp_server_manager=mcp_server_manager,
         )
-        # What was approved beyond the configured profile, held by the permission plugin so one grant is not re-asked.
+        # What was approved beyond the configured profile. The boundary is the core's; only the
+        # permission plugin adds to it, so other plugins never need to know that plugin exists.
+        self._access_grants: list[Grant] = []
+        # The files the person attached: like a grant, but answering what they handed over rather than what was asked.
         self._attached_files: dict[str, None] = {}
         # The pluggable sub-behaviors this runtime runs, each with its own state and templates.
-        from langmesh.runtime.features.base import FeatureServices, build_features, feature_prompts
+        from langmesh.runtime.features import (
+            BoundaryView,
+            BookkeepingView,
+            ConversationView,
+            PluginBus,
+            PluginContext,
+            PluginHost,
+            ToolsView,
+            TurnView,
+            WindowView,
+            build_features,
+            feature_prompts,
+        )
 
-        feature_services = FeatureServices(
+        self._plugin_bus = PluginBus()
+        self._plugin_context = PluginContext(
             session_id=self._session_id,
             parent_session=self._parent_session,
             working_directory=self._working_directory,
             project_directory=self._project_directory,
             agent_configuration=self._agent_configuration,
             global_configuration=self._global_configuration,
-            model=self._model,
-            conversation=self._conversation,
-            catalogued_prompts=lambda name: feature_prompts(name, self._catalogue),
             catalogue=self._catalogue,
-            tool_context=self._tool_context,
-            model_tools=self._model_tools,
-            tool_schemas=self._tool_schemas,
-            supplied_tool_names=self._supplied_tool_names,
-            supplied_tool_gate=self._supplied_tool_gate,
-            sandbox=self._sandbox,
-            locations=self._locations,
-            locations_by_name=self._locations_by_name,
-            context_window=self._context_window,
-            latest_context_tokens=self._latest_context_tokens,
-            task_manager=self._task_manager,
-            goal=lambda: (
-                self._features.goal_review.goal if self._features.present("goal_review") else None
+            prompts=lambda name: feature_prompts(name, self._catalogue),
+            bus=self._plugin_bus,
+        )
+        plugin_host = PluginHost(
+            conversation=ConversationView(
+                model=self._model,
+                messages=self._conversation,
             ),
-            write_goal=self.write_goal,
-            turn_reader=self._turn_reader,
-            background=lambda: (
-                self._features.background.runner
-                if self._features.present("background")
-                else None
+            boundary=BoundaryView(
+                sandbox=self._sandbox,
+                locations=self._locations,
+                locations_by_name=self._locations_by_name,
+                resolve_location=self._resolve_location,
+                call_policy=self._call_policy,
+                granted_profile=self._granted_profile,
+                access_grants=lambda: self._access_grants,
+                record_grant=self._record_grant,
+                attached_files=self._attached_files,
             ),
-            job_store=components.jobs,
-            reminder_message=self._reminder_message,
-            compaction=self._compaction,
-            compaction_preparation=self._compaction_preparation,
-            compaction_summarizer=self._compaction_summarizer,
-            continuation_policy=self._continuations,
-            goal_review_journal=self._goal_review_journal,
-            set_latest_context_tokens=lambda value: setattr(self, "_latest_context_tokens", value),
-            refresh_cached_prompt=lambda: setattr(self, "_cached_system_prompt", None),
-            abort_event=self._abort_event,
-            mark_dirty=self._mark_session_dirty,
-            record_event=self._record_event,
-            discard_pending_steering=self.discard_pending_steering,
-            session_snapshot=self.session_snapshot,
-            restore_session=self.restore_session,
-            build_static_system_prompt=self._build_static_system_prompt,
-            build_turn_messages=self._build_turn_messages,
-            refuse_if_over_window=self._refuse_if_over_window,
-            granted_profile=self._granted_profile,
-            resolve_location=self._resolve_location,
-            call_policy=self._call_policy,
-            compaction_waiting=lambda: bool(
-                self._features.present("compaction")
-                and self._features.compaction.control.waiting
+            tools=ToolsView(
+                tool_context=self._tool_context,
+                model_tools=self._model_tools,
+                tool_schemas=self._tool_schemas,
+                supplied_tool_names=self._supplied_tool_names,
+                supplied_tool_gate=self._supplied_tool_gate,
+                turn_reader=self._turn_reader,
+            ),
+            window=WindowView(
+                context_window=self._context_window,
+                latest_context_tokens=self._latest_context_tokens,
+                set_latest_context_tokens=lambda value: setattr(self, "_latest_context_tokens", value),
+                refresh_cached_prompt=lambda: setattr(self, "_cached_system_prompt", None),
+            ),
+            turn=TurnView(
+                abort_event=self._abort_event,
+                discard_pending_steering=self.discard_pending_steering,
+                build_static_system_prompt=self._build_static_system_prompt,
+                build_turn_messages=self._build_turn_messages,
+                refuse_if_over_window=self._refuse_if_over_window,
+                reminder_message=self._reminder_message,
+                maintenance_active=lambda: bool(self._features.active_maintenance()),
+                feature_classes=lambda: [type(feature) for feature in self._features.instances],
+            ),
+            bookkeeping=BookkeepingView(
+                mark_dirty=self._mark_session_dirty,
+                record_event=self._record_event,
+                session_snapshot=self.session_snapshot,
+                restore_session=self.restore_session,
             ),
         )
-        self._features = build_features(components.features, feature_services)
-        self._feature_services = feature_services
+        self._features = build_features(components.features, self._plugin_context, plugin_host)
         # The daemon's goal listener is handed to the goal plugin, which owns the goal itself.
-        if self._features.present("goal_review"):
-            self._features.goal_review.set_listener(components.goal_listener)
+        goal_review = self._features.by_type(GoalReviewFeature)
+        if goal_review is not None:
+            goal_review.set_listener(components.goal_listener)
         # Per-session state a screen-control script keeps between calls, and the services bundle
         # every tool handler runs against. The bundle is the tool's only view of the runtime.
         self._screen_queries_asked: list[tuple[Any, str]] = []
+        background_feature = self._features.by_type(BackgroundJobsFeature)
+        continuation_feature = self._features.by_type(Continuation)
         self._services = ToolServices(
-            background=self._features.background.runner if self._features.present("background") else None,
+            background=background_feature.runner if background_feature is not None else None,
             permissions=self._permissions,
-            task_manager=self._task_manager,
+            task_manager=continuation_feature.task_manager if continuation_feature is not None else None,
             goal=_GoalAccess(self),
             prompt_loader=self._prompt_loader,
             catalogue=self._catalogue,
             tool_context=self._tool_context,
-            access_grants=(
-                self._features.permissions.access_grants
-                if self._features.present("permissions")
-                else ()
-            ),
+            access_grants=self._access_grants,
             attached_files=self._attached_files,
             turn_reader=self._turn_reader,
             record_event=self._record_event,
             mark_dirty=self._mark_session_dirty,
             abort_event=self._abort_event,
             submit_goal_review=lambda review: (
-                self._features.goal_review.submit(review)
-                if self._features.present("goal_review")
+                self._features.by_type(GoalReviewFeature).submit(review)
+                if self._features.by_type(GoalReviewFeature) is not None
                 else None
             ),
             submit_compaction_summary=lambda summary: (
-                self._features.compaction.submit_summary(summary)
-                if self._features.present("compaction")
+                self._features.by_type(Compaction).submit_summary(summary)
+                if self._features.by_type(Compaction) is not None
                 else None
             ),
             leases=_LeaseAccess(self),
@@ -675,14 +579,14 @@ class AgentRuntime(
 
     def note_observation_registry(self, metadata: dict[str, Any], error: str | None = None) -> None:
         """Adopt watcher metadata and queue a changed schema failure for the next model opening."""
-        if self._features.present("observations"):
-            self._features.observations.note(metadata, error)
+        observations = self._features.by_type(ObservationMemory)
+        if observations is not None:
+            observations.note(metadata, error)
 
     def _take_observation_registry_feedback(self) -> str | None:
         """The one schema-failure note owed to the next model opening, consumed by it."""
-        if not self._features.present("observations"):
-            return None
-        return self._features.observations.take_feedback()
+        observations = self._features.by_type(ObservationMemory)
+        return observations.take_feedback() if observations is not None else None
 
     def set_locations(self, locations: Sequence[Location] | None) -> None:
         """Adopt the workspace's environments as they are now, so one added later reaches an existing session."""
@@ -805,11 +709,15 @@ class AgentRuntime(
         return messages_to_dict(inherited_messages)
 
     @property
+    def features(self):
+        """The installed features, which a composer reaches through ``by_type`` to orchestrate."""
+        return self._features
+
+    @property
     def _background(self):
         """This runtime's background-job runner, owned by the background plugin."""
-        if not self._features.present("background"):
-            return None
-        return self._features.background.runner
+        background_feature = self._features.by_type(BackgroundJobsFeature)
+        return background_feature.runner if background_feature is not None else None
 
     @property
     def background_jobs(self) -> BackgroundJobs:
@@ -836,8 +744,9 @@ class AgentRuntime(
         self, *, kind: str, identifier: str, tool_call_identifier: str, result: str
     ) -> None:
         """Append a restored background result, so a rebuilt runtime replays it exactly like a live completion."""
-        if self._features.present("background"):
-            self._features.background.inject_stored_result(
+        background_feature = self._features.by_type(BackgroundJobsFeature)
+        if background_feature is not None:
+            background_feature.inject_stored_result(
                 kind=kind,
                 identifier=identifier,
                 tool_call_identifier=tool_call_identifier,
@@ -1064,85 +973,63 @@ class AgentRuntime(
         self._turn_reader = task_reader
 
     def unfinished_tasks(self) -> list[dict]:
-        return self._task_manager.unfinished()
+        continuation = self._features.by_type(Continuation)
+        return continuation.unfinished() if continuation is not None else []
 
     def has_actionable_tasks(self) -> bool:
-        return bool(self._task_manager.actionable())
+        continuation = self._features.by_type(Continuation)
+        return bool(continuation is not None and continuation.actionable())
 
     def should_continue_goal(self) -> bool:
-        if not self._features.present("continuation"):
-            return False
-        return self._features.continuation.should_continue_goal(self.goal)
+        continuation = self._features.by_type(Continuation)
+        return bool(continuation is not None and continuation.should_continue_goal(self.goal))
 
     def should_continue_tasks(self) -> bool:
-        if not self._features.present("continuation"):
-            return False
-        return self._features.continuation.should_continue_tasks(self._task_manager.actionable())
+        continuation = self._features.by_type(Continuation)
+        return bool(
+            continuation is not None
+            and continuation.should_continue_tasks(continuation.actionable())
+        )
 
     def task_continuation_message(self) -> str:
         """The hidden instruction that makes unfinished tracked work an actual next turn."""
-        if not self._features.present("continuation"):
+        continuation = self._features.by_type(Continuation)
+        if continuation is None:
             return ""
-        return self._features.continuation.task_continuation_message(self._task_manager.unfinished())
+        return continuation.task_continuation_message(continuation.unfinished())
 
     def continuation_content(self, *, goal_review: str = "", task_continuation: str = "") -> str:
         """The one message a continuation turn carries: the goal review's prose and the
         task note, composed by the shared template rather than joined in Python."""
-        if not self._features.present("continuation"):
+        continuation = self._features.by_type(Continuation)
+        if continuation is None:
             return task_continuation.strip() or goal_review.strip()
-        return self._features.continuation.continuation_content(
+        return continuation.continuation_content(
             goal_review=goal_review, task_continuation=task_continuation
         )
 
     @property
     def task_continuations(self) -> int:
-        if not self._features.present("continuation"):
-            return 0
-        return self._features.continuation.task_continuations
+        continuation = self._features.by_type(Continuation)
+        return continuation.task_continuations if continuation is not None else 0
 
     def note_task_continuation(self) -> None:
-        if self._features.present("continuation"):
-            self._features.continuation.note_task_continuation()
+        continuation = self._features.by_type(Continuation)
+        if continuation is not None:
+            continuation.note_task_continuation()
 
     def restore_task_allowance(self) -> None:
-        if self._features.present("continuation"):
-            self._features.continuation.restore_task_allowance()
+        continuation = self._features.by_type(Continuation)
+        if continuation is not None:
+            continuation.restore_task_allowance()
 
     def session_snapshot(self) -> dict:
-        """The durable non-conversation state — the goal and the tasks — persisted beside the checkpoint."""
-        goal = self.goal if self._features.present("goal_review") else None
-        return {
-            "goal": goal.model_dump() if goal is not None else None,
-            "tasks": self._task_manager.snapshot(),
-            "task_continuations": (
-                self._features.continuation.task_continuations
-                if self._features.present("continuation")
-                else 0
-            ),
-            "compaction": (
-                control.snapshot() if (control := self._compaction_control) is not None else None
-            ),
-            "turn_recovery": self._turn_recovery,
-        }
+        """The durable non-conversation state the features own, plus the core's own recovery flag."""
+        return {**self._features.snapshot(), "turn_recovery": self._turn_recovery}
 
     def restore_session(self, snapshot: dict) -> None:
-        """Rehydrate goal and tasks. A goal that does not validate is dropped rather than guessed at."""
-        stored = snapshot.get("goal")
-        goal = None
-        if isinstance(stored, dict) and str(stored.get("text", "")).strip():
-            try:
-                goal = Goal.model_validate(stored)
-            except ValidationError:
-                logger.warning("discarding a stored goal that no longer validates")
-        if self._features.present("goal_review"):
-            self._features.goal_review.restore(goal)
-        self._task_manager.restore(snapshot.get("tasks", {}) or {})
-        if self._features.present("continuation"):
-            self._features.continuation.restore_task_continuations(
-                snapshot.get("task_continuations", 0) or 0
-            )
-        if self._features.present("compaction"):
-            self._features.compaction.restore_control(snapshot.get("compaction"))
+        """Rehydrate the features' durable state and the core's recovery flag."""
+        self._features.restore(snapshot)
         recovery = str(snapshot.get("turn_recovery") or "none")
         # A process that died after claiming the retry still owes that retry after restart.
         self._turn_recovery = "retryable" if recovery == "retrying" else recovery
@@ -1177,119 +1064,72 @@ class AgentRuntime(
             self._turn_recovery = "none"
             self._mark_session_dirty()
 
-    @property
-    def _compaction_control(self):
-        """The compaction phase machine, owned by the compaction plugin like its other state."""
-        if not self._features.present("compaction"):
-            return None
-        return self._features.compaction.control
+    # The compaction plugin's control surface, forwarded for the harness.
 
     @property
     def compaction_failure(self) -> str | None:
         """The failure that blocks new input until an explicit compaction retry succeeds."""
-        if not self._features.present("compaction"):
-            return None
-        return self._features.compaction.failure
+        compaction = self._features.by_type(Compaction)
+        return compaction.failure if compaction is not None else None
 
     def _fail_compaction(self, message: str) -> None:
         """Make a failed fold durable and visible; the compaction plugin owns how."""
-        if self._features.present("compaction"):
-            self._features.compaction.fail_compaction(message)
+        compaction = self._features.by_type(Compaction)
+        if compaction is not None:
+            compaction.fail_compaction(message)
 
     def _record_compaction_preparation(self) -> None:
-        if self._features.present("compaction"):
-            self._features.compaction.record_preparation()
+        compaction = self._features.by_type(Compaction)
+        if compaction is not None:
+            compaction.record_preparation()
 
     def retry_compaction(self) -> str | None:
         """Reopen exactly the failed compaction phase and return the operation to drive."""
-        if not self._features.present("compaction"):
-            return None
-        return self._features.compaction.retry()
+        compaction = self._features.by_type(Compaction)
+        return compaction.retry() if compaction is not None else None
 
     def begin_compaction_preparation(self) -> bool:
         """Begin an explicit compaction's recording handshake when no other compaction state is active."""
-        if not self._features.present("compaction"):
-            return False
-        return self._features.compaction.begin_explicit()
+        compaction = self._features.by_type(Compaction)
+        return bool(compaction is not None and compaction.begin_explicit())
 
     @property
     def resumes_after_compaction(self) -> bool:
-        control = self._compaction_control
-        return bool(control is not None and control.resume_after)
+        compaction = self._features.by_type(Compaction)
+        return bool(compaction is not None and compaction.control.resume_after)
 
     @property
     def pending_compaction_reason(self) -> str:
-        control = self._compaction_control
-        return control.reason if control is not None else "manual"
+        compaction = self._features.by_type(Compaction)
+        return compaction.control.reason if compaction is not None else "manual"
 
     @property
     def awaiting_compaction_recording(self) -> bool:
         """Whether a persisted compaction is waiting for its private recording segment to finish."""
-        control = self._compaction_control
-        return bool(control is not None and control.waiting)
-
-    def _should_compact(self, pending_message=None) -> bool:
-        if not self._features.present("compaction"):
-            return False
-        return self._features.compaction.should_compact(pending_message)
-
-    def _begin_compaction_preparation(self, *, reason: str, resume_after: bool) -> None:
-        if self._features.present("compaction"):
-            self._features.compaction.begin_preparation(reason=reason, resume_after=resume_after)
-
-    def _fail_compaction_preparation(
-        self, error: str, *, error_code: str = "compaction_preparation_failed"
-    ):
-        if not self._features.present("compaction"):
-            return []
-        return self._features.compaction.fail_preparation(error, error_code=error_code)
-
-    def _usable_context(self) -> int:
-        if not self._features.present("compaction"):
-            return 0
-        return self._features.compaction.usable_context()
-
-    def _tail_within_budget(self, recent: list, budget: int) -> list:
-        if not self._features.present("compaction"):
-            return recent
-        return self._features.compaction.tail_within_budget(recent, budget)
-
-    def _without_compaction_preparation(self, messages: list) -> list:
-        if not self._features.present("compaction"):
-            return messages
-        return self._features.compaction.without_preparation(messages)
+        compaction = self._features.by_type(Compaction)
+        return bool(compaction is not None and compaction.control.waiting)
 
     async def compact(self, reason: str = "manual"):
         """Reclaim the window after the explicit observational-memory handoff has completed."""
-        if not self._features.present("compaction"):
+        compaction = self._features.by_type(Compaction)
+        if compaction is None:
             return
-        async for event in self._features.compaction.compact(reason):
+        async for event in compaction.compact(reason):
             yield event
 
-    # Permission gating and the standing grants, both owned by the permission plugin.
+    # The boundary and the grants: the boundary is the core's, the permission plugin fills it.
 
     def _granted_profile(self):
         """The session's confinement with every standing grant compacted in. What an escape is measured against."""
-        if not self._features.present("permissions"):
-            return self._sandbox
-        return self._features.permissions.granted_profile()
+        profile = self._sandbox
+        for grant in self._access_grants:
+            profile = profile.with_grant(grant, workspace=self._working_directory or "")
+        return profile
 
-    async def _preflight_permissions(
-        self, tool_calls: list[dict]
-    ) -> tuple[dict, list]:
-        if not self._features.present("permissions"):
-            return {}, []
-        return await self._features.permissions.preflight(tool_calls)
+    def _record_grant(self, grant: Grant) -> None:
+        self._access_grants.append(grant)
 
-    async def _review_auto_gate(self, gate):
-        if not self._features.present("permissions"):
-            return None
-        return await self._features.permissions.review_auto_gate(gate)
-
-    def _resolve_tool_decisions(self, plans: dict, answers: dict) -> dict:
-        if not self._features.present("permissions"):
-            return {}
-        return self._features.permissions.resolve_tool_decisions(plans, answers)
+    # The permission plugin's gate and retry surface, forwarded for the harness and the tools.
 
     def retry_gate(
         self,
@@ -1299,9 +1139,10 @@ class AgentRuntime(
         denial,
         explanation: str,
     ):
-        if not self._features.present("permissions"):
+        permissions = self._features.by_type(PermissionReview)
+        if permissions is None:
             return None
-        return self._features.permissions.retry_gate(
+        return permissions.retry_gate(
             tool_call_id=tool_call_id,
             command=command,
             denial=denial,
@@ -1309,65 +1150,74 @@ class AgentRuntime(
         )
 
     async def decide_retry(self, gate):
-        if not self._features.present("permissions"):
+        permissions = self._features.by_type(PermissionReview)
+        if permissions is None:
             return "ask", None
-        return await self._features.permissions.decide_retry(gate)
+        return await permissions.decide_retry(gate)
 
     def _retry_refusal_result(self, gate, *, actor: str = "reviewer", reason: str = "") -> dict:
-        if not self._features.present("permissions"):
+        permissions = self._features.by_type(PermissionReview)
+        if permissions is None:
             return {}
-        return self._features.permissions.retry_refusal_result(gate, actor=actor, reason=reason)
+        return permissions.retry_refusal_result(gate, actor=actor, reason=reason)
 
     async def reconsider_gate(self, gate):
-        if not self._features.present("permissions"):
+        permissions = self._features.by_type(PermissionReview)
+        if permissions is None:
             return {}
-        return await self._features.permissions.reconsider_gate(gate)
+        return await permissions.reconsider_gate(gate)
 
     # The goal and its review, both owned by the goal plugin so none of this lives on the core.
 
     @property
     def goal(self) -> Optional[Goal]:
         """The session's goal, or ``None`` when it has none."""
-        if not self._features.present("goal_review"):
-            return None
-        return self._features.goal_review.goal
+        goal_review = self._features.by_type(GoalReviewFeature)
+        return goal_review.goal if goal_review is not None else None
 
     def set_goal_listener(self, listener: Optional[Callable[[Optional[Goal]], None]]) -> None:
         """Install the callback that hears every goal change, which is how the interface learns of one."""
-        if self._features.present("goal_review"):
-            self._features.goal_review.set_listener(listener)
+        goal_review = self._features.by_type(GoalReviewFeature)
+        if goal_review is not None:
+            goal_review.set_listener(listener)
 
     def write_goal(self, goal: Optional[Goal]) -> None:
         """Set, replace or drop the goal, and announce it. The single writer, so no path changes it silently."""
-        if self._features.present("goal_review"):
-            self._features.goal_review.write(goal)
+        goal_review = self._features.by_type(GoalReviewFeature)
+        if goal_review is not None:
+            goal_review.write(goal)
 
     def note_goal_continuation(self) -> None:
         """Count one review-opened turn and consume the message that opened it."""
-        if self._features.present("goal_review"):
-            self._features.goal_review.note_continuation()
+        goal_review = self._features.by_type(GoalReviewFeature)
+        if goal_review is not None:
+            goal_review.note_continuation()
 
     def restore_goal_allowance(self) -> None:
         """A person spoke, so the allowance restarts and a parked goal resumes. A settled one keeps its answer."""
-        if self._features.present("goal_review"):
-            self._features.goal_review.restore_allowance()
+        goal_review = self._features.by_type(GoalReviewFeature)
+        if goal_review is not None:
+            goal_review.restore_allowance()
 
     def park_goal(self) -> None:
         """Stop working the goal until a person speaks. The goal is kept: it is still what the session is for."""
-        if self._features.present("goal_review"):
-            self._features.goal_review.park()
+        goal_review = self._features.by_type(GoalReviewFeature)
+        if goal_review is not None:
+            goal_review.park()
 
     def review_goal(self, publish: Optional[Callable] = None):
         """Run the linked reviewer until it submits a verdict or the parent turn is cancelled."""
-        if not self._features.present("goal_review"):
+        goal_review = self._features.by_type(GoalReviewFeature)
+        if goal_review is None:
             return None
-        return self._features.goal_review.review(publish)
+        return goal_review.review(publish)
 
     def apply_goal_review(self, review):
         """Write the verdict onto the goal and answer with it, so the caller reads one value rather than two."""
-        if not self._features.present("goal_review"):
+        goal_review = self._features.by_type(GoalReviewFeature)
+        if goal_review is None:
             return self.goal
-        return self._features.goal_review.apply(review)
+        return goal_review.apply(review)
 
     def dirty_session_snapshot(self) -> Optional[dict]:
         """Return state newer than the last persisted revision without acknowledging it."""

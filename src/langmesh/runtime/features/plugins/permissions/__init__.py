@@ -37,7 +37,7 @@ from langmesh.runtime.locations import (
     ResolvedLocation,
     ToolLocationError,
 )
-from langmesh.runtime.features.base import FeatureServices
+from langmesh.runtime.features import Feature, PluginContext, PluginHost
 
 logger = logging.getLogger(__name__)
 
@@ -85,27 +85,26 @@ def _screen_primitive(func: ast.expr) -> str:
     return ""
 
 
-class PermissionReview:
+class PermissionReview(Feature):
     """Whether a call runs, is asked about, or is refused, and what approval a session keeps."""
 
-    def __init__(self, services: FeatureServices) -> None:
-        self._services = services
-        self._prompts = services.catalogued_prompts("permissions")
-        # What was approved beyond the configured profile, held for the session so one grant is not re-asked.
-        self._grants: list[Grant] = []
+
+    def __init__(self) -> None:
+        pass
+
+    def attach(self, context: PluginContext, host: PluginHost) -> None:
+        self._context = context
+        self._host = host
+        self._prompts = context.prompts("permissions")
 
     @property
     def access_grants(self) -> list[Grant]:
-        return self._grants
+        """The standing grants, kept on the core boundary so other plugins never need this one."""
+        return list(self._host.boundary.access_grants)
 
     def granted_profile(self):
         """The session's confinement with every standing grant compacted in. What an escape is measured against."""
-        profile = self._services.sandbox
-        for grant in self._grants:
-            profile = profile.with_grant(
-                grant, workspace=self._services.working_directory or ""
-            )
-        return profile
+        return self._host.boundary.granted_profile()
 
     async def review(self, gate: _PreflightGate) -> PermissionDecision:
         """The reviewer's verdict on one gate. Takes a gate, so it cannot reach a call that raised none."""
@@ -113,7 +112,7 @@ class PermissionReview:
         context = compact(
             {
                 "tool": gate.tool_name,
-                "working_directory": self._services.working_directory,
+                "working_directory": self._context.working_directory,
                 "command": gate.command,
                 "arguments": gate.arguments,
                 "requested_access": {
@@ -124,9 +123,9 @@ class PermissionReview:
                 },
                 "model_explanation": gate.arguments.get("explanation", "") or gate.explanation,
                 # The person's standing instructions, so the reviewer can tell user-requested reach from invention.
-                "user_instructions": instructions_payload(self._services.catalogue.instructions()),
-                "confinement": self._services.sandbox.describe(
-                    workspace=self._services.working_directory
+                "user_instructions": instructions_payload(self._context.catalogue.instructions()),
+                "confinement": self._host.boundary.sandbox.describe(
+                    workspace=self._context.working_directory
                 ),
                 # Only on a second run, so the reviewer knows the command hit a wall rather than merely failed.
                 **({"denial_evidence": gate.denial_evidence} if gate.denial_evidence else {}),
@@ -139,20 +138,20 @@ class PermissionReview:
                 "thinking_language": self._prompts.load("thinking_language", {}).strip(),
                 "toolbox": (
                     self._prompts.load("reviewer_toolbox", {})
-                    if getattr(self._services.tool_context, "toolbox", None) is not None
+                    if getattr(self._host.tools.tool_context, "toolbox", None) is not None
                     else ""
                 ),
             },
         )
         # Preserve the exact main-session prefix and invariant tool schema for provider-cache reuse.
         request = [
-            SystemMessage(content=self._services.build_static_system_prompt()),
+            SystemMessage(content=self._host.turn.build_static_system_prompt()),
             *self._conversation_for_review(),
             SystemMessage(content=prompt),
             HumanMessage(content=context),
         ]
         try:
-            self._services.refuse_if_over_window(request)
+            self._host.turn.refuse_if_over_window(request)
         except ContextWindowExceeded:
             logger.warning(
                 "the permission reviewer could not fit the session in the window; denying"
@@ -163,7 +162,7 @@ class PermissionReview:
                 risk="medium",
             )
         # The reviewer is one verdict call: bind only its verdict tool, not the session's surface.
-        model = self._services.model.bind_tools(
+        model = self._host.conversation.model.bind_tools(
             [permission_decision_tool],
             tool_choice="auto",
             parallel_tool_calls=False,
@@ -269,12 +268,12 @@ class PermissionReview:
             "shared_segments": int(cache_trace.get("shared_segments", 0) or 0),
             "segments": int(cache_trace.get("segments", 0) or 0),
         }
-        self._services.record_event("permission_reviewed", metrics)
+        self._host.bookkeeping.record_event("permission_reviewed", metrics)
         logger.info(
             "permission review session=%s action=%s attempts=%d duration_ms=%d tool_calls=%d "
             "input_tokens=%d output_tokens=%d cache_read_tokens=%d prefix_intact=%s "
             "reachable_tokens=%d shared_segments=%d segments=%d",
-            self._services.session_id,
+            self._context.session_id,
             metrics["action"],
             metrics["attempts"],
             metrics["duration_milliseconds"],
@@ -291,7 +290,7 @@ class PermissionReview:
     def _conversation_for_review(self) -> list[Any]:
         """The conversation as the reviewer may see it: the pending tool call closed by a
         placeholder, since a proposal with no response is invalid to the provider."""
-        conversation = list(self._services.conversation)
+        conversation = list(self._host.conversation.messages)
         last = conversation[-1] if conversation else None
         if isinstance(last, AIMessage) and getattr(last, "tool_calls", None):
             for tool_call in last.tool_calls:
@@ -304,9 +303,9 @@ class PermissionReview:
         return conversation
 
     def record_grant(self, grant: Grant) -> None:
-        """Remember an approved widening for the session, so one grant is not re-asked on every command."""
-        self._grants.append(grant)
-        self._services.record_event(
+        """Remember an approved widening on the core boundary, so one grant is not re-asked on every command."""
+        self._host.boundary.record_grant(grant)
+        self._host.bookkeeping.record_event(
             "access_granted",
             {
                 "reads": list(grant.reads),
@@ -320,15 +319,26 @@ class PermissionReview:
 
     def _new_permission_request_id(self, tool_call_id: str = "") -> str:
         """The id an answer is filed under, derived from the call so a replanned gate is the same gate."""
-        return f"perm-{self._services.session_id}-{tool_call_id or uuid.uuid4()}"
+        return f"perm-{self._context.session_id}-{tool_call_id or uuid.uuid4()}"
 
     def _new_question_request_id(self, tool_call_id: str = "") -> str:
         """Stable for the same reason, and by the same means, as the permission id above."""
-        return f"q-{self._services.session_id}-{tool_call_id or uuid.uuid4()}"
+        return f"q-{self._context.session_id}-{tool_call_id or uuid.uuid4()}"
 
     def _new_retry_request_id(self, tool_call_id: str) -> str:
         """The id for a second run, distinct from the preflight id since both can exist in one turn."""
-        return f"retry-{self._services.session_id}-{tool_call_id}"
+        return f"retry-{self._context.session_id}-{tool_call_id}"
+
+    async def plan_tool_calls(self, tool_calls: list[dict]) -> Any | None:
+        """Plan one batch's calls: the plans and the gates they raised, if any."""
+        plans, gates = await self.preflight(tool_calls)
+        if not plans:
+            return None
+        return plans, gates
+
+    def resolve_gates(self, plans: Any, answers: dict) -> dict:
+        """Plans plus answers into one verdict per call."""
+        return self.resolve_tool_decisions(plans, answers)
 
     async def preflight(
         self, tool_calls: list[dict]
@@ -358,10 +368,7 @@ class PermissionReview:
     ) -> _ToolPlan:
         """The verdict for one call. One path for every tool; only the rule table and the escape differ."""
         plan = _ToolPlan(tool_call_id=tool_call_identifier)
-        if self._services.compaction_waiting() and tool_name in {"bash", "load_skill"}:
-            # The handoff protocol itself: local foreground Bash and read-only skill loading; the turn loop rejects every other shape.
-            return plan
-        schema = self._services.tool_schemas.get(tool_name)
+        schema = self._host.tools.tool_schemas.get(tool_name)
         if schema is not None:
             tool_arguments = _coerce_structured_arguments(schema, tool_arguments)
 
@@ -370,11 +377,11 @@ class PermissionReview:
             tool_arguments = dict(tool_arguments)
             location_value = tool_arguments.pop("location", None) or None
             try:
-                resolved_location = self._services.resolve_location(location_value)
+                resolved_location = self._host.boundary.resolve_location(location_value)
             except ToolLocationError:
                 # A bad location is an execution error, raised by _execute_tool rather than decided here.
                 return plan
-        policy = self._services.call_policy(resolved_location)
+        policy = self._host.boundary.call_policy(resolved_location)
         explanation = str(tool_arguments.get("explanation", "") or "")
 
         # ask_user is the one call that is a question rather than an act.
@@ -447,12 +454,16 @@ class PermissionReview:
         plan.gates.append(gate)
         return plan
 
+    async def review_automatic_gate(self, gate: _PreflightGate) -> Any | None:
+        """The verdict for one automatic gate, decided by this plugin and announced before it runs."""
+        return await self.review_auto_gate(gate)
+
     async def review_auto_gate(self, gate: _PreflightGate) -> PermissionAnswer:
         """Review one automatic gate and return the typed answer the shared resolver consumes."""
         decision = await self.review(gate)
         if decision.action == "allow":
             gate.approved_by = confinement.APPROVED_BY_REVIEWER
-            self._services.record_event(
+            self._host.bookkeeping.record_event(
                 "access_allowed",
                 {
                     "tool": gate.tool_name,
@@ -465,7 +476,7 @@ class PermissionReview:
                 reason=decision.explanation,
                 actor="reviewer",
             )
-        self._services.record_event(
+        self._host.bookkeeping.record_event(
             "access_refused",
             {
                 "tool": gate.tool_name,
@@ -547,7 +558,7 @@ class PermissionReview:
 
     def _rule_for(self, tool_name: str, tool_arguments: dict) -> tuple[str, str]:
         """What the configuration says about this call. The subject differs by tool, because the calls do."""
-        tools = self._services.agent_configuration.tools
+        tools = self._context.agent_configuration.tools
         if tool_name == "bash":
             command = str(tool_arguments.get("command", "") or "")
             return command, tools.bash.evaluate_permission(command, unmatched=RULE_ALLOW)
@@ -560,9 +571,9 @@ class PermissionReview:
             return subject, tools.screen.decide(
                 subject, unmatched=RULE_ASK if mutations else RULE_ALLOW
             )
-        if tool_name in self._services.supplied_tool_names:
+        if tool_name in self._host.tools.supplied_tool_names:
             # A supplied tool is unknown to the engine, so it is asked about unless the caller said otherwise.
-            return tool_name, RULE_ALLOW if self._services.supplied_tool_gate == "none" else RULE_ASK
+            return tool_name, RULE_ALLOW if self._host.tools.supplied_tool_gate == "none" else RULE_ASK
         return tool_name, RULE_ALLOW
 
     def _command_of(self, tool_name: str, tool_arguments: dict) -> str:
@@ -720,7 +731,7 @@ class PermissionReview:
 
     async def reconsider_gate(self, gate) -> dict[str, Any]:
         """Re-decide a gate the session is parked on, under the mode now in force."""
-        if not self._services.call_policy(None).asks:
+        if not self._host.boundary.call_policy(None).asks:
             return {}
         if gate.kind == "question":
             return {
@@ -739,7 +750,7 @@ class PermissionReview:
 
     async def decide_retry(self, gate: _PreflightGate) -> tuple[str, Optional[Grant]]:
         """What to do with a retry gate: ask, run with a grant, or refuse. Three answers, not an optional grant."""
-        if self._services.call_policy(None).asks:
+        if self._host.boundary.call_policy(None).asks:
             return "ask", None
         decision = await self.review(gate)
         if decision.action != "allow":
@@ -750,7 +761,7 @@ class PermissionReview:
                     or "The permission reviewer did not produce an approval."
                 },
             )
-            self._services.record_event(
+            self._host.bookkeeping.record_event(
                 "retry_refused",
                 {
                     "command": gate.command,
@@ -758,7 +769,7 @@ class PermissionReview:
                 },
             )
             return "refuse", None
-        self._services.record_event(
+        self._host.bookkeeping.record_event(
             "retry_allowed",
             {
                 "command": gate.command,

@@ -40,12 +40,12 @@ from langmesh.runtime.turn_events import (
     ToolResult,
     TurnEvent,
 )
-from langmesh.runtime.tools.registry import bash as bash_tool
 from langchain_core.messages import ToolMessage
 from pydantic import ValidationError
 from typing import Any, AsyncIterator, cast
 import asyncio
 from langmesh.base.serialization import compact
+from langmesh.runtime.features.plugins.background import BackgroundJobsFeature
 from langmesh.runtime.tools.execution import (
     bind_tool_decision,
     bind_tool_services,
@@ -244,8 +244,8 @@ class _DispatchesTools:
         arguments: dict,
     ) -> tuple[str, str] | None:
         tool_schemas = (
-            {**self._tool_schemas, "bash": bash_tool.args_schema}
-            if self._compaction_control.waiting
+            {**self._tool_schemas, **self._features.maintenance_tool_schemas()}
+            if self._features.active_maintenance()
             else self._tool_schemas
         )
         if not isinstance(arguments, dict):
@@ -347,8 +347,9 @@ class _DispatchesTools:
                 (tool_call_identifier, note) for note in outcome.get("model_guidance", []) if note
             )
             background_job_id = outcome.get("background_job_id")
-            if background_job_id and self._features.present("background"):
-                self._features.background.runner.bind_tool_call(
+            background_feature = self._features.by_type(BackgroundJobsFeature)
+            if background_job_id and background_feature is not None:
+                background_feature.runner.bind_tool_call(
                     background_job_id,
                     tool_call_identifier,
                 )
@@ -419,21 +420,16 @@ class _DispatchesTools:
         current_context_window.set(self._context_window)
 
         # The session state tools read at call time, bound per call so two open turns cannot see each other's.
-        grants = (
-            self._features.permissions.access_grants
-            if self._features.present("permissions")
-            else ()
-        )
         tool_context.bind(
-            self._tool_context.with_grants(grants).with_attachments(
+            self._tool_context.with_grants(self._access_grants).with_attachments(
                 self._attached_files
             )
         )
 
         # Coerce JSON-string arguments up front, so validation and dispatch see the real container.
         schema = (
-            bash_tool.args_schema
-            if self._compaction_control.waiting and tool_name == "bash"
+            self._features.maintenance_tool_schemas().get(tool_name)
+            if self._features.active_maintenance() and tool_name in self._features.maintenance_tool_schemas()
             else self._tool_schemas.get(tool_name)
         )
         if schema is not None:
