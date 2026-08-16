@@ -14,6 +14,7 @@ from typing import Any, AsyncIterator, Sequence
 from langmesh.base.configuration import PromptLoader
 from langmesh.runtime.features.context import PluginContext
 from langmesh.runtime.features.host import PluginHost
+from langmesh.runtime.turn_events import TurnEvent
 
 
 class Feature:
@@ -53,12 +54,12 @@ class Feature:
     def begin_maintenance(self, *, reason: str, resume_after: bool) -> None:
         """Start holding the loop, preparing the durable handoff the fold needs."""
 
-    async def advance_maintenance(self) -> AsyncIterator[Any]:
+    async def advance_maintenance(self) -> AsyncIterator[TurnEvent]:
         """Advance the hold one step (record a handoff, announce a phase), yielding its events."""
         if False:
             yield None
 
-    async def run_maintenance(self, *, reason: str) -> AsyncIterator[Any]:
+    async def run_maintenance(self, *, reason: str) -> AsyncIterator[TurnEvent]:
         """Complete the hold and reclaim context, yielding the fold's events."""
         if False:
             yield None
@@ -83,7 +84,7 @@ class Feature:
         """The refusal a model is given for calling outside the held loop's protocol."""
         return ""
 
-    async def fail_maintenance(self, message: str) -> AsyncIterator[Any]:
+    async def fail_maintenance(self, message: str) -> AsyncIterator[TurnEvent]:
         """The hold could not complete; fail it as a durable blocker, yielding its events."""
         if False:
             yield None
@@ -95,19 +96,23 @@ class Feature:
         """The tool schemas a held loop accepts, keyed by name, merged for validation."""
         return {}
 
-    async def plan_tool_calls(self, tool_calls: list[dict]) -> Any | None:
-        """Plan one batch of calls: return ``(plans, gates)`` or ``None`` to not gate this batch."""
+    async def plan_tool_calls(self, tool_calls: list[dict]) -> tuple[dict, list] | None:
+        """Plan one batch of calls: return ``(plans, gates)`` or ``None`` to not gate this batch.
+
+        ``plans`` maps a tool-call id to its plan; ``gates`` are the interactions the calls
+        raised. The concrete types are the gating plugin's own, so this seam leaves them open.
+        """
         return None
 
-    def resolve_gates(self, plans: Any, answers: dict) -> dict:
+    def resolve_gates(self, plans: dict, answers: dict) -> dict:
         """Turn the plans plus the answers into one verdict per call."""
         return {}
 
-    async def review_automatic_gate(self, gate: Any) -> Any | None:
+    async def review_automatic_gate(self, gate) -> Any | None:
         """The verdict a feature that gates decides for one automatic gate, or ``None`` to pass."""
         return None
 
-    def drain(self) -> list[Any]:
+    def drain(self) -> list[TurnEvent]:
         """The events this feature has finished producing since the last drain."""
         return []
 

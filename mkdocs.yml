@@ -36,6 +36,7 @@ nav:
       - Lifecycle and control: library/lifecycle.md
       - Events and driving patterns: library/events.md
       - Tools, hooks, and policy: library/customization.md
+      - Features and plugins: library/plugins.md
       - Compaction and continuation: library/compaction.md
       - Resources and persistence: library/resources.md
       - API reference: library/api.md
