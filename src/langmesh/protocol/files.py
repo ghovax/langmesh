@@ -19,7 +19,7 @@ import jwt
 from a2a.types import FilePart, FileWithBytes, FileWithUri
 
 from langmesh.base.attachments import attachment_from_path
-from langmesh.base.net_trust import UntrustedHostError, pin_to_ip, resolve_public_ips
+from langmesh.base.confinement.outbound import UntrustedHostError, pin_to_ip, resolve_public_ips
 from langmesh.base.tuning import Tunable, active_tuning
 
 __all__ = ["attachment_from_path"]

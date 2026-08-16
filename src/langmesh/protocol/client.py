@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from langmesh.base.net_trust import UntrustedHostError, assert_public_host
+from langmesh.base.confinement.outbound import UntrustedHostError, assert_public_host
 
 from a2a.client import Client, ClientConfig, ClientEvent, ClientFactory
 from a2a.client.card_resolver import A2ACardResolver
