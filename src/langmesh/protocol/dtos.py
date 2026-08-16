@@ -42,13 +42,11 @@ class AgentConfigurationResponse(BaseModel):
     reasoning_effort: str = "high"
     permission_mode: Literal["ask", "automatic"]
     tools_enabled: list[str]
-    tools_disabled: list[str]
     bash: AgentBashConfigurationResponse
     path: str
 
 
 class AgentBashConfigurationRequest(BaseModel):
-    enabled: bool | None = None
     background_allowed: bool | None = None
     permissions: dict[str, str] | None = None
 
@@ -59,7 +57,6 @@ class AgentConfigurationUpdateRequest(BaseModel):
     reasoning_effort: str | None = None
     permission_mode: Literal["ask", "automatic"] | None = None
     tools_enabled: list[str] | None = None
-    tools_disabled: list[str] | None = None
     bash: AgentBashConfigurationRequest | None = None
 
     @model_validator(mode="after")

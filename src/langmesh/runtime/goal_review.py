@@ -143,11 +143,7 @@ class _ReviewsGoal:
                         update={
                             "bash": reviewer_configuration.tools.bash.model_copy(
                                 update={"background_allowed": False}
-                            ),
-                            "disabled": sorted(
-                                set(reviewer_configuration.tools.disabled)
-                                | _REVIEWER_DISABLED_TOOLS
-                            ),
+                            )
                         }
                     )
                 }

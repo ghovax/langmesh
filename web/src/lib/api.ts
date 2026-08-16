@@ -632,7 +632,6 @@ export interface AgentSummary {
 }
 
 export interface AgentBashConfiguration {
-  enabled: boolean;
   background_allowed: boolean;
   permissions: Record<string, string>;
 }
@@ -647,7 +646,6 @@ export interface AgentConfiguration {
   /** The mode a new session using this agent starts with. */
   permission_mode: PermissionMode;
   tools_enabled: string[];
-  tools_disabled: string[];
   bash: AgentBashConfiguration;
   path: string;
 }
@@ -658,7 +656,6 @@ export interface SaveAgentConfigurationPayload {
   reasoning_effort?: string;
   permission_mode?: PermissionMode;
   tools_enabled?: string[];
-  tools_disabled?: string[];
   bash?: Partial<AgentBashConfiguration>;
 }
 

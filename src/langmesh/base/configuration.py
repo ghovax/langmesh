@@ -768,7 +768,7 @@ class NamedToolPermissions(BaseModel):
 
 
 class BashToolConfiguration(BaseModel):
-    enabled: bool = True
+    # Policy only: which tools an agent uses is `tools_enabled`, not this block.
     background_allowed: bool = True
     permissions: dict[str, str] = {}
 
@@ -858,28 +858,27 @@ class BashToolConfiguration(BaseModel):
         segment = BashToolConfiguration._canonical_rm_segment(segment)
         if pattern.endswith("*"):
             keyword = pattern[:-1].rstrip()
-            if segment.startswith(keyword):
-                return True
-            return bool(re.search(r"(?:^|\s)" + re.escape(keyword) + r"(?:\s|$)", segment))
+            # A rule names a command: it matches when the segment starts with that command,
+            # never when the keyword merely appears inside a heredoc body or `-c` code. Splitting
+            # on shell operators already isolates each command, so `a && sudo rm` matches `sudo *`
+            # through its own segment; scanning the whole text would deny a doc write whose
+            # content happens to mention "sudo", "git", or "rm".
+            return segment.startswith(keyword)
         return segment == pattern
 
 
 class ToolsConfiguration(BaseModel):
-    """Which of the harness's tools an agent has, and how the ones with settings behave."""
+    """How an agent's tools behave: per-tool policy only, never membership.
+
+    Which tools an agent uses is `tools_enabled` on the agent itself, composed by whoever builds
+    the session; this block only carries the settings of the tools that are on (bash background
+    and command rules, MCP and screen permissions). There is deliberately no `enabled` or
+    `disabled` here, so a tool's presence has exactly one source.
+    """
 
     bash: BashToolConfiguration = BashToolConfiguration()
-    # The other two tools whose calls can be named and ruled on; empty leaves the default in force.
     mcp: NamedToolPermissions = NamedToolPermissions()
     screen: NamedToolPermissions = NamedToolPermissions()
-    disabled: list[str] = Field(default_factory=list)
-
-    def is_enabled(self, tool_name: str) -> bool:
-        """Whether this agent may use `tool_name` at all."""
-        if tool_name in self.disabled:
-            return False
-        if tool_name == "bash" and not self.bash.enabled:
-            return False
-        return True
 
 
 class AgentConfiguration(BaseModel):
@@ -980,31 +979,12 @@ class PermissionEvaluator:
     def __init__(self, agent_configuration: AgentConfiguration):
         self._configuration = agent_configuration
 
-    def check_tool_enabled(self, tool_name: str) -> None:
-        """Refuse a tool the profile does not list, whatever `tools_enabled` names."""
-        if self._configuration.tools_enabled and tool_name not in self._configuration.tools_enabled:
-            raise PermissionDenied(
-                f"Tool '{tool_name}' is not enabled for agent '{self._configuration.identifier}'"
-            )
-
-    def check_tool_not_disabled(self, tool_name: str) -> None:
-        """Refuse a tool the profile switched off, at call time too, since a model may call one it was never offered."""
-        if not self._configuration.tools.is_enabled(tool_name):
-            raise PermissionDenied(
-                f"Tool '{tool_name}' is disabled for agent '{self._configuration.identifier}'"
-            )
-
     def evaluate_bash_permission(self, command: str, unmatched: str = "allow") -> str:
         return self._configuration.tools.bash.evaluate_permission(command, unmatched=unmatched)
 
     def check_bash_background(self) -> None:
         if not self._configuration.tools.bash.background_allowed:
             raise PermissionDenied("Background bash execution is not allowed")
-
-    def check_tool(self, tool_name: str, /, **arguments) -> None:
-        # Positional-only, so a tool whose own arguments include `tool_name` does not collide with it.
-        self.check_tool_enabled(tool_name)
-        self.check_tool_not_disabled(tool_name)
 
 
 class PermissionDenied(RuntimeError):

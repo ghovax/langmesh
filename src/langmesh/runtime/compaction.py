@@ -645,11 +645,7 @@ class _CompactsContext:
                         update={
                             "bash": summarizer_configuration.tools.bash.model_copy(
                                 update={"background_allowed": False}
-                            ),
-                            "disabled": sorted(
-                                set(summarizer_configuration.tools.disabled)
-                                | {tool.name for tool in self._tools}
-                            ),
+                            )
                         }
                     )
                 }
