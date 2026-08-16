@@ -7,9 +7,10 @@ configuration, the plugin's own templates, and the bus.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Callable
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.configuration import AgentConfiguration, Configuration, PromptLoader
+from langmesh.base.ports import CatalogueLike
 from langmesh.runtime.features.bus import PluginBus
 
 
@@ -23,9 +24,9 @@ class PluginContext:
         parent_session: str,
         working_directory: str,
         project_directory: str,
-        agent_configuration: Any,
-        global_configuration: Any,
-        catalogue: Any,
+        agent_configuration: AgentConfiguration,
+        global_configuration: Configuration,
+        catalogue: CatalogueLike,
         prompts: Callable[[str], PromptLoader],
         bus: PluginBus,
     ) -> None:
