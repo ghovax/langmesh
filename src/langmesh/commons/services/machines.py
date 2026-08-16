@@ -12,7 +12,7 @@ from typing import Any
 from langmesh.commons import state
 from langmesh.commons.database import MachineRecord
 
-# The scheme `langmesh reach` prints, accepted with or without it.
+# The scheme a paired door prints, accepted with or without it.
 PAIRING_PREFIX = "langmesh://pair#"
 
 

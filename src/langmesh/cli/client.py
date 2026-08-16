@@ -1,12 +1,15 @@
-"""Talking to the daemon, and starting it if it is not there."""
+"""Starting the daemon, and checking whether it is up.
+
+The command line's only verb is serving, which needs the daemon; this is how it starts
+and probes the daemon, and the only surface this module exists for.
+"""
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-from typing import Any, Optional
+from typing import Optional
 
 import httpx
 
@@ -15,7 +18,7 @@ from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 
 class DaemonError(RuntimeError):
-    """The daemon could not be reached, or refused the call."""
+    """The daemon could not be started or reached."""
 
 
 def _read_token() -> str:
@@ -81,67 +84,10 @@ def _await_announcement(daemon: subprocess.Popen) -> Optional[dict]:
             return None
     if not line:
         return None
+    import json
+
     try:
         announcement = json.loads(line)
     except ValueError:
         return None
     return announcement if announcement.get("ready") else None
-
-
-def call(method: str, **params: Any) -> dict:
-    """One control-plane call, autostarting the daemon if needed."""
-    ensure_daemon()
-    token = _read_token()
-    try:
-        with httpx.Client(
-            transport=httpx.HTTPTransport(uds=str(daemon_socket_path())),
-            timeout=300.0,
-            headers={"Authorization": f"Bearer {token}"},
-        ) as client:
-            response = client.post("http://daemon/rpc", json={"method": method, "params": params})
-    except (httpx.HTTPError, OSError) as error:
-        raise DaemonError(f"Could not reach langmeshd: {error}") from error
-
-    try:
-        body = response.json()
-    except ValueError as error:
-        raise DaemonError(
-            f"langmeshd returned something that was not JSON ({response.status_code})."
-        ) from error
-    if "error" in body:
-        raise DaemonError(body["error"].get("message") or "The call failed.")
-    if response.status_code >= 400:
-        raise DaemonError(f"langmeshd rejected {method} ({response.status_code}).")
-    return body.get("result", {})
-
-
-def stream(path: str):
-    """Follow one of the daemon's event streams, yielding decoded frames."""
-    ensure_daemon()
-    token = _read_token()
-    with httpx.Client(
-        transport=httpx.HTTPTransport(uds=str(daemon_socket_path())),
-        timeout=None,
-        headers={"Authorization": f"Bearer {token}"},
-    ) as client:
-        with client.stream("GET", f"http://daemon{path}") as response:
-            if response.status_code >= 400:
-                # A refused stream still parses as no frames, so without this an attach ends instantly and silently.
-                response.read()
-                try:
-                    message = response.json()["error"]["message"]
-                except (ValueError, KeyError, TypeError):
-                    message = f"langmeshd refused the stream ({response.status_code})."
-                raise DaemonError(message)
-            buffer = ""
-            for chunk in response.iter_text():
-                # Frames are separated by a blank line whose wire form is a carriage return and newline.
-                buffer += chunk.replace("\r\n", "\n")
-                while "\n\n" in buffer:
-                    frame, buffer = buffer.split("\n\n", 1)
-                    for line in frame.splitlines():
-                        if line.startswith("data:"):
-                            try:
-                                yield json.loads(line[5:].strip())
-                            except ValueError:
-                                continue

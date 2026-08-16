@@ -294,34 +294,34 @@ fn installed_daemon_executable() -> Result<PathBuf, String> {
 
 #[cfg(not(debug_assertions))]
 fn ensure_local_daemon() -> Result<(), String> {
+    use std::process::Stdio;
+
     if daemon_is_listening() {
         return Ok(());
     }
     let executable = installed_daemon_executable()?;
-    let output = Command::new(&executable)
-        .args(["daemon", "--start"])
-        .output()
+    // The daemon is `langmesh langmeshd`, started detached so it outlives the app's launch.
+    let mut child = Command::new(&executable)
+        .arg("langmeshd")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
         .map_err(|error| format!("could not start {}: {error}", executable.display()))?;
-    if !output.status.success() {
-        let standard_error = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let standard_output = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if standard_error.is_empty() {
-            standard_output
-        } else {
-            standard_error
-        };
-        return Err(if detail.is_empty() {
-            format!("{} could not start the local daemon", executable.display())
-        } else {
-            detail
-        });
+    // Wait for the daemon to publish its endpoint, giving up if it exits or stalls.
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if daemon_is_listening() {
+            return Ok(());
+        }
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return Err(format!("{} exited before the daemon became ready", executable.display()));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("the local daemon did not become ready in time".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(200));
     }
-    if !daemon_is_listening() {
-        return Err(
-            "the local daemon finished starting but is not accepting connections".to_string(),
-        );
-    }
-    Ok(())
 }
 
 #[cfg(debug_assertions)]

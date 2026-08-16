@@ -353,7 +353,7 @@ class TuningConfiguration(Section):
         unknown = unknown_tunable_names(value)
         if unknown:
             raise ValueError(
-                f"unknown tuning default(s): {', '.join(unknown)}. The names that exist are the members of `langmesh.base.primitives.tuning.Tunable`; `langmesh configure --all` lists them with their defaults."
+                f"unknown tuning default(s): {', '.join(unknown)}. The names that exist are the members of `langmesh.base.primitives.tuning.Tunable`; the settings panel lists them with their defaults."
             )
         return value
 

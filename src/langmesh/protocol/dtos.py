@@ -182,7 +182,7 @@ class InterfacePreferencesUpdateRequest(BaseModel):
 
 
 class MachineRequest(BaseModel):
-    """A machine to remember, as the `langmesh://pair#…` link `langmesh reach` prints."""
+    """A machine to remember, as the `langmesh://pair#…` link a paired door prints."""
 
     link: str
 

@@ -49,18 +49,17 @@ You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv`
 | 9 | `ln -sf "/Applications/LangMesh Computer Use.app/Contents/MacOS/langmesh" /usr/local/bin/langmesh` | Puts `langmesh` and `langmeshd` on your `PATH` | May need `sudo` | seconds |
 | 10 | `cd web && bun run tauri:build` | Rust compile plus a static export. No Python in this step | `LangMesh.app` and a `.dmg` under `web/src-tauri/target/release/bundle/` | first time, about 10 minutes |
 | 11 | `packaging/sign-app.sh web/src-tauri/target/release/bundle/macos/LangMesh.app` | Signs the app plainly with the same identity, so both fold into one Accessibility row | `signed …` | seconds |
-| 12 | `ditto` that `LangMesh.app` to `/Applications` | Installs the window. Required before `langmesh app` can find it by identifier | | seconds |
-| 13 | `langmesh app` | Starts the daemon and launches the app | `{"opened":"com.ghovax.langmesh","daemon":true}`; first run seeds `~/.config/langmesh/configuration.yaml` | seconds |
-| 14 | `langmesh configure providers.anthropic.api_key <key>` | A model to run on | The key echoed back | |
+| 12 | `ditto` that `LangMesh.app` to `/Applications` | Installs the window | | seconds |
+| 13 | Open `LangMesh.app` | Starts the daemon and opens the window | First run seeds `~/.config/langmesh/configuration.yaml` | seconds |
+| 14 | Add a provider key under **Settings → Providers** (or in `~/.config/langmesh/configuration.yaml`) | A model to run on | | |
 
 ### Things that will catch you
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `langmesh: nothing on this system claims com.ghovax.langmesh` | You built `LangMesh.app` but left it in the Tauri target directory. macOS resolves `-b` through LaunchServices, which does not know about it there | Step 12: `ditto` it to `/Applications` |
-| The app opens but only ever shows the connection picker | The separately installed daemon bundle is missing or could not start | Install `LangMesh Computer Use.app`, then reopen LangMesh, or run `langmesh daemon status` for the failure |
-| Computer control keeps asking for Accessibility after every rebuild | The daemon serving you is the checkout's (`uv run langmesh`), whose code identity is the Python interpreter, not the signed image | `langmesh daemon status` reports `image.frozen`. If it is `false`, stop that daemon and start the installed one |
-| Two `langmesh` on your `PATH` behave differently | The checkout's and the installed one share `~/.config/langmesh/` and the runtime directory, so whichever daemon started first owns it | `which -a langmesh`, and check `image.executable` in `langmesh daemon status` |
+| The app opens but only ever shows the connection picker | The separately installed daemon bundle is missing or could not start | Install `LangMesh Computer Use.app`, then reopen LangMesh; the daemon's failure is in its log under the state directory |
+| Computer control keeps asking for Accessibility after every rebuild | The daemon serving you is the checkout's (`uv run langmesh`), whose code identity is the Python interpreter, not the signed image | The daemon's status reports `image.frozen`. If it is `false`, stop that daemon and start the installed one |
+| Two `langmesh` on your `PATH` behave differently | The checkout's and the installed one share `~/.config/langmesh/` and the runtime directory, so whichever daemon started first owns it | `which -a langmesh`, and check `image.executable` in the daemon's status |
 | `ln -sf … /usr/local/bin/langmesh` is denied | `/usr/local/bin` is root-owned | `sudo ln -sf …`, or symlink into `~/.local/bin` and put that on `PATH` |
 | `packaging/build-daemon.sh` says "daemon up to date" after you changed something | The freshness guard decided nothing that goes into the freeze had changed | `FORCE=1 packaging/build-daemon.sh` |
 

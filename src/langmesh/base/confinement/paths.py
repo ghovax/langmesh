@@ -160,7 +160,7 @@ def daemon_port_path() -> Path:
 
 
 def reach_token_path() -> Path:
-    """The token a phone presents to `langmesh reach`, in the data directory because it outlives a daemon."""
+    """The token a paired phone presents, in the data directory because it outlives a daemon."""
     return data_directory() / "reach-token"
 
 

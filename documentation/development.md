@@ -12,19 +12,13 @@ The repo ships a **Nix flake devshell** that pins bun, Rust, `cargo-tauri`, and 
 
 ## Running it
 
-The CLI starts the daemon on its first command, so usually there is nothing to launch:
+The interface is the surface you work in; the daemon it talks to is started by `langmesh serve` or by the app. To run the daemon in the foreground, the fastest way to watch a traceback, start it by name: `uv run python -m langmesh langmeshd`.
 
-```shell
-uv run langmesh create --agent general-assistant --directory ~/code/project
-uv run langmesh send "$id" "What does this project do?" --wait
-```
-
-- The [`langmesh` command](cli.md) is the full surface. To run the daemon in the foreground, the fastest way to watch a traceback, start it by name: `uv run python -m langmesh langmeshd`.
-- One image, two entry points, chosen by the first argument: `langmesh` (the CLI) and `langmeshd` (the daemon that hosts sessions). A bare launch lands in the CLI. `langmesh daemon stop` takes down a foreground daemon and its sessions with it.
+- One image, two entry points, chosen by the first argument: `langmesh` (the CLI, whose only verb is serving) and `langmeshd` (the daemon that hosts sessions). A bare launch lands in the CLI.
 - A session is an object the daemon builds and holds, not a process; creating one costs about as much as constructing the object, so there is no pool waiting.
-- It listens on a unix socket in your runtime directory, and for GUI clients on an ephemeral loopback port. `langmesh daemon endpoint` reports the port and the capability token.
+- It listens on a unix socket in your runtime directory, and for GUI clients on an ephemeral loopback port. The port and the capability token are published under the runtime directory.
 
-State follows XDG, all of it created on first run: configuration in `~/.config/langmesh/`, durable state in `~/.local/share/langmesh/`, logs in `~/.local/state/langmesh/`. Add provider keys with `langmesh configure`, in the configuration file, or through environment variables. See the [Configuration guide](configuration.md).
+State follows XDG, all of it created on first run: configuration in `~/.config/langmesh/`, durable state in `~/.local/share/langmesh/`, logs in `~/.local/state/langmesh/`. Add provider keys in the configuration file, in the settings panel, or through environment variables. See the [Configuration guide](configuration.md).
 
 ## Running the web UI
 
@@ -48,7 +42,7 @@ Outside `web/`, the package layering runs `base`, then `protocol`, then `compute
 - **Nothing reaches the network at import.** A catalogue fetch at module scope blocks the daemon's boot behind a stranger's endpoint.
 - **The runtime keeps no process-wide state.** Nothing under `runtime/` parks a caller's argument in a module global, installs a signal handler, or registers an exit hook; one process may host more than one session.
 
-A new setting is a field on the configuration model, and then three things that are not in the code with it. The schema walk finds the field on its own, so `langmesh configure` and the settings panel both have it from the moment it exists. But the panel draws it with **a label and a sentence from `shared/messages/*.json`**, in every locale, and the [configuration reference](configuration-reference.md) needs **a row**.
+A new setting is a field on the configuration model, and then three things that are not in the code with it. The schema walk finds the field on its own, so the settings panel has it from the moment it exists. But the panel draws it with **a label and a sentence from `shared/messages/*.json`**, in every locale, and the [configuration reference](configuration-reference.md) needs **a row**.
 
 ## Running the desktop app in dev
 
