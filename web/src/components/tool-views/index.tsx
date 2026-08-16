@@ -6,7 +6,7 @@ import { Alert, Box, Button, Flex, Link, List, Text } from "@chakra-ui/react";
 import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { LuExternalLink } from "react-icons/lu";
-import { openAccessibilitySettings, openBrowserRemoteDebugging } from "@/lib/api";
+import { openSystemPermission, openBrowserRemoteDebugging } from "@/lib/api";
 import { MarkdownContent } from "../markdown-content";
 import { RelativeTime } from "../ui/relative-time";
 import {
@@ -1092,7 +1092,7 @@ function PermissionGrantAlert() {
           colorPalette="yellow"
           variant="solid"
           onClick={async () => {
-            await openAccessibilitySettings();
+            await openSystemPermission("accessibility");
             setOpened(true);
           }}
         >

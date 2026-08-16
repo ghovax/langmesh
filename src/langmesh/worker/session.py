@@ -56,6 +56,67 @@ from langmesh.base.serialization import compact
 logger = logging.getLogger(__name__)
 
 
+# The settings-gated built-ins: only reachable when the machine actually has them.
+_MCP_TOOL_NAMES = frozenset(
+    {"list_mcp_tools", "call_mcp_server_tool", "list_mcp_resources", "read_mcp_resource"}
+)
+_REMOTE_TOOL_NAMES = frozenset({"list_remote_agents", "message_remote_agent"})
+
+
+def _installed_agent_names(
+    global_configuration: Configuration, working_directory: str
+) -> list[str]:
+    """The profiles a peer could be created with, read at build time so a bad name is unrepresentable."""
+    from langmesh.base.configuration import list_agents
+
+    directories = (
+        global_configuration.agent_directories_for(working_directory)
+        if working_directory
+        else global_configuration.agent_directories()
+    )
+    try:
+        return [entry["id"] for entry in list_agents(directories)]
+    except Exception:  # noqa: BLE001 — an unreadable profile directory must not fail the runtime
+        return []
+
+
+def _compose_session_tools(
+    configuration: Any,
+    global_configuration: Configuration,
+    working_directory: str = "",
+    *,
+    can_reach_peers: bool = False,
+    permission_mode: Any = None,
+) -> list[Any]:
+    """The diamond's toolset for one session: the agent profile's declared built-ins, gated by
+    what the machine actually has, plus the peer and remote tools the daemon owns. Nothing is
+    forced — an agent that declares no tools runs with none."""
+    from langmesh.runtime.tools import registry
+    from langmesh.runtime.tools.sessions import remote_agent_tools, session_tools
+
+    tools = []
+    for name in configuration.tools_enabled:
+        schema = getattr(registry, name, None)
+        if schema is None or not hasattr(schema, "name"):
+            continue
+        if name == "ask_user" and not (permission_mode is None or permission_mode.asks):
+            continue
+        if name == "control_screen" and not global_configuration.computer_control.enabled:
+            continue
+        if name in _MCP_TOOL_NAMES and not global_configuration.mcp.enabled_servers():
+            continue
+        if name in _REMOTE_TOOL_NAMES and not global_configuration.remote_agents.agents:
+            continue
+        tools.append(schema)
+    if can_reach_peers:
+        tools.extend(
+            session_tools(_installed_agent_names(global_configuration, working_directory))
+        )
+        if global_configuration.remote_agents.agents:
+            tools.extend(remote_agent_tools())
+    return tools
+
+
 class SessionExecutor(AgentExecutor):
     """The live half of one session. The machinery still speaks in contexts, but a worker only ever has one."""
 
@@ -833,6 +894,21 @@ class SessionExecutor(AgentExecutor):
                 )
             )
         runtime_directory = working_directory or project_directory or str(Path.cwd())
+        # The daemon composes the session's tools: the agent profile's declared set, mapped onto
+        # the shipped built-ins, plus the settings-gated and peer tools it owns. The library
+        # forces nothing; this is the diamond assembling the toolset.
+        composed = _compose_session_tools(
+            configuration,
+            self._global_configuration,
+            working_directory,
+            can_reach_peers=self._peers is not None,
+            permission_mode=self._permission_mode,
+        )
+        # The permission evaluator refuses what the profile did not declare, so the declared set
+        # is exactly the composed set.
+        configuration = configuration.model_copy(
+            update={"tools_enabled": sorted({tool.name for tool in composed})}
+        )
         runtime = AgentRuntime(
             RuntimeProfile(
                 agent=configuration,
@@ -855,6 +931,7 @@ class SessionExecutor(AgentExecutor):
                 sessions=self._peers,
                 mcp_servers=self._mcp_server_manager,
                 jobs=self._job_store,
+                toolset=composed,
                 compaction_preparation=self._compaction_preparation(runtime_directory),
                 related_turns=self._make_turn_reader(),
                 goal_listener=lambda goal: self._notify_goal_state(session_id, goal),

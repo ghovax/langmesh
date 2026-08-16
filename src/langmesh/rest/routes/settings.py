@@ -5,20 +5,15 @@ from fastapi import APIRouter, HTTPException
 import langmesh.base.confinement as _confinement
 import langmesh.base.toolbox as _toolbox
 import langmesh.base.configuration as _configuration
-from langmesh.base.credentials import ChatGPTLoginFlow, clear_tokens, load_tokens
-from langmesh.base.cursor_credentials import CursorLoginFlow
-from langmesh.base.cursor_credentials import clear_tokens as cursor_clear_tokens
-from langmesh.base.cursor_credentials import load_tokens as cursor_load_tokens
 from langmesh.base import cursor_subscription
 from langmesh.base.models import available_models, list_models, ModelDefinition
 from langmesh.base.subscription import (
     clear_subscription_models_cache,
-    clear_usage_snapshot,
     fetch_subscription_models,
-    get_usage_snapshot,
 )
 from langmesh.base.providers import PROVIDERS
 import asyncio
+from langmesh.protocol.dtos import DictationUpdateRequest
 from langmesh.protocol.dtos import (
     AttachmentsUpdateRequest,
     CompactionUpdateRequest,
@@ -29,8 +24,6 @@ from langmesh.protocol.dtos import (
     SettingsUpdateRequest,
     UserContextUpdateRequest,
 )
-from langmesh.commons.services import workspaces as _workspaces
-from langmesh.rest.services import filesystem as _system
 from langmesh.commons import state
 from langmesh.commons.services.broadcast import _publish_broadcast
 from langmesh.commons.services.sessions import (
@@ -42,7 +35,6 @@ from langmesh.commons.services.settings import (
     _persist_configuration,
     _reload_configuration_from_disk,
 )
-from langmesh.commons.services.workspaces import _reset_all_runtimes
 
 router = APIRouter()
 
@@ -83,33 +75,6 @@ def _merged_sandbox(current, posted: dict):
         )
     except Exception as error:  # noqa: BLE001 — the validator's own message is the useful part
         raise HTTPException(status_code=400, detail=f"invalid sandbox settings: {error}") from error
-
-
-@router.get("/system/full-disk-access")
-async def full_disk_access_status():
-    """Whether the daemon can read Full-Disk-Access-protected data, which drives the Settings banner and button."""
-    return {"granted": await asyncio.to_thread(_workspaces._full_disk_access_granted)}
-
-
-@router.post("/system/full-disk-access/open")
-async def open_full_disk_access_settings():
-    """Open System Settings to the Full Disk Access pane so the user can add LangMesh."""
-    await asyncio.to_thread(_workspaces._open_full_disk_access_settings)
-    return {"ok": True}
-
-
-@router.get("/system/accessibility")
-async def accessibility_status():
-    """Whether the daemon can control other apps, which is the permission the computer-use tool needs."""
-    return {"granted": await asyncio.to_thread(_system._accessibility_granted)}
-
-
-@router.post("/system/accessibility/open")
-async def open_accessibility_settings():
-    """Trigger the system Accessibility prompt and open the pane so the user can grant LangMesh."""
-    await asyncio.to_thread(_system._request_accessibility)
-    await asyncio.to_thread(_system._open_accessibility_settings)
-    return {"ok": True}
 
 
 @router.get("/models")
@@ -189,114 +154,19 @@ async def recent_models():
     return {"models": await asyncio.to_thread(_recent_models)}
 
 
-@router.get("/auth/chatgpt")
-async def chatgpt_auth_status():
-    """Whether a ChatGPT subscription is signed in and for which account, with the latest rate-limit snapshot."""
-    tokens = await asyncio.to_thread(load_tokens)
-    return {
-        "signed_in": tokens is not None,
-        "email": tokens.email if tokens else "",
-        "usage": get_usage_snapshot() if tokens is not None else None,
-    }
+@router.post("/settings/dictation")
+async def update_dictation(request: DictationUpdateRequest):
+    """Persist and apply the toggle, releasing the worker at once since it holds a model in wired memory."""
+    from langmesh.rest.routes.dictation import _shutdown_transcriber
 
-
-@router.post("/auth/chatgpt/start")
-async def chatgpt_auth_start():
-    """Begin an OAuth sign-in: bind the loopback callback and return the authorize URL for the client to open."""
-    previous = state.chatgpt_login_flow
-    if previous is not None:
-        await previous.close()
-    flow = ChatGPTLoginFlow()
-    try:
-        await flow.start()
-    except OSError as error:
-        # Port 1455 is busy — most likely a Codex CLI (or a prior langmesh) sign-in.
-        raise HTTPException(
-            status_code=409,
-            detail=f"Could not start sign-in — the callback port 1455 is in use ({error}).",
-        ) from error
-    state.chatgpt_login_flow = flow
-
-    async def _await_completion() -> None:
-        try:
-            await flow.wait()
-            clear_subscription_models_cache()
-            clear_usage_snapshot()
-            await _reset_all_runtimes()
-            _publish_broadcast({"type": "settings_changed"})
-        except Exception:  # noqa: BLE001 — timeout/denial just leaves us signed out
-            pass
-        finally:
-            if state.chatgpt_login_flow is flow:
-                state.chatgpt_login_flow = None
-
-    asyncio.create_task(_await_completion())
-    return {"authorize_url": flow.authorize_url}
-
-
-@router.delete("/auth/chatgpt")
-async def chatgpt_auth_signout():
-    """Sign out: clear the stored tokens and reset runtimes so the provider re-locks immediately."""
-    if state.chatgpt_login_flow is not None:
-        await state.chatgpt_login_flow.close()
-        state.chatgpt_login_flow = None
-    await asyncio.to_thread(clear_tokens)
-    clear_subscription_models_cache()
-    clear_usage_snapshot()
-    await _reset_all_runtimes()
+    assert state.global_configuration is not None
+    async with state.configuration_lock:
+        await _persist_configuration(dictation_enabled=request.enabled)
+        state.global_configuration.dictation.enabled = request.enabled
+        if not request.enabled:
+            await asyncio.to_thread(_shutdown_transcriber)
     _publish_broadcast({"type": "settings_changed"})
-    return {"ok": True}
-
-
-@router.get("/auth/cursor")
-async def cursor_auth_status():
-    """Whether a Cursor subscription is signed in and for which account, with no usage snapshot to report."""
-    tokens = await asyncio.to_thread(cursor_load_tokens)
-    return {"signed_in": tokens is not None, "account": tokens.account if tokens else ""}
-
-
-@router.post("/auth/cursor/start")
-async def cursor_auth_start():
-    """Begin a Cursor sign-in and poll for its completion, since its flow has no redirect to catch."""
-    previous = state.cursor_login_flow
-    if previous is not None:
-        # A second sign-in supersedes the first, which must stop polling rather than race to write a replaced token.
-        await previous.close()
-    flow = CursorLoginFlow()
-    state.cursor_login_flow = flow
-
-    async def _await_completion() -> None:
-        try:
-            await flow.wait()
-            cursor_subscription.clear_subscription_models_cache()
-            await _reset_all_runtimes()
-            _publish_broadcast({"type": "settings_changed"})
-        except Exception:  # noqa: BLE001 — timeout/denial/cancellation just leaves us signed out
-            pass
-        finally:
-            if state.cursor_login_flow is flow:
-                state.cursor_login_flow = None
-
-    asyncio.create_task(_await_completion())
-    return {"authorize_url": flow.authorize_url}
-
-
-@router.delete("/auth/cursor")
-async def cursor_auth_signout():
-    """Sign out: clear the stored tokens and reset runtimes so the provider re-locks immediately."""
-    # Deferred, because resumable conversation state is the model client's and this layer does not import the runtime.
-    from langmesh.runtime.models.cursor import clear_resumptions
-
-    if state.cursor_login_flow is not None:
-        await state.cursor_login_flow.close()
-        state.cursor_login_flow = None
-    await asyncio.to_thread(cursor_clear_tokens)
-    cursor_subscription.clear_subscription_models_cache()
-    # Resumable conversation state belongs to the account that produced it, so it goes too.
-    clear_resumptions()
-    await _reset_all_runtimes()
-    _publish_broadcast({"type": "settings_changed"})
-    return {"ok": True}
+    return {"status": "saved", "enabled": state.global_configuration.dictation.enabled}
 
 
 @router.get("/settings")

@@ -2,13 +2,15 @@
 
 ## Granting a tool to a session
 
-Every tool a session can call is one **`Tool` unit**: its model-facing schema, its description, and the handler that runs it. The built-in tools (`bash`, `search_web`, `set_tasks`, and the rest) are such units in `langmesh.runtime.tools.units`. The runtime holds the set of units the session was composed with and dispatches every call generically by name, so there is no hard-coded routing and a caller's tool of the same name simply replaces a built-in's implementation.
+Every tool a session can call is one **`Tool` unit**: its model-facing schema, its description, and the handler that runs it. The built-in tools (`bash`, `search_web`, `set_tasks`, and the rest) are shipped with the library as an optional inventory in `langmesh.runtime.tools.registry`; the runtime holds the set of units the session was composed with and dispatches every call generically by name, so there is no hard-coded routing and a caller's tool of the same name simply replaces a built-in's implementation.
 
-Three ways to compose a session's tools, in increasing control:
+**The library forces no tools.** A `Session` composes its tool set explicitly and starts with none. The shipped implementations are something the caller opts into and assembles, never something injected by default.
 
-- **Defaults.** A `Session` with no `tools` and no `toolset` runs the built-in set, narrowed by the agent profile (an allow-list or a disabled list).
-- **Add or replace.** Pass `tools=[...]`, or call `session.grant_tool(...)` later. Each is added on top of the defaults; a grant whose name matches a built-in replaces its implementation.
-- **Own the roster.** Set `SessionComponents(toolset=[...])` to run exactly those tools and nothing else, or `toolset=()` to run with no tools at all.
+Three ways to compose a session's tools:
+
+- **The whole roster.** Pass `SessionComponents(toolset=[...])` to run exactly those tools, or `toolset=()` to run with no tools at all.
+- **Additions.** Pass `tools=[...]`, or call `session.grant_tool(...)` later. A tool whose name the session already runs replaces its implementation.
+- **The agent profile, at the application layer.** The daemon (the diamond) reads an agent's declared `tools_enabled` and assembles its built-ins from the registry; an agent that declares none runs with none.
 
 ```python
 from langchain_core.tools import tool
@@ -19,14 +21,14 @@ async def incident_lookup(service: str) -> list[dict]:
     """Return open incidents for a service."""
     return await incidents.open_for(service)
 
-# Defaults plus one tool; "bash" would replace the built-in bash, not add a second.
-session = Session(agent, directory="/srv/checkout", tools=[incident_lookup])
-
 # Exactly these tools, and nothing else.
 session = Session(
     agent, directory="/srv/checkout",
     components=SessionComponents(toolset=(incident_lookup,)),
 )
+
+# Add one tool on top of nothing; "bash" would be your implementation, not ours.
+session = Session(agent, directory="/srv/checkout", tools=[incident_lookup])
 
 # No tools at all.
 session = Session(

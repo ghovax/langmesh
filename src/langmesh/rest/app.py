@@ -9,6 +9,7 @@ from fastapi import FastAPI
 # Imported by name, since several route modules share a name with something else in scope.
 ROUTE_MODULES = (
     "agents",
+    "auth",
     "dictation",
     "filesystem",
     "machines",
@@ -19,7 +20,9 @@ ROUTE_MODULES = (
     "remote_agents",
     "sessions",
     "settings",
+    "system",
     "terminals",
+    "transcript",
     "uploads",
     "observations",
 )

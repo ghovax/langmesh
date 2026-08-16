@@ -26,28 +26,11 @@ from langmesh.runtime.models.cursor import ChatCursorModel
 from langmesh.base.models import find_model, resolve_litellm
 from langmesh.base.tools import as_tool_grants
 from langmesh.runtime.tools.execution import Tool, ToolServices, invoke_supplied
-from langmesh.runtime.tools.units import BUILTIN_TOOLS
+from langmesh.runtime.tools import registry as tools_registry
+from langmesh.runtime.tools.handlers import HANDLERS
 from langmesh.locations.resolver import LocationAddress, executor_for, location_uri_for
-from langmesh.runtime.tools.registry import (
-    bash as bash_tool,
-    search_web as search_web_tool,
-    read_turn as read_turn_tool,
-    set_tasks as set_tasks_tool,
-    update_tasks as update_tasks_tool,
-    update_goal as update_goal_tool,
-    list_mcp_tools as list_mcp_tools_tool,
-    call_mcp_server_tool as call_mcp_server_tool_tool,
-    list_mcp_resources as list_mcp_resources_tool,
-    read_mcp_resource as read_mcp_resource_tool,
-    fetch_url as fetch_url_tool,
-    download_file as download_file_tool,
-    control_screen as control_screen_tool,
-    ask_user as ask_user_tool,
-    load_skill as load_skill_tool,
-)
 from langmesh.base.ports import Observation
 from langmesh.runtime.tools.context import ToolContext
-from langmesh.runtime.tools.sessions import remote_agent_tools, session_tools
 from langmesh.runtime.background import (
     BackgroundJobs,
     background_completion_event,
@@ -159,110 +142,6 @@ def build_chat_model(
             "reasoning_effort": agent_configuration.reasoning_effort,
         }
     )
-
-
-def _build_tools(
-    agent_configuration: AgentConfiguration,
-    global_configuration: Configuration,
-    working_directory: str = "",
-    *,
-    can_reach_peers: bool = False,
-    extra_tools: Sequence[BaseTool] = (),
-    permission_mode: PermissionMode = PermissionMode.ASK,
-) -> list[BaseTool]:
-    tools = _all_available_tools(
-        agent_configuration,
-        global_configuration,
-        working_directory,
-        can_reach_peers=can_reach_peers,
-        extra_tools=extra_tools,
-        permission_mode=permission_mode,
-    )
-    # A profile's allow-list narrows our tools and never the caller's, which it was written long before.
-    supplied = {tool.name for tool in extra_tools}
-    allowed = _live_allow_list(
-        agent_configuration.tools_enabled,
-        {tool.name for tool in tools} - supplied,
-    )
-    # `disabled` applies to ours and the caller's alike: switching a supplied tool off means it.
-    return [
-        tool
-        for tool in tools
-        if agent_configuration.tools.is_enabled(tool.name)
-        and (tool.name in supplied or not allowed or tool.name in allowed)
-    ]
-
-
-def _live_allow_list(configured: list[str], existing: set[str]) -> set[str]:
-    """An agent's allow-list narrowed to tools that exist, so a stale name cannot leave it permitting nothing."""
-    live = {name for name in configured if name in existing}
-    return live
-
-
-def _installed_agent_names(
-    global_configuration: Configuration, working_directory: str
-) -> list[str]:
-    """The profiles a peer could be created with, read at build time so a bad name is unrepresentable."""
-    from langmesh.base.configuration import list_agents
-
-    directories = (
-        global_configuration.agent_directories_for(working_directory)
-        if working_directory
-        else global_configuration.agent_directories()
-    )
-    try:
-        return [entry["id"] for entry in list_agents(directories)]
-    except Exception:  # noqa: BLE001 — an unreadable profile directory must not fail the runtime
-        return []
-
-
-def _all_available_tools(
-    agent_configuration: AgentConfiguration,
-    global_configuration: Configuration,
-    working_directory: str = "",
-    *,
-    can_reach_peers: bool = False,
-    extra_tools: Sequence[BaseTool] = (),
-    permission_mode: PermissionMode = PermissionMode.ASK,
-) -> list[BaseTool]:
-    available = [
-        bash_tool,
-        fetch_url_tool,
-        download_file_tool,
-        load_skill_tool,
-        search_web_tool,
-        set_tasks_tool,
-        update_tasks_tool,
-        update_goal_tool,
-        read_turn_tool,
-    ]
-    # Asking parks the turn, which only makes sense where somebody is there — so `automatic` is not given the tool.
-    if permission_mode.asks:
-        available.append(ask_user_tool)
-    # Driving the live screen is opt-in, added only where the user enabled it in Settings.
-    if global_configuration.computer_control.enabled:
-        available.append(control_screen_tool)
-    if global_configuration.mcp.enabled_servers():
-        available.extend(
-            [
-                list_mcp_tools_tool,
-                call_mcp_server_tool_tool,
-                list_mcp_resources_tool,
-                read_mcp_resource_tool,
-            ]
-        )
-    # Peer sessions: offered only with a profile to run and a control plane to reach.
-    if can_reach_peers:
-        available.extend(
-            session_tools(_installed_agent_names(global_configuration, working_directory))
-        )
-        # Remote agents are a different bargain, so they are separate verbs and appear only when registered.
-        if global_configuration.remote_agents.agents:
-            available.extend(remote_agent_tools())
-    # The caller's tools last, so a name collision resolves to ours rather than replacing a built-in.
-    known = {tool.name for tool in available}
-    available.extend(tool for tool in extra_tools if tool.name not in known)
-    return available
 
 
 def _as_profile(sandbox: Any):
@@ -571,34 +450,27 @@ class AgentRuntime(
         self._tool_grants = tuple(as_tool_grants(tools))
         # What a caller's tool is gated at: asking by default, so adding one cannot silently widen a session.
         self._supplied_tool_gate = components.supplied_tool_gate
-        configured_tools = (
-            list(toolset)
-            if toolset is not None
-            else _build_tools(
-                agent_configuration,
-                global_configuration,
-                self._working_directory,
-                can_reach_peers=session_access is not None,
-                extra_tools=(),
-                permission_mode=self._permission_mode,
-            )
-        )
-        # The dispatchable units: every tool the session runs, assembled from the built-in registry
-        # and the caller's own tools. A caller's tool of the same name replaces the built-in, so
-        # "my own bash" wins over ours. The model binds the configured schemas; grants ride as
-        # appended messages and only change who executes, keeping the cache prefix untouched.
+        # The session's tools are composed by the caller, never forced: the complete roster comes
+        # from `toolset`, additions from `tools`/`grant_tool`, and nothing is injected by default.
+        configured_tools = list(toolset) if toolset is not None else []
+        # The dispatchable units: every tool the session runs, assembled from the caller's set and
+        # the caller's own tools. A caller's tool of the same name replaces a built-in's execution.
+        # The model binds the configured schemas; grants ride as appended messages and only change
+        # who executes, keeping the cache prefix untouched.
         units: dict[str, Tool] = {}
         for tool in configured_tools:
-            builtin = BUILTIN_TOOLS.get(tool.name)
-            units[tool.name] = (
-                builtin
-                if builtin is not None and builtin.schema is tool
-                else Tool(
-                    name=tool.name,
-                    schema=tool,
-                    description=tool.description or "",
-                    handler=invoke_supplied,
-                )
+            # A built-in keeps its event-rich handler only when it is the registry's own schema; a
+            # caller's tool of the same name is theirs to run through the generic invoke path.
+            handler = (
+                HANDLERS.get(tool.name, invoke_supplied)
+                if tool is getattr(tools_registry, tool.name, None)
+                else invoke_supplied
+            )
+            units[tool.name] = Tool(
+                name=tool.name,
+                schema=tool,
+                description=tool.description or "",
+                handler=handler,
             )
         for grant in self._tool_grants:
             units[grant.tool.name] = Tool(
@@ -618,22 +490,11 @@ class AgentRuntime(
         self._tool_schemas: dict[str, Any] = {tool.name: tool.args_schema for tool in self._tools}
         self._bound_model = self._model.bind_tools(self._model_tools)
         self._compaction_summarizer = components.compaction_summarizer
-        # The evaluator gates against the same narrowed allow-list the tool set was built from.
+        # The evaluator's own `tools_enabled` gate refuses what the profile did not declare.
         self._permissions = (
             permissions
             if permissions is not None
-            else PermissionEvaluator(
-                agent_configuration.model_copy(
-                    update={
-                        "tools_enabled": sorted(
-                            _live_allow_list(
-                                agent_configuration.tools_enabled,
-                                {tool.name for tool in self._tools},
-                            )
-                        ),
-                    }
-                )
-            )
+            else PermissionEvaluator(agent_configuration)
         )
         self._background = BackgroundJobs(
             session_id=session_id,
