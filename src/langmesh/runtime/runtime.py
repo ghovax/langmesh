@@ -66,7 +66,6 @@ from langmesh.runtime.compaction import (
 from langmesh.base.serialization import compact
 from langmesh.base.toolbox import toolbox_for
 from langmesh.runtime.goal import Goal
-from langmesh.runtime.goal_review import _ReviewsGoal
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.internals import (
     _cap_model_result_payload,
@@ -364,7 +363,7 @@ class _LeaseAccess:
 
 
 class AgentRuntime(
-    _DispatchesTools, _DecidesPermissions, _CompactsContext, _ReviewsGoal, _RunsTurns
+    _DispatchesTools, _DecidesPermissions, _CompactsContext, _RunsTurns
 ):
     # A turn runs until the model is done or the user interrupts: no ceiling and no stuck-detector.
 
@@ -515,7 +514,6 @@ class AgentRuntime(
         self._transcript = transcript
         # The daemon's event publisher is optional; the registry reader is used only for compaction verification.
         self._goal_review_journal = components.goal_review_journal
-        self._submitted_goal_review = None
         self._submitted_compaction_summary: Any = None
         # The conversation and the prompt this runtime runs with.
 
@@ -550,9 +548,6 @@ class AgentRuntime(
             self._conversation.append(self._tool_grant_message(grant.tool))
         self._cached_system_prompt: str | None = None
         self._task_manager = TaskManager()
-        self._goal: Optional[Goal] = None
-        # Called when the goal changes, so the layer above can tell the daemon and the interface.
-        self._on_goal_change: Optional[Callable[[Optional[Goal]], None]] = None
         self._session_revision = 0
         self._persisted_session_revision = 0
         self._execution_history: list[dict] = []
@@ -585,7 +580,6 @@ class AgentRuntime(
             conversation_snapshot=self._peer_conversation_snapshot,
             mcp_server_manager=mcp_server_manager,
         )
-        self._on_goal_change = components.goal_listener
         # What was approved beyond the configured profile, held for the session so one grant is not re-asked.
         self._access_grants: list[Grant] = []
         # The files the person attached: like a grant, but answering what they handed over rather than what was asked.
@@ -615,8 +609,11 @@ class AgentRuntime(
             context_window=self._context_window,
             latest_context_tokens=self._latest_context_tokens,
             task_manager=self._task_manager,
-            goal=lambda: self._goal,
+            goal=lambda: (
+                self._features.goal_review.goal if self._features.present("goal_review") else None
+            ),
             write_goal=self.write_goal,
+            turn_reader=self._turn_reader,
             background=self._background,
             compaction=self._compaction,
             compaction_preparation=self._compaction_preparation,
@@ -634,9 +631,19 @@ class AgentRuntime(
             build_static_system_prompt=self._build_static_system_prompt,
             build_turn_messages=self._build_turn_messages,
             refuse_if_over_window=self._refuse_if_over_window,
+            granted_profile=self._granted_profile,
+            resolve_location=self._resolve_location,
+            call_policy=self._call_policy,
+            compaction_waiting=lambda: bool(
+                self._features.present("compaction")
+                and self._features.compaction.control.waiting
+            ),
         )
         self._features = build_features(components.features, feature_services)
         self._feature_services = feature_services
+        # The daemon's goal listener is handed to the goal plugin, which owns the goal itself.
+        if self._features.present("goal_review"):
+            self._features.goal_review.set_listener(components.goal_listener)
         # Per-session state a screen-control script keeps between calls, and the services bundle
         # every tool handler runs against. The bundle is the tool's only view of the runtime.
         self._screen_queries_asked: list[tuple[Any, str]] = []
@@ -654,7 +661,11 @@ class AgentRuntime(
             record_event=self._record_event,
             mark_dirty=self._mark_session_dirty,
             abort_event=self._abort_event,
-            submit_goal_review=lambda review: setattr(self, "_submitted_goal_review", review),
+            submit_goal_review=lambda review: (
+                self._features.goal_review.submit(review)
+                if self._features.present("goal_review")
+                else None
+            ),
             submit_compaction_summary=lambda summary: setattr(
                 self, "_submitted_compaction_summary", summary
             ),
@@ -841,6 +852,17 @@ class AgentRuntime(
         )
         status, code = _model_result_status(capped_result, ok=True, backgrounded=False)
         self._append_background_result_messages(capped_result, metadata, status, code)
+
+    def constrained_tool_named(self, tool_name: str):
+        """One tool of a given name from the executable set, for a sub-session being bound down to its verdict tool."""
+        return [tool for tool in self._tools if tool.name == tool_name]
+
+    def constrain_toolset(self, only: Sequence[BaseTool]) -> None:
+        """Bind the session down to exactly the given tools, as a reviewer or summarizer's one verdict tool."""
+        self._tools = list(only)
+        self._tool_schemas = {tool.name: tool.args_schema for tool in only}
+        self._model_tools = list(only)
+        self._bound_model = self._model.bind_tools(list(only))
 
     def grant_tool(self, tool: BaseTool) -> None:
         """Grant a tool to this session at any moment: dispatchable now, described to the model
@@ -1099,7 +1121,7 @@ class AgentRuntime(
     def should_continue_goal(self) -> bool:
         if not self._features.present("continuation"):
             return False
-        return self._features.continuation.should_continue_goal(self._goal)
+        return self._features.continuation.should_continue_goal(self.goal)
 
     def should_continue_tasks(self) -> bool:
         if not self._features.present("continuation"):
@@ -1137,8 +1159,9 @@ class AgentRuntime(
 
     def session_snapshot(self) -> dict:
         """The durable non-conversation state — the goal and the tasks — persisted beside the checkpoint."""
+        goal = self.goal if self._features.present("goal_review") else None
         return {
-            "goal": self._goal.model_dump() if self._goal is not None else None,
+            "goal": goal.model_dump() if goal is not None else None,
             "tasks": self._task_manager.snapshot(),
             "task_continuations": (
                 self._features.continuation.task_continuations
@@ -1158,7 +1181,8 @@ class AgentRuntime(
                 goal = Goal.model_validate(stored)
             except ValidationError:
                 logger.warning("discarding a stored goal that no longer validates")
-        self._goal = goal
+        if self._features.present("goal_review"):
+            self._features.goal_review.restore(goal)
         self._task_manager.restore(snapshot.get("tasks", {}) or {})
         if self._features.present("continuation"):
             self._features.continuation.restore_task_continuations(
@@ -1252,57 +1276,51 @@ class AgentRuntime(
         """Whether a persisted compaction is waiting for its private recording segment to finish."""
         return self._compaction_control.waiting
 
-    # The goal, and the four things anyone outside this class does with it.
+    # The goal and its review, both owned by the goal plugin so none of this lives on the core.
 
     @property
     def goal(self) -> Optional[Goal]:
         """The session's goal, or ``None`` when it has none."""
-        return self._goal
+        if not self._features.present("goal_review"):
+            return None
+        return self._features.goal_review.goal
 
     def set_goal_listener(self, listener: Optional[Callable[[Optional[Goal]], None]]) -> None:
         """Install the callback that hears every goal change, which is how the interface learns of one."""
-        self._on_goal_change = listener
+        if self._features.present("goal_review"):
+            self._features.goal_review.set_listener(listener)
 
     def write_goal(self, goal: Optional[Goal]) -> None:
         """Set, replace or drop the goal, and announce it. The single writer, so no path changes it silently."""
-        self._goal = goal
-        self._mark_session_dirty()
-        if self._on_goal_change is not None:
-            self._on_goal_change(goal)
+        if self._features.present("goal_review"):
+            self._features.goal_review.write(goal)
 
     def note_goal_continuation(self) -> None:
         """Count one review-opened turn and consume the message that opened it."""
-        if self._goal is None:
-            return
-        self.write_goal(
-            self._goal.updated(
-                continuations=self._goal.continuations + 1,
-                review_message=None,
-                review_id=None,
-            )
-        )
+        if self._features.present("goal_review"):
+            self._features.goal_review.note_continuation()
 
     def restore_goal_allowance(self) -> None:
         """A person spoke, so the allowance restarts and a parked goal resumes. A settled one keeps its answer."""
-        goal = self._goal
-        if goal is None or goal.status not in (Goal.ACTIVE, Goal.PARKED):
-            return
-        if goal.continuations == 0 and goal.status == Goal.ACTIVE and not goal.review_message:
-            return
-        self.write_goal(
-            goal.updated(
-                continuations=0,
-                status=Goal.ACTIVE,
-                review_message=None,
-                review_id=None,
-            )
-        )
+        if self._features.present("goal_review"):
+            self._features.goal_review.restore_allowance()
 
     def park_goal(self) -> None:
         """Stop working the goal until a person speaks. The goal is kept: it is still what the session is for."""
-        if self._goal is None or not self._goal.is_open:
-            return
-        self.write_goal(self._goal.updated(status=Goal.PARKED, review_message=None, review_id=None))
+        if self._features.present("goal_review"):
+            self._features.goal_review.park()
+
+    def review_goal(self, publish: Optional[Callable] = None):
+        """Run the linked reviewer until it submits a verdict or the parent turn is cancelled."""
+        if not self._features.present("goal_review"):
+            return None
+        return self._features.goal_review.review(publish)
+
+    def apply_goal_review(self, review):
+        """Write the verdict onto the goal and answer with it, so the caller reads one value rather than two."""
+        if not self._features.present("goal_review"):
+            return self.goal
+        return self._features.goal_review.apply(review)
 
     def dirty_session_snapshot(self) -> Optional[dict]:
         """Return state newer than the last persisted revision without acknowledging it."""

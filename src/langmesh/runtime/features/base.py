@@ -92,6 +92,7 @@ class FeatureServices:
     task_manager: Any = None
     goal: Any = None
     write_goal: Any = None
+    turn_reader: Any = None
     background: Any = None
     compaction: Any = None
     compaction_preparation: Any = None
@@ -138,7 +139,7 @@ def feature_prompts(name: str, catalogue: Any) -> PromptLoader:
 
 #: The class each shipped plugin publishes for its slot, resolved on first build of a runtime.
 _FEATURE_CLASSES = {
-    "goal_review": "GoalReview",
+    "goal_review": "GoalReviewFeature",
     "compaction": "Compaction",
     "permissions": "PermissionReview",
     "continuation": "Continuation",
