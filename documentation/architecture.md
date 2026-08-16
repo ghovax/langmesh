@@ -48,16 +48,16 @@ sequenceDiagram
 
 `langmeshd` owns everything there can only sensibly be one of, and hosts the sessions. It owns:
 
-- the **registry** of sessions (identity, parent, permission mode, status);
-- the **lifecycle**: building a session's executor, dropping it when the session sleeps, and reaping a subtree parent-last;
-- the **databases**, as the sole writer, so exactly one process writes SQLite;
-- the shared **brokers**: events, terminals, file leases, workspaces, signed file URLs, push notifications, remote agents;
-- the **sessions themselves**, each an executor it builds, holds, and drops. Hosting them is why the daemon imports the runtime at boot: that import costs seconds, and paying it once makes building a session cost a fraction of a millisecond.
+- The **registry** of sessions (identity, parent, permission mode, status);
+- The **lifecycle**: building a session's executor, dropping it when the session sleeps, and reaping a subtree parent-last;
+- The **databases**, as the sole writer, so exactly one process writes SQLite;
+- The shared **brokers**: events, terminals, file leases, workspaces, signed file URLs, push notifications, remote agents;
+- The **sessions themselves**, each an executor it builds, holds, and drops. Hosting them is why the daemon imports the runtime at boot: that import costs seconds, and paying it once makes building a session cost a fraction of a millisecond.
 
 It serves one API two ways:
 
-- a **unix socket**, for the CLI and for sessions;
-- a **loopback TCP port**, for the desktop client, which cannot open a unix socket from a webview. The port is ephemeral and chosen at boot; both listeners require the capability token the daemon writes `0600` into the runtime directory.
+- A **unix socket**, for the CLI and for sessions;
+- A **loopback TCP port**, for the desktop client, which cannot open a unix socket from a webview. The port is ephemeral and chosen at boot; both listeners require the capability token the daemon writes `0600` into the runtime directory.
 
 A token says a caller may drive the daemon; it does not say who is calling, and on the unix socket that distinction is load-bearing. A session's own `bash` tool runs as the same user and can read that `0600` file, so attribution on tokens alone would let a session present the daemon's token and get a peer with no parent and no permission clamp.
 

@@ -84,8 +84,7 @@ The constructor keeps run facts (directory, identity, permission mode, confineme
 | `permissions` | `PermissionPolicy` | Built-in evaluator |
 | `prompt_composer` | `PromptComposer` | Catalogue `system_prompt` template |
 | `tools` | `BaseTool` or `ToolGrant` sequence | No supplied tools |
-| `toolset` | Complete `BaseTool` sequence | Built-in registry filtered by the agent |
-| `hooks` | Any combination of the three hook protocols | None |
+| `toolset` | Complete `BaseTool` sequence | Built-in registry filtered by the agent || `hooks` | Any combination of the three hook protocols | None |
 | `middleware` | `ToolMiddleware` sequence | None |
 | `compaction` | `Compaction` | Token-bounded recent working set |
 | `compaction_preparation` | `CompactionPreparation` | Observational-memory preparation in `Session` and the daemon; direct compaction in bare `AgentRuntime` |

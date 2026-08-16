@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import logging
-import json
 import asyncio
-from contextlib import suppress
 from dataclasses import dataclass, replace
 from itertools import accumulate, takewhile
-from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, AsyncIterator, Literal
 
@@ -18,6 +15,7 @@ from langmesh.base.message_content import forget_carried_reasoning
 from langmesh.runtime.internals import (
     conversation_tokens,
     message_tokens,
+    race_interrupt,
 )
 from langmesh.runtime.turn_events import (
     CompactionDone,
@@ -28,11 +26,8 @@ from langmesh.runtime.turn_events import (
 )
 from langmesh.base.ports import CompactionState, CompactionSummaryState
 from langmesh.runtime.cache_trace import cache_lane
-from langmesh.base.tuning import Tunable, active_tuning
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langmesh.base.errors import log_fields
-from langmesh.runtime.turn_events import ToolResult
-from langmesh.runtime.values import ToolStatus
 
 
 logger = logging.getLogger(__name__)
@@ -106,6 +101,26 @@ class _CompactionControl:
     failure: str | None = None
     # Whether the running compaction indicator has already been announced for this preparation.
     started: bool = False
+
+    @property
+    def idle(self) -> bool:
+        return self.phase == "none"
+
+    @property
+    def waiting(self) -> bool:
+        return self.phase == "waiting"
+
+    @property
+    def recorded(self) -> bool:
+        return self.phase == "recorded"
+
+    @property
+    def active(self) -> bool:
+        return self.phase in {"waiting", "recorded"}
+
+    @property
+    def failed(self) -> bool:
+        return self.phase in {"preparation_failed", "compaction_failed"}
 
     def begin(self, *, reason: str, resume_after: bool) -> None:
         if reason not in {"auto", "manual", "overflow"}:
@@ -347,7 +362,7 @@ class _CompactsContext:
 
     async def compact(self, reason: str = "manual") -> AsyncIterator[TurnEvent]:
         """Reclaim the window after the explicit observational-memory handoff has completed."""
-        if self._compaction_control.phase != "recorded":
+        if not self._compaction_control.recorded:
             for event in self._fail_compaction_preparation(
                 "Compaction requires its configured durable preparation to complete first."
             ):
@@ -545,19 +560,9 @@ class _CompactsContext:
                                     streamed["last_usage"] = _event
 
                     stream_task = asyncio.create_task(_consume())
-                    abort_waiter = asyncio.create_task(self._abort_event.wait())
-                    try:
-                        finished, _ = await asyncio.wait(
-                            {stream_task, abort_waiter},
-                            return_when=asyncio.FIRST_COMPLETED,
-                        )
-                        if abort_waiter in finished and not stream_task.done():
-                            summarizer.abort()
-                            await stream_task
-                    finally:
-                        abort_waiter.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await abort_waiter
+                    if await race_interrupt(stream_task, self._abort_event):
+                        summarizer.abort()
+                    await stream_task
                     if self._abort_event.is_set():
                         break
                     last_text = streamed["last_text"] or last_text
@@ -696,33 +701,6 @@ class _CompactsContext:
         summarizer._cached_system_prompt = self._build_static_system_prompt()
         summarizer._attached_files = dict(self._attached_files)
         return summarizer
-
-    async def _tool_submit_compaction_summary(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: Any,
-        policy: Any,
-        resolved_location: Any,
-    ):
-        """The one dispatchable call of the hidden compaction summarizer."""
-        model_guidance = ""
-        # The tool exists only in this summarizer's lane, so every call is a real submission.
-        submitted = CompactionSummary.model_validate(tool_arguments)
-        self._submitted_compaction_summary = submitted
-        self._abort_event.set()
-        result = {
-            "code": "compaction_summary_submitted",
-            "status": ToolStatus.OK.value,
-        }
-        yield ToolResult(
-            id=tool_call_identifier,
-            name=tool_name,
-            result=result,
-            model_guidance=model_guidance,
-        )
-
 
 class KeepRecentTurns:
     """Keep the last `keep` exchanges and drop the rest, with no model call and no cost."""
