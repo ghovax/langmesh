@@ -178,9 +178,7 @@ def _agent_configuration_payload(
         reasoning_effort=configuration.reasoning_effort,
         permission_mode=configuration.permission_mode,
         tools_enabled=configuration.tools_enabled,
-        tools_disabled=list(configuration.tools.disabled),
         bash=AgentBashConfigurationResponse(
-            enabled=configuration.tools.bash.enabled,
             background_allowed=configuration.tools.bash.background_allowed,
             permissions=dict(configuration.tools.bash.permissions),
         ),
@@ -203,11 +201,7 @@ def _apply_agent_configuration_update(
         updated.permission_mode = request.permission_mode
     if request.tools_enabled is not None:
         updated.tools_enabled = list(request.tools_enabled)
-    if request.tools_disabled is not None:
-        updated.tools.disabled = list(request.tools_disabled)
     if request.bash is not None:
-        if request.bash.enabled is not None:
-            updated.tools.bash.enabled = request.bash.enabled
         if request.bash.background_allowed is not None:
             updated.tools.bash.background_allowed = request.bash.background_allowed
         if request.bash.permissions is not None:

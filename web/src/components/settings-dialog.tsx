@@ -1477,15 +1477,6 @@ function AgentPermissionsEditor({
               <Button
                 h={8}
                 justifyContent="flex-start"
-                variant={configuration.bash.enabled ? "subtle" : "outline"}
-                colorPalette={configuration.bash.enabled ? "green" : "gray"}
-                onClick={() => updateBash({ enabled: !configuration.bash.enabled })}
-              >
-                {configuration.bash.enabled ? translation("enabled") : translation("disabled")}
-              </Button>
-              <Button
-                h={8}
-                justifyContent="flex-start"
                 variant={configuration.bash.background_allowed ? "subtle" : "outline"}
                 colorPalette={configuration.bash.background_allowed ? "blue" : "gray"}
                 onClick={() =>

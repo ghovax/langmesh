@@ -45,7 +45,6 @@ from langchain_core.messages import ToolMessage
 from pydantic import ValidationError
 from typing import Any, AsyncIterator, cast
 import asyncio
-from langmesh.base.configuration import PermissionDenied
 from langmesh.base.serialization import compact
 from langmesh.runtime.tools.execution import (
     bind_tool_decision,
@@ -437,15 +436,6 @@ class _DispatchesTools:
             # And fill the schema's defaults, so a documented default is the one that applies.
             tool_arguments = _with_schema_defaults(schema, tool_arguments)
 
-        if tool_name != "submit_goal_review" and not (
-            self._compaction_control.waiting
-            and tool_name in {"bash", "load_skill"}
-        ):
-            try:
-                self._permissions.check_tool(tool_name, **tool_arguments)
-            except PermissionDenied as exception:
-                yield Error(id=tool_call_identifier, message=str(exception), tool=tool_name)
-                return
 
         validation_error = self._validate_tool_call(
             tool_name,

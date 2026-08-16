@@ -25,7 +25,6 @@ tools_enabled:
   - read_mcp_resource
 tools:
   bash:
-    enabled: true
     background_allowed: true
     permissions:
       rm *: ask
