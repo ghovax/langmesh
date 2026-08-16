@@ -22,7 +22,7 @@ from langmesh.runtime.tools import context as tool_context, fetching
 from langmesh.runtime.tools.execution import current_tool_decision, current_tool_services
 from langmesh.base.skills import enabled_skills
 from langmesh.runtime.internals import _background_handle_kind
-from langmesh.runtime.goal_review import GoalReview
+from langmesh.runtime.features.goal_review import GoalReview
 from langmesh.runtime.goal import Goal
 from langmesh.runtime.values import ToolStatus
 from langmesh.runtime.locations import PermissionDecision

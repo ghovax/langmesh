@@ -123,7 +123,7 @@ class _RunsTurns:
             context = TurnContext(
                 now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
                 pwd=self._working_directory or str(Path.cwd()),
-                goal=self._goal.for_model() if self._goal is not None else {},
+                goal=self.goal.for_model() if self.goal is not None else {},
                 tasks=self._task_manager.to_dict_list(),
                 background={
                     "running": self._background.active_by_context_key(),

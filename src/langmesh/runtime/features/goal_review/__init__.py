@@ -1,4 +1,10 @@
-"""The linked agent session that independently reviews a goal."""
+"""The goal-review plugin: the goal's own state, its durable review, and the linked reviewer session.
+
+The goal belongs to this plugin, never to the runtime core the other plugins attach to: the
+runtime only delegates `goal`, `write`, the review, and the allowance bookkeeping here. The
+reviewer is an isolated session with its own visible transcript and only its verdict tool; its
+prompts and the verdict schema's descriptions live beside this module so they are configurable.
+"""
 
 from __future__ import annotations
 
@@ -28,10 +34,12 @@ from langmesh.runtime.turn_events import (
     GoalReviewStarted,
     TurnEvent,
 )
-
+from langmesh.runtime.features.base import FeatureServices
 
 logger = logging.getLogger(__name__)
-_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "descriptions")
+
+#: A goal's schema descriptions and its instructions, both configurable beside this plugin.
+_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
 
 #: Where a goal stands after one reading of the work, which is not the same as what the session says about it.
 GOAL_STANDING = Literal["unmet", "satisfied", "blocked"]
@@ -120,20 +128,90 @@ class GoalReview(BaseModel):
         return self
 
 
-class _ReviewsGoal:
-    """Review an open goal in an isolated session with its own visible transcript."""
+class GoalReviewFeature:
+    """The session's goal and the isolated review that decides where it stands."""
+
+    def __init__(self, services: FeatureServices) -> None:
+        self._services = services
+        self._prompts = services.catalogued_prompts("goal_review")
+        self._goal: Optional[Goal] = None
+        self._listener: Optional[Callable[[Optional[Goal]], None]] = None
+        self._submitted: Optional[GoalReview] = None
+
+    @property
+    def goal(self) -> Optional[Goal]:
+        """The session's goal, or ``None`` when it has none."""
+        return self._goal
+
+    @property
+    def submitted(self) -> Optional[GoalReview]:
+        """The verdict a reviewer session has handed over, read once the review turn ends."""
+        return self._submitted
+
+    def set_listener(self, listener: Optional[Callable[[Optional[Goal]], None]]) -> None:
+        """Install the callback that hears every goal change, which is how the interface learns of one."""
+        self._listener = listener
+
+    def restore(self, goal: Optional[Goal]) -> None:
+        """Rehydrate the durable goal, validated and dropped rather than guessed at by the caller."""
+        self._goal = goal
+
+    def write(self, goal: Optional[Goal]) -> None:
+        """Set, replace or drop the goal, and announce it. The single writer, so no path changes it silently."""
+        self._goal = goal
+        self._services.mark_dirty()
+        if self._listener is not None:
+            self._listener(goal)
+
+    def note_continuation(self) -> None:
+        """Count one review-opened turn and consume the message that opened it."""
+        if self._goal is None:
+            return
+        self.write(
+            self._goal.updated(
+                continuations=self._goal.continuations + 1,
+                review_message=None,
+                review_id=None,
+            )
+        )
+
+    def restore_allowance(self) -> None:
+        """A person spoke, so the allowance restarts and a parked goal resumes. A settled one keeps its answer."""
+        goal = self._goal
+        if goal is None or goal.status not in (Goal.ACTIVE, Goal.PARKED):
+            return
+        if goal.continuations == 0 and goal.status == Goal.ACTIVE and not goal.review_message:
+            return
+        self.write(
+            goal.updated(
+                continuations=0,
+                status=Goal.ACTIVE,
+                review_message=None,
+                review_id=None,
+            )
+        )
+
+    def park(self) -> None:
+        """Stop working the goal until a person speaks. The goal is kept: it is still what the session is for."""
+        if self._goal is None or not self._goal.is_open:
+            return
+        self.write(self._goal.updated(status=Goal.PARKED, review_message=None, review_id=None))
+
+    def submit(self, review: Optional[GoalReview]) -> None:
+        """The reviewer's verdict tool lands here, so the review loop reads one submission slot."""
+        self._submitted = review
 
     def _goal_reviewer(self, scratch_directory: str):
         from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
         from langmesh.runtime.runtime import AgentRuntime
         from langmesh.runtime.tools.registry import submit_goal_review as submit_goal_review_tool
 
-        reviewer_configuration = self._agent_configuration.model_copy(
+        reviewer_configuration = self._services.agent_configuration.model_copy(
             update={"permission_mode": "automatic"}
         )
-        reviewer_global_configuration = self._global_configuration.model_copy(
+        reviewer_global_configuration = self._services.global_configuration.model_copy(
             update={
-                "toolbox": self._global_configuration.toolbox.model_copy(update={"enabled": False})
+                "toolbox": self._services.global_configuration.toolbox.model_copy(update={"enabled": False})
             }
         )
         reviewer_permissions = PermissionEvaluator(
@@ -149,11 +227,11 @@ class _ReviewsGoal:
                 }
             )
         )
-        granted_sandbox = self._granted_profile()
+        granted_sandbox = self._services.granted_profile()
         reviewer_sandbox = granted_sandbox.narrowed(
             writable=(scratch_directory,),
             network=granted_sandbox.network,
-            workspace=self._working_directory,
+            workspace=self._services.working_directory,
         )
         reviewer_sandbox = replace(
             reviewer_sandbox,
@@ -163,7 +241,7 @@ class _ReviewsGoal:
                 "XDG_CACHE_HOME": scratch_directory,
             },
         )
-        toolbox = self._tool_context.toolbox
+        toolbox = self._services.tool_context.toolbox
         if toolbox is not None:
             reviewer_sandbox = replace(
                 reviewer_sandbox,
@@ -178,38 +256,38 @@ class _ReviewsGoal:
             RuntimeProfile(
                 agent=reviewer_configuration,
                 configuration=reviewer_global_configuration,
-                session_id=self._session_id,
-                working_directory=self._working_directory,
-                project_directory=self._project_directory,
+                session_id=self._services.session_id,
+                working_directory=self._services.working_directory,
+                project_directory=self._services.project_directory,
                 permission_mode="automatic",
-                parent_session=self._parent_session,
+                parent_session=self._services.parent_session,
                 sandbox=reviewer_sandbox,
             ),
             RuntimeComponents(
-                model=self._model,
-                catalogue=self._catalogue,
+                model=self._services.model,
+                catalogue=self._services.catalogue,
                 sessions=None,
-                mcp_servers=self._tool_context.mcp_server_manager,
+                mcp_servers=self._services.tool_context.mcp_server_manager,
                 # The verdict tool is injected here and only here: the main session never carries it.
                 tools=[ToolGrant(submit_goal_review_tool)],
-                supplied_tool_gate=self._supplied_tool_gate,
+                supplied_tool_gate=self._services.supplied_tool_gate,
                 permissions=reviewer_permissions,
                 # What the parent's model sees, minus the tools a reviewer must never use.
                 toolset=tuple(
                     tool
-                    for tool in self._model_tools
+                    for tool in self._services.model_tools
                     if tool.name not in _REVIEWER_DISABLED_TOOLS
                 ),
-                related_turns=self._turn_reader,
+                related_turns=self._services.turn_reader,
             ),
-            conversation=list(self._conversation),
+            conversation=list(self._services.conversation),
         )
-        reviewer._locations = dict(self._locations)
-        reviewer._locations_by_name = dict(self._locations_by_name)
+        reviewer._locations = dict(self._services.locations)
+        reviewer._locations_by_name = dict(self._services.locations_by_name)
         reviewer._tool_context = replace(reviewer._tool_context, toolbox=toolbox)
-        reviewer.restore_session(self.session_snapshot())
-        reviewer._cached_system_prompt = self._build_static_system_prompt()
-        reviewer._attached_files = dict(self._attached_files)
+        reviewer.restore_session(self._services.session_snapshot())
+        reviewer._cached_system_prompt = self._services.build_static_system_prompt()
+        reviewer._attached_files = dict(self._services.attached_files)
         return reviewer
 
     async def _run_goal_review_turn(
@@ -228,12 +306,12 @@ class _ReviewsGoal:
                         reviewer._last_review_text = event.text
                     if publish is not None:
                         await publish(GoalReviewProgress(review_id=review_id, event=event))
-                    if self._goal_review_journal is not None:
-                        await self._goal_review_journal.append(review_id, event)
+                    if self._services.goal_review_journal is not None:
+                        await self._services.goal_review_journal.append(review_id, event)
 
         review_turn = asyncio.create_task(run())
         try:
-            if await race_interrupt(review_turn, self._abort_event):
+            if await race_interrupt(review_turn, self._services.abort_event):
                 reviewer.abort()
                 await review_turn
                 return False
@@ -248,12 +326,12 @@ class _ReviewsGoal:
     async def _open_goal_review_journal(
         self, review_id: str, assignment: str, goal: Goal
     ) -> None:
-        if self._goal_review_journal is None:
+        if self._services.goal_review_journal is None:
             return
-        await self._goal_review_journal.open(
+        await self._services.goal_review_journal.open(
             GoalReviewContext(
                 review_id=review_id,
-                session_id=self._session_id,
+                session_id=self._services.session_id,
                 goal=goal.text,
                 assignment=assignment,
                 created_at=datetime.now(timezone.utc),
@@ -263,12 +341,12 @@ class _ReviewsGoal:
     async def _close_goal_review_journal(
         self, review_id: str, status: str, standing: str | None
     ) -> None:
-        if self._goal_review_journal is None:
+        if self._services.goal_review_journal is None:
             return
-        await self._goal_review_journal.close(
+        await self._services.goal_review_journal.close(
             GoalReviewOutcome(
                 review_id=review_id,
-                session_id=self._session_id,
+                session_id=self._services.session_id,
                 status=status,
                 standing=standing,
                 completed_at=datetime.now(timezone.utc),
@@ -278,23 +356,17 @@ class _ReviewsGoal:
     @staticmethod
     def _require_review_submission(reviewer) -> None:
         """Constrain a reviewer that already investigated to its one accepted verdict tool, including what the model is bound to."""
-        review_tool = next(tool for tool in reviewer._tools if tool.name == "submit_goal_review")
-        reviewer._tools = [review_tool]
-        reviewer._tool_schemas = {review_tool.name: review_tool.args_schema}
-        reviewer._model_tools = [review_tool]
-        reviewer._bound_model = reviewer._model.bind_tools([review_tool])
+        review_tool = next(tool for tool in reviewer.constrained_tool_named("submit_goal_review"))
+        reviewer.constrain_toolset([review_tool])
 
-    async def review_goal(
+    async def review(
         self, publish: Callable[[TurnEvent], Awaitable[None]] | None = None
     ) -> Optional[GoalReview]:
         """Run the linked reviewer until it submits a verdict or the parent turn is cancelled."""
         goal = self.goal
         if goal is None or not goal.is_open:
             return None
-        goal = self.goal
-        if goal is None or not goal.is_open:
-            return None
-        instructions = self._prompt_loader.load(
+        instructions = self._prompts.load(
             "goal_review",
             {
                 "goal_contract": compact(
@@ -308,7 +380,7 @@ class _ReviewsGoal:
             },
         )
         review_id = new_id("review")
-        assignment = self._prompt_loader.load(
+        assignment = self._prompts.load(
             "goal_review_assignment",
             {
                 "goal_contract": compact(
@@ -360,19 +432,19 @@ class _ReviewsGoal:
             try:
                 instruction = instructions
                 attempts = 0
-                while not self._abort_event.is_set():
+                while not self._services.abort_event.is_set():
                     if not await self._run_goal_review_turn(
                         reviewer, instruction, review_id, publish
                     ):
                         await finish_transcript("canceled")
                         return None
-                    if reviewer._submitted_goal_review is not None:
-                        review = reviewer._submitted_goal_review
+                    if reviewer._features.goal_review.submitted is not None:
+                        review = reviewer._features.goal_review.submitted
                         review._review_id = review_id
                         await finish_transcript("completed", review)
                         return review
                     attempts += 1
-                    maximum_attempts = self._global_configuration.goal_review.maximum_attempts
+                    maximum_attempts = self._services.global_configuration.goal_review.maximum_attempts
                     if attempts >= maximum_attempts:
                         logger.error(
                             "goal reviewer did not submit after %d attempts; last text: %r",
@@ -387,7 +459,7 @@ class _ReviewsGoal:
                         maximum_attempts,
                     )
                     self._require_review_submission(reviewer)
-                    instruction = self._prompt_loader.load("goal_review_missing", {})
+                    instruction = self._prompts.load("goal_review_missing", {})
             except asyncio.CancelledError:
                 await finish_transcript("canceled")
                 raise
@@ -401,17 +473,17 @@ class _ReviewsGoal:
                     await finish_transcript("canceled")
         return None
 
-    def apply_goal_review(self, review: Optional[GoalReview]) -> Optional[Goal]:
+    def apply(self, review: Optional[GoalReview]) -> Optional[Goal]:
         """Write the verdict onto the goal and answer with it, so the caller reads one value rather than two."""
         goal = self.goal
         if goal is None or not goal.is_open:
             return goal
         if review is None:
             logger.warning("the goal review did not land; carrying the goal on unchanged")
-            self.write_goal(goal.updated(review_message=None, review_id=None))
+            self.write(goal.updated(review_message=None, review_id=None))
             return self.goal
         if review.standing == "satisfied":
-            self.write_goal(
+            self.write(
                 goal.updated(
                     status=Goal.SATISFIED,
                     blocker=None,
@@ -422,7 +494,7 @@ class _ReviewsGoal:
             )
             return self.goal
         if review.standing == "blocked":
-            self.write_goal(
+            self.write(
                 goal.updated(
                     status=Goal.BLOCKED,
                     blocker=review.blocker,
@@ -432,7 +504,7 @@ class _ReviewsGoal:
                 )
             )
             return self.goal
-        self.write_goal(
+        self.write(
             goal.updated(
                 blocker=None,
                 evidence=None,
@@ -441,3 +513,6 @@ class _ReviewsGoal:
             )
         )
         return self.goal
+
+
+__all__ = ["GoalReview", "GoalReviewFeature"]
