@@ -125,6 +125,7 @@ export interface ChatMessage {
 
 export interface ChatTask {
   identifier: string;
+  title: string;
   description: string;
   status: string;
   dependencies: string[];
@@ -500,6 +501,7 @@ function asChatTask(value: unknown): ChatTask | null {
   if (!identifier || !description) return null;
   return {
     identifier,
+    title: String(record.title ?? ""),
     description,
     status: String(record.status ?? "pending"),
     dependencies: Array.isArray(record.dependencies) ? record.dependencies.map(String) : [],
@@ -1322,7 +1324,7 @@ export function useChat(
   // True once we have driven a turn: the live stream is then authoritative, so never subscribe as well.
   const streamedLocallyRef = useRef(false);
   const startTurnRef = useRef<(message: OutboxMessage) => Promise<Delivery>>(async () => "failed");
-  const flushFrameRef = useRef<number | null>(null);
+  const flushScheduledRef = useRef(false);
   const historyBufferRef = useRef(new TranscriptHistoryBuffer());
 
   // Whether the transcript holds a decision nobody has made: a parked session has stopped, not paused.
@@ -1357,10 +1359,8 @@ export function useChat(
   );
 
   const flushNow = useCallback(() => {
-    if (flushFrameRef.current != null) {
-      window.cancelAnimationFrame(flushFrameRef.current);
-      flushFrameRef.current = null;
-    }
+    // A direct flush supersedes any microtask still pending, so it never paints a second snapshot.
+    flushScheduledRef.current = false;
     drainLiveDeltas(stateRef.current);
     historyBufferRef.current.drainInto(stateRef.current);
     // Reducers mutate indexed rows in place between paints; one shallow snapshot per paint makes
@@ -1372,15 +1372,18 @@ export function useChat(
 
   const flush = useCallback(() => {
     if (typeof window === "undefined") {
-      drainLiveDeltas(stateRef.current);
-      setMessages([...stateRef.current.messages]);
-      setTasks(stateRef.current.tasks);
-      setTokenUsage(stateRef.current.tokenUsage);
+      flushNow();
       return;
     }
-    if (flushFrameRef.current != null) return;
-    flushFrameRef.current = window.requestAnimationFrame(() => {
-      flushFrameRef.current = null;
+    if (flushScheduledRef.current) return;
+    flushScheduledRef.current = true;
+    // A microtask, not a frame callback: it still coalesces every frame delivered in this task into
+    // one snapshot, but it runs only when the current task's stack empties, so it can never fire
+    // while React is mid-render. A rAF can — a long render spans frame boundaries — and a setState
+    // landing then is exactly the interleave that drives "Maximum update depth exceeded".
+    queueMicrotask(() => {
+      if (!flushScheduledRef.current) return;
+      flushScheduledRef.current = false;
       flushNow();
     });
   }, [flushNow]);
@@ -1406,10 +1409,7 @@ export function useChat(
   // Close this hook's stream on unmount, or orphaned streams exhaust the browser's connection pool.
   useEffect(() => {
     return () => {
-      if (flushFrameRef.current != null) {
-        window.cancelAnimationFrame(flushFrameRef.current);
-        flushFrameRef.current = null;
-      }
+      flushScheduledRef.current = false;
       attachRef.current?.abort();
       viewerAttachRef.current?.abort();
     };

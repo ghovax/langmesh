@@ -11,6 +11,7 @@ from langmesh.runtime.internals import (
 from langmesh.base import confinement
 from langmesh.base.confinement import Grant, parse_access_request
 from langmesh.runtime.values import PermissionAnswer, PermissionReason
+from langmesh.runtime.tools.registry import permission_decision as permission_decision_tool
 from langmesh.runtime.boundary import RULE_ALLOW, RULE_ASK, escape_of, verdict_for
 from langmesh.runtime.locations import (
     _LOCATION_TOOLS,
@@ -132,8 +133,9 @@ class _DecidesPermissions:
                 explanation="The conversation is too large to review safely, so this request was refused.",
                 risk="medium",
             )
+        # The reviewer is one verdict call: bind only its verdict tool, not the session's surface.
         model = self._model.bind_tools(
-            self._model_tools,
+            [permission_decision_tool],
             tool_choice="auto",
             parallel_tool_calls=False,
         )
@@ -334,11 +336,6 @@ class _DecidesPermissions:
     ) -> _ToolPlan:
         """The verdict for one call. One path for every tool; only the rule table and the escape differ."""
         plan = _ToolPlan(tool_call_id=tool_call_identifier)
-        # Keep verdict schemas cache-stable but inert outside their dedicated review capability.
-        if tool_name == "permission_decision" or (
-            tool_name == "submit_goal_review" and not self._accepts_goal_review
-        ):
-            return plan
         if self._compaction_control.phase == "waiting" and tool_name in {"bash", "load_skill"}:
             # The handoff protocol itself: local foreground Bash and read-only skill loading; the turn loop rejects every other shape.
             return plan

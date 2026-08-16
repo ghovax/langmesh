@@ -17,6 +17,7 @@ from langmesh.base.configuration import PermissionEvaluator, PromptLoader
 from langmesh.base.ports import GoalReviewContext, GoalReviewOutcome
 from langmesh.base.identifiers import new_id
 from langmesh.base.serialization import compact
+from langmesh.base.tools import ToolGrant
 from langmesh.runtime.values import ToolStatus
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.goal import Goal, NonBlankText
@@ -133,25 +134,16 @@ class _ReviewsGoal:
         resolved_location: Any,
     ):
         model_guidance = ""
-        if not self._accepts_goal_review:
-            result = {
-                "code": "internal_verdict_inert",
-                "status": ToolStatus.OK.value,
-            }
-            model_guidance = self._prompt_loader.load(
-                "internal_verdict_inert",
-                {"tool_name": tool_name},
-            )
-        else:
-            # A genuine impasse is accepted on any review: the reviewer's own standards gate blocked,
-            # not a turn count, so a goal that cannot proceed (a user-only step, an impossibility) can
-            # be marked blocked the first time it is truly stuck.
-            self._submitted_goal_review = GoalReview.model_validate(tool_arguments)
-            self._abort_event.set()
-            result = {
-                "code": "goal_review_submitted",
-                "status": ToolStatus.OK.value,
-            }
+        # The verdict tool exists only in this reviewer's lane, so there is no inert case: every
+        # call is a real submission. A genuine impasse is accepted on any review — the reviewer's
+        # own standards gate blocked, not a turn count, so a goal that cannot proceed (a user-only
+        # step, an impossibility) can be marked blocked the first time it is truly stuck.
+        self._submitted_goal_review = GoalReview.model_validate(tool_arguments)
+        self._abort_event.set()
+        result = {
+            "code": "goal_review_submitted",
+            "status": ToolStatus.OK.value,
+        }
         yield ToolResult(
             id=tool_call_identifier,
             name=tool_name,
@@ -162,6 +154,7 @@ class _ReviewsGoal:
     def _goal_reviewer(self, scratch_directory: str):
         from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
         from langmesh.runtime.runtime import AgentRuntime
+        from langmesh.runtime.tools.registry import submit_goal_review as submit_goal_review_tool
 
         reviewer_configuration = self._agent_configuration.model_copy(
             update={"permission_mode": "automatic"}
@@ -223,17 +216,22 @@ class _ReviewsGoal:
                 permission_mode="automatic",
                 parent_session=self._parent_session,
                 sandbox=reviewer_sandbox,
-                accepts_goal_review=True,
             ),
             RuntimeComponents(
                 model=self._model,
                 catalogue=self._catalogue,
                 sessions=None,
                 mcp_servers=self._tool_context.mcp_server_manager,
-                tools=tuple(self._extra_tools.values()),
+                # The verdict tool is injected here and only here: the main session never carries it.
+                tools=[ToolGrant(submit_goal_review_tool)],
                 supplied_tool_gate=self._supplied_tool_gate,
                 permissions=reviewer_permissions,
-                toolset=tuple(self._tools),
+                # What the parent's model sees, minus the tools a reviewer must never use.
+                toolset=tuple(
+                    tool
+                    for tool in self._model_tools
+                    if tool.name not in _REVIEWER_DISABLED_TOOLS
+                ),
                 related_turns=self._turn_reader,
             ),
             conversation=list(self._conversation),

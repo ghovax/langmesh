@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any, AsyncIterator, Mapping, Optional, Sequence
 
 from langmesh.base.catalogue import Catalogue
 from langmesh.base.attachments import AttachmentInput, PathAttachments
+from langmesh.base.tools import ToolGrant, ToolLike, as_tool_grants
 from langmesh.base.configuration import (
     AgentConfiguration,
     BashToolConfiguration,
@@ -201,6 +203,9 @@ __all__ = [
     "Session",
     "SessionAccess",
     "SessionComponents",
+    "ToolGrant",
+    "ToolLike",
+    "as_tool_grants",
     "SessionPhase",
     "SessionState",
     "SessionWorktree",
@@ -306,6 +311,7 @@ class Session:
         providers: Optional[Mapping[str, str | Mapping[str, str]]] = None,
         model_identifier: str = "",
         locations: Sequence[Location] | None = None,
+        tools: Sequence[ToolLike] = (),
         components: SessionComponents = SessionComponents(),
         # Any fsspec-backed workspace. Non-local sources are materialized for Bash and SQLite,
         # then synchronized at tool boundaries and close.
@@ -339,7 +345,14 @@ class Session:
         self._sandbox = sandbox
         if not isinstance(components, SessionComponents):
             raise TypeError("components must be a SessionComponents value")
+        if tools:
+            components = dataclasses.replace(
+                components,
+                tools=[*components.tools, *as_tool_grants(tools)],
+            )
         self._components = components
+        # Grants handed to `grant_tool` before the runtime exists, applied when it is built.
+        self._pending_grants: list[ToolGrant] = []
         self._mcp_server_manager = components.mcp_servers
         self._lifecycle = AsyncExitStack()
         # Reading configuration must not leave a file in the caller's home directory.
@@ -508,7 +521,20 @@ class Session:
                     ),
                 ),
             )
+            for grant in self._pending_grants:
+                self._runtime.grant_tool(grant.tool)
+            self._pending_grants = []
         return self._runtime
+
+    def grant_tool(self, tool: ToolLike) -> None:
+        """Grant a tool to this session now: dispatchable immediately, and described to the model
+        by an appended conversation message from the next model call. Append-only, so the provider
+        cache prefix is untouched. Works before the first turn as well as mid-session."""
+        grant = as_tool_grants([tool])[0]
+        if self._runtime is None:
+            self._pending_grants.append(grant)
+        else:
+            self._runtime.grant_tool(grant.tool)
 
     def _resolved_locations(self) -> Sequence[Location] | None:
         """Where this session's tools may run, with `None` meaning one local location at the working directory."""

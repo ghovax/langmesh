@@ -41,7 +41,7 @@ These APIs are read-only. The agent changes `.agents/observations.sqlite` throug
 
 ## Checkpoints
 
-`Checkpoints` stores conversation, goal, tasks, compaction control, retry state, and any suspended `PendingTurn`.
+`Checkpoints` stores the conversation, goal, tasks, compaction control, retry state, and any suspended `PendingTurn`.
 
 ```python
 class RedisCheckpoints:

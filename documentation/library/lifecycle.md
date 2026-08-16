@@ -1,6 +1,6 @@
 # Lifecycle and control
 
-`Session.state` is the control authority. Its `phase` is one of `idle`, `running`, `suspended`, `compacting`, or `retrying`; invalid combinations such as “running and suspended” are unrepresentable.
+`Session.state` is the control authority. Its `phase` is one of `idle`, `running`, `suspended`, `compacting`, or `retrying`; invalid combinations such as running and suspended are unrepresentable.
 
 ## Suspension and resume
 
@@ -62,7 +62,7 @@ await session.steer("Check the migration too.")
 
 ## Live policy and locations
 
-`await session.set_permission_mode("automatic")` changes the next tool decision and reconsiders unanswered suspended gates. `session.set_locations(...)` changes resolution for the next tool call. Both controls preserve the existing conversation prefix.
+`await session.set_permission_mode("automatic")` changes the next tool decision and reconsiders unanswered suspended gates. `session.set_locations(...)` changes resolution for the next tool call. Both preserve the existing conversation prefix.
 
 ## Failure and retry
 
