@@ -88,7 +88,7 @@ def _compose_session_tools(
     can_reach_peers: bool = False,
     permission_mode: Any = None,
 ) -> list[Any]:
-    """The diamond's toolset for one session: the agent profile's declared built-ins, gated by
+    """The daemon's toolset for one session: the agent profile's declared built-ins, gated by
     what the machine actually has, plus the peer and remote tools the daemon owns. Nothing is
     forced — an agent that declares no tools runs with none."""
     from langmesh.runtime.tools import registry
@@ -896,7 +896,7 @@ class SessionExecutor(AgentExecutor):
         runtime_directory = working_directory or project_directory or str(Path.cwd())
         # The daemon composes the session's tools: the agent profile's declared set, mapped onto
         # the shipped built-ins, plus the settings-gated and peer tools it owns. The library
-        # forces nothing; this is the diamond assembling the toolset.
+        # forces nothing; this is the daemon assembling the toolset.
         composed = _compose_session_tools(
             configuration,
             self._global_configuration,

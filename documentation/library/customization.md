@@ -10,7 +10,7 @@ Three ways to compose a session's tools:
 
 - **The whole roster.** Pass `SessionComponents(toolset=[...])` to run exactly those tools, or `toolset=()` to run with no tools at all.
 - **Additions.** Pass `tools=[...]`, or call `session.grant_tool(...)` later. A tool whose name the session already runs replaces its implementation.
-- **The agent profile, at the application layer.** The daemon (the diamond) reads an agent's declared `tools_enabled` and assembles its built-ins from the registry; an agent that declares none runs with none.
+- **The agent profile, at the application layer.** The daemon reads an agent's declared `tools_enabled` and assembles its built-ins from the registry; an agent that declares none runs with none.
 
 ```python
 from langchain_core.tools import tool
