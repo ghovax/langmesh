@@ -10,7 +10,7 @@
 | `ToolResult` | Tool completion | Close the matching card |
 | `Suspended` | Durable permission or question batch | Collect decisions, call `respond()`, then `resume()` |
 | `Steering` | Mid-turn user message accepted | Reconcile optimistic UI by message id |
-| `Usage` | Latest request and cumulative token/cache data | Update usage telemetry |
+| `Usage` | Latest request and cumulative token and cache data | Update usage telemetry |
 | `CompactionStarted` / `CompactionDone` | Context compaction lifecycle | Show compaction state and reclaimed size |
 | `GoalReviewStarted` / `GoalReviewProgress` / `GoalReviewFinished` | Independent goal review | Render review status separately from assistant prose |
 | `Checkpoint` | Tool batch became durable | Commit a product high-water mark if needed |

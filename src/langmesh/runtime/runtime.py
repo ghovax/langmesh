@@ -24,6 +24,7 @@ from langmesh.runtime.models.litellm import ChatLiteLLMModel
 from langmesh.runtime.models.codex import ChatCodexModel
 from langmesh.runtime.models.cursor import ChatCursorModel
 from langmesh.base.models import find_model, resolve_litellm
+from langmesh.base.tools import as_tool_grants
 from langmesh.locations.resolver import LocationAddress, executor_for, location_uri_for
 from langmesh.runtime.tools.registry import (
     bash as bash_tool,
@@ -41,9 +42,6 @@ from langmesh.runtime.tools.registry import (
     control_screen as control_screen_tool,
     ask_user as ask_user_tool,
     load_skill as load_skill_tool,
-    submit_goal_review as submit_goal_review_tool,
-    permission_decision as permission_decision_tool,
-    submit_compaction_summary as submit_compaction_summary_tool,
 )
 from langmesh.base.ports import Observation
 from langmesh.runtime.tools.context import ToolContext
@@ -351,6 +349,8 @@ def _build_tool_context(
 
 class TaskItem(BaseModel):
     identifier: str = ""
+    # One short phrase naming the task, like a tool call's explanation; the description says what to do.
+    title: str = ""
     description: str
     status: str = "pending"
     dependencies: list[str] = []
@@ -365,10 +365,12 @@ class TaskManager:
     def add_tasks(self, task_definitions: list[dict]) -> list[str]:
         created = []
         for definition in task_definitions:
-            identifier = f"task-{self._next_identifier}"
+            # The identifier is the task's index: the model addresses a task by number, never by a prefixed id.
+            identifier = str(self._next_identifier)
             self._next_identifier += 1
             task = TaskItem(
                 identifier=identifier,
+                title=definition.get("title", ""),
                 description=definition.get("description", ""),
                 dependencies=definition.get("dependencies", []),
             )
@@ -557,8 +559,12 @@ class AgentRuntime(
         )
 
         self._file_lease_manager = components.file_leases
-        # The caller's tools alongside ours. `BaseTool` is adopted rather than wrapped.
-        self._extra_tools = {tool.name: tool for tool in tools}
+        # The caller's tools, granted to this session. A grant is dispatchable and its description
+        # is appended to the conversation as a message, so the bound schema — and the provider
+        # cache prefix — never changes. A grant may therefore be added at creation or at any
+        # later moment; both are append-only.
+        self._tool_grants = tuple(as_tool_grants(tools))
+        self._extra_tools = {grant.tool.name: grant.tool for grant in self._tool_grants}
         # What a caller's tool is gated at: asking by default, so adding one cannot silently widen a session.
         self._supplied_tool_gate = components.supplied_tool_gate
         configured_tools = (
@@ -569,26 +575,17 @@ class AgentRuntime(
                 global_configuration,
                 self._working_directory,
                 can_reach_peers=session_access is not None,
-                extra_tools=tools,
+                extra_tools=(),
                 permission_mode=self._permission_mode,
             )
         )
-        self._tools = [tool for tool in configured_tools if tool.name != "submit_goal_review"]
-        if profile.accepts_goal_review:
-            self._tools.append(submit_goal_review_tool)
-        if profile.accepts_compaction_summary:
-            self._tools.append(submit_compaction_summary_tool)
-        # Keep one cache-stable schema while restricting verdict execution to dedicated reviewers.
-        self._model_tools = [
-            *(
-                tool
-                for tool in self._tools
-                if tool.name not in {"submit_goal_review", "submit_compaction_summary"}
-            ),
-            submit_goal_review_tool,
-            permission_decision_tool,
-            submit_compaction_summary_tool,
-        ]
+        # Executable set: the configured tools plus every grant. The model sees only the configured
+        # set — grants ride as conversation messages — so the schema is fixed for the session's life.
+        self._tools = list(configured_tools)
+        for grant in self._tool_grants:
+            if grant.tool.name not in {tool.name for tool in self._tools}:
+                self._tools.append(grant.tool)
+        self._model_tools = list(configured_tools)
         self._tool_schemas: dict[str, Any] = {tool.name: tool.args_schema for tool in self._tools}
         self._bound_model = self._model.bind_tools(self._model_tools)
         self._compaction_summarizer = components.compaction_summarizer
@@ -630,8 +627,6 @@ class AgentRuntime(
         self._transcript = transcript
         # The daemon's event publisher is optional; the registry reader is used only for compaction verification.
         self._goal_review_journal = components.goal_review_journal
-        self._accepts_goal_review = profile.accepts_goal_review
-        self._accepts_compaction_summary = profile.accepts_compaction_summary
         self._submitted_goal_review = None
         self._submitted_compaction_summary: Any = None
         # When the turn now running began, for the transcript entry it will produce.
@@ -663,6 +658,10 @@ class AgentRuntime(
             catalogue = machine_catalogue(global_configuration, self._project_directory)
         self._catalogue = catalogue
         self._prompt_loader = _CataloguePrompts(catalogue)
+        # Creation-time grants are described from the first turn: their messages sit at the head
+        # of the conversation, before any user message, and are stable for the session's life.
+        for grant in self._tool_grants:
+            self._conversation.append(self._tool_grant_message(grant.tool))
         self._cached_system_prompt: str | None = None
         self._task_manager = TaskManager()
         # Independent from goal continuations: one may share a turn with the other, but neither consumes its allowance.
@@ -894,6 +893,37 @@ class AgentRuntime(
         )
         status, code = _model_result_status(capped_result, ok=True, backgrounded=False)
         self._append_background_result_messages(capped_result, metadata, status, code)
+
+    def grant_tool(self, tool: BaseTool) -> None:
+        """Grant a tool to this session at any moment: dispatchable now, described to the model
+        by an appended message, so the bound schema — and the provider cache prefix — is untouched."""
+        if tool.name in self._extra_tools or any(existing.name == tool.name for existing in self._tools):
+            return
+        self._extra_tools[tool.name] = tool
+        self._tools.append(tool)
+        self._tool_schemas[tool.name] = tool.args_schema
+        self._conversation.append(self._tool_grant_message(tool))
+        self._mark_session_dirty()
+
+    def _tool_grant_message(self, tool: BaseTool):
+        """The conversation message that describes a granted tool, schema included, so the model
+        can construct a call without the tool being bound into the provider schema."""
+        schema: dict[str, Any] = {}
+        args_schema = getattr(tool, "args_schema", None)
+        if args_schema is not None:
+            try:
+                schema = args_schema.model_json_schema()
+            except Exception:  # noqa: BLE001 — a malformed schema still leaves the description useful
+                schema = {}
+        content = self._prompt_loader.load(
+            "tool_grant",
+            {
+                "tool_name": tool.name,
+                "description": (tool.description or "").strip(),
+                "schema": compact(schema),
+            },
+        )
+        return self._reminder_message(content, marks={"tool_grant": True, "tool_name": tool.name})
 
     def _append_background_result_messages(
         self,

@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable, Sequence
 from langchain_core.tools import BaseTool
 
 from langmesh.base.configuration import AgentConfiguration, Configuration
+from langmesh.base.tools import ToolGrant
 from langmesh.runtime.locations import Location
 
 
@@ -25,8 +26,6 @@ class RuntimeProfile:
     sandbox: Any = None
     locations: Sequence[Location] | None = None
     parent_session: str = ""
-    accepts_goal_review: bool = False
-    accepts_compaction_summary: bool = False
 
     def __post_init__(self) -> None:
         if not self.session_id.strip():
@@ -54,7 +53,7 @@ class RuntimeComponents:
     file_leases: Any = None
     permissions: Any = None
     prompt_composer: Any = None
-    tools: Sequence[BaseTool] = field(default_factory=tuple)
+    tools: Sequence[BaseTool | ToolGrant] = field(default_factory=tuple)
     toolset: Sequence[BaseTool] | None = None
     supplied_tool_gate: str = "ask"
     hooks: Sequence[Any] = field(default_factory=tuple)

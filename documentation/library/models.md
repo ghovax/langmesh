@@ -40,6 +40,7 @@ The static system prompt and tool schema form the reusable prefix. LangMesh pres
 - `RuntimeComponents` is frozen and snapshots sequence fields.
 - Prior conversation messages are append-only until an explicit compaction.
 - Permission and goal reviewers inherit the main conversation and stable tool schema, then append their private instructions.
+- A tool granted to a session is described by an appended conversation message, not a schema change, so the prefix holds at any moment. See [Granting a tool to a session](customization.md#granting-a-tool-to-a-session).
 - Steering appends at a provider boundary; it never edits an earlier message.
 - Permission-mode and location changes apply during execution without rewriting model history.
 

@@ -41,7 +41,14 @@ export interface LangMeshEvents {}
  */
 export interface CompactionEvent {
   error_code?:
-    | ("compaction_failed" | "compaction_no_reclaim" | "compaction_preparation_failed" | "compaction_strategy_failed")
+    | (
+        | "compaction_cancelled"
+        | "compaction_failed"
+        | "compaction_no_reclaim"
+        | "compaction_preparation_failed"
+        | "compaction_strategy_failed"
+        | "compaction_summary_failed"
+      )
     | null;
   kind: "compaction";
   messages_after?: number;

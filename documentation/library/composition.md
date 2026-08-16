@@ -8,15 +8,14 @@ LangMesh separates three concerns:
 | `RuntimeComponents` | Model and replaceable runtime capabilities | No; replace the value before construction |
 | `SessionComponents` | All runtime components plus checkpoints, credentials, workspace management, and tracing | No; `Session` owns their lifetime |
 
-The daemon uses the same `RuntimeProfile` and `RuntimeComponents` API as an embedder. Product persistence is connected through `GoalReviewJournal`; the core never imports daemon or worker state.
+The daemon uses the same `RuntimeProfile` and `RuntimeComponents` API as an embedder. Product persistence connects through `GoalReviewJournal`; the core never imports daemon or worker state.
 
 ## Direct runtime construction
 
-Use `Session` unless your application already owns checkpointing, resource leases, and turn serialization. Direct construction is appropriate for a scheduler or another session host.
+Use `Session` unless your application already owns checkpointing, resource leases, and turn serialization. Direct construction suits a scheduler or another session host.
 
 ```python
 from langmesh import AgentRuntime, RuntimeComponents, RuntimeProfile
-
 
 profile = RuntimeProfile(
     agent=agent,
@@ -44,11 +43,10 @@ async for event in runtime.stream("Inspect the current change."):
 
 ## Session composition
 
-`SessionComponents` extends `RuntimeComponents` with ownership seams:
+`SessionComponents` extends `RuntimeComponents` with ownership seams.
 
 ```python
 from langmesh import Session, SessionComponents
-
 
 components = SessionComponents(
     model=model,
@@ -68,7 +66,7 @@ session = Session(
 )
 ```
 
-The constructor keeps run facts—directory, identity, permission mode, confinement, model identifier, and locations—outside the component value. This prevents a persistence adapter from silently changing confinement or identity.
+The constructor keeps run facts (directory, identity, permission mode, confinement, model identifier, locations) outside the component value, so a persistence adapter cannot silently change confinement or identity.
 
 ## Component reference
 
@@ -85,12 +83,12 @@ The constructor keeps run facts—directory, identity, permission mode, confinem
 | `file_leases` | `FileLeases` | No cross-session mutation coordination |
 | `permissions` | `PermissionPolicy` | Built-in evaluator |
 | `prompt_composer` | `PromptComposer` | Catalogue `system_prompt` template |
-| `tools` | LangChain `BaseTool` sequence | No supplied tools |
+| `tools` | `BaseTool` or `ToolGrant` sequence | No supplied tools |
 | `toolset` | Complete `BaseTool` sequence | Built-in registry filtered by the agent |
 | `hooks` | Any combination of the three hook protocols | None |
 | `middleware` | `ToolMiddleware` sequence | None |
 | `compaction` | `Compaction` | Token-bounded recent working set |
-| `compaction_preparation` | `CompactionPreparation` | Observational-memory preparation in `Session` and daemon; direct compaction in bare `AgentRuntime` |
+| `compaction_preparation` | `CompactionPreparation` | Observational-memory preparation in `Session` and the daemon; direct compaction in bare `AgentRuntime` |
 | `continuations` | `ContinuationPolicy` | Active tuning allowances |
 | `synchronize_resources` | Async callable | No synchronization |
 | `related_turns` | Async turn reader | `read_turn` unavailable |
@@ -99,6 +97,8 @@ The constructor keeps run facts—directory, identity, permission mode, confinem
 
 `SessionComponents` additionally owns `checkpoints`, `attachments`, `credentials`, `workspace`, and `tracer_provider`.
 
+The `tools` field accepts bare tools or `ToolGrant` values. A `Session` built with `tools=[...]` merges them into the components. A tool granted later, through `Session.grant_tool`, is described to the model by an appended conversation message rather than a schema change. See [Granting a tool to a session](customization.md#granting-a-tool-to-a-session).
+
 ## Cache stability
 
-Components are fixed for a runtime because model-visible tool schemas and static instructions form the provider-cache prefix. Runtime controls such as steering, permission-mode changes, locations, and goal state are append-only or applied at execution boundaries; they do not rewrite prior model messages. A custom prompt composer should produce the same output until the application explicitly calls `Session.refresh_prompt()`.
+Components are fixed for a runtime because the model-visible tool schemas and static instructions form the provider-cache prefix. Runtime controls such as steering, permission-mode changes, locations, and goal state are append-only or applied at execution boundaries; none rewrites an earlier model message. A custom prompt composer should produce the same output until the application explicitly calls `Session.refresh_prompt()`.

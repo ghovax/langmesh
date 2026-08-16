@@ -24,6 +24,12 @@
     options:
       members: true
 
+## Tool grants
+
+::: langmesh.base.tools
+
+`Session(..., tools=[...])` accepts bare LangChain tools or `ToolGrant` values; `Session.grant_tool(...)` adds one at any later moment. Both are append-only. See [Granting a tool to a session](customization.md#granting-a-tool-to-a-session).
+
 ## Extension ports
 
 ::: langmesh.base.ports

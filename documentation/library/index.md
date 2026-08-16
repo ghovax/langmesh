@@ -69,6 +69,19 @@ session = Session(agent, directory="/srv/checkout", components=components)
 
 Supplied tools are gated by default. Set `supplied_tool_gate="none"` only when the surrounding application already enforces their authority.
 
+### Tools at creation, or granted later
+
+Pass tools to `Session(..., tools=[...])`, or add one at any later moment with `session.grant_tool(...)`. Both are append-only: the tool's description and schema ride as a conversation message, so the provider-cache prefix never changes.
+
+```python
+session = Session(agent, directory="/srv/checkout", tools=[incident_lookup])
+
+# Later, mid-session:
+session.grant_tool(current_incident)
+```
+
+See [Granting a tool to a session](customization.md#granting-a-tool-to-a-session).
+
 ## Next
 
 - [Composition](composition.md) explains every configured value and product boundary.

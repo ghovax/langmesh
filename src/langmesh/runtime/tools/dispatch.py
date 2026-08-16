@@ -551,29 +551,6 @@ class _DispatchesTools:
             )
         )
 
-        # Make internal verdicts inert before validation or dispatch outside their dedicated environments.
-        if (
-            tool_name == "permission_decision"
-            or (
-                tool_name == "submit_compaction_summary"
-                and not self._accepts_compaction_summary
-            )
-            or (tool_name == "submit_goal_review" and not self._accepts_goal_review)
-        ):
-            yield ToolResult(
-                id=tool_call_identifier,
-                name=tool_name,
-                result={
-                    "code": "internal_verdict_inert",
-                    "status": ToolStatus.OK.value,
-                },
-                model_guidance=self._prompt_loader.load(
-                    "internal_verdict_inert",
-                    {"tool_name": tool_name},
-                ),
-            )
-            return
-
         # Coerce JSON-string arguments up front, so validation and dispatch see the real container.
         schema = (
             bash_tool.args_schema

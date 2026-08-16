@@ -615,6 +615,7 @@ class _CompactsContext:
         summarizer._bound_model = summarizer._model.bind_tools([summary_tool])
 
     def _compaction_summarizer_runtime(self, scratch_directory: str):
+        from langmesh.runtime.tools.registry import submit_compaction_summary as submit_compaction_summary_tool
         """The hidden session that produces the compaction summary, mirroring the goal reviewer."""
         from langmesh.base.configuration import PermissionEvaluator
         from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
@@ -673,18 +674,16 @@ class _CompactsContext:
                 permission_mode="automatic",
                 parent_session=self._parent_session,
                 sandbox=summarizer_sandbox,
-                accepts_goal_review=False,
-                accepts_compaction_summary=True,
             ),
             RuntimeComponents(
                 model=self._model,
                 catalogue=self._catalogue,
                 sessions=None,
                 mcp_servers=self._tool_context.mcp_server_manager,
-                tools=tuple(self._extra_tools.values()),
+                # The hidden summarizer is one summary call: only its verdict tool is bound.
+                toolset=(submit_compaction_summary_tool,),
                 supplied_tool_gate=self._supplied_tool_gate,
                 permissions=summarizer_permissions,
-                toolset=tuple(self._tools),
             ),
             conversation=list(self._conversation),
         )
@@ -709,23 +708,14 @@ class _CompactsContext:
     ):
         """The one dispatchable call of the hidden compaction summarizer."""
         model_guidance = ""
-        if not self._accepts_compaction_summary:
-            result = {
-                "code": "internal_verdict_inert",
-                "status": ToolStatus.OK.value,
-            }
-            model_guidance = self._prompt_loader.load(
-                "internal_verdict_inert",
-                {"tool_name": tool_name},
-            )
-        else:
-            submitted = CompactionSummary.model_validate(tool_arguments)
-            self._submitted_compaction_summary = submitted
-            self._abort_event.set()
-            result = {
-                "code": "compaction_summary_submitted",
-                "status": ToolStatus.OK.value,
-            }
+        # The tool exists only in this summarizer's lane, so every call is a real submission.
+        submitted = CompactionSummary.model_validate(tool_arguments)
+        self._submitted_compaction_summary = submitted
+        self._abort_event.set()
+        result = {
+            "code": "compaction_summary_submitted",
+            "status": ToolStatus.OK.value,
+        }
         yield ToolResult(
             id=tool_call_identifier,
             name=tool_name,

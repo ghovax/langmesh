@@ -27,9 +27,9 @@ components = SessionComponents(
 )
 ```
 
-For another durable system, implement the port. `baseline()` must return checkpoint-safe data; `completed()` must prove the handoff committed after that baseline. Returning an instruction of `None` records preparation immediately.
+For another durable system, implement the port. `baseline()` must return checkpoint-safe data; `completed()` must prove the handoff committed after that baseline. Returning `None` for the instruction records preparation immediately.
 
-## Compactioning
+## Compaction
 
 `Compaction.should_compaction(state)` is the cheap automatic trigger. `compaction(state)` returns the model messages retained after a compaction.
 
@@ -45,9 +45,11 @@ class KeepDecisions:
 
 The runtime rejects a strategy that reclaims no messages, restores the original conversation on failure, emits `CompactionDone(ok=False)`, and blocks later input until `Session.compaction()` succeeds.
 
-With the built-in compaction, the runtime appends one private compaction instruction to the existing conversation and asks the model to answer with a `submit_compaction_summary` tool call. That request is the system prompt followed by the whole existing conversation and one appended instruction, so the provider-cache prefix is preserved and only the new tail is uncached; the collected summary then continues the session as the system prompt, the summary, and the newest turns in that order. The summary sits as the first message after the system prompt, becomes part of the cached leading block, and is never a user-visible chat row. The tool is carried on every request with the other internal verdict tools so the schema, and therefore the cache prefix, never changes; outside a compaction instruction it is an enforced no-op.
+With the built-in compaction, the runtime appends one private compaction instruction to the existing conversation and asks the model to answer with a `submit_compaction_summary` tool call. That request is the system prompt, the whole existing conversation, and one appended instruction, so the provider-cache prefix is preserved and only the new tail is uncached. The collected summary then continues the session as the system prompt, the summary, and the newest turns in that order. The summary sits as the first message after the system prompt, becomes part of the cached leading block, and is never a user-visible chat row.
 
-The summary is best-effort by construction: a provider error, an empty reply, or a model that writes prose instead of calling the tool falls back to the plain tail compaction, which never blocks the session. It always runs on the built-in compaction; supply your own distillation through `SessionComponents(compaction_summarizer=...)` to replace the model call:
+The tool is carried on every request, alongside the other internal verdict tools, so the schema and therefore the cache prefix never changes. It exists only in the summarizer's lane: it is granted to that hidden session as a `ToolGrant`, so outside a compaction instruction there is nothing to call and no no-op verdict to enforce. See [Granting a tool to a session](customization.md#granting-a-tool-to-a-session).
+
+The summary is best-effort by construction. A provider error, an empty reply, or a model that writes prose instead of calling the tool falls back to the plain tail compaction, which never blocks the session. It always runs on the built-in compaction; supply your own distillation through `SessionComponents(compaction_summarizer=...)` to replace the model call:
 
 ```python
 from langchain_core.messages import SystemMessage
