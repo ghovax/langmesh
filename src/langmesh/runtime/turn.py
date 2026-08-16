@@ -20,7 +20,6 @@ from langmesh.runtime.internals import (
     _ToolPlan,
     _maybe_json,
     conversation_tokens,
-    message_tokens,
     settled_arguments,
 )
 from langmesh.runtime.prompt_environment import probe_local_environment, probe_user_context
@@ -40,7 +39,6 @@ from langmesh.base.skills import enabled_skills, skills_for_agent, skills_payloa
 from langmesh.base.confinement import Denial
 from langmesh.runtime.turn_events import (
     Checkpoint,
-    CompactionStarted,
     Done,
     Error,
     RetryRequested,
@@ -123,21 +121,16 @@ class _RunsTurns:
             context = TurnContext(
                 now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
                 pwd=self._working_directory or str(Path.cwd()),
-                goal=self.goal.for_model() if self.goal is not None else {},
-                tasks=self._task_manager.to_dict_list(),
-                background={
-                    "running": self._features.background.active_by_context_key()
-                    if self._features.present("background")
-                    else {},
-                    "active_count": self._features.background.active_count()
-                    if self._features.present("background")
-                    else 0,
-                    "recent_events": self._execution_history[-20:],
-                },
                 screen=self._screen_context(),
                 locations=self._locations_summary(),
                 confinement=self._confinement_summary(),
             ).model_dump(exclude_defaults=True)
+            # The features contribute what only they know — the goal, the tasks, the running jobs.
+            self._features.compose_context(context)
+            context["background"] = {
+                "recent_events": self._execution_history[-20:],
+                **dict(context.get("background") or {}),
+            }
             context.update(
                 {
                     "session": self._session_id,
@@ -226,17 +219,14 @@ class _RunsTurns:
                 "instructions": instructions,
                 "skills": lines(skills_payload(agent_skills)),
                 "memories": lines(memories_payload(memories)),
-                "observational_memory": (
-                    self._features.observations.system_variable()
-                    if self._features.present("observations")
-                    else ""
-                ),
                 "agent_context": agent_context,
                 "computer_control_guidance": computer_control_guidance,
                 "toolbox": toolbox,
                 "peer_sessions": peer_sessions,
                 "mcp_servers": mcp_servers,
             }
+            # A feature contributes the prompt sections it owns, such as the memory registry's picture.
+            self._features.compose_prompt(variables)
             if self._prompt_composer is None:
                 prompt = self._prompt_loader.load("system_prompt", variables)
             else:
@@ -268,13 +258,8 @@ class _RunsTurns:
         if profile is None or self._global_configuration.sandbox.enforce == "off":
             return {}
         summary = profile.describe(workspace=self._working_directory or "")
-        grants = (
-            self._features.permissions.access_grants
-            if self._features.present("permissions")
-            else ()
-        )
-        if grants:
-            summary["granted"] = [grant.as_dict() for grant in grants]
+        if self._access_grants:
+            summary["granted"] = [grant.as_dict() for grant in self._access_grants]
         return summary
 
     def _screen_context(self) -> dict:
@@ -506,9 +491,9 @@ class _RunsTurns:
     ) -> AsyncIterator[TurnEvent]:
         from langmesh.base.errors import CompactionBlockedError
 
-        if self._compaction_control.failure and not continue_existing:
+        if self.compaction_failure and not continue_existing:
             raise CompactionBlockedError(
-                f"Context compaction failed: {self._compaction_control.failure} Retry compaction before sending more work."
+                f"Context compaction failed: {self.compaction_failure} Retry compaction before sending more work."
             )
         self._abort_event.clear()
         # A turn's own bookkeeping: the no-op nudge happens once, and the start time feeds the transcript.
@@ -531,7 +516,7 @@ class _RunsTurns:
             if response is None or not getattr(response, "tool_calls", None):
                 yield Done(text="", stop_reason="completed")
                 return
-            resolved = self._resolve_tool_decisions(
+            resolved = self._features.resolve_gates(
                 {
                     tool_call_id: _ToolPlan.from_dict(plan)
                     for tool_call_id, plan in resume_plans.items()
@@ -573,54 +558,35 @@ class _RunsTurns:
                 yield Done(text="", stop_reason="cancelled")
                 return
 
-            background_events = self._background_result_events()
+            background_events = self._features.drain()
             if background_events:
                 for background_event in background_events:
                     yield background_event
                 continue
 
-            # The threshold is a preparation boundary, not a hard cut. The reserved window
-            # gives the agent room for one private recording batch before the compaction happens.
-            should_compact = self._should_compact(pending_user_message)
-            if should_compact and self._compaction_control.idle:
-                self._begin_compaction_preparation(reason="auto", resume_after=True)
-            if (
-                self._compaction_control.waiting
-                and self._compaction_control.preparation_token is None
-            ):
-                self._compaction_control.preparation_token = (
-                    await self._compaction_preparation.baseline()
+            # The loop may hold while a feature reclaims context. The threshold is a preparation
+            # boundary, not a hard cut: the reserved window gives the agent room for one private
+            # recording batch before the fold happens.
+            if not self._features.active_maintenance():
+                request_tokens = max(
+                    self._latest_context_tokens,
+                    conversation_tokens(
+                        [
+                            *self._build_turn_messages(),
+                            *([pending_user_message] if pending_user_message else []),
+                        ]
+                    ),
                 )
-                self._mark_session_dirty()
-            if (
-                self._compaction_control.waiting
-                and self._compaction_control.preparation_token is not None
-            ):
-                if await self._compaction_preparation.completed(
-                    self._compaction_control.preparation_token
+                for maintainer in self._features.maintainers(request_tokens):
+                    maintainer.begin_maintenance(reason="auto", resume_after=True)
+            if self._features.active_maintenance():
+                async for maintenance_event in self._features.advance_maintenance():
+                    yield maintenance_event
+            if self._features.maintenance_ready():
+                async for fold_event in self._features.run_maintenance(
+                    reason=self._features.maintenance_reason()
                 ):
-                    # The write may have committed just before a process stopped or a checkpoint
-                    # was persisted. Its revision is the durable acknowledgement; do not ask the
-                    # model to repeat a side effect merely because the in-memory state was lost.
-                    self._record_compaction_preparation()
-            if self._compaction_control.waiting and not self._compaction_control.started:
-                # The indicator opens when the recording handoff begins, not when the compaction finally
-                # runs: preparation is the long phase, and a session restart must not drop it.
-                self._compaction_control.started = True
-                self._mark_session_dirty()
-                yield CompactionStarted(
-                    reason=self._compaction_control.reason,
-                    messages_before=len(self._without_compaction_preparation(self._conversation)),
-                    tokens_before=conversation_tokens(self._conversation),
-                )
-            if self._compaction_control.recorded:
-                compaction_reason = self._compaction_control.reason
-                try:
-                    self._features.observations.adopt(await self._compaction_preparation.describe())
-                except Exception as error:  # noqa: BLE001 — the compaction verification below remains authoritative
-                    self.note_observation_registry({}, str(error) or type(error).__name__)
-                async for compaction_event in self.compact(reason=compaction_reason):
-                    yield compaction_event
+                    yield fold_event
                 if self.compaction_failure:
                     # The send was already accepted. Keep its user message in the durable
                     # conversation, but do not continue into a model call until retry succeeds.
@@ -632,30 +598,18 @@ class _RunsTurns:
                     return
                 continue
 
-            # The person's words join the request exactly once, after any needed compaction.
-            if pending_user_message is not None and not self._compaction_control.waiting:
+            # The person's words join the request exactly once, after any needed fold.
+            if pending_user_message is not None and not self._features.active_maintenance():
                 self._conversation.append(pending_user_message)
                 pending_user_message = None
 
             # Steering accepted while a new message was waiting belongs after that message. During
-            # preparation it remains queued until the private segment has compacted away.
-            if not self._compaction_control.waiting:
+            # the hold it remains queued until the private segment has compacted away.
+            if not self._features.active_maintenance():
                 for steering_event in await self._drain_steering_messages():
                     yield steering_event
 
-                registry_error = self._take_observation_registry_feedback()
-            else:
-                registry_error = ""
-
-            messages = self._build_turn_messages()
-            if registry_error:
-                # Feedback is request-local: it reaches the next model opening but never becomes
-                # user history or a stale reminder after another process repairs the registry.
-                messages.append(
-                    self._reminder_message(
-                        self._features.observations.error_request_message(registry_error)
-                    )
-                )
+            messages = self._features.prepare_request(self._build_turn_messages())
 
             # The model call: yields the stream and hands back the assembled response, or a terminal condition.
             call = _ModelCallOutcome()
@@ -679,16 +633,19 @@ class _RunsTurns:
                     self._latest_context_tokens = max(
                         self._latest_context_tokens, overflow.tokens or window
                     )
-                if not self._compaction_control.recorded:
-                    self._compaction_control.reason = "overflow"
-                    self._compaction_control.resume_after = True
-                    for compaction_event in self._fail_compaction_preparation(
-                        "The provider exhausted the context window before compaction preparation could run."
+                if not self._features.active_maintenance():
+                    for feature in self._features.instances:
+                        feature.begin_maintenance(reason="overflow", resume_after=True)
+                    async for maintenance_event in self._features.advance_maintenance():
+                        yield maintenance_event
+                if not self._features.maintenance_ready():
+                    async for blocker in self._features.fail_maintenance(
+                        "The provider exhausted the context window before the hold could prepare."
                     ):
-                        yield compaction_event
+                        yield blocker
                     return
-                async for compaction_event in self.compact(reason="overflow"):
-                    yield compaction_event
+                async for fold_event in self._features.run_maintenance(reason="overflow"):
+                    yield fold_event
                 if self.compaction_failure:
                     return
                 # The same accepted turn retries against the newly compacted conversation;
@@ -756,31 +713,23 @@ class _RunsTurns:
                 continue
 
             # Calls to make: run the batch behind its checkpoint, then honour a Stop that landed during it.
-            preparing_compaction = self._compaction_control.waiting
-            def _valid_preparation_call(call: dict) -> bool:
-                if call.get("name") == "bash":
-                    return not str((call.get("args") or {}).get("location") or "").strip() and not bool(
-                        (call.get("args") or {}).get("background")
-                    )
-                # Read-only skill loading is part of the handoff protocol; it cannot mutate anything.
-                return call.get("name") == "load_skill"
-
-            preparation_call_is_valid = bool(response.tool_calls) and all(
-                _valid_preparation_call(call) for call in response.tool_calls
+            maintaining = bool(self._features.active_maintenance())
+            calls_are_valid = bool(response.tool_calls) and all(
+                self._features.valid_during_maintenance(call) for call in response.tool_calls
             )
-            if preparing_compaction and not preparation_call_is_valid:
+            if maintaining and not calls_are_valid:
                 self._conversation.append(response)
-                refusal = self._features.compaction.preparation_violation_message()
+                refusal = self._features.maintenance_violation_message()
                 for call_data in response.tool_calls:
                     identifier = str(call_data.get("id") or "")
                     yield Error(
                         id=identifier,
                         tool=str(call_data.get("name") or ""),
-                        code="compaction_preparation_violation",
+                        code="maintenance_violation",
                         message=refusal,
                     )
                     self._conversation.append(ToolMessage(content=refusal, tool_call_id=identifier))
-                for event in self._fail_compaction_preparation(refusal):
+                async for event in self._features.fail_maintenance(refusal):
                     yield event
                 if pending_user_message is not None:
                     self._conversation.append(pending_user_message)
@@ -794,22 +743,16 @@ class _RunsTurns:
                 step,
             ):
                 yield event
-            if self._compaction_control.waiting:
-                token = self._compaction_control.preparation_token
-                if token is None:
-                    raise RuntimeError("compaction preparation has no durable baseline")
-                if await self._compaction_preparation.completed(token):
-                    self._record_compaction_preparation()
             if self.compaction_failure:
                 if pending_user_message is not None:
                     self._conversation.append(pending_user_message)
                     pending_user_message = None
                 return
-            if self._compaction_control.recorded:
+            if self._features.maintenance_ready():
                 # The successful recording call is the terminal action of this model segment.
-                # The next loop iteration compacts and resumes the already-accepted work.
+                # The next loop iteration folds and resumes the already-accepted work.
                 continue
-            if preparing_compaction:
+            if maintaining:
                 # Inspection, repair, and recording may need several foreground Bash batches.
                 # The segment ends only when a valid revision advances or the model stops.
                 continue
@@ -822,25 +765,10 @@ class _RunsTurns:
                 yield steering_event
 
     def _build_turn_messages(self) -> list:
-        """This iteration's messages: the static prompt and the whole conversation."""
+        """This iteration's messages: the static prompt and the whole conversation.
+        A feature trims the request it needs through ``prepare_request`` before it leaves."""
         system_message = SystemMessage(content=self._build_static_system_prompt())
-        conversation = self._conversation
-        if self._compaction_control.waiting:
-            # Normally the output reserve leaves the complete conversation enough room for
-            # its recording handoff. A restored or provider-rejected oversized session is the
-            # exceptional case: give the handoff the largest recent view that can actually run,
-            # while retaining the untouched full conversation until the compaction commits.
-            preparation_budget = self._usable_context() - message_tokens(system_message)
-            if conversation_tokens([system_message, *conversation]) > self._usable_context():
-                handoff = conversation[-1:]
-                older_budget = preparation_budget - sum(
-                    message_tokens(message) for message in handoff
-                )
-                conversation = [
-                    *self._tail_within_budget(conversation[:-1], older_budget),
-                    *handoff,
-                ]
-        return [system_message, *conversation]
+        return [system_message, *self._conversation]
 
     def _refuse_if_over_window(self, messages: list) -> None:
         """Refuse a request that cannot fit before sending it, with numbers, since the harness knows the window."""
@@ -895,7 +823,7 @@ class _RunsTurns:
         abort_waiter = None
         cache_scope = ExitStack()
         try:
-            if self._compaction_control.waiting:
+            if self._features.active_maintenance():
                 cache_scope.enter_context(cache_lane("compaction"))
             model_stream = bound_model.astream(messages)
             abort_waiter = asyncio.ensure_future(self._abort_event.wait())
@@ -920,16 +848,21 @@ class _RunsTurns:
                     outcome.cancelled = True
                     return
                 if self._has_queued_steering():
-                    # Steering waits at a semantic boundary; never mid-tool-call, or the call would be orphaned.
-                    if any(
+                    # Steering waits at a semantic boundary, and never while the model is thinking
+                    # or mid-tool-call, or the call would be orphaned and the reasoning cut short.
+                    mid_tool_call = any(
                         getattr(chunk, "tool_call_chunks", None)
                         or getattr(chunk, "tool_calls", None)
                         or getattr(chunk, "invalid_tool_calls", None)
                         for chunk in response_chunks
-                    ):
+                    )
+                    if not thinking_done_emitted or mid_tool_call:
+                        # The model is still reasoning (or committing a call): the steering waits,
+                        # so the thinking is never interrupted and the cache prefix stays intact.
                         pass
                     else:
-                        # Only a text prefix has been shown, so the steering can replace it here.
+                        # Thinking is complete and only a text prefix has been shown, so the
+                        # steering can replace it here without disturbing a call or the reasoning.
                         aborted_for_steering = True
                         break
 
@@ -1084,10 +1017,10 @@ class _RunsTurns:
             step.directive = _CONTINUE
             return
 
-        if self._compaction_control.waiting:
+        if self._features.active_maintenance():
             self._conversation.append(response)
             # Best-effort handoff: the summary is the durable memory, so an unadvanced registry must not block the fold.
-            self._record_compaction_preparation()
+            self._features.record_maintenance_handoff()
             step.directive = _CONTINUE
             return
 
@@ -1164,7 +1097,12 @@ class _RunsTurns:
         tool_calls = cast(list[dict], response.tool_calls)
         outcomes: dict[str, dict] = {}
         if not self._abort_event.is_set() and not self._stop_requested:
-            plans, pending = await self._preflight_permissions(tool_calls)
+            # During the held loop only the handoff's safe calls are present, so nothing here gates.
+            if self._features.active_maintenance():
+                plans, pending = {}, []
+            else:
+                planned = await self._features.plan_tool_calls(tool_calls)
+                plans, pending = planned if planned is not None else ({}, [])
             gates = [SuspensionGate(**gate.to_dict()) for gate in pending]
             # Automatic-mode gates are announced first, then weighed by the reviewer, so the call
             # is visible while the decision is pending instead of appearing only once it is made.
@@ -1174,8 +1112,7 @@ class _RunsTurns:
                 yield PermissionReviewing(
                     interactions=[SuspensionGate(**gate.to_dict()) for gate in auto_gates]
                 )
-                for gate in auto_gates:
-                    reviewed[gate.request_id] = await self._review_auto_gate(gate)
+                reviewed = await self._features.review_automatic_gates(auto_gates)
                 gates = [gate for gate in gates if not gate.automatic_review]
             interactive_answers = await self._answer_gates(gates)
             answered = {**reviewed, **interactive_answers}
@@ -1188,7 +1125,7 @@ class _RunsTurns:
                 step.directive = _STOP
                 return
             else:
-                decisions = self._resolve_tool_decisions(plans, answered)
+                decisions = self._features.resolve_gates(plans, answered)
             # After the barrier: a hook sees only what the rules approved, so it can drop calls but never add one.
             if not self._hooks.empty:
                 tool_calls = await self._hooks.before_tools(tool_calls)
@@ -1244,7 +1181,7 @@ class _RunsTurns:
                     turn_tool_calls_log,
                     turn_tool_results_log,
                     outcomes,
-                    self._resolve_tool_decisions(plans, answered),
+                    self._features.resolve_gates(plans, answered),
                 ):
                     yield event
         self._append_tool_results(response, outcomes)

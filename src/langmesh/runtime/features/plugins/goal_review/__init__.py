@@ -15,9 +15,9 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Awaitable, Callable, Literal, Optional
+from typing import Any, Awaitable, Callable, Literal, Optional
 
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError, model_validator
 
 from langmesh.base.configuration import PermissionEvaluator, PromptLoader
 from langmesh.base.ports import GoalReviewContext, GoalReviewOutcome
@@ -34,7 +34,7 @@ from langmesh.runtime.turn_events import (
     GoalReviewStarted,
     TurnEvent,
 )
-from langmesh.runtime.features.base import FeatureServices
+from langmesh.runtime.features import Feature, PluginContext, PluginHost
 
 logger = logging.getLogger(__name__)
 
@@ -128,15 +128,20 @@ class GoalReview(BaseModel):
         return self
 
 
-class GoalReviewFeature:
+class GoalReviewFeature(Feature):
     """The session's goal and the isolated review that decides where it stands."""
 
-    def __init__(self, services: FeatureServices) -> None:
-        self._services = services
-        self._prompts = services.catalogued_prompts("goal_review")
+
+    def __init__(self, *, journal: Any = None) -> None:
+        self._journal = journal
         self._goal: Optional[Goal] = None
         self._listener: Optional[Callable[[Optional[Goal]], None]] = None
         self._submitted: Optional[GoalReview] = None
+
+    def attach(self, context: PluginContext, host: PluginHost) -> None:
+        self._context = context
+        self._host = host
+        self._prompts = context.prompts("goal_review")
 
     @property
     def goal(self) -> Optional[Goal]:
@@ -152,14 +157,27 @@ class GoalReviewFeature:
         """Install the callback that hears every goal change, which is how the interface learns of one."""
         self._listener = listener
 
-    def restore(self, goal: Optional[Goal]) -> None:
-        """Rehydrate the durable goal, validated and dropped rather than guessed at by the caller."""
+    def compose_context(self, context: dict) -> None:
+        """The goal as the model sees it, never the bookkeeping around it."""
+        context["goal"] = self.goal.for_model() if self.goal is not None else {}
+
+    def snapshot(self) -> dict | None:
+        return {"goal": self.goal.model_dump() if self.goal is not None else None}
+
+    def restore(self, snapshot: dict) -> None:
+        stored = snapshot.get("goal")
+        goal = None
+        if isinstance(stored, dict) and str(stored.get("text", "")).strip():
+            try:
+                goal = Goal.model_validate(stored)
+            except ValidationError:
+                logger.warning("discarding a stored goal that no longer validates")
         self._goal = goal
 
     def write(self, goal: Optional[Goal]) -> None:
         """Set, replace or drop the goal, and announce it. The single writer, so no path changes it silently."""
         self._goal = goal
-        self._services.mark_dirty()
+        self._host.bookkeeping.mark_dirty()
         if self._listener is not None:
             self._listener(goal)
 
@@ -206,12 +224,12 @@ class GoalReviewFeature:
         from langmesh.runtime.runtime import AgentRuntime
         from langmesh.runtime.tools.registry import submit_goal_review as submit_goal_review_tool
 
-        reviewer_configuration = self._services.agent_configuration.model_copy(
+        reviewer_configuration = self._context.agent_configuration.model_copy(
             update={"permission_mode": "automatic"}
         )
-        reviewer_global_configuration = self._services.global_configuration.model_copy(
+        reviewer_global_configuration = self._context.global_configuration.model_copy(
             update={
-                "toolbox": self._services.global_configuration.toolbox.model_copy(update={"enabled": False})
+                "toolbox": self._context.global_configuration.toolbox.model_copy(update={"enabled": False})
             }
         )
         reviewer_permissions = PermissionEvaluator(
@@ -227,11 +245,11 @@ class GoalReviewFeature:
                 }
             )
         )
-        granted_sandbox = self._services.granted_profile()
+        granted_sandbox = self._host.boundary.granted_profile()
         reviewer_sandbox = granted_sandbox.narrowed(
             writable=(scratch_directory,),
             network=granted_sandbox.network,
-            workspace=self._services.working_directory,
+            workspace=self._context.working_directory,
         )
         reviewer_sandbox = replace(
             reviewer_sandbox,
@@ -241,7 +259,7 @@ class GoalReviewFeature:
                 "XDG_CACHE_HOME": scratch_directory,
             },
         )
-        toolbox = self._services.tool_context.toolbox
+        toolbox = self._host.tools.tool_context.toolbox
         if toolbox is not None:
             reviewer_sandbox = replace(
                 reviewer_sandbox,
@@ -256,38 +274,39 @@ class GoalReviewFeature:
             RuntimeProfile(
                 agent=reviewer_configuration,
                 configuration=reviewer_global_configuration,
-                session_id=self._services.session_id,
-                working_directory=self._services.working_directory,
-                project_directory=self._services.project_directory,
+                session_id=self._context.session_id,
+                working_directory=self._context.working_directory,
+                project_directory=self._context.project_directory,
                 permission_mode="automatic",
-                parent_session=self._services.parent_session,
+                parent_session=self._context.parent_session,
                 sandbox=reviewer_sandbox,
             ),
             RuntimeComponents(
-                model=self._services.model,
-                catalogue=self._services.catalogue,
+                model=self._host.conversation.model,
+                catalogue=self._context.catalogue,
                 sessions=None,
-                mcp_servers=self._services.tool_context.mcp_server_manager,
+                mcp_servers=self._host.tools.tool_context.mcp_server_manager,
                 # The verdict tool is injected here and only here: the main session never carries it.
                 tools=[ToolGrant(submit_goal_review_tool)],
-                supplied_tool_gate=self._services.supplied_tool_gate,
+                supplied_tool_gate=self._host.tools.supplied_tool_gate,
                 permissions=reviewer_permissions,
                 # What the parent's model sees, minus the tools a reviewer must never use.
                 toolset=tuple(
                     tool
-                    for tool in self._services.model_tools
+                    for tool in self._host.tools.model_tools
                     if tool.name not in _REVIEWER_DISABLED_TOOLS
                 ),
-                related_turns=self._services.turn_reader,
+                related_turns=self._host.tools.turn_reader,
+                features=[feature_class() for feature_class in self._host.turn.feature_classes()],
             ),
-            conversation=list(self._services.conversation),
+            conversation=list(self._host.conversation.messages),
         )
-        reviewer._locations = dict(self._services.locations)
-        reviewer._locations_by_name = dict(self._services.locations_by_name)
+        reviewer._locations = dict(self._host.boundary.locations)
+        reviewer._locations_by_name = dict(self._host.boundary.locations_by_name)
         reviewer._tool_context = replace(reviewer._tool_context, toolbox=toolbox)
-        reviewer.restore_session(self._services.session_snapshot())
-        reviewer._cached_system_prompt = self._services.build_static_system_prompt()
-        reviewer._attached_files = dict(self._services.attached_files)
+        reviewer.restore_session(self._host.bookkeeping.session_snapshot())
+        reviewer._cached_system_prompt = self._host.turn.build_static_system_prompt()
+        reviewer._attached_files = dict(self._host.boundary.attached_files)
         return reviewer
 
     async def _run_goal_review_turn(
@@ -306,12 +325,12 @@ class GoalReviewFeature:
                         reviewer._last_review_text = event.text
                     if publish is not None:
                         await publish(GoalReviewProgress(review_id=review_id, event=event))
-                    if self._services.goal_review_journal is not None:
-                        await self._services.goal_review_journal.append(review_id, event)
+                    if self._journal is not None:
+                        await self._journal.append(review_id, event)
 
         review_turn = asyncio.create_task(run())
         try:
-            if await race_interrupt(review_turn, self._services.abort_event):
+            if await race_interrupt(review_turn, self._host.turn.abort_event):
                 reviewer.abort()
                 await review_turn
                 return False
@@ -326,12 +345,12 @@ class GoalReviewFeature:
     async def _open_goal_review_journal(
         self, review_id: str, assignment: str, goal: Goal
     ) -> None:
-        if self._services.goal_review_journal is None:
+        if self._journal is None:
             return
-        await self._services.goal_review_journal.open(
+        await self._journal.open(
             GoalReviewContext(
                 review_id=review_id,
-                session_id=self._services.session_id,
+                session_id=self._context.session_id,
                 goal=goal.text,
                 assignment=assignment,
                 created_at=datetime.now(timezone.utc),
@@ -341,12 +360,12 @@ class GoalReviewFeature:
     async def _close_goal_review_journal(
         self, review_id: str, status: str, standing: str | None
     ) -> None:
-        if self._services.goal_review_journal is None:
+        if self._journal is None:
             return
-        await self._services.goal_review_journal.close(
+        await self._journal.close(
             GoalReviewOutcome(
                 review_id=review_id,
-                session_id=self._services.session_id,
+                session_id=self._context.session_id,
                 status=status,
                 standing=standing,
                 completed_at=datetime.now(timezone.utc),
@@ -432,19 +451,22 @@ class GoalReviewFeature:
             try:
                 instruction = instructions
                 attempts = 0
-                while not self._services.abort_event.is_set():
+                while not self._host.turn.abort_event.is_set():
                     if not await self._run_goal_review_turn(
                         reviewer, instruction, review_id, publish
                     ):
                         await finish_transcript("canceled")
                         return None
-                    if reviewer._features.goal_review.submitted is not None:
-                        review = reviewer._features.goal_review.submitted
+                    submitted = reviewer._features.by_type(GoalReview)
+                    if submitted is not None:
+                        submitted = submitted.submitted
+                    if submitted is not None:
+                        review = submitted
                         review._review_id = review_id
                         await finish_transcript("completed", review)
                         return review
                     attempts += 1
-                    maximum_attempts = self._services.global_configuration.goal_review.maximum_attempts
+                    maximum_attempts = self._context.global_configuration.goal_review.maximum_attempts
                     if attempts >= maximum_attempts:
                         logger.error(
                             "goal reviewer did not submit after %d attempts; last text: %r",

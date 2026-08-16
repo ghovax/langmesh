@@ -936,6 +936,7 @@ class SessionExecutor(AgentExecutor):
                 related_turns=self._make_turn_reader(),
                 goal_listener=lambda goal: self._notify_goal_state(session_id, goal),
                 goal_review_journal=self._goal_review_journal(session_id),
+                features=self._compose_features(session_id, runtime_directory),
             ),
             conversation=conversation,
         )
@@ -945,6 +946,19 @@ class SessionExecutor(AgentExecutor):
                 self._observation_registry_error,
             )
         return runtime
+
+    def _compose_features(self, session_id: str, runtime_directory: str):
+        """The daemon's features for one session, its ports bound the way the daemon holds them."""
+        from langmesh.runtime.features.battery import default_features
+
+        ports = type("FeaturePorts", (), {})()
+        ports.goal_review_journal = self._goal_review_journal(session_id)
+        ports.compaction = None
+        ports.compaction_preparation = self._compaction_preparation(runtime_directory)
+        ports.compaction_summarizer = None
+        ports.continuations = None
+        ports.jobs = self._job_store
+        return default_features(ports)
 
     def _compaction_preparation(self, working_directory: str):
         from langmesh.base.observation_store import SQLiteObservationStore
