@@ -31,7 +31,7 @@ async def _fire(record) -> None:
             }
         )
         session_id = str(created.get("id") or "")
-        # The same shape `langmesh send` uses, so a scheduled turn and a typed one arrive the same way.
+        # The same shape a typed message uses, so a scheduled turn and a typed one arrive the same way.
         await api._session_send(
             {
                 "id": session_id,

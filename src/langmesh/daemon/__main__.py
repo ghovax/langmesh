@@ -58,7 +58,7 @@ def _write_handshake(token: str, port: int) -> None:
     port_path = daemon_port_path()
     port_path.write_text(str(port))
     port_path.chmod(0o600)
-    # The pid is how `langmesh daemon stop` reaches a daemon that has stopped answering.
+    # The pid is how a stop signal reaches a daemon that has stopped answering.
     pidfile = daemon_socket_path().parent / "langmeshd.pid"
     pidfile.write_text(str(os.getpid()))
     pidfile.chmod(0o600)

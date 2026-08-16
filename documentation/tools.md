@@ -1,6 +1,6 @@
 # Tools
 
-A session acts through tools, and every tool call runs inside the session's [confinement](configuration.md#confinement). A call that stays inside it runs without asking anybody. A call that asks to reach past it pauses under `ask` and reaches you as a prompt in the app, or as `langmesh allow` / `langmesh deny` in the terminal; under `automatic` it never pauses, and the reviewer allows or refuses it. The description the model reads is in the repo, one Markdown file per tool in `src/langmesh/runtime/tools/descriptions/`.
+A session acts through tools, and every tool call runs inside the session's [confinement](configuration.md#confinement). A call that stays inside it runs without asking anybody. A call that asks to reach past it pauses under `ask` and reaches you as a prompt in the app; under `automatic` it never pauses, and the reviewer allows or refuses it. The description the model reads is in the repo, one Markdown file per tool in `src/langmesh/runtime/tools/descriptions/`.
 
 There is no delegation tool and no in-process sub-agent. A session that needs a peer creates one with `create_session`, which reaches the same control plane your terminal does. See [Composing with other sessions](#composing-with-other-sessions).
 

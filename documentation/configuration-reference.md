@@ -2,15 +2,9 @@
 
 Every setting LangMesh has, in the order the settings panel presents them: what you decide first at the top, the numbers underneath everything at the bottom.
 
-A setting is addressed by its dotted path, and the same path works everywhere: in `~/.config/langmesh/configuration.yaml`, in `langmesh configure`, and as the key the interface writes. Nothing is written to that file until you change it; a setting you never touched follows the default.
+A setting is addressed by its dotted path, and the same path works everywhere: in `~/.config/langmesh/configuration.yaml`, and as the key the interface writes. Nothing is written to that file until you change it; a setting you never touched follows the default.
 
-Everything `langmesh configure` does:
-
-- `langmesh configure` — what this machine has been set to, as one object.
-- `langmesh configure --all` — every setting there is, each with what it ships at and what it currently runs on.
-- `langmesh configure sandbox.enforce` — read one, printing the value and nothing else.
-- `langmesh configure sandbox.enforce off` — change one, and print how it was stored.
-- `langmesh configure sandbox.enforce --unset` — put it back, removing it from the file rather than writing the default into it.
+To read or change a setting, edit `~/.config/langmesh/configuration.yaml` (a setting you never touched may be absent; omit it and the default applies) or use the interface's settings panel, which walks the same schema. To unset a setting, remove its line from the file rather than writing the default into it.
 
 The settings panel shows the same set, with the name and explanation in the interface language. The words there and the words here are the same: they live in `shared/messages/`, keyed by these paths.
 

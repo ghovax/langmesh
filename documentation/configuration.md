@@ -4,7 +4,6 @@ Runtime configuration lives in **`$XDG_CONFIG_HOME/langmesh/configuration.yaml`*
 
 Three ways to change it, all writing the same file:
 
-- `langmesh configure` from the terminal. `--all` lists every setting with its default; no argument lists only what you changed; a name reads or sets one setting; `--unset` removes it. A name the schema does not define, or a value it would reject, is refused with the reason rather than written.
 - **Settings** in the desktop app.
 - Editing the file directly, which the next thing to start reads.
 
@@ -13,7 +12,7 @@ Three ways to change it, all writing the same file:
 
 A change applies to whatever starts **next**. A running session keeps the configuration it was built with, with a few exceptions the daemon pushes out: the sandbox, computer control, and the user-context snapshot each ask live sessions to rebuild.
 
-Three places say something about a setting, and each says a different thing. **This document** is the narrative, for the settings worth explaining at length. The **[configuration reference](configuration-reference.md)** is the list, one row per setting. **`langmesh configure`** reads the running code, so it is the only one that can tell you what _this machine_ is set to.
+Three places say something about a setting, and each says a different thing. **This document** is the narrative, for the settings worth explaining at length. The **[configuration reference](configuration-reference.md)** is the list, one row per setting. The **settings panel** reads the running schema, so it can tell you what _this machine_ is set to.
 
 Names the schema does not define are **refused**, not ignored.
 
@@ -103,7 +102,7 @@ toolbox: { enabled: true }
 
 `workspace.strategy` is one of `none`, `branch`, or `worktree`. It is resolved once, when the session is created. A `worktree` session runs its tools in its own git worktree, so parallel sessions on one repository do not tread on each other.
 
-`agent.permission_mode` is the mode a session gets when none is asked for. It is a default, not a ceiling: `langmesh create --mode` overrides it, and a child is clamped against its parent either way.
+`agent.permission_mode` is the mode a session gets when none is asked for. It is a default, not a ceiling: a session's creation can override it, and a child is clamped against its parent either way.
 
 `computer_control` turns on the macOS screen tools (`control_screen`); it is opt-in. `user_context` puts a snapshot of how you work into the prompt; it is opt-in too.
 
@@ -169,7 +168,7 @@ A session's mode says **who answers** when a call asks to reach past its confine
 
 There is **no bypass mode** and no standing "always allow": the only runtime decisions are allow-once and deny. A session's mode is chosen when the harness creates it and can be changed afterwards by the person running it; a session can never change its own. A session created by another is never looser than its parent, and tightening a session tightens the subtree it created.
 
-**A read-only session** is not a mode. It is a confinement with nowhere writable: `langmesh create --read-only`, or a `sandbox:` block that lists no `writable` paths. Nothing about a command's text decides it, so no spelling of a write gets past.
+**A read-only session** is not a mode. It is a confinement with nowhere writable: created with a `sandbox:` block that lists no `writable` paths. Nothing about a command's text decides it, so no spelling of a write gets past.
 
 Three tools take per-call rules on each agent, the three whose calls can be named: `bash` by its command (`sudo *: deny`, `rm -rf *: ask`), `mcp` by `server.tool` (`*.delete_*: deny`), and `screen` by the primitive a script reaches for (`evaluate: deny`). The longest matching pattern wins. A `deny` refuses the call outright in both modes; a reviewer may not overrule a rule you wrote.
 
@@ -224,7 +223,7 @@ tuning:
 
 Those three move whole families. `defaults` is the escape hatch for a single value. Its keys are the names in `langmesh.base.primitives.tuning.Tunable`, the same idea as `sandbox.limits` using `setrlimit` constant names. An unknown name is an error at load. An override replaces the value the code ships with, so `context_share` and `timeout_multiplier` still apply on top.
 
-`langmesh configure --all` lists every setting with what it ships at and what this machine runs on; what each one is _for_ is in the [configuration reference](configuration-reference.md). [`configuration.example.yaml`](configuration.example.yaml) is the same surface as a file at its shipped values. Read it; do not copy it over your own configuration, because everything in it is already the default.
+The settings panel lists every setting with what it ships at and what this machine runs on; what each one is _for_ is in the [configuration reference](configuration-reference.md). [`configuration.example.yaml`](configuration.example.yaml) is the same surface as a file at its shipped values. Read it; do not copy it over your own configuration, because everything in it is already the default.
 
 ## Screen control
 
@@ -271,7 +270,7 @@ remote_agents:
   agents: {}
 ```
 
-Agents on other hosts, resolved by their A2A card and reached with `langmesh remote`. Normally registered in `~/.agents/remote-agents.json` or from Settings rather than written here. A remote agent is not a session: LangMesh does not own its lifecycle, cannot set its permission mode, and keeps no transcript of it.
+Agents on other hosts, resolved by their A2A card. Normally registered in `~/.agents/remote-agents.json` or from Settings rather than written here. A remote agent is not a session: LangMesh does not own its lifecycle, cannot set its permission mode, and keeps no transcript of it.
 
 ## Telemetry
 
@@ -284,4 +283,4 @@ telemetry:
   sample_ratio: 1.0
 ```
 
-**There is no default agent setting**, here or anywhere. `langmesh create --agent` is required, and no profile is the one to fall back to. Add your own under `~/.agents/agents/<id>/` or `.agents/agents/<id>/` in a working directory. See [Agent system](agent-system.md).
+**There is no default agent setting**, here or anywhere. Every session is created with an explicit agent, and no profile is the one to fall back to. Add your own under `~/.agents/agents/<id>/` or `.agents/agents/<id>/` in a working directory. See [Agent system](agent-system.md).

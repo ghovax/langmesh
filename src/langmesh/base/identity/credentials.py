@@ -206,7 +206,7 @@ async def valid_tokens() -> ChatGPTTokens:
     tokens = await asyncio.to_thread(load_tokens)
     if tokens is None:
         raise ChatGPTAuthError(
-            "Not signed in to ChatGPT. Run `langmesh auth login`, sign in from Settings, or drive `langmesh.base.identity.credentials.ChatGPTLoginFlow` yourself."
+            "Not signed in to ChatGPT. Sign in from Settings, or drive `langmesh.base.identity.credentials.ChatGPTLoginFlow` yourself."
         )
     if not tokens.is_expired():
         return tokens

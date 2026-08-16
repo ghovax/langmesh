@@ -61,7 +61,7 @@ It serves one API two ways:
 
 A token says a caller may drive the daemon; it does not say who is calling, and on the unix socket that distinction is load-bearing. A session's own `bash` tool runs as the same user and can read that `0600` file, so attribution on tokens alone would let a session present the daemon's token and get a peer with no parent and no permission clamp.
 
-The unix listener asks the kernel instead: `SO_PEERCRED` on Linux, or `LOCAL_PEERPID` on macOS, names the process that opened the connection. Every worker starts as a process-session leader, so `getsid` on that pid names the session it belongs to, covering the worker and every shell command and `langmesh` invocation underneath it. That answer wins over the token: a session is itself, whatever token it holds. A caller the kernel places in no session stays unattributed, as it should: a person's terminal, or the desktop client. `langmesh kill` signals that same session id.
+The unix listener asks the kernel instead: `SO_PEERCRED` on Linux, or `LOCAL_PEERPID` on macOS, names the process that opened the connection. Every worker starts as a process-session leader, so `getsid` on that pid names the session it belongs to, covering the worker and every shell command and `langmesh` invocation underneath it. That answer wins over the token: a session is itself, whatever token it holds. A caller the kernel places in no session stays unattributed, as it should: a person's terminal, or the desktop client. That same session id is how the harness ends a session's work.
 
 The two answers are one fact read in two directions. What the kernel calls a session is what the harness attributes to it, and what it reaps with it. A caller can `setsid` itself, which leaves the session entirely: it stops being the session; it does not escape as the session.
 
@@ -96,7 +96,7 @@ That yields three ways to run:
 - **Remote URL.** Run `langmeshd` on another host, expose its loopback port behind your own transport security, and add the URL plus the token. The app becomes a native front end to a remote backend; the agent's shell, files, and network all live on that host.
 - **Over SSH.** Add an SSH host. LangMesh forwards a local port to the daemon's port on the remote machine, so the harness can live on a machine you reach only over SSH, with nothing exposed.
 
-For the last two, run `langmesh daemon endpoint` on that host: it reports the port and the token the connection needs.
+For the last two, read the port and token `langmeshd` published into the runtime directory on that host: those are the two values the connection needs.
 
 Keeping the halves apart serves one goal: **put the compute, the files, and the credentials wherever they belong, and keep the interface native and local.**
 
@@ -114,7 +114,7 @@ A session's permission mode is chosen when the session is created and can change
 
 1. You send a message to a session. Every client posts to the daemon, which relays to the owning session. A session mid-turn takes the message into that turn at its next safe point; one parked on a decision takes nothing and says so, because starting a turn would discard the parked one.
 2. The agent loop calls the model, which may request tool calls.
-3. Each tool call is measured against the session's confinement. One that stays inside it runs. One that asks to reach past it is decided by the session's permission mode: under `ask` the session streams a permission request, which the CLI prints and `langmesh allow` or `langmesh deny` answers, or the app shows as an overlay; under `automatic` the reviewer answers it.
+3. Each tool call is measured against the session's confinement. One that stays inside it runs. One that asks to reach past it is decided by the session's permission mode: under `ask` the session streams a permission request, which the app shows as an overlay to answer; under `automatic` the reviewer answers it.
 4. Approved tools then run: shell inside an OS-enforced confinement (`sandbox-exec` on macOS, Landlock on Linux), files on the active location, screen control against the local machine, and MCP servers through the session's own connections.
 5. Results take two deliberately separate lanes:
    - Every model text and reasoning delta is published synchronously to the daemon's in-process bounded event bus and reaches attached SSE clients without a timer, task allocation, or database write; the browser coalesces only at its next paint. At semantic boundaries the accumulated content block is written once to `history.sqlite`.

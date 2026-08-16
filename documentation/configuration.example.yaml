@@ -9,14 +9,15 @@
 # can still move.
 #
 # What exists, what it ships at, and what this machine currently runs:
+# the settings panel, or the configuration reference in the docs.
 #
-#     langmesh configure --all
+# Set one, read one, put one back — in this file, not through a command:
 #
-# Set one, read one, put one back:
+#     workspace:
+#       strategy: worktree
 #
-#     langmesh configure workspace.strategy worktree
-#     langmesh configure workspace.strategy
-#     langmesh configure workspace.strategy --unset
+# A setting you never touched may be absent; omit it and the default applies.
+# To unset a setting, remove its line from the file.
 #
 # A name that is not in the schema is refused at load rather than written and ignored.
 
@@ -249,7 +250,7 @@ tuning:
   # applied and is not. An override replaces what the code *ships* with, so the two knobs above
   # still apply on top of it.
   #
-  # `langmesh configure --all` prints what each is for. The long explanations live as markdown under
+  # The settings panel lists what each is for. The long explanations live as markdown under
   # src/langmesh/base/tuning_notes/ and are read at runtime, so the code and the reference cannot
   # drift apart.
   defaults:

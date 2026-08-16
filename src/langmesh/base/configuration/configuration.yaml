@@ -3,10 +3,10 @@
 # Deliberately small. Credentials and the conversation-compaction policy are explicit; other settings
 # stay at their schema defaults so they can still improve without being pinned here.
 #
-# To see what there is to change:   langmesh configure --all
-# To change one:                    langmesh configure workspace.strategy worktree
-# To read one:                      langmesh configure workspace.strategy
-# To put it back:                   langmesh configure workspace.strategy --unset
+# To see what there is to change:   read configuration-reference.md, or open Settings
+# To change one:                    edit this file: workspace:
+#                                     strategy: worktree
+# To put it back:                   remove the line, and the default applies
 #
 # A name that is not in the schema is refused rather than written and ignored.
 

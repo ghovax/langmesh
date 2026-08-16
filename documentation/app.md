@@ -1,8 +1,8 @@
 # The desktop app
 
-A native macOS window over the same control plane the `langmesh` command uses. The app holds no harness of its own: it finds a daemon, talks to it, and shows you what it says. Anything the app can do, the command can do, and the reverse.
+A native macOS window over the same control plane the `langmesh` command serves. The app holds no harness of its own: it finds a daemon, talks to it, and shows you what it says. Anything the app can do, the interface in a browser can do, and the reverse.
 
-Start it with the daemon in one step: `langmesh app`. That brings the daemon up if it is not running, then opens the window. Opening **LangMesh** directly does the same: the release app starts the separately installed local daemon when it cannot find one.
+Open **LangMesh** to start it: the release app starts the separately installed local daemon when it cannot find one, then opens the window.
 
 ## What the window shows
 

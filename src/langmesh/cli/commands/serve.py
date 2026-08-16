@@ -372,7 +372,7 @@ def run(arguments) -> int:
             return
         if current_daemon_process_id != started_daemon_process_id:
             return
-        # The group, so the sessions go with it, by the same reasoning and the same signal as `langmesh daemon stop`.
+        # The group, so the sessions go with it, by the same reasoning and the same signal a stop sends.
         with contextlib.suppress(OSError, ProcessLookupError):
             os.killpg(os.getpgid(started_daemon_process_id), signal.SIGTERM)
         logger.info("langmesh: stopped the daemon this command had started.")
