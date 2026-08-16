@@ -52,6 +52,7 @@ from langmesh.runtime.compaction import (
 )
 from langmesh.runtime.continuation import TuningContinuationPolicy
 from langmesh.runtime.features.battery import default_features
+from langmesh.runtime.features import access as _features
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile, SessionComponents
 from langmesh.runtime.hooks import MaximumToolCalls
 from langmesh.runtime.locations import Location
@@ -581,12 +582,12 @@ class Session:
             if not self._restored:
                 await self.restore()
             runtime = self.runtime
-            goal = runtime.goal
+            goal = _features.goal(runtime)
             if goal is None:
                 return False
             from langmesh.runtime.goal import Goal
 
-            runtime.write_goal(
+            _features.write_goal(runtime, 
                 goal.updated(status=Goal.CLEARED, review_message=None, review_id=None)
             )
             await self.save()
@@ -597,9 +598,9 @@ class Session:
         try:
             metadata = await self._observations.describe()
         except ObservationRegistryError as error:
-            self.runtime.note_observation_registry({}, str(error))
+            _features.note_observation_registry(self.runtime, {}, str(error))
         else:
-            self.runtime.note_observation_registry(metadata)
+            _features.note_observation_registry(self.runtime, metadata)
         self._observation_metadata_loaded = True
         self.runtime.refresh_system_prompt()
 
@@ -637,10 +638,10 @@ class Session:
             phase=self._phase,
             pending=self._pending,
             permission_mode=str(runtime.permission_mode if runtime is not None else self._permission_mode),
-            compaction_failure=runtime.compaction_failure if runtime is not None else None,
-            background_jobs=tuple(runtime.background_snapshots()) if runtime is not None else (),
-            unfinished_tasks=tuple(runtime.unfinished_tasks()) if runtime is not None else (),
-            goal=runtime.goal if runtime is not None else None,
+            compaction_failure=_features.compaction_failure(runtime) if runtime is not None else None,
+            background_jobs=tuple(_features.background_snapshots(runtime, )) if runtime is not None else (),
+            unfinished_tasks=tuple(_features.unfinished_tasks(runtime, )) if runtime is not None else (),
+            goal=_features.goal(runtime) if runtime is not None else None,
         )
 
     def interrupt(self) -> bool:
@@ -656,15 +657,15 @@ class Session:
 
     def interrupt_tool(self, tool_call_id: str) -> bool:
         """Cancel one foreground or detached tool call by its streamed identifier."""
-        return bool(self._runtime and self._runtime.abort_tool(tool_call_id))
+        return bool(self._runtime and _features.abort_tool(self._runtime, tool_call_id))
 
     def background_tool(self, tool_call_id: str) -> bool:
         """Detach one eligible foreground tool call without stopping its turn."""
-        return bool(self._runtime and self._runtime.send_tool_to_background(tool_call_id))
+        return bool(self._runtime and _features.send_tool_to_background(self._runtime, tool_call_id))
 
     def background_jobs(self) -> tuple[Mapping[str, Any], ...]:
         """Return immutable snapshots of this session's active background work."""
-        return tuple(self._runtime.background_snapshots()) if self._runtime is not None else ()
+        return tuple(_features.background_snapshots(self._runtime, )) if self._runtime is not None else ()
 
     async def steer(self, message: str, *, message_id: str = "") -> bool:
         """Append a user message at the running turn's next safe provider boundary."""
@@ -705,7 +706,7 @@ class Session:
         pending = self._pending
         if pending is not None:
             for gate in pending.remaining:
-                verdict = await runtime.reconsider_gate(gate)
+                verdict = await _features.reconsider_gate(runtime, gate)
                 if not verdict:
                     continue
                 if gate.kind == "question":
@@ -801,7 +802,7 @@ class Session:
                     "This session is suspended. Respond to every pending interaction and call Session.resume(), or call Session.cancel_pending()."
                 )
             self._phase = SessionPhase.RUNNING
-            failure = self.runtime.compaction_failure
+            failure = _features.compaction_failure(self.runtime)
             if failure:
                 self._phase = SessionPhase.IDLE
                 raise CompactionBlockedError(
@@ -809,8 +810,8 @@ class Session:
                 )
             # Somebody is here again, so a goal that had used its allowance gets it back.
             self.runtime.abandon_turn_retry()
-            self.runtime.restore_goal_allowance()
-            self.runtime.restore_task_allowance()
+            _features.restore_goal_allowance(self.runtime)
+            _features.restore_task_allowance(self.runtime)
             cancelled = False
             try:
                 async for event in self.runtime.stream(self._compose(message, attachments)):
@@ -824,7 +825,7 @@ class Session:
                         )
                         self._phase = SessionPhase.SUSPENDED
                     yield event
-                if self.runtime.compaction_failure:
+                if _features.compaction_failure(self.runtime):
                     return
                 # A turn the person stopped opens no follow-up work of its own.
                 if cancelled:
@@ -896,7 +897,7 @@ class Session:
                         )
                         self._phase = SessionPhase.SUSPENDED
                     yield event
-                if self.runtime.compaction_failure:
+                if _features.compaction_failure(self.runtime):
                     return
                 # A turn the person stopped opens no follow-up work of its own.
                 if cancelled:
@@ -916,13 +917,13 @@ class Session:
         """Review goals and reopen actionable tracked work through one continuation turn."""
         while True:
             # A stop is owed (or just landed): continuation turns must not erase it.
-            if self.runtime.has_pending_jobs() or self.runtime.stop_requested:
+            if _features.has_pending_jobs(self.runtime) or self.runtime.stop_requested:
                 return
-            goal = self.runtime.goal
-            continue_goal = self.runtime.should_continue_goal()
-            continue_tasks = self.runtime.should_continue_tasks()
+            goal = _features.goal(self.runtime)
+            continue_goal = _features.should_continue_goal(self.runtime)
+            continue_tasks = _features.should_continue_tasks(self.runtime)
             if goal is not None and goal.is_open and not continue_goal:
-                self.runtime.park_goal()
+                _features.park_goal(self.runtime)
             if not continue_goal and not continue_tasks:
                 return
             goal_review_message = ""
@@ -930,7 +931,7 @@ class Session:
             opens_exchange = False
             if continue_goal:
                 review_events: asyncio.Queue[TurnEventUnion] = asyncio.Queue()
-                review_task = asyncio.create_task(self.runtime.review_goal(review_events.put))
+                review_task = asyncio.create_task(_features.review_goal(self.runtime, review_events.put))
                 try:
                     while True:
                         if not review_events.empty():
@@ -956,21 +957,21 @@ class Session:
                         review_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
                             await review_task
-                goal = self.runtime.apply_goal_review(review)
+                goal = _features.apply_goal_review(self.runtime, review)
                 if goal is not None and goal.is_open and goal.review_message:
                     goal_review_message = goal.review_message
-                    self.runtime.note_goal_continuation()
+                    _features.note_goal_continuation(self.runtime)
                     opens_exchange = True
-            if continue_tasks and self.runtime.should_continue_tasks():
-                task_note = self.runtime.task_continuation_message()
-                self.runtime.note_task_continuation()
+            if continue_tasks and _features.should_continue_tasks(self.runtime):
+                task_note = _features.task_continuation_message(self.runtime, )
+                _features.note_task_continuation(self.runtime)
             if not goal_review_message and not task_note:
                 return
             cancelled_continuation = False
             noop_continuation = False
             saw_tool_result = False
             async for event in self.runtime.stream(
-                self.runtime.continuation_content(
+                _features.continuation_content(self.runtime, 
                     goal_review=goal_review_message,
                     task_continuation=task_note,
                 ),
@@ -1032,24 +1033,24 @@ class Session:
                 raise RuntimeError("A suspended turn must be resumed or cancelled before compaction.")
             self._phase = SessionPhase.COMPACTING
             runtime = self.runtime
-            if runtime.compaction_failure:
-                retry_operation = runtime.retry_compaction()
+            if _features.compaction_failure(runtime):
+                retry_operation = _features.retry_compaction(runtime)
             else:
-                runtime.begin_compaction_preparation()
+                _features.begin_compaction_preparation(runtime)
                 retry_operation = "prepare"
-            resume_after = runtime.resumes_after_compaction
+            resume_after = _features.resumes_after_compaction(runtime)
             try:
                 if retry_operation == "compact":
-                    source = runtime.compact(reason=runtime.pending_compaction_reason)
+                    source = _features.compact(runtime, reason=_features.pending_compaction_reason(runtime))
                 else:
                     source = (
                         runtime.continue_stream()
-                        if runtime.resumes_after_compaction
+                        if _features.resumes_after_compaction(runtime)
                         else runtime.prepare_compaction_stream()
                     )
                 async for event in source:
                     yield event
-                if retry_operation == "compact" and resume_after and not runtime.compaction_failure:
+                if retry_operation == "compact" and resume_after and not _features.compaction_failure(runtime):
                     async for event in runtime.continue_stream():
                         yield event
             finally:
@@ -1067,7 +1068,7 @@ class Session:
             if self._pending is not None:
                 raise RuntimeError("A suspended turn must be resumed or cancelled before retrying.")
             self._phase = SessionPhase.RETRYING
-            if self.runtime.compaction_failure:
+            if _features.compaction_failure(self.runtime):
                 self._phase = SessionPhase.IDLE
                 raise CompactionBlockedError(
                     "Context compaction is blocked; retry Session.compact() before retrying the turn."
@@ -1110,7 +1111,7 @@ class Session:
         self._bindings.clear()
         if self._runtime is not None:
             with contextlib.suppress(Exception):
-                self._runtime.background_jobs.cancel_all()
+                _features.background_jobs(self._runtime).cancel_all()
         await self._lifecycle.aclose()
         self._materialized_resources = None
         self._runtime = None

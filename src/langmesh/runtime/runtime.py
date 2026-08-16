@@ -32,9 +32,6 @@ from langmesh.runtime.tools.handlers import HANDLERS
 from langmesh.locations.resolver import LocationAddress, executor_for, location_uri_for
 from langmesh.base.ports import Observation
 from langmesh.runtime.tools.context import ToolContext
-from langmesh.runtime.background import (
-    BackgroundJobs,
-)
 
 
 from langmesh.base.permission_mode import PermissionMode
@@ -55,14 +52,12 @@ from langmesh.runtime.turn import (
 
 from langmesh.base.serialization import compact
 from langmesh.base.toolbox import toolbox_for
-from langmesh.runtime.goal import Goal
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.features.plugins.continuation import Continuation
 from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
 from langmesh.runtime.features.plugins.compaction import Compaction
 from langmesh.runtime.features.plugins.permissions import PermissionReview
 from langmesh.runtime.features.plugins.background import BackgroundJobsFeature
-from langmesh.runtime.features.plugins.observations import ObservationMemory
 from langmesh.runtime.internals import (
     _utc_timestamp,
     conversation_tokens,
@@ -226,10 +221,17 @@ class _GoalAccess:
         self._runtime = runtime
 
     def current(self) -> Any:
-        return self._runtime.goal
+        from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
+
+        feature = self._runtime._features.by_type(GoalReviewFeature)
+        return feature.goal if feature is not None else None
 
     def write(self, goal: Any) -> None:
-        self._runtime.write_goal(goal)
+        from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
+
+        feature = self._runtime._features.by_type(GoalReviewFeature)
+        if feature is not None:
+            feature.write(goal)
 
 
 class _LeaseAccess:
@@ -558,9 +560,15 @@ class AgentRuntime(
                 else None
             ),
             leases=_LeaseAccess(self),
-            retry_gate=self.retry_gate,
-            decide_retry=self.decide_retry,
-            retry_refusal_result=self._retry_refusal_result,
+            retry_gate=lambda **kwargs: self._features.by_type(PermissionReview).retry_gate(**kwargs)
+            if self._features.by_type(PermissionReview) is not None
+            else None,
+            decide_retry=lambda gate: self._features.by_type(PermissionReview).decide_retry(gate)
+            if self._features.by_type(PermissionReview) is not None
+            else ("ask", None),
+            retry_refusal_result=lambda gate, **kwargs: self._features.by_type(PermissionReview).retry_refusal_result(gate, **kwargs)
+            if self._features.by_type(PermissionReview) is not None
+            else {},
             pipeline=self._pipeline,
             tools=lambda: self._tools,
             screen_query_log=self._screen_queries_asked,
@@ -576,17 +584,6 @@ class AgentRuntime(
     def refresh_system_prompt(self) -> None:
         """Rebuild catalogue-derived prompt material at the next model-call boundary."""
         self._cached_system_prompt = None
-
-    def note_observation_registry(self, metadata: dict[str, Any], error: str | None = None) -> None:
-        """Adopt watcher metadata and queue a changed schema failure for the next model opening."""
-        observations = self._features.by_type(ObservationMemory)
-        if observations is not None:
-            observations.note(metadata, error)
-
-    def _take_observation_registry_feedback(self) -> str | None:
-        """The one schema-failure note owed to the next model opening, consumed by it."""
-        observations = self._features.by_type(ObservationMemory)
-        return observations.take_feedback() if observations is not None else None
 
     def set_locations(self, locations: Sequence[Location] | None) -> None:
         """Adopt the workspace's environments as they are now, so one added later reaches an existing session."""
@@ -718,40 +715,6 @@ class AgentRuntime(
         """This runtime's background-job runner, owned by the background plugin."""
         background_feature = self._features.by_type(BackgroundJobsFeature)
         return background_feature.runner if background_feature is not None else None
-
-    @property
-    def background_jobs(self) -> BackgroundJobs:
-        """This runtime's background-job runner, which the executor's resume pump reads."""
-        return self._background
-
-    def has_pending_jobs(self) -> bool:
-        """Whether any background job is still in flight, without reaching into the runner's internals."""
-        runner = self._background
-        return bool(runner is not None and runner.has_pending())
-
-    def has_completed_undelivered_jobs(self) -> bool:
-        """Whether a completed background result is waiting to be delivered to the model."""
-        runner = self._background
-        return bool(runner is not None and runner.has_completed_undelivered())
-
-    async def wait_for_jobs(self) -> None:
-        """Await the next background-job completion (the resume pump's wait point)."""
-        runner = self._background
-        if runner is not None:
-            await runner.wait_for_completion()
-
-    def inject_stored_background_result(
-        self, *, kind: str, identifier: str, tool_call_identifier: str, result: str
-    ) -> None:
-        """Append a restored background result, so a rebuilt runtime replays it exactly like a live completion."""
-        background_feature = self._features.by_type(BackgroundJobsFeature)
-        if background_feature is not None:
-            background_feature.inject_stored_result(
-                kind=kind,
-                identifier=identifier,
-                tool_call_identifier=tool_call_identifier,
-                result=result,
-            )
 
     def constrained_tool_named(self, tool_name: str):
         """One tool of a given name from the executable set, for a sub-session being bound down to its verdict tool."""
@@ -929,15 +892,6 @@ class AgentRuntime(
             (runner is not None and runner.cancel_by_tool_call(tool_call_identifier)) or aborted
         )
 
-    def background_snapshots(self) -> list[dict[str, Any]]:
-        runner = self._background
-        return runner.active_snapshots() if runner is not None else []
-
-    def send_tool_to_background(self, tool_call_identifier: str) -> bool:
-        """Push a blocking command to the background on the user's behalf, as if the model had done it."""
-        runner = self._background
-        return bool(runner is not None and runner.request_background(tool_call_identifier))
-
     def enqueue_steering(
         self, message: str, message_id: str = "", peer_sender: str = ""
     ) -> asyncio.Future[bool] | None:
@@ -972,57 +926,6 @@ class AgentRuntime(
         """Install the reader `read_turn` uses to fetch related turns from the store."""
         self._turn_reader = task_reader
 
-    def unfinished_tasks(self) -> list[dict]:
-        continuation = self._features.by_type(Continuation)
-        return continuation.unfinished() if continuation is not None else []
-
-    def has_actionable_tasks(self) -> bool:
-        continuation = self._features.by_type(Continuation)
-        return bool(continuation is not None and continuation.actionable())
-
-    def should_continue_goal(self) -> bool:
-        continuation = self._features.by_type(Continuation)
-        return bool(continuation is not None and continuation.should_continue_goal(self.goal))
-
-    def should_continue_tasks(self) -> bool:
-        continuation = self._features.by_type(Continuation)
-        return bool(
-            continuation is not None
-            and continuation.should_continue_tasks(continuation.actionable())
-        )
-
-    def task_continuation_message(self) -> str:
-        """The hidden instruction that makes unfinished tracked work an actual next turn."""
-        continuation = self._features.by_type(Continuation)
-        if continuation is None:
-            return ""
-        return continuation.task_continuation_message(continuation.unfinished())
-
-    def continuation_content(self, *, goal_review: str = "", task_continuation: str = "") -> str:
-        """The one message a continuation turn carries: the goal review's prose and the
-        task note, composed by the shared template rather than joined in Python."""
-        continuation = self._features.by_type(Continuation)
-        if continuation is None:
-            return task_continuation.strip() or goal_review.strip()
-        return continuation.continuation_content(
-            goal_review=goal_review, task_continuation=task_continuation
-        )
-
-    @property
-    def task_continuations(self) -> int:
-        continuation = self._features.by_type(Continuation)
-        return continuation.task_continuations if continuation is not None else 0
-
-    def note_task_continuation(self) -> None:
-        continuation = self._features.by_type(Continuation)
-        if continuation is not None:
-            continuation.note_task_continuation()
-
-    def restore_task_allowance(self) -> None:
-        continuation = self._features.by_type(Continuation)
-        if continuation is not None:
-            continuation.restore_task_allowance()
-
     def session_snapshot(self) -> dict:
         """The durable non-conversation state the features own, plus the core's own recovery flag."""
         return {**self._features.snapshot(), "turn_recovery": self._turn_recovery}
@@ -1047,7 +950,7 @@ class AgentRuntime(
             self._mark_session_dirty()
 
     def begin_turn_retry(self) -> bool:
-        if self._turn_recovery != "retryable" or bool(self.compaction_failure):
+        if self._turn_recovery != "retryable" or bool(self._features.blocked_reason()):
             return False
         self._turn_recovery = "retrying"
         self._mark_session_dirty()
@@ -1064,59 +967,6 @@ class AgentRuntime(
             self._turn_recovery = "none"
             self._mark_session_dirty()
 
-    # The compaction plugin's control surface, forwarded for the harness.
-
-    @property
-    def compaction_failure(self) -> str | None:
-        """The failure that blocks new input until an explicit compaction retry succeeds."""
-        compaction = self._features.by_type(Compaction)
-        return compaction.failure if compaction is not None else None
-
-    def _fail_compaction(self, message: str) -> None:
-        """Make a failed fold durable and visible; the compaction plugin owns how."""
-        compaction = self._features.by_type(Compaction)
-        if compaction is not None:
-            compaction.fail_compaction(message)
-
-    def _record_compaction_preparation(self) -> None:
-        compaction = self._features.by_type(Compaction)
-        if compaction is not None:
-            compaction.record_preparation()
-
-    def retry_compaction(self) -> str | None:
-        """Reopen exactly the failed compaction phase and return the operation to drive."""
-        compaction = self._features.by_type(Compaction)
-        return compaction.retry() if compaction is not None else None
-
-    def begin_compaction_preparation(self) -> bool:
-        """Begin an explicit compaction's recording handshake when no other compaction state is active."""
-        compaction = self._features.by_type(Compaction)
-        return bool(compaction is not None and compaction.begin_explicit())
-
-    @property
-    def resumes_after_compaction(self) -> bool:
-        compaction = self._features.by_type(Compaction)
-        return bool(compaction is not None and compaction.control.resume_after)
-
-    @property
-    def pending_compaction_reason(self) -> str:
-        compaction = self._features.by_type(Compaction)
-        return compaction.control.reason if compaction is not None else "manual"
-
-    @property
-    def awaiting_compaction_recording(self) -> bool:
-        """Whether a persisted compaction is waiting for its private recording segment to finish."""
-        compaction = self._features.by_type(Compaction)
-        return bool(compaction is not None and compaction.control.waiting)
-
-    async def compact(self, reason: str = "manual"):
-        """Reclaim the window after the explicit observational-memory handoff has completed."""
-        compaction = self._features.by_type(Compaction)
-        if compaction is None:
-            return
-        async for event in compaction.compact(reason):
-            yield event
-
     # The boundary and the grants: the boundary is the core's, the permission plugin fills it.
 
     def _granted_profile(self):
@@ -1128,96 +978,6 @@ class AgentRuntime(
 
     def _record_grant(self, grant: Grant) -> None:
         self._access_grants.append(grant)
-
-    # The permission plugin's gate and retry surface, forwarded for the harness and the tools.
-
-    def retry_gate(
-        self,
-        *,
-        tool_call_id: str,
-        command: str,
-        denial,
-        explanation: str,
-    ):
-        permissions = self._features.by_type(PermissionReview)
-        if permissions is None:
-            return None
-        return permissions.retry_gate(
-            tool_call_id=tool_call_id,
-            command=command,
-            denial=denial,
-            explanation=explanation,
-        )
-
-    async def decide_retry(self, gate):
-        permissions = self._features.by_type(PermissionReview)
-        if permissions is None:
-            return "ask", None
-        return await permissions.decide_retry(gate)
-
-    def _retry_refusal_result(self, gate, *, actor: str = "reviewer", reason: str = "") -> dict:
-        permissions = self._features.by_type(PermissionReview)
-        if permissions is None:
-            return {}
-        return permissions.retry_refusal_result(gate, actor=actor, reason=reason)
-
-    async def reconsider_gate(self, gate):
-        permissions = self._features.by_type(PermissionReview)
-        if permissions is None:
-            return {}
-        return await permissions.reconsider_gate(gate)
-
-    # The goal and its review, both owned by the goal plugin so none of this lives on the core.
-
-    @property
-    def goal(self) -> Optional[Goal]:
-        """The session's goal, or ``None`` when it has none."""
-        goal_review = self._features.by_type(GoalReviewFeature)
-        return goal_review.goal if goal_review is not None else None
-
-    def set_goal_listener(self, listener: Optional[Callable[[Optional[Goal]], None]]) -> None:
-        """Install the callback that hears every goal change, which is how the interface learns of one."""
-        goal_review = self._features.by_type(GoalReviewFeature)
-        if goal_review is not None:
-            goal_review.set_listener(listener)
-
-    def write_goal(self, goal: Optional[Goal]) -> None:
-        """Set, replace or drop the goal, and announce it. The single writer, so no path changes it silently."""
-        goal_review = self._features.by_type(GoalReviewFeature)
-        if goal_review is not None:
-            goal_review.write(goal)
-
-    def note_goal_continuation(self) -> None:
-        """Count one review-opened turn and consume the message that opened it."""
-        goal_review = self._features.by_type(GoalReviewFeature)
-        if goal_review is not None:
-            goal_review.note_continuation()
-
-    def restore_goal_allowance(self) -> None:
-        """A person spoke, so the allowance restarts and a parked goal resumes. A settled one keeps its answer."""
-        goal_review = self._features.by_type(GoalReviewFeature)
-        if goal_review is not None:
-            goal_review.restore_allowance()
-
-    def park_goal(self) -> None:
-        """Stop working the goal until a person speaks. The goal is kept: it is still what the session is for."""
-        goal_review = self._features.by_type(GoalReviewFeature)
-        if goal_review is not None:
-            goal_review.park()
-
-    def review_goal(self, publish: Optional[Callable] = None):
-        """Run the linked reviewer until it submits a verdict or the parent turn is cancelled."""
-        goal_review = self._features.by_type(GoalReviewFeature)
-        if goal_review is None:
-            return None
-        return goal_review.review(publish)
-
-    def apply_goal_review(self, review):
-        """Write the verdict onto the goal and answer with it, so the caller reads one value rather than two."""
-        goal_review = self._features.by_type(GoalReviewFeature)
-        if goal_review is None:
-            return self.goal
-        return goal_review.apply(review)
 
     def dirty_session_snapshot(self) -> Optional[dict]:
         """Return state newer than the last persisted revision without acknowledging it."""

@@ -188,6 +188,10 @@ class Compaction(Feature):
     def failure(self) -> str | None:
         return self._control.failure
 
+    def blocks_input(self) -> str | None:
+        """A failed fold refuses new input until an explicit retry succeeds."""
+        return self._control.failure
+
     def submit_summary(self, summary: Any) -> None:
         """The summarizer's verdict tool lands here, read once the summary turn ends."""
         self._submitted_summary = summary
