@@ -55,14 +55,6 @@ from langmesh.runtime.turn import (
     _RunsTurns,
 )
 
-from langmesh.runtime.permissions import (
-    _DecidesPermissions,
-)
-
-from langmesh.runtime.compaction import (
-    _CompactionControl,
-    _CompactsContext,
-)
 from langmesh.base.serialization import compact
 from langmesh.base.toolbox import toolbox_for
 from langmesh.runtime.goal import Goal
@@ -363,7 +355,7 @@ class _LeaseAccess:
 
 
 class AgentRuntime(
-    _DispatchesTools, _DecidesPermissions, _CompactsContext, _RunsTurns
+    _DispatchesTools, _RunsTurns
 ):
     # A turn runs until the model is done or the user interrupts: no ceiling and no stuck-detector.
 
@@ -404,7 +396,6 @@ class AgentRuntime(
         # The session that created this one, empty when a person did. Reporting back needs its id.
         self._parent_session = profile.parent_session
         # What every child is confined to, held so a configuration edit cannot widen a live session.
-        from langmesh.base.confinement import Grant
 
         # Normalised once, because callers hand this three different shapes.
         self._sandbox = _as_profile(profile.sandbox)
@@ -514,7 +505,6 @@ class AgentRuntime(
         self._transcript = transcript
         # The daemon's event publisher is optional; the registry reader is used only for compaction verification.
         self._goal_review_journal = components.goal_review_journal
-        self._submitted_compaction_summary: Any = None
         # The conversation and the prompt this runtime runs with.
 
         self._conversation: list = conversation if conversation is not None else []
@@ -566,9 +556,6 @@ class AgentRuntime(
         # harness cannot schedule compacting or refuse an oversized request with numbers.
         self._context_window_estimated = reported_context_window == 0
         self._context_window = reported_context_window
-        # Durable compaction preparation: one state value prevents contradictory phase, reason,
-        # resumption, revision, and failure flags from surviving a restart.
-        self._compaction_control = _CompactionControl()
         self._turn_recovery = "none"
         # What the module-level tools read at call time, built from this runtime's own configuration and conversation.
         self._tool_context = _build_tool_context(
@@ -580,9 +567,7 @@ class AgentRuntime(
             conversation_snapshot=self._peer_conversation_snapshot,
             mcp_server_manager=mcp_server_manager,
         )
-        # What was approved beyond the configured profile, held for the session so one grant is not re-asked.
-        self._access_grants: list[Grant] = []
-        # The files the person attached: like a grant, but answering what they handed over rather than what was asked.
+        # What was approved beyond the configured profile, held by the permission plugin so one grant is not re-asked.
         self._attached_files: dict[str, None] = {}
         # The pluggable sub-behaviors this runtime runs, each with its own state and templates.
         from langmesh.runtime.features.base import FeatureServices, build_features, feature_prompts
@@ -655,7 +640,11 @@ class AgentRuntime(
             prompt_loader=self._prompt_loader,
             catalogue=self._catalogue,
             tool_context=self._tool_context,
-            access_grants=self._access_grants,
+            access_grants=(
+                self._features.permissions.access_grants
+                if self._features.present("permissions")
+                else ()
+            ),
             attached_files=self._attached_files,
             turn_reader=self._turn_reader,
             record_event=self._record_event,
@@ -666,8 +655,10 @@ class AgentRuntime(
                 if self._features.present("goal_review")
                 else None
             ),
-            submit_compaction_summary=lambda summary: setattr(
-                self, "_submitted_compaction_summary", summary
+            submit_compaction_summary=lambda summary: (
+                self._features.compaction.submit_summary(summary)
+                if self._features.present("compaction")
+                else None
             ),
             leases=_LeaseAccess(self),
             retry_gate=self.retry_gate,
@@ -1168,7 +1159,9 @@ class AgentRuntime(
                 if self._features.present("continuation")
                 else 0
             ),
-            "compaction": self._compaction_control.snapshot(),
+            "compaction": (
+                control.snapshot() if (control := self._compaction_control) is not None else None
+            ),
             "turn_recovery": self._turn_recovery,
         }
 
@@ -1188,7 +1181,8 @@ class AgentRuntime(
             self._features.continuation.restore_task_continuations(
                 snapshot.get("task_continuations", 0) or 0
             )
-        self._compaction_control = _CompactionControl.restore(snapshot.get("compaction"))
+        if self._features.present("compaction"):
+            self._features.compaction.restore_control(snapshot.get("compaction"))
         recovery = str(snapshot.get("turn_recovery") or "none")
         # A process that died after claiming the retry still owes that retry after restart.
         self._turn_recovery = "retryable" if recovery == "retrying" else recovery
@@ -1206,7 +1200,7 @@ class AgentRuntime(
             self._mark_session_dirty()
 
     def begin_turn_retry(self) -> bool:
-        if self._turn_recovery != "retryable" or self._compaction_control.failure:
+        if self._turn_recovery != "retryable" or bool(self.compaction_failure):
             return False
         self._turn_recovery = "retrying"
         self._mark_session_dirty()
@@ -1224,57 +1218,150 @@ class AgentRuntime(
             self._mark_session_dirty()
 
     @property
+    def _compaction_control(self):
+        """The compaction phase machine, owned by the compaction plugin like its other state."""
+        if not self._features.present("compaction"):
+            return None
+        return self._features.compaction.control
+
+    @property
     def compaction_failure(self) -> str | None:
         """The failure that blocks new input until an explicit compaction retry succeeds."""
-        return self._compaction_control.failure
+        if not self._features.present("compaction"):
+            return None
+        return self._features.compaction.failure
 
     def _fail_compaction(self, message: str) -> None:
-        self._compaction_control.fail_compaction(message)
-        # Messages queued during the atomic preparation segment were never accepted into
-        # the conversation. Release their senders so they can remain visibly held outside it.
-        self.discard_pending_steering()
-        self._mark_session_dirty()
+        """Make a failed fold durable and visible; the compaction plugin owns how."""
+        if self._features.present("compaction"):
+            self._features.compaction.fail_compaction(message)
 
     def _record_compaction_preparation(self) -> None:
-        self._compaction_control.record()
-        self._mark_session_dirty()
+        if self._features.present("compaction"):
+            self._features.compaction.record_preparation()
 
     def retry_compaction(self) -> str | None:
         """Reopen exactly the failed compaction phase and return the operation to drive."""
-        if self._compaction_control.phase == "compaction_failed":
-            self._compaction_control.retry_compaction()
-            self._mark_session_dirty()
-            return "compaction"
-        if self._compaction_control.phase != "preparation_failed":
+        if not self._features.present("compaction"):
             return None
-        # A retry gets one unambiguous preparation notice. Retain any accepted user message
-        # that followed the failed private segment while removing that segment's discarded work.
-        self._conversation[:] = self._without_compaction_preparation(self._conversation)
-        self._begin_compaction_preparation(
-            reason=self._compaction_control.reason,
-            resume_after=self._compaction_control.resume_after,
-        )
-        return "prepare"
+        return self._features.compaction.retry()
 
     def begin_compaction_preparation(self) -> bool:
         """Begin an explicit compaction's recording handshake when no other compaction state is active."""
-        if self._compaction_control.failure or not self._compaction_control.idle:
+        if not self._features.present("compaction"):
             return False
-        self._begin_compaction_preparation(reason="manual", resume_after=False)
-        return True
+        return self._features.compaction.begin_explicit()
 
     @property
     def resumes_after_compaction(self) -> bool:
-        return self._compaction_control.resume_after
+        control = self._compaction_control
+        return bool(control is not None and control.resume_after)
 
     @property
     def pending_compaction_reason(self) -> str:
-        return self._compaction_control.reason
+        control = self._compaction_control
+        return control.reason if control is not None else "manual"
 
     @property
     def awaiting_compaction_recording(self) -> bool:
         """Whether a persisted compaction is waiting for its private recording segment to finish."""
-        return self._compaction_control.waiting
+        control = self._compaction_control
+        return bool(control is not None and control.waiting)
+
+    def _should_compact(self, pending_message=None) -> bool:
+        if not self._features.present("compaction"):
+            return False
+        return self._features.compaction.should_compact(pending_message)
+
+    def _begin_compaction_preparation(self, *, reason: str, resume_after: bool) -> None:
+        if self._features.present("compaction"):
+            self._features.compaction.begin_preparation(reason=reason, resume_after=resume_after)
+
+    def _fail_compaction_preparation(
+        self, error: str, *, error_code: str = "compaction_preparation_failed"
+    ):
+        if not self._features.present("compaction"):
+            return []
+        return self._features.compaction.fail_preparation(error, error_code=error_code)
+
+    def _usable_context(self) -> int:
+        if not self._features.present("compaction"):
+            return 0
+        return self._features.compaction.usable_context()
+
+    def _tail_within_budget(self, recent: list, budget: int) -> list:
+        if not self._features.present("compaction"):
+            return recent
+        return self._features.compaction.tail_within_budget(recent, budget)
+
+    def _without_compaction_preparation(self, messages: list) -> list:
+        if not self._features.present("compaction"):
+            return messages
+        return self._features.compaction.without_preparation(messages)
+
+    async def compact(self, reason: str = "manual"):
+        """Reclaim the window after the explicit observational-memory handoff has completed."""
+        if not self._features.present("compaction"):
+            return
+        async for event in self._features.compaction.compact(reason):
+            yield event
+
+    # Permission gating and the standing grants, both owned by the permission plugin.
+
+    def _granted_profile(self):
+        """The session's confinement with every standing grant compacted in. What an escape is measured against."""
+        if not self._features.present("permissions"):
+            return self._sandbox
+        return self._features.permissions.granted_profile()
+
+    async def _preflight_permissions(
+        self, tool_calls: list[dict]
+    ) -> tuple[dict, list]:
+        if not self._features.present("permissions"):
+            return {}, []
+        return await self._features.permissions.preflight(tool_calls)
+
+    async def _review_auto_gate(self, gate):
+        if not self._features.present("permissions"):
+            return None
+        return await self._features.permissions.review_auto_gate(gate)
+
+    def _resolve_tool_decisions(self, plans: dict, answers: dict) -> dict:
+        if not self._features.present("permissions"):
+            return {}
+        return self._features.permissions.resolve_tool_decisions(plans, answers)
+
+    def retry_gate(
+        self,
+        *,
+        tool_call_id: str,
+        command: str,
+        denial,
+        explanation: str,
+    ):
+        if not self._features.present("permissions"):
+            return None
+        return self._features.permissions.retry_gate(
+            tool_call_id=tool_call_id,
+            command=command,
+            denial=denial,
+            explanation=explanation,
+        )
+
+    async def decide_retry(self, gate):
+        if not self._features.present("permissions"):
+            return "ask", None
+        return await self._features.permissions.decide_retry(gate)
+
+    def _retry_refusal_result(self, gate, *, actor: str = "reviewer", reason: str = "") -> dict:
+        if not self._features.present("permissions"):
+            return {}
+        return self._features.permissions.retry_refusal_result(gate, actor=actor, reason=reason)
+
+    async def reconsider_gate(self, gate):
+        if not self._features.present("permissions"):
+            return {}
+        return await self._features.permissions.reconsider_gate(gate)
 
     # The goal and its review, both owned by the goal plugin so none of this lives on the core.
 

@@ -419,8 +419,13 @@ class _DispatchesTools:
         current_context_window.set(self._context_window)
 
         # The session state tools read at call time, bound per call so two open turns cannot see each other's.
+        grants = (
+            self._features.permissions.access_grants
+            if self._features.present("permissions")
+            else ()
+        )
         tool_context.bind(
-            self._tool_context.with_grants(self._access_grants).with_attachments(
+            self._tool_context.with_grants(grants).with_attachments(
                 self._attached_files
             )
         )

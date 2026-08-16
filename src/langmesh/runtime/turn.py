@@ -264,8 +264,13 @@ class _RunsTurns:
         if profile is None or self._global_configuration.sandbox.enforce == "off":
             return {}
         summary = profile.describe(workspace=self._working_directory or "")
-        if self._access_grants:
-            summary["granted"] = [grant.as_dict() for grant in self._access_grants]
+        grants = (
+            self._features.permissions.access_grants
+            if self._features.present("permissions")
+            else ()
+        )
+        if grants:
+            summary["granted"] = [grant.as_dict() for grant in grants]
         return summary
 
     def _screen_context(self) -> dict:
@@ -761,7 +766,7 @@ class _RunsTurns:
             )
             if preparing_compaction and not preparation_call_is_valid:
                 self._conversation.append(response)
-                refusal = self._prompt_loader.load("compaction_preparation_violation", {})
+                refusal = self._features.compaction.preparation_violation_message()
                 for call_data in response.tool_calls:
                     identifier = str(call_data.get("id") or "")
                     yield Error(
