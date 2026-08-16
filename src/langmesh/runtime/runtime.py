@@ -511,8 +511,6 @@ class AgentRuntime(
         from langmesh.runtime.continuation import TuningContinuationPolicy
 
         self._continuations = components.continuations or TuningContinuationPolicy()
-        self._observation_registry_metadata = {}
-        initial_observation_registry_error = None
         self._approvals = approvals
         self._transcript = transcript
         # The daemon's event publisher is optional; the registry reader is used only for compaction verification.
@@ -552,8 +550,6 @@ class AgentRuntime(
             self._conversation.append(self._tool_grant_message(grant.tool))
         self._cached_system_prompt: str | None = None
         self._task_manager = TaskManager()
-        # Independent from goal continuations: one may share a turn with the other, but neither consumes its allowance.
-        self._task_continuations = 0
         self._goal: Optional[Goal] = None
         # Called when the goal changes, so the layer above can tell the daemon and the interface.
         self._on_goal_change: Optional[Callable[[Optional[Goal]], None]] = None
@@ -579,8 +575,6 @@ class AgentRuntime(
         # resumption, revision, and failure flags from surviving a restart.
         self._compaction_control = _CompactionControl()
         self._turn_recovery = "none"
-        self._observation_registry_error: str | None = initial_observation_registry_error
-        self._pending_observation_registry_feedback: str | None = initial_observation_registry_error
         # What the module-level tools read at call time, built from this runtime's own configuration and conversation.
         self._tool_context = _build_tool_context(
             global_configuration,
@@ -596,6 +590,53 @@ class AgentRuntime(
         self._access_grants: list[Grant] = []
         # The files the person attached: like a grant, but answering what they handed over rather than what was asked.
         self._attached_files: dict[str, None] = {}
+        # The pluggable sub-behaviors this runtime runs, each with its own state and templates.
+        from langmesh.runtime.features.base import FeatureServices, build_features, feature_prompts
+
+        feature_services = FeatureServices(
+            session_id=self._session_id,
+            parent_session=self._parent_session,
+            working_directory=self._working_directory,
+            project_directory=self._project_directory,
+            agent_configuration=self._agent_configuration,
+            global_configuration=self._global_configuration,
+            model=self._model,
+            conversation=self._conversation,
+            catalogued_prompts=lambda name: feature_prompts(name, self._catalogue),
+            catalogue=self._catalogue,
+            tool_context=self._tool_context,
+            model_tools=self._model_tools,
+            tool_schemas=self._tool_schemas,
+            supplied_tool_names=self._supplied_tool_names,
+            supplied_tool_gate=self._supplied_tool_gate,
+            sandbox=self._sandbox,
+            locations=self._locations,
+            locations_by_name=self._locations_by_name,
+            context_window=self._context_window,
+            latest_context_tokens=self._latest_context_tokens,
+            task_manager=self._task_manager,
+            goal=lambda: self._goal,
+            write_goal=self.write_goal,
+            background=self._background,
+            compaction=self._compaction,
+            compaction_preparation=self._compaction_preparation,
+            compaction_summarizer=self._compaction_summarizer,
+            continuation_policy=self._continuations,
+            goal_review_journal=self._goal_review_journal,
+            set_latest_context_tokens=lambda value: setattr(self, "_latest_context_tokens", value),
+            refresh_cached_prompt=lambda: setattr(self, "_cached_system_prompt", None),
+            abort_event=self._abort_event,
+            mark_dirty=self._mark_session_dirty,
+            record_event=self._record_event,
+            discard_pending_steering=self.discard_pending_steering,
+            session_snapshot=self.session_snapshot,
+            restore_session=self.restore_session,
+            build_static_system_prompt=self._build_static_system_prompt,
+            build_turn_messages=self._build_turn_messages,
+            refuse_if_over_window=self._refuse_if_over_window,
+        )
+        self._features = build_features(components.features, feature_services)
+        self._feature_services = feature_services
         # Per-session state a screen-control script keeps between calls, and the services bundle
         # every tool handler runs against. The bundle is the tool's only view of the runtime.
         self._screen_queries_asked: list[tuple[Any, str]] = []
@@ -639,23 +680,14 @@ class AgentRuntime(
 
     def note_observation_registry(self, metadata: dict[str, Any], error: str | None = None) -> None:
         """Adopt watcher metadata and queue a changed schema failure for the next model opening."""
-        normalized_error = error.strip() if error else None
-        metadata_changed = metadata != self._observation_registry_metadata
-        error_changed = normalized_error != self._observation_registry_error
-        if not metadata_changed and not error_changed:
-            return
-        if metadata_changed:
-            self._observation_registry_metadata = dict(metadata)
-            # The memory panel receives this revision immediately, while the model's static
-            # prefix adopts it only at an explicit prompt refresh such as successful compacting.
-        self._observation_registry_error = normalized_error
-        if error_changed:
-            self._pending_observation_registry_feedback = normalized_error
+        if self._features.present("observations"):
+            self._features.observations.note(metadata, error)
 
     def _take_observation_registry_feedback(self) -> str | None:
-        message = self._pending_observation_registry_feedback
-        self._pending_observation_registry_feedback = None
-        return message
+        """The one schema-failure note owed to the next model opening, consumed by it."""
+        if not self._features.present("observations"):
+            return None
+        return self._features.observations.take_feedback()
 
     def set_locations(self, locations: Sequence[Location] | None) -> None:
         """Adopt the workspace's environments as they are now, so one added later reaches an existing session."""
@@ -1065,52 +1097,54 @@ class AgentRuntime(
         return bool(self._task_manager.actionable())
 
     def should_continue_goal(self) -> bool:
-        return self._continuations.continue_goal(
-            self._goal,
-            self._goal.continuations if self._goal is not None else 0,
-        )
+        if not self._features.present("continuation"):
+            return False
+        return self._features.continuation.should_continue_goal(self._goal)
 
     def should_continue_tasks(self) -> bool:
-        return self._continuations.continue_tasks(
-            self._task_manager.actionable(),
-            self._task_continuations,
-        )
+        if not self._features.present("continuation"):
+            return False
+        return self._features.continuation.should_continue_tasks(self._task_manager.actionable())
 
     def task_continuation_message(self) -> str:
         """The hidden instruction that makes unfinished tracked work an actual next turn."""
-        return self._prompt_loader.load(
-            "task_continuation_note",
-            {"tasks": compact(self.unfinished_tasks())},
-        )
+        if not self._features.present("continuation"):
+            return ""
+        return self._features.continuation.task_continuation_message(self._task_manager.unfinished())
 
     def continuation_content(self, *, goal_review: str = "", task_continuation: str = "") -> str:
         """The one message a continuation turn carries: the goal review's prose and the
         task note, composed by the shared template rather than joined in Python."""
-        return self._prompt_loader.load(
-            "goal_and_task_continuation",
-            {"goal_review": goal_review, "task_continuation": task_continuation},
-        ).strip()
+        if not self._features.present("continuation"):
+            return task_continuation.strip() or goal_review.strip()
+        return self._features.continuation.continuation_content(
+            goal_review=goal_review, task_continuation=task_continuation
+        )
 
     @property
     def task_continuations(self) -> int:
-        return self._task_continuations
+        if not self._features.present("continuation"):
+            return 0
+        return self._features.continuation.task_continuations
 
     def note_task_continuation(self) -> None:
-        self._task_continuations += 1
-        self._mark_session_dirty()
+        if self._features.present("continuation"):
+            self._features.continuation.note_task_continuation()
 
     def restore_task_allowance(self) -> None:
-        if self._task_continuations == 0:
-            return
-        self._task_continuations = 0
-        self._mark_session_dirty()
+        if self._features.present("continuation"):
+            self._features.continuation.restore_task_allowance()
 
     def session_snapshot(self) -> dict:
         """The durable non-conversation state — the goal and the tasks — persisted beside the checkpoint."""
         return {
             "goal": self._goal.model_dump() if self._goal is not None else None,
             "tasks": self._task_manager.snapshot(),
-            "task_continuations": self._task_continuations,
+            "task_continuations": (
+                self._features.continuation.task_continuations
+                if self._features.present("continuation")
+                else 0
+            ),
             "compaction": self._compaction_control.snapshot(),
             "turn_recovery": self._turn_recovery,
         }
@@ -1126,7 +1160,10 @@ class AgentRuntime(
                 logger.warning("discarding a stored goal that no longer validates")
         self._goal = goal
         self._task_manager.restore(snapshot.get("tasks", {}) or {})
-        self._task_continuations = max(0, int(snapshot.get("task_continuations", 0) or 0))
+        if self._features.present("continuation"):
+            self._features.continuation.restore_task_continuations(
+                snapshot.get("task_continuations", 0) or 0
+            )
         self._compaction_control = _CompactionControl.restore(snapshot.get("compaction"))
         recovery = str(snapshot.get("turn_recovery") or "none")
         # A process that died after claiming the retry still owes that retry after restart.

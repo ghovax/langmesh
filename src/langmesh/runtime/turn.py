@@ -222,10 +222,11 @@ class _RunsTurns:
                 "instructions": instructions,
                 "skills": lines(skills_payload(agent_skills)),
                 "memories": lines(memories_payload(memories)),
-                "observational_memory": self._prompt_loader.load(
-                    "observational_memory",
-                    {"metadata": compact(self._observation_registry_metadata)},
-                ).strip(),
+                "observational_memory": (
+                    self._features.observations.system_variable()
+                    if self._features.present("observations")
+                    else ""
+                ),
                 "agent_context": agent_context,
                 "computer_control_guidance": computer_control_guidance,
                 "toolbox": toolbox,
@@ -606,9 +607,7 @@ class _RunsTurns:
             if self._compaction_control.recorded:
                 compaction_reason = self._compaction_control.reason
                 try:
-                    self._observation_registry_metadata = (
-                        await self._compaction_preparation.describe()
-                    )
+                    self._features.observations.adopt(await self._compaction_preparation.describe())
                 except Exception as error:  # noqa: BLE001 — the compaction verification below remains authoritative
                     self.note_observation_registry({}, str(error) or type(error).__name__)
                 async for compaction_event in self.compact(reason=compaction_reason):
@@ -645,9 +644,7 @@ class _RunsTurns:
                 # user history or a stale reminder after another process repairs the registry.
                 messages.append(
                     self._reminder_message(
-                        self._prompt_loader.load(
-                            "observation_registry_error", {"error": registry_error}
-                        )
+                        self._features.observations.error_request_message(registry_error)
                     )
                 )
 

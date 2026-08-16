@@ -479,8 +479,6 @@ class ToolMiddleware(Protocol):
 class PermissionPolicy(Protocol):
     """Enables tools and rejects disallowed argument shapes."""
 
-    def check_tool(self, tool_name: str, /, **arguments: Any) -> None: ...
-
     def check_bash_background(self) -> None: ...
 
 

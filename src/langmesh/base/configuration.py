@@ -11,7 +11,7 @@ from fnmatch import fnmatch
 import shutil
 import sys
 from pathlib import Path
-from typing import ClassVar, Literal, Optional
+from typing import Callable, ClassVar, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -992,18 +992,37 @@ class PermissionDenied(RuntimeError):
 
 
 class PromptLoader:
-    def __init__(self, prompts_directory: str | Path, extension: str = "md"):
+    def __init__(
+        self,
+        prompts_directory: str | Path,
+        extension: str = "md",
+        *,
+        overrides: Optional[Callable[[str], Optional[str]]] = None,
+        fallback: Optional["PromptLoader"] = None,
+    ):
+        """A template directory, an override hook consulted first, and an optional fallback loader.
+
+        The override hook answers a template name with a template already in hand, so a caller's
+        catalogue can supply one without touching this directory. The fallback lets a plugin chain
+        its own templates behind the shared ones when a name is not its own.
+        """
         self._directory = Path(prompts_directory)
         self._extension = extension
+        self._overrides = overrides
+        self._fallback = fallback
 
     def load(self, template_name: str, variables: Mapping[str, object]) -> str:
-        """A template rendered with these variables, its text read from disk only when the file has changed."""
+        """A template rendered with these variables, read from disk only when the file has changed."""
+        if self._overrides is not None:
+            override = self._overrides(template_name)
+            if override is not None:
+                return self._replace_variables(override, variables, template_name)
         from langmesh.base.file_cache import parsed_file
 
         path = self._directory / f"{template_name}.{self._extension}"
         content = parsed_file(path, lambda each: each.read_text())
         if content is None:
-            return ""
+            return self._fallback.load(template_name, variables) if self._fallback is not None else ""
         return self._replace_variables(content, variables, template_name)
 
     @classmethod
