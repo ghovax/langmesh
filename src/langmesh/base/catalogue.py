@@ -152,6 +152,17 @@ class FileCatalogue:
             return ""
         return PromptLoader(directory).load(name, dict(variables))
 
+    def prompt_override(self, name: str) -> Optional[str]:
+        """A template this catalogue itself carries, or ``None`` so the caller's shipped one serves."""
+        from langmesh.base.file_cache import parsed_file
+
+        directory = self._roots.prompts
+        if directory is None:
+            return None
+        path = directory / f"{name}.md"
+        content = parsed_file(path, lambda each: each.read_text())
+        return None if content is None else content
+
 
 class Catalogue:
     """Everything supplied in code and nothing read from disk."""
@@ -196,6 +207,10 @@ class Catalogue:
             return PromptLoader.render(template, dict(variables), name)
         directory = self._fallback_prompts or packaged_prompts_directory()
         return PromptLoader(directory).load(name, dict(variables))
+
+    def prompt_override(self, name: str) -> Optional[str]:
+        """The in-memory template this catalogue carries for ``name``, or ``None`` when it carries none."""
+        return self._prompts.get(name)
 
 
 def packaged_prompts_directory() -> Path:
