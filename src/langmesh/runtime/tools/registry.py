@@ -621,7 +621,7 @@ async def control_screen(
 
     from langmesh.computer import targets as target_registry, workflows as workflow_registry
 
-    from langmesh.runtime.permissions import MUTATING_SCREEN_PRIMITIVES
+    from langmesh.runtime.features.permissions import MUTATING_SCREEN_PRIMITIVES
 
     services = current_tool_services()
     script = str(script)
