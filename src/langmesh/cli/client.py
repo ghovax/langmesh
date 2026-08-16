@@ -10,8 +10,8 @@ from typing import Any, Optional
 
 import httpx
 
-from langmesh.base.paths import daemon_socket_path, daemon_token_path
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.confinement.paths import daemon_socket_path, daemon_token_path
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 
 class DaemonError(RuntimeError):

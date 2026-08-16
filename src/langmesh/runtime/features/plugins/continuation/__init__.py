@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from langmesh.base.serialization import compact
+from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tasks import TaskManager
 from langmesh.runtime.continuation import TuningContinuationPolicy
 from langmesh.runtime.features import Feature, PluginContext, PluginHost

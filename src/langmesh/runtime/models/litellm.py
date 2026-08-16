@@ -22,7 +22,7 @@ from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import PrivateAttr, SecretStr
 
-from langmesh.base.serialization import compact
+from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.cache_trace import (
     ITEM,
     TOOLS,
@@ -33,7 +33,7 @@ from langmesh.runtime.cache_trace import (
     provider_cache_key,
     trace,
 )
-from langmesh.base.message_content import (
+from langmesh.base.content.message_content import (
     REASONING_MODEL_KEY,
     carried_reasoning_for,
     content_blocks_to_message_content,

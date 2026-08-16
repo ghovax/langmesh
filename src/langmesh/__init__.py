@@ -10,9 +10,9 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, AsyncIterator, Mapping, Optional, Sequence
 
-from langmesh.base.catalogue import Catalogue
-from langmesh.base.attachments import AttachmentInput, PathAttachments
-from langmesh.base.tools import ToolGrant, ToolLike, as_tool_grants
+from langmesh.base.contracts.catalogue import Catalogue
+from langmesh.base.content.attachments import AttachmentInput, PathAttachments
+from langmesh.base.contracts.tools import ToolGrant, ToolLike, as_tool_grants
 from langmesh.base.configuration import (
     AgentConfiguration,
     BashToolConfiguration,
@@ -24,14 +24,14 @@ from langmesh.base.configuration import (
     ToolboxConfiguration,
     ToolsConfiguration,
 )
-from langmesh.base.permission_mode import PermissionMode
-from langmesh.base.errors import CompactionBlockedError
-from langmesh.base.instructions import Instruction
-from langmesh.base.observation_store import ObservationRegistryError
-from langmesh.base.observations import ObservationRegistry
-from langmesh.base.file_leases import FileLeaseManager
-from langmesh.base.mcp_client import MCPServerManager
-from langmesh.base.resources import (
+from langmesh.base.configuration.permission_mode import PermissionMode
+from langmesh.base.primitives.errors import CompactionBlockedError
+from langmesh.base.content.instructions import Instruction
+from langmesh.base.persistence.observation_store import ObservationRegistryError
+from langmesh.base.persistence.observations import ObservationRegistry
+from langmesh.base.confinement.file_leases import FileLeaseManager
+from langmesh.base.contracts.mcp_client import MCPServerManager
+from langmesh.base.persistence.resources import (
     LocalResourceChanges,
     MaterializedResources,
     OverlayResources,
@@ -42,8 +42,8 @@ from langmesh.base.resources import (
     WorkspaceResourcesLike,
     resource_path,
 )
-from langmesh.base.skills import Skill
-from langmesh.base.worktrees import SessionWorktree, SessionWorktreeManager
+from langmesh.base.content.skills import Skill
+from langmesh.base.persistence.worktrees import SessionWorktree, SessionWorktreeManager
 from langmesh.locations.executor import LocationExecutor, LocalExecutor, SshExecutor
 from langmesh.runtime.compaction import (
     DirectCompactionPreparation,
@@ -57,7 +57,7 @@ from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile, Sess
 from langmesh.runtime.hooks import MaximumToolCalls
 from langmesh.runtime.locations import Location
 from langmesh.runtime.session_control import PendingTurn, SessionPhase, SessionState
-from langmesh.base.ports import (
+from langmesh.base.contracts.ports import (
     Approval,
     Approvals,
     Attachments,
@@ -97,7 +97,7 @@ from langmesh.base.ports import (
     WorkspaceManager,
     describe_unmet,
 )
-from langmesh.base.schedules import (
+from langmesh.base.persistence.schedules import (
     ScheduleError,
     is_due,
     next_firing,
@@ -320,7 +320,7 @@ class Session:
         resources: WorkspaceResourcesLike | None = None,
     ) -> None:
         from langmesh.base.configuration import Configuration
-        from langmesh.base.identifiers import new_id
+        from langmesh.base.primitives.identifiers import new_id
 
         if isinstance(agent, str):
             raise TypeError(
@@ -451,7 +451,7 @@ class Session:
                     raise RuntimeError(
                         "non-local resources require `async with Session(...)` so LangMesh can hold their materialized POSIX view"
                     )
-            from langmesh.base.tuning import set_tuning, tuning_from_policy
+            from langmesh.base.primitives.tuning import set_tuning, tuning_from_policy
             from langmesh.runtime.runtime import AgentRuntime
 
             # The tuning policy is bound per task, so binding it here scopes it to the caller rather than the interpreter.
@@ -459,25 +459,25 @@ class Session:
             _bind_retrieval_policy(self._configuration)
             # Both are bound per task, so two sessions in one interpreter can hold different credentials and tracers.
             if self._credentials is not None:
-                from langmesh.base.credentials import set_credentials
+                from langmesh.base.identity.credentials import set_credentials
 
                 self._bindings.append(("credentials", set_credentials(self._credentials)))
             if self._tracer_provider is not None:
-                from langmesh.base.telemetry import set_tracer
+                from langmesh.base.primitives.telemetry import set_tracer
 
                 self._bindings.append(
                     ("tracer", set_tracer(self._tracer_provider.get_tracer("langmesh")))
                 )
             # The directory the caller supplied plus the packaged base layer, and deliberately nothing of `$HOME`.
             if self._catalogue is None:
-                from langmesh.base.catalogue import project_catalogue
+                from langmesh.base.contracts.catalogue import project_catalogue
 
                 catalogue = project_catalogue(self._configuration, self._directory)
             else:
                 catalogue = self._catalogue
             compaction_preparation = self._components.compaction_preparation
             if compaction_preparation is None:
-                from langmesh.base.observation_store import SQLiteObservationStore
+                from langmesh.base.persistence.observation_store import SQLiteObservationStore
                 from langmesh.runtime.compaction import ObservationCompactionPreparation
 
                 compaction_preparation = ObservationCompactionPreparation(
@@ -555,7 +555,7 @@ class Session:
             raise RuntimeError("prepare_worktree requires a local directory-backed session")
         manager = self._workspace
         if manager is None:
-            from langmesh.base.worktrees import SessionWorktreeManager
+            from langmesh.base.persistence.worktrees import SessionWorktreeManager
 
             manager = SessionWorktreeManager()
         prepared = await manager.prepare(self._session_id, self._directory, strategy)
@@ -1101,11 +1101,11 @@ class Session:
         for kind, token in reversed(self._bindings):
             with contextlib.suppress(Exception):
                 if kind == "credentials":
-                    from langmesh.base.credentials import reset_credentials
+                    from langmesh.base.identity.credentials import reset_credentials
 
                     reset_credentials(token)
                 else:
-                    from langmesh.base.telemetry import reset_tracer
+                    from langmesh.base.primitives.telemetry import reset_tracer
 
                     reset_tracer(token)
         self._bindings.clear()
@@ -1140,7 +1140,7 @@ class Session:
                         [Path(self._directory) / ".agents"]
                     ).enabled_servers()
                     if servers:
-                        from langmesh.base.mcp_client import MCPServerManager
+                        from langmesh.base.contracts.mcp_client import MCPServerManager
 
                         manager = MCPServerManager(servers)
                         await manager.start()

@@ -6,7 +6,7 @@ import json
 from hashlib import sha256
 from typing import Any
 
-from langmesh.base.tuning import Tunable, active_tuning, clip_to_tokens
+from langmesh.base.primitives.tuning import Tunable, active_tuning, clip_to_tokens
 
 # Purely encoding: the value that parses back out is identical either way.
 _SEPARATORS = (",", ":")

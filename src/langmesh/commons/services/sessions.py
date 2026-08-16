@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from fastapi import HTTPException
-from langmesh.base.worktrees import SessionWorktree, WorktreeStrategy
+from langmesh.base.persistence.worktrees import SessionWorktree, WorktreeStrategy
 from pathlib import Path
 from typing import Any, cast
 from langmesh.commons import state
@@ -14,7 +14,7 @@ from langmesh.commons.services.broadcast import _publish_broadcast
 
 def _normalize_permission_mode(mode: str) -> str:
     """A validated permission mode at a persistence boundary."""
-    from langmesh.base.permission_mode import PermissionMode
+    from langmesh.base.configuration.permission_mode import PermissionMode
 
     return str(PermissionMode.resolve(mode))
 

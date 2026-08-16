@@ -19,7 +19,7 @@ from langmesh.computer.surface import (
     resolve_caret,
     resolve_range,
 )
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 message = message_loader("computer")
 

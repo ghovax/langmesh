@@ -19,8 +19,8 @@ from pydantic import AnyUrl
 # How long to wait for one server's handshake at startup before booting without it.
 
 from langmesh.base.configuration import MCPServerConfiguration
-from langmesh.base.tuning import Tunable, active_tuning
-from langmesh.base.errors import log_fields
+from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmesh.base.primitives.errors import log_fields
 
 logger = logging.getLogger(__name__)
 

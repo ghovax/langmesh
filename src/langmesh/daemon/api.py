@@ -16,13 +16,13 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
-from langmesh.base.permission_mode import PermissionMode
-from langmesh.base.tuning import Tunable, active_tuning
-from langmesh.base import telemetry
+from langmesh.base.configuration.permission_mode import PermissionMode
+from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmesh.base.primitives import telemetry
 from langmesh.daemon import state
 from langmesh.daemon.registry import SessionRecord
-from langmesh.base.serialization import compact
-from langmesh.base.errors import log_fields
+from langmesh.base.primitives.serialization import compact
+from langmesh.base.primitives.errors import log_fields
 
 logger = logging.getLogger(__name__)
 

@@ -13,7 +13,7 @@ import time
 
 from contextlib import suppress
 from datetime import datetime, timezone
-from langmesh.base import telemetry as _telemetry
+from langmesh.base.primitives import telemetry as _telemetry
 from langmesh.base.confinement import parse_access_request
 from langmesh.runtime.internals import (
     _cap_model_result_payload,
@@ -32,7 +32,7 @@ from langmesh.runtime.locations import (
     ResolvedLocation,
     ToolLocationError,
 )
-from langmesh.base.tuning import current_context_window
+from langmesh.base.primitives.tuning import current_context_window
 from langmesh.runtime.turn_events import (
     DeniedInjection,
     Error,
@@ -44,7 +44,7 @@ from langchain_core.messages import ToolMessage
 from pydantic import ValidationError
 from typing import Any, AsyncIterator, cast
 import asyncio
-from langmesh.base.serialization import compact
+from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.features.plugins.background import BackgroundJobsFeature
 from langmesh.runtime.tools.execution import (
     bind_tool_decision,

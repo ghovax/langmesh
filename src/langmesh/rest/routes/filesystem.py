@@ -21,7 +21,7 @@ from langmesh.rest.services.filesystem import (
     _open_folder_picker,
     _validate_directory_payload,
 )
-from langmesh.base.serialization import compact
+from langmesh.base.primitives.serialization import compact
 
 router = APIRouter()
 

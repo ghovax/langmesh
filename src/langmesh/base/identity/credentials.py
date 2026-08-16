@@ -20,8 +20,8 @@ from typing import Any, Optional
 
 import httpx
 
-from langmesh.base.paths import oauth_token_path
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.confinement.paths import oauth_token_path
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 # Codex's public OAuth client and endpoints, reused so the consent screen mints a subscription-scoped token.
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -206,7 +206,7 @@ async def valid_tokens() -> ChatGPTTokens:
     tokens = await asyncio.to_thread(load_tokens)
     if tokens is None:
         raise ChatGPTAuthError(
-            "Not signed in to ChatGPT. Run `langmesh auth login`, sign in from Settings, or drive `langmesh.base.credentials.ChatGPTLoginFlow` yourself."
+            "Not signed in to ChatGPT. Run `langmesh auth login`, sign in from Settings, or drive `langmesh.base.identity.credentials.ChatGPTLoginFlow` yourself."
         )
     if not tokens.is_expired():
         return tokens

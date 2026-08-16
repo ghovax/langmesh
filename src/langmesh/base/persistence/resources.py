@@ -93,7 +93,7 @@ class LocalResourceChanges:
         self.root = Path(root).expanduser().absolute()
 
     def subscribe(self, prefix: str = "") -> ResourceSubscription:
-        from langmesh.base.observation_store import NativeFileSubscription
+        from langmesh.base.persistence.observation_store import NativeFileSubscription
 
         root = self.root
         normalized = resource_path(prefix) if prefix else ""

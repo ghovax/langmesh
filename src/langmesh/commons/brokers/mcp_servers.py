@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from langmesh.base.configuration import Configuration
-from langmesh.base.mcp_client import MCPServerManager
+from langmesh.base.contracts.mcp_client import MCPServerManager
 from langmesh.commons import state
 
 

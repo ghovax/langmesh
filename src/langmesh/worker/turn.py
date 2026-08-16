@@ -19,9 +19,9 @@ from a2a.utils import new_task
 from langchain_core.messages import messages_to_dict
 
 from langmesh.runtime.features import access as _features
-from langmesh.base import telemetry as _telemetry
+from langmesh.base.primitives import telemetry as _telemetry
 from langmesh.base.configuration import PromptLoader
-from langmesh.base.serialization import compact, conversation_snapshot_id
+from langmesh.base.primitives.serialization import compact, conversation_snapshot_id
 from langmesh.protocol.errors import _safe_turn_error
 from langmesh.protocol.events import ErrorEvent, InboundMessageEvent, RetryEvent, StatusEvent
 from langmesh.protocol.metadata import (
@@ -342,7 +342,7 @@ class _TurnRunner:
 
     async def _publish_usage_snapshot(self) -> None:
         """Send the daemon what this turn learned about the account's limits. Never fatal to the turn."""
-        from langmesh.base.subscription import get_usage_snapshot
+        from langmesh.base.identity.subscription import get_usage_snapshot
 
         snapshot = get_usage_snapshot()
         if not snapshot:

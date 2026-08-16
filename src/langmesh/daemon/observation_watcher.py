@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from langmesh.base.observation_store import (
+from langmesh.base.persistence.observation_store import (
     SQLiteObservationStore,
     NativeFileSubscription,
 )

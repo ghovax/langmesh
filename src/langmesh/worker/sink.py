@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable, assert_never
 
 
-from langmesh.base import telemetry as _telemetry
+from langmesh.base.primitives import telemetry as _telemetry
 from langmesh.protocol.events import (
     CompactionEvent,
     CumulativeUsage,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from langmesh.base.configuration_file import (
+from langmesh.base.configuration.configuration_file import (
     flatten as _flatten,
     load as _load,
     parse as _parse,
@@ -15,7 +15,7 @@ from langmesh.base.configuration_file import (
     save as _save,
     write as _write,
 )
-from langmesh.base.serialization import compact
+from langmesh.base.primitives.serialization import compact
 
 
 logger = logging.getLogger("langmesh.configure")
@@ -23,14 +23,14 @@ logger = logging.getLogger("langmesh.configure")
 
 def _known(path: str):
     """The schema's entry for a dotted path, or `None`, so a typo never looks like a stored setting."""
-    from langmesh.base.configuration_schema import setting_for
+    from langmesh.base.configuration.configuration_schema import setting_for
 
     return setting_for(path)
 
 
 def _everything(data: dict) -> dict:
     """Every setting the schema defines, with what it ships at and what this machine runs on."""
-    from langmesh.base.configuration_schema import leaf_settings
+    from langmesh.base.configuration.configuration_schema import leaf_settings
 
     listing: dict[str, dict] = {}
     for setting in leaf_settings():

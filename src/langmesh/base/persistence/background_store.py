@@ -11,10 +11,10 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from langmesh.base.paths import BACKGROUND_DATABASE_FILENAME, data_directory
+from langmesh.base.confinement.paths import BACKGROUND_DATABASE_FILENAME, data_directory
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from langmesh.base.ports import JobStore
+    from langmesh.base.contracts.ports import JobStore
 
 
 # Lifecycle of a persisted job.

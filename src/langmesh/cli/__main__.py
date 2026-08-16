@@ -11,8 +11,8 @@ from typing import Any
 from tenacity import Retrying, RetryError, retry_if_exception_type, stop_after_delay, wait_fixed
 
 from langmesh.cli.client import DaemonError, call, daemon_is_up, ensure_daemon, stream
-from langmesh.base.serialization import compact
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.serialization import compact
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 
 class _StillRunning(Exception):
@@ -147,7 +147,7 @@ def _session_from_environment() -> str:
     import os
 
     from langmesh.base import environment_variables
-    from langmesh.base.identifiers import is_id
+    from langmesh.base.primitives.identifiers import is_id
 
     value = os.environ.get(environment_variables.SESSION_ID, "").strip()
     return value if is_id(value, "session") else ""
@@ -236,7 +236,7 @@ def _command_daemon(arguments: argparse.Namespace) -> int:
         return 0
     if arguments.action == "endpoint":
         # The two values a client needs to attach to this daemon: where it listens, and the token that authorises talking to it.
-        from langmesh.base.paths import daemon_port_path, daemon_token_path
+        from langmesh.base.confinement.paths import daemon_port_path, daemon_token_path
 
         try:
             port = daemon_port_path().read_text().strip()
@@ -251,7 +251,7 @@ def _command_daemon(arguments: argparse.Namespace) -> int:
         import os
         import signal
 
-        from langmesh.base.paths import runtime_directory
+        from langmesh.base.confinement.paths import runtime_directory
 
         pidfile = runtime_directory() / "langmeshd.pid"
         try:
@@ -274,7 +274,7 @@ def _command_daemon(arguments: argparse.Namespace) -> int:
         import os
         import signal
 
-        from langmesh.base.paths import runtime_directory
+        from langmesh.base.confinement.paths import runtime_directory
 
         pidfile = runtime_directory() / "langmeshd.pid"
         try:
@@ -424,7 +424,7 @@ def _command_auth(arguments: argparse.Namespace) -> int:
     """Sign in to a provider that uses an account rather than an API key, so a headless install can reach one too."""
     import asyncio
 
-    from langmesh.base.credentials import (
+    from langmesh.base.identity.credentials import (
         ChatGPTAuthError,
         ChatGPTLoginFlow,
         clear_tokens,

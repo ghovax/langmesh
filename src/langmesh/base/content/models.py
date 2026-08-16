@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from langmesh.base.providers import (
+from langmesh.base.identity.providers import (
     PROVIDERS,
     ProviderDefinition,
     extend_provider_env_vars,

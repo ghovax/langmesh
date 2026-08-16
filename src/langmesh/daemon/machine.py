@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from langmesh.base.catalogue import project_catalogue
+from langmesh.base.contracts.catalogue import project_catalogue
 from langmesh.base.configuration import Configuration
 
 

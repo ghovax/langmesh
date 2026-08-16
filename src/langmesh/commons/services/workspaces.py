@@ -8,7 +8,7 @@ from langmesh.protocol.dtos import LocationInput, WorkspaceCreateRequest
 from pathlib import Path
 from typing import Any
 import subprocess
-from langmesh.base.identifiers import new_id
+from langmesh.base.primitives.identifiers import new_id
 from langmesh.commons import state
 from langmesh.commons.database import LocationRecord, WorkspaceRecord, SessionRecord
 from langmesh.commons.services.locations import (

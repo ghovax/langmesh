@@ -222,7 +222,7 @@ tuning:
 | `timeout_multiplier`    | `2.0` doubles every wait, for a slow machine. `1.0` is neutral. |
 | `defaults`              | Overrides one value by its own name; every duration is in seconds. |
 
-Those three move whole families. `defaults` is the escape hatch for a single value. Its keys are the names in `langmesh.base.tuning.Tunable`, the same idea as `sandbox.limits` using `setrlimit` constant names. An unknown name is an error at load. An override replaces the value the code ships with, so `context_share` and `timeout_multiplier` still apply on top.
+Those three move whole families. `defaults` is the escape hatch for a single value. Its keys are the names in `langmesh.base.primitives.tuning.Tunable`, the same idea as `sandbox.limits` using `setrlimit` constant names. An unknown name is an error at load. An override replaces the value the code ships with, so `context_share` and `timeout_multiplier` still apply on top.
 
 `langmesh configure --all` lists every setting with what it ships at and what this machine runs on; what each one is _for_ is in the [configuration reference](configuration-reference.md). [`configuration.example.yaml`](configuration.example.yaml) is the same surface as a file at its shipped values. Read it; do not copy it over your own configuration, because everything in it is already the default.
 

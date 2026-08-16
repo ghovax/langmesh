@@ -17,10 +17,10 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from langmesh.base import confinement
 from langmesh.base.confinement import Grant, parse_access_request
-from langmesh.base.model_errors import ContextWindowExceeded
-from langmesh.base.instructions import instructions_payload
-from langmesh.base.serialization import compact
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.content.model_errors import ContextWindowExceeded
+from langmesh.base.content.instructions import instructions_payload
+from langmesh.base.primitives.serialization import compact
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.internals import (
     _coerce_structured_arguments,

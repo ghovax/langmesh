@@ -13,12 +13,12 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException
 
-from langmesh.base.credentials import ChatGPTLoginFlow, clear_tokens, load_tokens
-from langmesh.base.cursor_credentials import CursorLoginFlow
-from langmesh.base.cursor_credentials import clear_tokens as cursor_clear_tokens
-from langmesh.base.cursor_credentials import load_tokens as cursor_load_tokens
-from langmesh.base import cursor_subscription
-from langmesh.base.subscription import (
+from langmesh.base.identity.credentials import ChatGPTLoginFlow, clear_tokens, load_tokens
+from langmesh.base.identity.cursor_credentials import CursorLoginFlow
+from langmesh.base.identity.cursor_credentials import clear_tokens as cursor_clear_tokens
+from langmesh.base.identity.cursor_credentials import load_tokens as cursor_load_tokens
+from langmesh.base.identity import cursor_subscription
+from langmesh.base.identity.subscription import (
     clear_subscription_models_cache,
     clear_usage_snapshot,
     get_usage_snapshot,

@@ -13,7 +13,7 @@ from a2a.types import (
 )
 
 from langmesh.base.configuration import AgentConfiguration
-from langmesh.base.skills import Skill
+from langmesh.base.content.skills import Skill
 from langmesh.protocol.metadata import METADATA_KEY
 
 

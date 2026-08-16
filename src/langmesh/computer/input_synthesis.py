@@ -7,7 +7,7 @@ import time
 import Quartz
 
 # The pacing an operating system needs for a synthesized gesture to register lives in the central tuning policy.
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 # Virtual key codes for the named non-printing keys, which map to a fixed physical key on any layout.
 _NAMED_KEY_CODES = {

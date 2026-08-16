@@ -42,7 +42,7 @@ def _report(error: "TailscaleUnavailable") -> None:
 
 def reach_token(create: bool = True) -> Optional[str]:
     """The durable token, minted on first use, read back from disk so a rotation elsewhere is picked up."""
-    from langmesh.base.paths import reach_token_path
+    from langmesh.base.confinement.paths import reach_token_path
 
     path = reach_token_path()
     try:
@@ -58,7 +58,7 @@ def reach_token(create: bool = True) -> Optional[str]:
 
 def rotate_token() -> str:
     """Mint a new token, which unpairs every device holding the old one."""
-    from langmesh.base.paths import reach_token_path
+    from langmesh.base.confinement.paths import reach_token_path
 
     return _write_token(reach_token_path(), secrets.token_urlsafe(32))
 
@@ -362,7 +362,7 @@ def run(arguments) -> int:
 def _serve(arguments, payload: dict) -> int:
     import uvicorn
 
-    from langmesh.base.paths import daemon_port_path, daemon_token_path
+    from langmesh.base.confinement.paths import daemon_port_path, daemon_token_path
     from langmesh.cli.client import ensure_daemon
     from langmesh.cli.commands.serve import (
         _port_is_taken,

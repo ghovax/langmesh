@@ -24,18 +24,18 @@ from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import PrivateAttr
 
-from langmesh.base.credentials import (
+from langmesh.base.identity.credentials import (
     ChatGPTAuthError,
     load_tokens,
     valid_tokens,
 )
-from langmesh.base.message_content import (
+from langmesh.base.content.message_content import (
     REASONING_MODEL_KEY,
     carried_reasoning_for,
     content_blocks_to_message_content,
     message_text,
 )
-from langmesh.base.model_errors import CONTEXT_OVERFLOW_CODES, ContextWindowExceeded
+from langmesh.base.content.model_errors import CONTEXT_OVERFLOW_CODES, ContextWindowExceeded
 from langmesh.runtime.cache_trace import (
     INSTRUCTIONS,
     ITEM,
@@ -47,8 +47,8 @@ from langmesh.runtime.cache_trace import (
     provider_cache_key,
     trace,
 )
-from langmesh.base.serialization import compact, upstream_detail
-from langmesh.base.subscription import (
+from langmesh.base.primitives.serialization import compact, upstream_detail
+from langmesh.base.identity.subscription import (
     RESPONSES_URL,
     cached_subscription_models,
     capture_usage_headers,

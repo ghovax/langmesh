@@ -11,10 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from langmesh.base.identifiers import new_id
-from langmesh.base.serialization import compact
-from langmesh.base.background_store import STATUS_COMPLETED, STATUS_DELIVERED
-from langmesh.base.ports import JobStore, MemoryJobStore
+from langmesh.base.primitives.identifiers import new_id
+from langmesh.base.primitives.serialization import compact
+from langmesh.base.persistence.background_store import STATUS_COMPLETED, STATUS_DELIVERED
+from langmesh.base.contracts.ports import JobStore, MemoryJobStore
 
 
 # Per-kind presentation: how a completed job is announced and how in-flight ones are grouped in the turn context.

@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from langmesh.base.permission_mode import PermissionMode
+from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.commons.database import SessionRecord as SessionRow
 from langmesh.daemon.registry import LIVE, SessionRecord
 

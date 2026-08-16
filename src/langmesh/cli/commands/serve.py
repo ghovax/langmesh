@@ -331,7 +331,7 @@ def run(arguments) -> int:
     import os
     import signal
 
-    from langmesh.base.paths import daemon_port_path, daemon_token_path, runtime_directory
+    from langmesh.base.confinement.paths import daemon_port_path, daemon_token_path, runtime_directory
     from langmesh.cli.client import daemon_is_up, ensure_daemon
 
     directory = interface_directory()

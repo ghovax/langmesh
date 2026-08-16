@@ -14,7 +14,7 @@ import Quartz
 from CoreFoundation import kCFBooleanTrue
 from Foundation import NSMakeRange
 
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 
 def _resolve_symbols_before_any_thread_exists() -> None:

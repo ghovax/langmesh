@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum, StrEnum
 from typing import Any, Mapping
 
-from langmesh.base.ports import Approval, SuspensionGate
+from langmesh.base.contracts.ports import Approval, SuspensionGate
 
 
 def _plain(value: Any) -> Any:

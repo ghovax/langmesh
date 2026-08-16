@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from langmesh.base.paths import ssh_control_directory, ssh_control_identifier
+from langmesh.base.confinement.paths import ssh_control_directory, ssh_control_identifier
 
 import abc
 import os
@@ -14,7 +14,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 # Baseline command and connect ceilings, scaled at each subprocess boundary by the active timeout knob.
 DEFAULT_TIMEOUT = 120.0

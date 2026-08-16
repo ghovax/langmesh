@@ -12,10 +12,10 @@ from langmesh.base.configuration import (
     list_agent_route_names,
     seed_home_agents,
 )
-from langmesh.base import toolbox
-from langmesh.base.file_leases import FileLeaseManager
-from langmesh.base.paths import data_directory
-from langmesh.base.worktrees import SessionWorktreeManager
+from langmesh.base.content import toolbox
+from langmesh.base.confinement.file_leases import FileLeaseManager
+from langmesh.base.confinement.paths import data_directory
+from langmesh.base.persistence.worktrees import SessionWorktreeManager
 from langmesh.daemon import state
 from langmesh.commons import state as commons_state
 from langmesh.commons.services.agents import _reload_agent_cards
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 async def open_shared_resources() -> None:
     """Build what the daemon holds for everyone, in dependency order."""
     from langmesh.commons.brokers.composio import composio_mcp_servers
-    from langmesh.base.mcp_client import MCPServerManager
+    from langmesh.base.contracts.mcp_client import MCPServerManager
     from langmesh.commons.brokers.remote_agents import _remote_agent_dataclasses
     from langmesh.daemon.persistence.push_store import (
         PersistentPushNotificationConfigurationStore,

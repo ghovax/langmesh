@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
-from langmesh.base import environment_variables
+from langmesh.base.confinement import environment_variables
 from langmesh.base.confinement import Grant, Profile
 
 
@@ -49,7 +49,7 @@ class ToolContext:
         """Where a tool's overflow output lands: somewhere this profile permits, never in the tree being worked in."""
         from pathlib import Path
         from langmesh.base import confinement as _confinement
-        from langmesh.base.identifiers import new_id
+        from langmesh.base.primitives.identifiers import new_id
 
         scratch = _confinement.temporary_directory(self.sandbox, workspace=self.workspace)
         return Path(scratch or tempfile.gettempdir()) / f"{new_id(prefix)}.log"

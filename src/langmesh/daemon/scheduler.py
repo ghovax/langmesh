@@ -6,7 +6,7 @@ import asyncio
 import logging
 
 from langmesh.commons.services import schedules as schedule_service
-from langmesh.base.errors import log_fields
+from langmesh.base.primitives.errors import log_fields
 
 logger = logging.getLogger(__name__)
 

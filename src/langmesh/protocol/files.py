@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 import hashlib
 import mimetypes
 import os
-from langmesh.base import environment_variables
+from langmesh.base.confinement import environment_variables
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -18,9 +18,9 @@ import jwt
 
 from a2a.types import FilePart, FileWithBytes, FileWithUri
 
-from langmesh.base.attachments import attachment_from_path
+from langmesh.base.content.attachments import attachment_from_path
 from langmesh.base.confinement.outbound import UntrustedHostError, pin_to_ip, resolve_public_ips
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 __all__ = ["attachment_from_path"]
 

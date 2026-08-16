@@ -1,6 +1,6 @@
 """The durable summary model and the composeable compaction ports a caller supplies.
 
-The fold itself lives in the `features.compaction` plugin; these are the small values a
+The fold itself lives in the `features.plugins.compaction` plugin; these are the small values a
 product hands the plugin through `RuntimeComponents`: the preparation handoff ports and
 a keep-recent strategy, plus the summary model the hidden summarizer's verdict tool returns.
 """

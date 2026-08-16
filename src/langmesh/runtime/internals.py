@@ -7,17 +7,17 @@ import json
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
-from langmesh.base.credentials import is_signed_in
-from langmesh.base.cursor_credentials import is_signed_in as cursor_is_signed_in
+from langmesh.base.identity.credentials import is_signed_in
+from langmesh.base.identity.cursor_credentials import is_signed_in as cursor_is_signed_in
 from langmesh.base.configuration import Configuration
 from langmesh.runtime.values import ToolStatus, tool_status_from_result
-from langmesh.base.providers import resolve_api_key
-from langmesh.base.models import find_model
-from langmesh.base.tuning import active_tuning, clip_to_tokens, count_tokens, Tunable
+from langmesh.base.identity.providers import resolve_api_key
+from langmesh.base.content.models import find_model
+from langmesh.base.primitives.tuning import active_tuning, clip_to_tokens, count_tokens, Tunable
 from langchain_core.messages import AIMessageChunk
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
-from langmesh.base.serialization import compact
+from langmesh.base.primitives.serialization import compact
 
 
 def settled_arguments(parsed: dict, raw: str) -> dict:
@@ -165,7 +165,7 @@ def _cap_model_result_payload(result: str, *, code: str = "tool_result_truncated
 
 def message_tokens(message: Any) -> int:
     """How much window one message occupies, counting the tool calls and results sent with it."""
-    from langmesh.base.message_content import message_text
+    from langmesh.base.content.message_content import message_text
 
     total = count_tokens(message_text(message))
     for tool_call in getattr(message, "tool_calls", None) or []:

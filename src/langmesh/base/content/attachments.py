@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
-from langmesh.base.models import find_model
-from langmesh.base.serialization import compact
+from langmesh.base.content.models import find_model
+from langmesh.base.primitives.serialization import compact
 
 ATTACHMENTS_KIND = "attachments"
 INLINE_IMAGE_MIME_PREFIX = "image/"
