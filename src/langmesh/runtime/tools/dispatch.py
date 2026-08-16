@@ -347,8 +347,8 @@ class _DispatchesTools:
                 (tool_call_identifier, note) for note in outcome.get("model_guidance", []) if note
             )
             background_job_id = outcome.get("background_job_id")
-            if background_job_id:
-                self._background.bind_tool_call(
+            if background_job_id and self._features.present("background"):
+                self._features.background.runner.bind_tool_call(
                     background_job_id,
                     tool_call_identifier,
                 )
