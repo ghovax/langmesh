@@ -136,7 +136,7 @@ TUNING_DEFAULTS = "tuning.defaults"
 
 def _tuning_defaults(prefix: str) -> list[Setting]:
     """The individual tunables, expanded under `tuning.defaults`, whose keys come from `Tunable`."""
-    from langmesh.base.tuning import Tunable
+    from langmesh.base.primitives.tuning import Tunable
 
     return [
         Setting(

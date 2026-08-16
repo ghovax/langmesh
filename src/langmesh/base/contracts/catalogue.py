@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from langmesh.base.instructions import Instruction, as_instructions
+from langmesh.base.content.instructions import Instruction, as_instructions
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
@@ -75,14 +75,14 @@ class FileCatalogue:
     # Skills and memories, re-read each call so an edit takes effect without a restart.
 
     def skills(self) -> Sequence[Any]:
-        from langmesh.base.skills import load_skills
+        from langmesh.base.content.skills import load_skills
 
         if not self._roots.skills:
             return []
         return load_skills(list(self._roots.skills))
 
     def memories(self) -> Sequence[Any]:
-        from langmesh.base.memories import load_memories
+        from langmesh.base.content.memories import load_memories
 
         if not self._roots.memories:
             return []
@@ -154,7 +154,7 @@ class FileCatalogue:
 
     def prompt_override(self, name: str) -> Optional[str]:
         """A template this catalogue itself carries, or ``None`` so the caller's shipped one serves."""
-        from langmesh.base.file_cache import parsed_file
+        from langmesh.base.persistence.file_cache import parsed_file
 
         directory = self._roots.prompts
         if directory is None:

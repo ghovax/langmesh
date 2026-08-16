@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from langmesh.base.configuration import PromptLoader
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 logger = logging.getLogger(__name__)
 

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from a2a.types import Task
 
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 from langmesh.daemon import state
 
 logger = logging.getLogger(__name__)

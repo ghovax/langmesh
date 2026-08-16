@@ -8,8 +8,8 @@ from typing import Any, Callable
 from a2a.types import Message, Part, Role, Task, TaskState, TaskStatus, TextPart
 from a2a.utils import new_task
 
-from langmesh.base.identifiers import new_id
-from langmesh.base.ports import GoalReviewContext, GoalReviewOutcome
+from langmesh.base.primitives.identifiers import new_id
+from langmesh.base.contracts.ports import GoalReviewContext, GoalReviewOutcome
 from langmesh.worker.sink import _TurnEventSink
 
 

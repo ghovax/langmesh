@@ -4,8 +4,8 @@ from collections.abc import Iterable, Mapping
 import json
 import logging
 import os
-from langmesh.base import environment_variables
-from langmesh.base.tuning import Scaling
+from langmesh.base.confinement import environment_variables
+from langmesh.base.primitives.tuning import Scaling
 import re
 from fnmatch import fnmatch
 import shutil
@@ -16,14 +16,14 @@ from typing import Callable, ClassVar, Literal, Optional
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-from langmesh.base.paths import configuration_file_path, database_file_path  # noqa: F401 — re-exported
-from langmesh.base.permission_mode import PermissionMode
+from langmesh.base.confinement.paths import configuration_file_path, database_file_path  # noqa: F401 — re-exported
+from langmesh.base.configuration.permission_mode import PermissionMode
 
 
 logger = logging.getLogger(__name__)
 
 
-# Where state lives is the placement layer's business, resolved in `langmesh.base.paths`.
+# Where state lives is the placement layer's business, resolved in `langmesh.base.confinement.paths`.
 
 # The packaged configuration is a sibling YAML file, so editing the template is a data change.
 PACKAGED_CONFIGURATION_PATH = Path(__file__).resolve().parent / "configuration.yaml"
@@ -348,12 +348,12 @@ class TuningConfiguration(Section):
     @field_validator("defaults")
     @classmethod
     def _known_defaults(cls, value: dict[str, float]) -> dict[str, float]:
-        from langmesh.base.tuning import unknown_tunable_names
+        from langmesh.base.primitives.tuning import unknown_tunable_names
 
         unknown = unknown_tunable_names(value)
         if unknown:
             raise ValueError(
-                f"unknown tuning default(s): {', '.join(unknown)}. The names that exist are the members of `langmesh.base.tuning.Tunable`; `langmesh configure --all` lists them with their defaults."
+                f"unknown tuning default(s): {', '.join(unknown)}. The names that exist are the members of `langmesh.base.primitives.tuning.Tunable`; `langmesh configure --all` lists them with their defaults."
             )
         return value
 
@@ -683,7 +683,7 @@ class Configuration(Section):
 
     def observation_database_for(self, working_directory: str) -> Path:
         """The workspace-owned observation database beside that workspace's `mcp.json`."""
-        from langmesh.base.observation_store import OBSERVATIONS_FILENAME
+        from langmesh.base.persistence.observation_store import OBSERVATIONS_FILENAME
 
         return self.project_agents_root_for(working_directory) / OBSERVATIONS_FILENAME
 
@@ -1017,7 +1017,7 @@ class PromptLoader:
             override = self._overrides(template_name)
             if override is not None:
                 return self._replace_variables(override, variables, template_name)
-        from langmesh.base.file_cache import parsed_file
+        from langmesh.base.persistence.file_cache import parsed_file
 
         path = self._directory / f"{template_name}.{self._extension}"
         content = parsed_file(path, lambda each: each.read_text())

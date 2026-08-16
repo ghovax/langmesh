@@ -26,14 +26,14 @@ from tenacity import (
     wait_fixed,
 )
 
-from langmesh.base.paths import (
+from langmesh.base.confinement.paths import (
     daemon_port_path,
     daemon_socket_path,
     daemon_token_path,
     log_file_path,
     runtime_directory,
 )
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 logger = logging.getLogger("langmesh.daemon")
 
@@ -259,7 +259,7 @@ async def _serve() -> int:
     import uvicorn
 
     from langmesh.base import confinement
-    from langmesh.base.background_store import reap_orphaned_process_groups
+    from langmesh.base.persistence.background_store import reap_orphaned_process_groups
     from langmesh.base.configuration import Configuration
     from langmesh.daemon import state
     from langmesh.commons import state as commons_state
@@ -424,7 +424,7 @@ async def _serve() -> int:
     )
 
     async def resume_pending_sessions() -> None:
-        from langmesh.base.background_store import get_background_job_store
+        from langmesh.base.persistence.background_store import get_background_job_store
 
         assert state.registry is not None
         assert state.lifecycle is not None
@@ -461,7 +461,7 @@ async def _open_stores() -> None:
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy.orm import sessionmaker
 
-    from langmesh.base.paths import database_file_path
+    from langmesh.base.confinement.paths import database_file_path
     from langmesh.commons import state as commons_state
     from langmesh.commons.database import create_history_schema
     from langmesh.daemon.persistence.turn_store import AppendOnlyTaskStore

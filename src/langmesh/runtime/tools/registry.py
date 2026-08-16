@@ -14,13 +14,13 @@ from langchain.tools import tool
 from langchain_core.tools import StructuredTool
 from pydantic import Field
 
-from langmesh.base.identifiers import new_id
+from langmesh.base.primitives.identifiers import new_id
 from langmesh.runtime.background import current_background_jobs, current_tool_call_id
-from langmesh.base.tuning import Tunable, active_tuning, clip_to_tokens
-from langmesh.base.serialization import compact
+from langmesh.base.primitives.tuning import Tunable, active_tuning, clip_to_tokens
+from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools import context as tool_context, fetching
 from langmesh.runtime.tools.execution import current_tool_decision, current_tool_services
-from langmesh.base.skills import enabled_skills
+from langmesh.base.content.skills import enabled_skills
 from langmesh.runtime.internals import _background_handle_kind
 from langmesh.runtime.features.plugins.goal_review import GoalReview
 from langmesh.runtime.goal import Goal

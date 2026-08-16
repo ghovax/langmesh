@@ -7,7 +7,7 @@ from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel
 
-from langmesh.base.permission_mode import PermissionMode
+from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.locations.executor import LocationExecutor
 
 

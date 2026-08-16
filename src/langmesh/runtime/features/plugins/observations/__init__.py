@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from langmesh.base.serialization import compact
+from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.features.events import MemoryHandoffFailed, MemoryHandoffVerified
 

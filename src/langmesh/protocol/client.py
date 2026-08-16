@@ -17,7 +17,7 @@ from a2a.client import Client, ClientConfig, ClientEvent, ClientFactory
 from a2a.client.card_resolver import A2ACardResolver
 from a2a.types import AgentCard, Message, TransportProtocol
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 logger = logging.getLogger(__name__)
 

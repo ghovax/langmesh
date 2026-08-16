@@ -11,8 +11,8 @@ import secrets
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterator, Optional
 
-from langmesh.base.identifiers import new_id
-from langmesh.base.paths import runtime_directory
+from langmesh.base.primitives.identifiers import new_id
+from langmesh.base.confinement.paths import runtime_directory
 
 # Does this session still exist? Durable, and the registry's own answer.
 LIVE = "live"

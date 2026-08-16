@@ -33,8 +33,8 @@ from a2a.server.context import ServerCallContext
 from a2a.server.tasks import TaskStore
 from a2a.types import Message, Role, Task, TaskState, TaskStatus
 
-from langmesh.base.message_content import content_block_identifier
-from langmesh.base.serialization import compact, conversation_snapshot_id
+from langmesh.base.content.message_content import content_block_identifier
+from langmesh.base.primitives.serialization import compact, conversation_snapshot_id
 from langmesh.protocol.turn_record import ReconcileAction, TurnRecord, reconcile_action
 from langmesh.protocol.events import ErrorEvent
 from langmesh.protocol.parts import _event_part

@@ -66,7 +66,7 @@ Two vocabularies, and they are not the same thing.
 
 - **A log message is an event name.** Lowercase, no terminal punctuation; the facts go in fields, not the sentence. Acronyms and proper nouns keep their capitals wherever they fall, because those are spellings rather than casing.
 - **Human copy is prose.** The interface catalog, an `HTTPException` `detail`, an `RpcError`, CLI output: sentence case with terminal punctuation. A fragment used as a label or a chip stays lowercase.
-- **Never interpolate an exception into a log message.** An exception's message is human copy, so stapling it onto an event reads as a sentence inside a label. Pass the traceback with `exc_info=True`, or the fields with `langmesh.base.errors.describe`, and leave the message an event.
+- **Never interpolate an exception into a log message.** An exception's message is human copy, so stapling it onto an event reads as a sentence inside a label. Pass the traceback with `exc_info=True`, or the fields with `langmesh.base.primitives.errors.describe`, and leave the message an event.
 
 ## Building and signing
 

@@ -3,15 +3,15 @@
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 import langmesh.base.confinement as _confinement
-import langmesh.base.toolbox as _toolbox
+import langmesh.base.content.toolbox as _toolbox
 import langmesh.base.configuration as _configuration
-from langmesh.base import cursor_subscription
-from langmesh.base.models import available_models, list_models, ModelDefinition
-from langmesh.base.subscription import (
+from langmesh.base.identity import cursor_subscription
+from langmesh.base.content.models import available_models, list_models, ModelDefinition
+from langmesh.base.identity.subscription import (
     clear_subscription_models_cache,
     fetch_subscription_models,
 )
-from langmesh.base.providers import PROVIDERS
+from langmesh.base.identity.providers import PROVIDERS
 import asyncio
 from langmesh.protocol.dtos import DictationUpdateRequest
 from langmesh.protocol.dtos import (
@@ -271,7 +271,7 @@ async def update_settings(request: SettingsUpdateRequest):
 async def settings_schema():
     """Every setting there is, with what it holds and what it is set to, as one endpoint for the whole file."""
     from langmesh.base import configuration_file
-    from langmesh.base.configuration_schema import KIND_SECTION, settings as all_settings
+    from langmesh.base.configuration.configuration_schema import KIND_SECTION, settings as all_settings
 
     document = await asyncio.to_thread(configuration_file.load)
     sections: dict[str, dict] = {}
@@ -309,7 +309,7 @@ async def settings_schema():
 async def update_setting(request: SettingValueRequest):
     """Set one setting by its path, validated first, because the daemon reads this file at every start."""
     from langmesh.base import configuration_file
-    from langmesh.base.configuration_schema import setting_for
+    from langmesh.base.configuration.configuration_schema import setting_for
 
     if setting_for(request.path) is None:
         raise HTTPException(status_code=404, detail=f"No setting named {request.path!r}.")
@@ -335,7 +335,7 @@ async def update_setting(request: SettingValueRequest):
 async def reset_setting(path: str):
     """Put one setting back to what the code ships by removing it, so it follows the default from here on."""
     from langmesh.base import configuration_file
-    from langmesh.base.configuration_schema import setting_for
+    from langmesh.base.configuration.configuration_schema import setting_for
 
     if setting_for(path) is None:
         raise HTTPException(status_code=404, detail=f"No setting named {path!r}.")

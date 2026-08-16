@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from langmesh.base.serialization import compact
+from langmesh.base.primitives.serialization import compact
 
 
 class TaskItem(BaseModel):

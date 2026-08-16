@@ -3,7 +3,7 @@
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from langmesh.base.configuration import list_agents
-from langmesh.base.skills import load_skills
+from langmesh.base.content.skills import load_skills
 import asyncio
 from langmesh.protocol.dtos import (
     AgentConfigurationUpdateRequest,

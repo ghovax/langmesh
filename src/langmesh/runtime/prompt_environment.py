@@ -8,13 +8,13 @@ import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from langmesh.base import environment_variables
+from langmesh.base.confinement import environment_variables
 import platform
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator, Optional, Sequence
-from langmesh.base.paths import state_directory
-from langmesh.base.serialization import compact
+from langmesh.base.confinement.paths import state_directory
+from langmesh.base.primitives.serialization import compact
 
 logger = logging.getLogger(__name__)
 

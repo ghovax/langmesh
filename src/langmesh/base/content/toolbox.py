@@ -9,8 +9,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Optional
 
-from langmesh.base import environment_variables
-from langmesh.base.paths import session_toolbox_directory, session_toolboxes_directory
+from langmesh.base.confinement import environment_variables
+from langmesh.base.confinement.paths import session_toolbox_directory, session_toolboxes_directory
 
 # What the environment has to say for the ordinary command to mean this session's own.
 _XDG_STATE = environment_variables.XDG_STATE_HOME

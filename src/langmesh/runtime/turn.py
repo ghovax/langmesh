@@ -6,8 +6,8 @@ import logging
 import os
 from contextlib import ExitStack, suppress
 from datetime import datetime, timezone
-from langmesh.base import telemetry as _telemetry
-from langmesh.base.identifiers import new_id
+from langmesh.base.primitives import telemetry as _telemetry
+from langmesh.base.primitives.identifiers import new_id
 from langmesh.runtime.internals import (
     _CONTINUE,
     _detect_workspace,
@@ -25,17 +25,17 @@ from langmesh.runtime.internals import (
 from langmesh.runtime.prompt_environment import probe_local_environment, probe_user_context
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.values import PermissionAnswer, TurnContext
-from langmesh.base.instructions import instructions_payload
-from langmesh.base.memories import memories_payload
-from langmesh.base.message_content import (
+from langmesh.base.content.instructions import instructions_payload
+from langmesh.base.content.memories import memories_payload
+from langmesh.base.content.message_content import (
     CARRIED_REASONING_KEYS,
     message_content_deltas,
     message_text,
 )
-from langmesh.base.model_errors import ContextWindowExceeded, over_context_window
+from langmesh.base.content.model_errors import ContextWindowExceeded, over_context_window
 from litellm.exceptions import ContextWindowExceededError as ProviderContextWindowExceeded
 from langchain_core.utils.json import parse_partial_json
-from langmesh.base.skills import enabled_skills, skills_for_agent, skills_payload
+from langmesh.base.content.skills import enabled_skills, skills_for_agent, skills_payload
 from langmesh.base.confinement import Denial
 from langmesh.runtime.turn_events import (
     Checkpoint,
@@ -67,8 +67,8 @@ import asyncio
 import platform
 import time
 import uuid
-from langmesh.base.serialization import compact, lines
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.serialization import compact, lines
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 
 logger = logging.getLogger(__name__)
@@ -230,7 +230,7 @@ class _RunsTurns:
             if self._prompt_composer is None:
                 prompt = self._prompt_loader.load("system_prompt", variables)
             else:
-                from langmesh.base.ports import PromptLayer
+                from langmesh.base.contracts.ports import PromptLayer
 
                 prompt = self._prompt_composer.compose(
                     tuple(PromptLayer(name, content) for name, content in variables.items())
@@ -320,7 +320,7 @@ class _RunsTurns:
         error: str = "",
     ) -> None:
         """Hand one completed turn to the caller's transcript: one entry per turn, not per message."""
-        from langmesh.base.ports import TurnSummary
+        from langmesh.base.contracts.ports import TurnSummary
 
         usage = self._token_usage
         summary = TurnSummary(
@@ -489,7 +489,7 @@ class _RunsTurns:
         continue_existing: bool = False,
         stop_after_compaction: bool = False,
     ) -> AsyncIterator[TurnEvent]:
-        from langmesh.base.errors import CompactionBlockedError
+        from langmesh.base.primitives.errors import CompactionBlockedError
 
         if self._features.blocked_reason() and not continue_existing:
             raise CompactionBlockedError(

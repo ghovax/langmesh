@@ -10,8 +10,8 @@ from typing import Any, Optional
 
 import httpx
 
-from langmesh.base.credentials import ChatGPTAuthError, ChatGPTTokens, valid_tokens
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.identity.credentials import ChatGPTAuthError, ChatGPTTokens, valid_tokens
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses"
 # The account's live, plan-specific model catalogue, gated by the client version we present.

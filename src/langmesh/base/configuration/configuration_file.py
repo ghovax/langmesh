@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-from langmesh.base.paths import configuration_file_path
+from langmesh.base.confinement.paths import configuration_file_path
 
 
 def load() -> dict:

@@ -16,7 +16,7 @@ from typing import Any, AsyncIterator, Callable, Sequence
 
 from langchain_core.tools import BaseTool
 
-from langmesh.base.ports import ToolInvocation
+from langmesh.base.contracts.ports import ToolInvocation
 from langmesh.runtime.turn_events import Error, ToolResult
 from langmesh.runtime.values import ToolStatus
 

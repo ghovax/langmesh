@@ -7,7 +7,7 @@ from contextlib import suppress
 
 import ApplicationServices as AS
 
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 
 def accessibility_granted() -> bool:

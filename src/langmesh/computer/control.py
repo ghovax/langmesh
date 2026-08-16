@@ -12,8 +12,8 @@ from typing import Any, Awaitable, Callable, Optional
 
 from langmesh.base import confinement
 from langmesh.computer.surface import message_loader
-from langmesh.base.serialization import compact
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.serialization import compact
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 logger = logging.getLogger("langmesh.computer.control")
 

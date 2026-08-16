@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from langmesh.base.tuning import Tuning, set_tuning, tuning_from_policy
+from langmesh.base.primitives.tuning import Tuning, set_tuning, tuning_from_policy
 from langmesh.daemon.registry import SessionRecord
 
 logger = logging.getLogger(__name__)

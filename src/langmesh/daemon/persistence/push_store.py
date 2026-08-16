@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from langmesh.base import environment_variables
+from langmesh.base.confinement import environment_variables
 from typing import Optional
 
 from sqlalchemy import Column, MetaData, String, Table, Text, delete, select

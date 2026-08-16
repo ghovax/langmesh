@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from langmesh.commons.brokers.composio import composio_mcp_servers
 from langmesh.base.configuration import Configuration, save_api_keys
-from langmesh.base.paths import configuration_file_path
-from langmesh.base.mcp_client import MCPServerManager
-from langmesh.base.serialization import compact
+from langmesh.base.confinement.paths import configuration_file_path
+from langmesh.base.contracts.mcp_client import MCPServerManager
+from langmesh.base.primitives.serialization import compact
 from typing import Optional
 import asyncio
 import hashlib

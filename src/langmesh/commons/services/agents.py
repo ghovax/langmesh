@@ -14,8 +14,8 @@ from langmesh.base.configuration import (
     list_agent_route_names,
     load_agent_configuration,
 )
-from langmesh.base.models import find_model, provider_and_suffix
-from langmesh.base.skills import load_skills, skills_for_agent
+from langmesh.base.content.models import find_model, provider_and_suffix
+from langmesh.base.content.skills import load_skills, skills_for_agent
 from pathlib import Path
 import langmesh.base.configuration as _configuration
 from langmesh.commons import state

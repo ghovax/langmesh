@@ -24,17 +24,17 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langmesh.runtime.models.litellm import ChatLiteLLMModel
 from langmesh.runtime.models.codex import ChatCodexModel
 from langmesh.runtime.models.cursor import ChatCursorModel
-from langmesh.base.models import find_model, resolve_litellm
-from langmesh.base.tools import as_tool_grants
+from langmesh.base.content.models import find_model, resolve_litellm
+from langmesh.base.contracts.tools import as_tool_grants
 from langmesh.runtime.tools.execution import Tool, ToolServices, invoke_supplied
 from langmesh.runtime.tools import registry as tools_registry
 from langmesh.runtime.tools.handlers import HANDLERS
 from langmesh.locations.resolver import LocationAddress, executor_for, location_uri_for
-from langmesh.base.ports import Observation
+from langmesh.base.contracts.ports import Observation
 from langmesh.runtime.tools.context import ToolContext
 
 
-from langmesh.base.permission_mode import PermissionMode
+from langmesh.base.configuration.permission_mode import PermissionMode
 
 from langmesh.runtime.locations import CallExecutionPolicy, Location, ResolvedLocation, ToolLocationError
 from langmesh.runtime.turn_events import (
@@ -50,8 +50,8 @@ from langmesh.runtime.turn import (
     _RunsTurns,
 )
 
-from langmesh.base.serialization import compact
-from langmesh.base.toolbox import toolbox_for
+from langmesh.base.primitives.serialization import compact
+from langmesh.base.content.toolbox import toolbox_for
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.features.plugins.continuation import Continuation
 from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
@@ -407,7 +407,7 @@ class AgentRuntime(
 
         # Where the prompt's material comes from, supplied rather than found by walking hardcoded paths.
         if catalogue is None:
-            from langmesh.base.catalogue import machine_catalogue
+            from langmesh.base.contracts.catalogue import machine_catalogue
 
             catalogue = machine_catalogue(global_configuration, self._project_directory)
         self._catalogue = catalogue
@@ -1034,12 +1034,6 @@ class AgentRuntime(
         except RuntimeError:
             # No loop: an observation outside a turn, with nothing to schedule it on.
             logger.debug("dropped an awaitable observation with no running loop")
-
-    def _background_result_events(self) -> list[TurnEvent]:
-        """Every finished background job, as the turn events the loop yields."""
-        if not self._features.present("background"):
-            return []
-        return self._features.background.drain_events()
 
     def _model_supports_vision(self) -> bool:
         """Whether the model advertises image input. An unknown model is assumed capable, as elsewhere."""

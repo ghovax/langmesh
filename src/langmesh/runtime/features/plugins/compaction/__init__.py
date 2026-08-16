@@ -15,9 +15,9 @@ from itertools import accumulate, takewhile
 from tempfile import TemporaryDirectory
 from typing import Any, AsyncIterator, Literal
 
-from langmesh.base.message_content import forget_carried_reasoning
-from langmesh.base.ports import CompactionState, CompactionSummaryState
-from langmesh.base.errors import log_fields
+from langmesh.base.content.message_content import forget_carried_reasoning
+from langmesh.base.contracts.ports import CompactionState, CompactionSummaryState
+from langmesh.base.primitives.errors import log_fields
 from langmesh.runtime.internals import (
     conversation_tokens,
     message_tokens,
@@ -677,7 +677,9 @@ class Compaction(Feature):
                         break
                     last_text = streamed["last_text"] or last_text
                     last_usage = streamed["last_usage"]
-                    submitted = summarizer._features.compaction.submitted_summary
+                    submitted = summarizer._features.by_type(Compaction)
+                    if submitted is not None:
+                        submitted = submitted.submitted_summary
                     if submitted is not None:
                         if last_usage is not None:
                             logger.info(

@@ -9,7 +9,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import Field, ValidationError, create_model
 
 from langmesh.base.configuration import PromptLoader
-from langmesh.base.serialization import compact
+from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.output import ToolOutput
 from langmesh.runtime.tools.registry import EXPLANATION, tool_description as _description

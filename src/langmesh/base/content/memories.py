@@ -29,7 +29,7 @@ def _as_directories(directories: str | Path | Iterable[str | Path]) -> list[Path
 
 
 def _parse_memory(path: Path) -> Memory:
-    from langmesh.base.file_cache import parsed_file
+    from langmesh.base.persistence.file_cache import parsed_file
 
     content = parsed_file(path, lambda each: each.read_text()) or ""
     match = _FRONTMATTER.match(content)

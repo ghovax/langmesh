@@ -20,10 +20,10 @@ from typing import Any, Awaitable, Callable, Literal, Optional
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError, model_validator
 
 from langmesh.base.configuration import PermissionEvaluator, PromptLoader
-from langmesh.base.ports import GoalReviewContext, GoalReviewOutcome
-from langmesh.base.identifiers import new_id
-from langmesh.base.serialization import compact
-from langmesh.base.tools import ToolGrant
+from langmesh.base.contracts.ports import GoalReviewContext, GoalReviewOutcome
+from langmesh.base.primitives.identifiers import new_id
+from langmesh.base.primitives.serialization import compact
+from langmesh.base.contracts.tools import ToolGrant
 from langmesh.runtime.internals import race_interrupt
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.goal import Goal, NonBlankText

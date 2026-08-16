@@ -13,7 +13,7 @@ import time
 import uuid
 from typing import Any, Optional
 
-from langmesh.base.errors import summary
+from langmesh.base.primitives.errors import summary
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def _worker_main(
     """Load the model once, then answer transcription requests until told to stop."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     # Spawned, so nothing about the daemon's logging is inherited; configured here against the same file.
-    from langmesh.base.paths import log_file_path
+    from langmesh.base.confinement.paths import log_file_path
 
     logging.basicConfig(
         level=logging.INFO,

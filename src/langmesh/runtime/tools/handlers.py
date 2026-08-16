@@ -16,8 +16,8 @@ from typing import Any, AsyncIterator
 
 from langmesh.base.confinement import parse_access_request
 from langmesh.base.configuration import PermissionDenied
-from langmesh.base.file_leases import FileLeaseConflict
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.confinement.file_leases import FileLeaseConflict
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 from langmesh.runtime.background import (
     bind_background_jobs,
     bind_tool_call_id,

@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone as _utc
 from typing import Any, Optional
 
-from langmesh.base.schedules import (
+from langmesh.base.persistence.schedules import (
     PERMISSION_MODES,
     ScheduleError,
     is_due,

@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Callable
 
 from langmesh.base.configuration import AgentConfiguration, Configuration, PromptLoader
-from langmesh.base.ports import CatalogueLike
+from langmesh.base.contracts.ports import CatalogueLike
 from langmesh.runtime.features.bus import PluginBus
 
 

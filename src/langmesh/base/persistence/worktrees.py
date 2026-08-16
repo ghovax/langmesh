@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from langmesh.base.paths import workspaces_directory
+from langmesh.base.confinement.paths import workspaces_directory
 
 
 WorktreeStrategy = Literal["none", "branch", "worktree"]

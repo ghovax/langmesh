@@ -24,8 +24,8 @@ from tenacity import (
     wait_exponential,
 )
 
-from langmesh.base.paths import oauth_token_path
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.confinement.paths import oauth_token_path
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 # Cursor's own login surface and API host, which are the addresses its own client uses.
 LOGIN_URL = "https://cursor.com/loginDeepControl"

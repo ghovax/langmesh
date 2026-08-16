@@ -19,13 +19,13 @@ from a2a.types import DataPart, Message, MessageSendParams, Part, Role, Task, Ta
 from langchain_core.messages import messages_from_dict
 
 from langmesh.runtime.features import access as _features
-from langmesh.base.catalogue import machine_catalogue
-from langmesh.base.tuning import Tunable, active_tuning
-from langmesh.base.file_leases import FileLeaseManager
+from langmesh.base.contracts.catalogue import machine_catalogue
+from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmesh.base.confinement.file_leases import FileLeaseManager
 from langmesh.base.configuration import Configuration
-from langmesh.base.background_store import get_background_job_store
-from langmesh.base.ports import JobStore
-from langmesh.base.worktrees import SessionWorktree
+from langmesh.base.persistence.background_store import get_background_job_store
+from langmesh.base.contracts.ports import JobStore
+from langmesh.base.persistence.worktrees import SessionWorktree
 from langmesh.protocol.metadata import (
     AUTONOMOUS_RESUME_KIND,
     COMPACTION_KIND,
@@ -52,7 +52,7 @@ from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import SuspensionGate
 from langmesh.runtime.values import PermissionAnswer
 from langmesh.worker.turn import _ContextState, _ContinuationPlan, _TurnRunner
-from langmesh.base.serialization import compact
+from langmesh.base.primitives.serialization import compact
 
 logger = logging.getLogger(__name__)
 
@@ -688,7 +688,7 @@ class SessionExecutor(AgentExecutor):
 
     async def set_permission_mode(self, mode: str) -> str:
         """Adopt a new permission mode now rather than on the next turn, since the turn to reach is the running one."""
-        from langmesh.base.permission_mode import PermissionMode
+        from langmesh.base.configuration.permission_mode import PermissionMode
 
         resolved = PermissionMode.resolve(mode)
         self._permission_mode = str(resolved)
@@ -962,7 +962,7 @@ class SessionExecutor(AgentExecutor):
         return default_features(ports)
 
     def _compaction_preparation(self, working_directory: str):
-        from langmesh.base.observation_store import SQLiteObservationStore
+        from langmesh.base.persistence.observation_store import SQLiteObservationStore
         from langmesh.runtime.compaction import ObservationCompactionPreparation
 
         return ObservationCompactionPreparation(
@@ -1146,8 +1146,8 @@ class SessionExecutor(AgentExecutor):
 
     async def start(self) -> None:
         """Prepare the session before its socket opens, without building the runtime it may never need."""
-        from langmesh.base.telemetry import configure as configure_telemetry
-        from langmesh.base.tuning import set_tuning, tuning_from_policy
+        from langmesh.base.primitives.telemetry import configure as configure_telemetry
+        from langmesh.base.primitives.tuning import set_tuning, tuning_from_policy
 
         configuration = self._global_configuration
         set_tuning(tuning_from_policy(configuration.tuning))
@@ -1166,7 +1166,7 @@ class SessionExecutor(AgentExecutor):
         # Each session connects its own MCP servers: connections are stateful and belong to this process.
         servers = configuration.mcp.enabled_servers()
         if servers:
-            from langmesh.base.mcp_client import MCPServerManager
+            from langmesh.base.contracts.mcp_client import MCPServerManager
 
             self._mcp_server_manager = MCPServerManager(servers)
             # Connected in the background, so a hung server does not delay the session's socket.
@@ -1440,7 +1440,7 @@ class SessionExecutor(AgentExecutor):
             }
 
     def _build_card_payload(self) -> dict:
-        from langmesh.base.skills import skills_for_agent
+        from langmesh.base.content.skills import skills_for_agent
         from langmesh.protocol.card import build_agent_card
 
         catalogue = machine_catalogue(self._global_configuration, self._working_directory)

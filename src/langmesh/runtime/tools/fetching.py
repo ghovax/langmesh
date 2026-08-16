@@ -10,9 +10,9 @@ import minify_html
 from bs4 import BeautifulSoup
 from markdownify import markdownify as _markdownify
 
-from langmesh.base.tuning import Tunable, active_tuning, clip_to_tokens
+from langmesh.base.primitives.tuning import Tunable, active_tuning, clip_to_tokens
 from langmesh.locations.executor import LocationExecutor
-from langmesh.base.serialization import compact
+from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools import context as tool_context
 
 #: The formats a caller may ask for, the first being what an unrecognised one falls back to.

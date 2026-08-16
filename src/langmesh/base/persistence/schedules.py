@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
 
-from langmesh.base.permission_mode import PermissionMode
+from langmesh.base.configuration.permission_mode import PermissionMode
 
 __all__ = [
     "PERMISSION_MODES",

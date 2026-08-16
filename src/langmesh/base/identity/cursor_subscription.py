@@ -14,13 +14,13 @@ from typing import Any, Optional
 
 import httpx
 
-from langmesh.base.cursor_credentials import (
+from langmesh.base.identity.cursor_credentials import (
     API_BASE_URL,
     CursorAuthError,
     CursorTokens,
     valid_tokens,
 )
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 RUN_PATH = "/agent.v1.AgentService/RunSSE"
 APPEND_PATH = "/aiserver.v1.BidiService/BidiAppend"

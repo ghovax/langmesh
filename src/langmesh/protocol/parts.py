@@ -6,14 +6,14 @@ from typing import Optional
 
 from a2a.types import DataPart, FilePart, Part, TextPart
 
-from langmesh.base.attachments import (
+from langmesh.base.content.attachments import (
     all_attachments as _all_attachments,
     attachment_payload,
     compose_turn_input,
     image_attachments as _image_attachments,
 )
-from langmesh.base.message_content import content_block_metadata
-from langmesh.base.paths import uploads_directory
+from langmesh.base.content.message_content import content_block_metadata
+from langmesh.base.confinement.paths import uploads_directory
 from langmesh.protocol.events import (
     ToolMetadata,
     ToolResultEvent,
