@@ -2,7 +2,13 @@
 
 ## Granting a tool to a session
 
-A supplied tool is any LangChain `BaseTool`. Pass tools at creation, or grant one later.
+Every tool a session can call is one **`Tool` unit**: its model-facing schema, its description, and the handler that runs it. The built-in tools (`bash`, `search_web`, `set_tasks`, and the rest) are such units in `langmesh.runtime.tools.units`. The runtime holds the set of units the session was composed with and dispatches every call generically by name, so there is no hard-coded routing and a caller's tool of the same name simply replaces a built-in's implementation.
+
+Three ways to compose a session's tools, in increasing control:
+
+- **Defaults.** A `Session` with no `tools` and no `toolset` runs the built-in set, narrowed by the agent profile (an allow-list or a disabled list).
+- **Add or replace.** Pass `tools=[...]`, or call `session.grant_tool(...)` later. Each is added on top of the defaults; a grant whose name matches a built-in replaces its implementation.
+- **Own the roster.** Set `SessionComponents(toolset=[...])` to run exactly those tools and nothing else, or `toolset=()` to run with no tools at all.
 
 ```python
 from langchain_core.tools import tool
@@ -13,14 +19,25 @@ async def incident_lookup(service: str) -> list[dict]:
     """Return open incidents for a service."""
     return await incidents.open_for(service)
 
+# Defaults plus one tool; "bash" would replace the built-in bash, not add a second.
 session = Session(agent, directory="/srv/checkout", tools=[incident_lookup])
+
+# Exactly these tools, and nothing else.
+session = Session(
+    agent, directory="/srv/checkout",
+    components=SessionComponents(toolset=(incident_lookup,)),
+)
+
+# No tools at all.
+session = Session(
+    agent, directory="/srv/checkout",
+    components=SessionComponents(toolset=()),
+)
 ```
 
-The tool becomes dispatchable immediately. Its description and JSON schema are appended to the conversation as a message, so the model learns to call it without the bound tool schema changing. That is what keeps the provider-cache prefix intact.
+A caller-supplied tool is gated by default (`supplied_tool_gate="ask"`, so every call asks); set `"none"` only when the surrounding application already enforces the tool's authority.
 
-A granted tool cannot shadow a built-in tool. It is gated by default (`supplied_tool_gate="ask"`, so every call asks); set `"none"` only when the surrounding application already enforces the tool's authority.
-
-### Granting later, mid-session
+### Appending later, mid-session
 
 ```python
 await session.ask("Inspect the recent incidents.")
@@ -33,7 +50,7 @@ def current_incident() -> dict:
 session.grant_tool(current_incident)
 ```
 
-`grant_tool` works at any moment, including after turns have run. It is append-only, so it never rewrites earlier messages and never bursts the cache.
+`grant_tool` works at any moment, including after turns have run. Its description and schema are appended to the conversation as a message rather than bound into the provider schema, so the model learns to call it without the cache prefix moving.
 
 ### The `ToolGrant` value
 
@@ -46,11 +63,17 @@ grants = as_tool_grants([incident_lookup, ToolGrant(current_incident)])
 session = Session(agent, directory="/srv/checkout", tools=grants)
 ```
 
-The same mechanism powers the internal reviewers. The goal reviewer receives `submit_goal_review` as a grant and the compaction summarizer receives `submit_compaction_summary`; the working session never carries either, so no tool is ever a no-op that exists only to be inert.
+The same mechanism powers the internal reviewers. The goal reviewer receives `submit_goal_review` and the compaction summarizer receives `submit_compaction_summary`; the working session never carries either, so no tool is ever a no-op that exists only to be inert.
 
-## Supplying the whole tool roster
+### How the built-ins are built
 
-Set `toolset` when the application owns the complete tool list. LangMesh still adds the cache-stable internal verdict schemas to the model binding and keeps them inert outside their matching internal review capability.
+Each built-in `Tool` in `langmesh.runtime.tools.units` joins three pieces that used to live apart:
+
+- Its **schema** in `langmesh.runtime.tools.registry` (the LangChain `StructuredTool` the model binds),
+- Its **description** in `langmesh/runtime/tools/descriptions/*.md`,
+- Its **handler** in `langmesh.runtime.tools.handlers` (the execution, over the same `ToolServices` bundle a caller's tool uses).
+
+The registry's schema tools are fully functional on their own: invoked directly, they resolve the current dispatch services and run the same handler. There are no no-op stubs left.
 
 ## Permission policy
 

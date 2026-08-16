@@ -1,4 +1,4 @@
-"""Per-agent background job runner, where completion is pushed onto a queue by the task's own callback rather than polled."""
+"""Per-agent background job runner. Each job is one asyncio task; a finished task is read directly."""
 
 from __future__ import annotations
 
@@ -89,8 +89,6 @@ class BackgroundJobs:
         store: JobStore | None = None,
     ) -> None:
         self._jobs: dict[str, _BackgroundJobRecord] = {}
-        # Ids of jobs whose task has finished, pushed by the done-callback, which is what makes completion event-driven.
-        self._completed_identifiers: asyncio.Queue[str] = asyncio.Queue()
         # Identity for the durable mirror; without a context, durability is simply skipped.
         self._session_id = session_id
         self._agent_name = agent_name
@@ -138,18 +136,16 @@ class BackgroundJobs:
                 arguments=arguments or {},
                 tool_call_id=tool_call_identifier,
             )
+        # Persist the finished result the moment the task completes, so a restart sees it undelivered.
         task.add_done_callback(
-            lambda _task, job_identifier=identifier: self._on_task_done(job_identifier)
+            lambda _task, job_identifier=identifier: self._persist_finished(job_identifier)
         )
         return identifier
 
-    def _on_task_done(self, identifier: str) -> None:
-        """Runs the instant a job's task finishes: persist the result before delivering it, then signal the waiters."""
+    def _persist_finished(self, identifier: str) -> None:
         record = self._jobs.get(identifier)
         if record is not None and self._session_id:
-            result = self._result_string(record)
-            self._store.record_finished(identifier, result, status=STATUS_COMPLETED)
-        self._completed_identifiers.put_nowait(identifier)
+            self._store.record_finished(identifier, self._result_string(record), status=STATUS_COMPLETED)
 
     def bind_tool_call(self, identifier: str, tool_call_identifier: str) -> None:
         """Correlate a job with the tool call that started it, so its completion can reference that call."""
@@ -213,11 +209,13 @@ class BackgroundJobs:
         *wake_events: asyncio.Event,
         timeout: float | None = None,
     ) -> None:
-        """Block until at least one job finishes or a wake event fires, awaiting the completion queue rather than polling."""
-        if not self._jobs or not self._completed_identifiers.empty():
+        """Block until at least one pending job finishes or a wake event fires."""
+        if not self._jobs:
             return
-        completion_getter: asyncio.Future = asyncio.ensure_future(self._completed_identifiers.get())
-        waiters: list[asyncio.Future] = [completion_getter]
+        waiters = [
+            asyncio.ensure_future(asyncio.shield(record.task))
+            for record in self._jobs.values()
+        ]
         for wake_event in wake_events:
             waiters.append(asyncio.ensure_future(wake_event.wait()))
         try:
@@ -225,13 +223,6 @@ class BackgroundJobs:
         finally:
             for waiter in waiters:
                 waiter.cancel()
-        # Put a pulled id back so `drain_completed` sees it; a wake for anything else cancels the getter and loses nothing.
-        if (
-            completion_getter.done()
-            and not completion_getter.cancelled()
-            and completion_getter.exception() is None
-        ):
-            self._completed_identifiers.put_nowait(completion_getter.result())
 
     async def settle_inline(self, identifier: str, timeout: float) -> BackgroundCompletion | None:
         """Give a just-spawned job a brief window to finish inline, draining and returning it if it does."""
@@ -252,7 +243,6 @@ class BackgroundJobs:
             if not task_waiter.done():
                 task_waiter.cancel()
             elif not task_waiter.cancelled():
-                # The task finished by raising, so consume the exception here and re-capture it into the completion below.
                 task_waiter.exception()
         if record.detach_requested.is_set():
             # Backgrounded by the user: mark it detached so a Stop leaves it running, and hand back the started placeholder.
@@ -260,27 +250,21 @@ class BackgroundJobs:
             return None
         if not record.task.done():
             return None
-        record = self._jobs.pop(identifier, None)
-        if record is None:
-            return None
-        # The stale queued id is harmless because `drain_completed` skips ids no longer tracked.
+        self._jobs.pop(identifier, None)
         if self._session_id:
             self._store.mark_delivered(identifier)
         return self._build_completion(record)
 
     def drain_completed(self) -> list[BackgroundCompletion]:
-        """Remove and return every finished job that has signalled completion."""
-        signalled: list[str] = []
-        while not self._completed_identifiers.empty():
-            signalled.append(self._completed_identifiers.get_nowait())
+        """Remove and return every finished job, read straight off the finished tasks."""
         completions: list[BackgroundCompletion] = []
-        for identifier in signalled:
-            record = self._jobs.pop(identifier, None)
-            if record is None:  # already drained (deduplicates repeated signals)
+        for identifier, record in list(self._jobs.items()):
+            if not record.task.done():
                 continue
-            completions.append(self._build_completion(record))
+            self._jobs.pop(identifier, None)
             if self._session_id:
                 self._store.mark_delivered(identifier)
+            completions.append(self._build_completion(record))
         return completions
 
     def cancel_all(self) -> None:

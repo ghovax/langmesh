@@ -336,7 +336,7 @@ class _DecidesPermissions:
     ) -> _ToolPlan:
         """The verdict for one call. One path for every tool; only the rule table and the escape differ."""
         plan = _ToolPlan(tool_call_id=tool_call_identifier)
-        if self._compaction_control.phase == "waiting" and tool_name in {"bash", "load_skill"}:
+        if self._compaction_control.waiting and tool_name in {"bash", "load_skill"}:
             # The handoff protocol itself: local foreground Bash and read-only skill loading; the turn loop rejects every other shape.
             return plan
         schema = self._tool_schemas.get(tool_name)
@@ -538,7 +538,7 @@ class _DecidesPermissions:
             return subject, tools.screen.decide(
                 subject, unmatched=RULE_ASK if mutations else RULE_ALLOW
             )
-        if tool_name in self._extra_tools:
+        if tool_name in self._supplied_tool_names:
             # A supplied tool is unknown to the engine, so it is asked about unless the caller said otherwise.
             return tool_name, RULE_ALLOW if self._supplied_tool_gate == "none" else RULE_ASK
         return tool_name, RULE_ALLOW

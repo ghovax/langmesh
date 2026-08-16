@@ -12,8 +12,8 @@ LangMesh targets **macOS on Apple Silicon (`aarch64`)**. The screen-control tool
 
 The app is **self-signed, not Apple-notarized**, so macOS Gatekeeper refuses the first launch with an "unidentified developer" or "damaged" message. This is expected. Clear it once, either way:
 
-- right-click `LangMesh.app`, choose **Open**, then **Open** again in the dialog, or
-- from a terminal:
+- Right-click `LangMesh.app`, choose **Open**, then **Open** again in the dialog, or
+- From a terminal:
 
   ```shell
   xattr -dr com.apple.quarantine /Applications/LangMesh.app

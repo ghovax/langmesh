@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -30,6 +30,16 @@ class SessionSnapshot:
     running: bool
 
 
+@dataclass
+class _TurnTail:
+    """One open turn's live suffix: its events, and whether it is still running or durably persisted."""
+
+    turn_id: str
+    events: list[dict] = field(default_factory=list)
+    durable: bool = False
+    running: bool = True
+
+
 class SessionEventBus:
     """Sequence, replay and bounded fan-out for the latency-critical live session stream."""
 
@@ -39,12 +49,9 @@ class SessionEventBus:
         self._subscriber_capacity = subscriber_capacity
         self._subscribers: dict[str, set[SessionSubscription]] = {}
         self._sequences: dict[str, int] = {}
-        # Only the current turn, compacted by adjacent delta. Durable history owns completed turns.
-        self._replay: dict[str, list[dict]] = {}
-        self._replay_turn_ids: dict[str, str] = {}
-        self._running: set[str] = set()
+        # One open turn's live suffix per session; retired once it is durable and not running.
+        self._tails: dict[str, _TurnTail] = {}
         self._activity: set[str] = set()
-        self._durable: set[tuple[str, str]] = set()
         self._block_cursors: dict[str, dict[tuple[str, str], int]] = {}
         # Unlike the wire sequence, this also changes for replay/durability transitions.
         self._versions: dict[str, int] = {}
@@ -56,12 +63,13 @@ class SessionEventBus:
 
     def snapshot(self, session_id: str) -> SessionSnapshot:
         """Atomically describe the live suffix through one sequence watermark."""
+        tail = self._tails.get(session_id)
         return SessionSnapshot(
             events=tuple(
                 {**event, **({"chunks": list(event["chunks"])} if "chunks" in event else {})}
-                for event in self._replay.get(session_id, ())
+                for event in (tail.events if tail is not None else ())
             ),
-            turn_id=self._replay_turn_ids.get(session_id, ""),
+            turn_id=tail.turn_id if tail is not None else "",
             sequence=self._sequences.get(session_id, 0),
             version=self._versions.get(session_id, 0),
             running=session_id in self._activity,
@@ -83,21 +91,19 @@ class SessionEventBus:
     def _changed(self, session_id: str) -> None:
         self._versions[session_id] = self._versions.get(session_id, 0) + 1
 
-    def _retire(self, session_id: str, turn_id: str) -> None:
-        if self._replay_turn_ids.get(session_id) != turn_id:
-            return
-        self._replay.pop(session_id, None)
-        self._replay_turn_ids.pop(session_id, None)
+    def _retire(self, session_id: str) -> None:
+        """Drop a closed turn's suffix once durable history owns it, so a new subscriber starts from history."""
+        self._tails.pop(session_id, None)
         self._block_cursors.pop(session_id, None)
-        self._durable.discard((session_id, turn_id))
         self._changed(session_id)
 
     def _remember(self, session_id: str, event: dict) -> None:
-        if session_id not in self._running or event.get("kind") == "turn":
+        """Record a live event into the open turn's suffix, coalescing adjacent deltas."""
+        tail = self._tails.get(session_id)
+        if tail is None or not tail.running or event.get("kind") == "turn":
             return
-        replay = self._replay.setdefault(session_id, [])
-        if event.get("kind") == "delta" and replay:
-            previous = replay[-1]
+        if event.get("kind") == "delta" and tail.events:
+            previous = tail.events[-1]
             if (
                 previous.get("kind") == "delta"
                 and previous.get("channel") == event.get("channel")
@@ -109,7 +115,7 @@ class SessionEventBus:
                 previous["chunks"].extend(event.get("chunks", ()))
                 previous["seq"] = event["seq"]
                 return
-        replay.append({**event, **({"chunks": list(event["chunks"])} if "chunks" in event else {})})
+        tail.events.append({**event, **({"chunks": list(event["chunks"])} if "chunks" in event else {})})
 
     def _fan_out(self, session_id: str, event: dict) -> None:
         for subscription in tuple(self._subscribers.get(session_id, ())):
@@ -137,7 +143,7 @@ class SessionEventBus:
             "seq": self._next(session_id),
             "channel": channel,
             "block_id": block_id,
-            "turn_id": self._replay_turn_ids.get(session_id, ""),
+            "turn_id": (tail.turn_id if (tail := self._tails.get(session_id)) is not None else ""),
             "cursor": self._block_cursors.setdefault(session_id, {}).get((channel, block_id), 0),
             "chunks": [text],
         }
@@ -147,29 +153,29 @@ class SessionEventBus:
 
     def begin_turn(self, session_id: str, turn_id: str) -> None:
         """Open one actual serialized turn, replacing the completed turn's replay."""
-        self._running.add(session_id)
-        self._replay[session_id] = []
-        self._replay_turn_ids[session_id] = turn_id
+        self._tails[session_id] = _TurnTail(turn_id)
         self._block_cursors[session_id] = {}
-        self._durable.discard((session_id, turn_id))
         self._changed(session_id)
 
     def end_turn(self, session_id: str, turn_id: str) -> None:
         """Close one actual turn while retaining its compact replay until durability catches up."""
-        if self._replay_turn_ids.get(session_id) == turn_id:
-            self._running.discard(session_id)
-            self._changed(session_id)
-            if (session_id, turn_id) in self._durable:
-                self._retire(session_id, turn_id)
+        tail = self._tails.get(session_id)
+        if tail is None or tail.turn_id != turn_id:
+            return
+        tail.running = False
+        self._changed(session_id)
+        if tail.durable:
+            self._retire(session_id)
 
     def commit_turn(self, session_id: str, turn_id: str) -> None:
         """Retire replay only after the exact turn is terminally durable."""
-        if self._replay_turn_ids.get(session_id) != turn_id:
+        tail = self._tails.get(session_id)
+        if tail is None or tail.turn_id != turn_id:
             return
-        self._durable.add((session_id, turn_id))
+        tail.durable = True
         self._changed(session_id)
-        if session_id not in self._running:
-            self._retire(session_id, turn_id)
+        if not tail.running:
+            self._retire(session_id)
 
     def publish_activity(self, session_id: str, running: bool) -> None:
         """Publish aggregate busy/idle state independently of the serialized turn replay."""
@@ -185,14 +191,11 @@ class SessionEventBus:
 
     def complete(self, session_id: str) -> None:
         """Close every watcher's stream — the session has ended."""
-        self._running.discard(session_id)
+        self._tails.pop(session_id, None)
         self._activity.discard(session_id)
-        self._replay.pop(session_id, None)
-        self._replay_turn_ids.pop(session_id, None)
         self._block_cursors.pop(session_id, None)
         self._sequences.pop(session_id, None)
         self._versions.pop(session_id, None)
-        self._durable = {key for key in self._durable if key[0] != session_id}
         for subscription in tuple(self._subscribers.get(session_id, ())):
             if subscription.overflowed:
                 continue

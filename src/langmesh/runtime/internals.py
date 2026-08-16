@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from langmesh.base.credentials import is_signed_in
@@ -14,7 +17,6 @@ from langmesh.base.tuning import active_tuning, clip_to_tokens, count_tokens, Tu
 from langchain_core.messages import AIMessageChunk
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
-import json
 from langmesh.base.serialization import compact
 
 
@@ -37,6 +39,19 @@ async def _stream_next(iterator: AsyncIterator) -> Any:
         return await iterator.__anext__()
     except StopAsyncIteration:
         return _STREAM_EXHAUSTED
+
+
+async def race_interrupt(task: Any, interrupt_event: Any) -> bool:
+    """Await `task` raced against an interrupt event; True when the interrupt fired first."""
+    waiter = asyncio.ensure_future(interrupt_event.wait())
+    try:
+        finished, _ = await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        return task not in finished
+    finally:
+        waiter.cancel()
+        if not waiter.done():
+            with suppress(asyncio.CancelledError):
+                await waiter
 
 
 def model_is_authorized(

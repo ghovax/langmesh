@@ -25,6 +25,8 @@ from langmesh.runtime.models.codex import ChatCodexModel
 from langmesh.runtime.models.cursor import ChatCursorModel
 from langmesh.base.models import find_model, resolve_litellm
 from langmesh.base.tools import as_tool_grants
+from langmesh.runtime.tools.execution import Tool, ToolServices, invoke_supplied
+from langmesh.runtime.tools.units import BUILTIN_TOOLS
 from langmesh.locations.resolver import LocationAddress, executor_for, location_uri_for
 from langmesh.runtime.tools.registry import (
     bash as bash_tool,
@@ -451,37 +453,41 @@ class TaskManager:
         self._next_identifier = max(stored_next, max(numeric_identifiers, default=0) + 1)
 
 
+class _GoalAccess:
+    """The goal as a tool handler sees it: read the current one, write a new one."""
+
+    def __init__(self, runtime: Any) -> None:
+        self._runtime = runtime
+
+    def current(self) -> Any:
+        return self._runtime.goal
+
+    def write(self, goal: Any) -> None:
+        self._runtime.write_goal(goal)
+
+
+class _LeaseAccess:
+    """The filesystem-lease surface a tool handler may hold across an operation."""
+
+    def __init__(self, runtime: Any) -> None:
+        self._runtime = runtime
+
+    async def acquire(self, *, scope: str, path: str, description: str, working_directory: str) -> str:
+        return await self._runtime._acquire_filesystem_lease(
+            scope=scope, path=path, description=description, working_directory=working_directory
+        )
+
+    def release(self, token: str) -> None:
+        self._runtime._release_filesystem_lease(token)
+
+    def canonical_working_directory(self, directory: str) -> str:
+        return self._runtime._canonical_working_directory(directory)
+
+
 class AgentRuntime(
     _DispatchesTools, _DecidesPermissions, _CompactsContext, _ReviewsGoal, _RunsTurns
 ):
     # A turn runs until the model is done or the user interrupts: no ceiling and no stuck-detector.
-
-    # Tool name to handler. `_execute_tool` resolves the shared preamble once, then dispatches here.
-    _TOOL_HANDLERS = {
-        "bash": "_tool_bash",
-        "fetch_url": "_tool_fetch_url",
-        "download_file": "_tool_download_file",
-        "load_skill": "_tool_load_skill",
-        "ask_user": "_tool_ask_user",
-        "call_mcp_server_tool": "_tool_call_mcp_server_tool",
-        "list_mcp_tools": "_tool_mcp_query",
-        "list_mcp_resources": "_tool_mcp_query",
-        "read_mcp_resource": "_tool_mcp_query",
-        "set_tasks": "_tool_set_tasks",
-        "update_tasks": "_tool_update_tasks",
-        "update_goal": "_tool_update_goal",
-        "submit_goal_review": "_tool_submit_goal_review",
-        "submit_compaction_summary": "_tool_submit_compaction_summary",
-        "search_web": "_tool_search_web",
-        "read_turn": "_tool_read_turn",
-        "control_screen": "_tool_control_screen",
-        "create_session": "_tool_session",
-        "message_session": "_tool_session",
-        "read_session": "_tool_session",
-        "list_sessions": "_tool_session",
-        "list_remote_agents": "_tool_session",
-        "message_remote_agent": "_tool_session",
-    }
 
     def __init__(
         self,
@@ -510,7 +516,6 @@ class AgentRuntime(
         permissions = components.permissions
         toolset = components.toolset
 
-        self._profile = profile
         self._components = components
         self._prompt_composer = components.prompt_composer
         self._hooks = HookRunner(components.hooks)
@@ -564,7 +569,6 @@ class AgentRuntime(
         # cache prefix — never changes. A grant may therefore be added at creation or at any
         # later moment; both are append-only.
         self._tool_grants = tuple(as_tool_grants(tools))
-        self._extra_tools = {grant.tool.name: grant.tool for grant in self._tool_grants}
         # What a caller's tool is gated at: asking by default, so adding one cannot silently widen a session.
         self._supplied_tool_gate = components.supplied_tool_gate
         configured_tools = (
@@ -579,12 +583,37 @@ class AgentRuntime(
                 permission_mode=self._permission_mode,
             )
         )
-        # Executable set: the configured tools plus every grant. The model sees only the configured
-        # set — grants ride as conversation messages — so the schema is fixed for the session's life.
-        self._tools = list(configured_tools)
+        # The dispatchable units: every tool the session runs, assembled from the built-in registry
+        # and the caller's own tools. A caller's tool of the same name replaces the built-in, so
+        # "my own bash" wins over ours. The model binds the configured schemas; grants ride as
+        # appended messages and only change who executes, keeping the cache prefix untouched.
+        units: dict[str, Tool] = {}
+        for tool in configured_tools:
+            builtin = BUILTIN_TOOLS.get(tool.name)
+            units[tool.name] = (
+                builtin
+                if builtin is not None and builtin.schema is tool
+                else Tool(
+                    name=tool.name,
+                    schema=tool,
+                    description=tool.description or "",
+                    handler=invoke_supplied,
+                )
+            )
         for grant in self._tool_grants:
-            if grant.tool.name not in {tool.name for tool in self._tools}:
-                self._tools.append(grant.tool)
+            units[grant.tool.name] = Tool(
+                name=grant.tool.name,
+                schema=grant.tool,
+                description=(grant.tool.description or ""),
+                handler=invoke_supplied,
+            )
+        self._tool_units = units
+        # The caller's own tools, for the gate and for replacing a built-in's execution.
+        self._supplied_tool_names = {grant.tool.name for grant in self._tool_grants}
+        # Executable set (for gating, validation and direct invocation): configured plus grants, grants win.
+        self._tools = [
+            tool for tool in configured_tools if tool.name not in self._supplied_tool_names
+        ] + [grant.tool for grant in self._tool_grants]
         self._model_tools = list(configured_tools)
         self._tool_schemas: dict[str, Any] = {tool.name: tool.args_schema for tool in self._tools}
         self._bound_model = self._model.bind_tools(self._model_tools)
@@ -629,8 +658,6 @@ class AgentRuntime(
         self._goal_review_journal = components.goal_review_journal
         self._submitted_goal_review = None
         self._submitted_compaction_summary: Any = None
-        # When the turn now running began, for the transcript entry it will produce.
-        self._turn_started_at = None
         # The conversation and the prompt this runtime runs with.
 
         self._conversation: list = conversation if conversation is not None else []
@@ -676,10 +703,8 @@ class AgentRuntime(
         self._a2a_turn_id: str = ""
         # Reads another task by id from the shared store, so context-aware agents can coordinate.
         self._turn_reader: Optional[Callable] = components.related_turns
-        self._steering_messages: asyncio.Queue[tuple[str, str, str, asyncio.Future[bool]]] = (
-            asyncio.Queue()
-        )
-        self._steering_available = asyncio.Event()
+        # Steering is a plain FIFO drained at the model boundary, never a queue raced against the stream.
+        self._pending_steering: list[tuple[str, str, str, asyncio.Future[bool]]] = []
         self._active_tool_tasks: dict[str, asyncio.Task] = {}
         # The latest call replaces this estimate once usage arrives; restored sessions need it immediately.
         self._latest_context_tokens = conversation_tokens(self._conversation)
@@ -710,6 +735,36 @@ class AgentRuntime(
         self._access_grants: list[Grant] = []
         # The files the person attached: like a grant, but answering what they handed over rather than what was asked.
         self._attached_files: dict[str, None] = {}
+        # Per-session state a screen-control script keeps between calls, and the services bundle
+        # every tool handler runs against. The bundle is the tool's only view of the runtime.
+        self._screen_queries_asked: list[tuple[Any, str]] = []
+        self._services = ToolServices(
+            background=self._background,
+            permissions=self._permissions,
+            task_manager=self._task_manager,
+            goal=_GoalAccess(self),
+            prompt_loader=self._prompt_loader,
+            catalogue=self._catalogue,
+            tool_context=self._tool_context,
+            access_grants=self._access_grants,
+            attached_files=self._attached_files,
+            turn_reader=self._turn_reader,
+            record_event=self._record_event,
+            mark_dirty=self._mark_session_dirty,
+            abort_event=self._abort_event,
+            submit_goal_review=lambda review: setattr(self, "_submitted_goal_review", review),
+            submit_compaction_summary=lambda summary: setattr(
+                self, "_submitted_compaction_summary", summary
+            ),
+            leases=_LeaseAccess(self),
+            retry_gate=self.retry_gate,
+            decide_retry=self.decide_retry,
+            retry_refusal_result=self._retry_refusal_result,
+            pipeline=self._pipeline,
+            tools=lambda: self._tools,
+            screen_query_log=self._screen_queries_asked,
+            project_directory=self._project_directory or "",
+        )
 
     def note_attachments(self, paths: Sequence[str]) -> None:
         """Record attached files so a tool may read them where they live. Additive across the conversation."""
@@ -896,11 +951,20 @@ class AgentRuntime(
 
     def grant_tool(self, tool: BaseTool) -> None:
         """Grant a tool to this session at any moment: dispatchable now, described to the model
-        by an appended message, so the bound schema — and the provider cache prefix — is untouched."""
-        if tool.name in self._extra_tools or any(existing.name == tool.name for existing in self._tools):
+        by an appended message, so the bound schema — and the provider cache prefix — is untouched.
+        A grant of a name the session already runs replaces that tool's implementation."""
+        if tool.name in self._supplied_tool_names:
             return
-        self._extra_tools[tool.name] = tool
-        self._tools.append(tool)
+        self._supplied_tool_names.add(tool.name)
+        self._tool_units[tool.name] = Tool(
+            name=tool.name,
+            schema=tool,
+            description=tool.description or "",
+            handler=invoke_supplied,
+        )
+        self._tools = [
+            existing for existing in self._tools if existing.name != tool.name
+        ] + [tool]
         self._tool_schemas[tool.name] = tool.args_schema
         self._conversation.append(self._tool_grant_message(tool))
         self._mark_session_dirty()
@@ -1106,25 +1170,19 @@ class AgentRuntime(
         if not text:
             return None
         accepted = asyncio.get_running_loop().create_future()
-        self._steering_messages.put_nowait((text, message_id, peer_sender, accepted))
-        self._steering_available.set()
-        # Interrupt an active provider read only at a safe boundary: never while a tool call is streaming or executing; the steering waits for the call to finish and inserts after its result.
-        # Preparation is an atomic private segment: steering waits at its boundary and is
-        # appended immediately before the compaction, then reaches the resumed model call.
-        if self._compaction_control.phase not in {"waiting", "recorded"}:
-            self._abort_event.set()
+        self._pending_steering.append((text, message_id, peer_sender, accepted))
+        # Drained at the next model boundary; never touches the interrupt event, which is a real stop only.
         return accepted
 
     def discard_pending_steering(self) -> None:
         """Drop steering accepted too late to be honoured, since the client re-delivers it as a fresh turn."""
-        while not self._steering_messages.empty():
-            _text, _message_id, _peer_sender, accepted = self._steering_messages.get_nowait()
+        for _text, _message_id, _peer_sender, accepted in self._pending_steering:
             if not accepted.done():
                 accepted.set_result(False)
-        self._steering_available.clear()
+        self._pending_steering.clear()
 
     def _has_queued_steering(self) -> bool:
-        return not self._steering_messages.empty()
+        return bool(self._pending_steering)
 
     def set_permission_mode(self, mode: PermissionMode) -> PermissionMode:
         """Adopt the mode the daemon resolved, reaching the very next tool call."""
@@ -1278,7 +1336,7 @@ class AgentRuntime(
 
     def begin_compaction_preparation(self) -> bool:
         """Begin an explicit compaction's recording handshake when no other compaction state is active."""
-        if self._compaction_control.failure or self._compaction_control.phase != "none":
+        if self._compaction_control.failure or not self._compaction_control.idle:
             return False
         self._begin_compaction_preparation(reason="manual", resume_after=False)
         return True
@@ -1294,7 +1352,7 @@ class AgentRuntime(
     @property
     def awaiting_compaction_recording(self) -> bool:
         """Whether a persisted compaction is waiting for its private recording segment to finish."""
-        return self._compaction_control.phase == "waiting"
+        return self._compaction_control.waiting
 
     # The goal, and the four things anyone outside this class does with it.
 

@@ -102,9 +102,13 @@ LangMesh attaches to **the Chrome you already use**, with your real logins and s
 
 ## Where the definitions live
 
-- Descriptions the model reads: one markdown file per tool in `src/langmesh/runtime/tools/descriptions/`.
-- Implementations: `src/langmesh/runtime/tools/` and `src/langmesh/computer/`.
+A built-in tool is one `Tool` unit: its schema, description, and handler joined in `langmesh.runtime.tools.units`.
+
+- Schemas and the model-facing `StructuredTool`s: `src/langmesh/runtime/tools/registry.py`.
+- The execution of each built-in, over the shared `ToolServices` bundle: `src/langmesh/runtime/tools/handlers.py`.
+- Descriptions the model reads, one markdown file per tool: `src/langmesh/runtime/tools/descriptions/`.
+- The dispatch preamble (permission, validation, location, policy) and the batch runner: `src/langmesh/runtime/tools/dispatch.py`.
 - Model-facing message templates: `src/langmesh/runtime/prompts/` and `src/langmesh/computer/messages/`.
 - The guidance a session gets for screen control: `src/langmesh/runtime/prompts/computer_control_guidance.md`.
 
-A tool runs inside the session's own process, so its blast radius is that session: its working directory, its permission mode, and its own MCP server connections. Under the `worktree` strategy the working directory is the session's own git worktree.
+The runtime never hard-codes a tool name: it dispatches whatever `Tool` units the session was composed with. A tool runs inside the session's own process, so its blast radius is that session: its working directory, its permission mode, and its own MCP server connections. Under the `worktree` strategy the working directory is the session's own git worktree.

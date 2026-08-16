@@ -9,7 +9,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Awaitable, Callable, Literal, Optional
+from typing import Awaitable, Callable, Literal, Optional
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
@@ -18,7 +18,7 @@ from langmesh.base.ports import GoalReviewContext, GoalReviewOutcome
 from langmesh.base.identifiers import new_id
 from langmesh.base.serialization import compact
 from langmesh.base.tools import ToolGrant
-from langmesh.runtime.values import ToolStatus
+from langmesh.runtime.internals import race_interrupt
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.goal import Goal, NonBlankText
 from langmesh.runtime.turn_events import (
@@ -26,7 +26,6 @@ from langmesh.runtime.turn_events import (
     GoalReviewFinished,
     GoalReviewProgress,
     GoalReviewStarted,
-    ToolResult,
     TurnEvent,
 )
 
@@ -123,33 +122,6 @@ class GoalReview(BaseModel):
 
 class _ReviewsGoal:
     """Review an open goal in an isolated session with its own visible transcript."""
-
-    async def _tool_submit_goal_review(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: Any,
-        policy: Any,
-        resolved_location: Any,
-    ):
-        model_guidance = ""
-        # The verdict tool exists only in this reviewer's lane, so there is no inert case: every
-        # call is a real submission. A genuine impasse is accepted on any review — the reviewer's
-        # own standards gate blocked, not a turn count, so a goal that cannot proceed (a user-only
-        # step, an impossibility) can be marked blocked the first time it is truly stuck.
-        self._submitted_goal_review = GoalReview.model_validate(tool_arguments)
-        self._abort_event.set()
-        result = {
-            "code": "goal_review_submitted",
-            "status": ToolStatus.OK.value,
-        }
-        yield ToolResult(
-            id=tool_call_identifier,
-            name=tool_name,
-            result=result,
-            model_guidance=model_guidance,
-        )
 
     def _goal_reviewer(self, scratch_directory: str):
         from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
@@ -264,21 +236,13 @@ class _ReviewsGoal:
                         await self._goal_review_journal.append(review_id, event)
 
         review_turn = asyncio.create_task(run())
-        abort_wait = asyncio.create_task(self._abort_event.wait())
         try:
-            finished, _ = await asyncio.wait(
-                {review_turn, abort_wait}, return_when=asyncio.FIRST_COMPLETED
-            )
-            if abort_wait in finished and self._abort_event.is_set():
+            if await race_interrupt(review_turn, self._abort_event):
                 reviewer.abort()
                 await review_turn
                 return False
-            await review_turn
             return True
         finally:
-            abort_wait.cancel()
-            with suppress(asyncio.CancelledError):
-                await abort_wait
             if not review_turn.done():
                 reviewer.abort()
                 review_turn.cancel()

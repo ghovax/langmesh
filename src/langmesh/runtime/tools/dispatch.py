@@ -1,19 +1,22 @@
-"""Executing a tool call: the handlers, the dispatch pipeline, batch draining, and the background runner."""
+"""Executing a tool call: the shared preamble, batch draining, and the background runner.
+
+Each tool's execution lives in `runtime/tools/handlers.py` as a `Tool` unit's handler; this module
+owns the one preamble every call passes through (permission, validation, location, policy) and
+the sequential batch runner. The runtime dispatches over its own tool set, so nothing here knows
+a tool name.
+"""
 
 from __future__ import annotations
 
 import logging
-import re
-import statistics
+import shlex
+import time
 
-from collections.abc import Coroutine
+from contextlib import suppress
 from datetime import datetime, timezone
 from langmesh.base import telemetry as _telemetry
-from langmesh.base import confinement as _confinement
 from langmesh.base.confinement import parse_access_request
-from langmesh.base.ports import ToolInvocation
 from langmesh.runtime.internals import (
-    _background_handle_kind,
     _cap_model_result_payload,
     _coerce_mcp_arguments,
     _coerce_structured_arguments,
@@ -23,66 +26,37 @@ from langmesh.runtime.internals import (
     _tool_timing_metadata,
     _utc_timestamp,
 )
-from langmesh.runtime.tools import context as tool_context, fetching
-from langmesh.runtime.tools.output import ToolOutput
-from langmesh.runtime.background import (
-    bind_background_jobs,
-    bind_tool_call_id,
-    unbind_background_jobs,
-    unbind_tool_call_id,
-)
+from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.values import ToolStatus
-from langmesh.runtime.goal import Goal
-from langmesh.base.file_leases import FileLeaseConflict
-from langmesh.base.skills import enabled_skills
 from langmesh.runtime.locations import (
     _LOCATION_TOOLS,
-    CallExecutionPolicy,
     ResolvedLocation,
     ToolLocationError,
 )
-from langmesh.base.tuning import active_tuning, current_context_window, Tunable
+from langmesh.base.tuning import current_context_window
 from langmesh.runtime.turn_events import (
     DeniedInjection,
     Error,
-    Mcp,
-    RetryRequested,
     ToolCall,
     ToolResult,
     TurnEvent,
 )
-from langmesh.runtime.tools.registry import (
-    bash as bash_tool,
-    call_mcp_server_tool_with_events,
-    list_mcp_resources as list_mcp_resources_tool,
-    list_mcp_tools as list_mcp_tools_tool,
-    read_mcp_resource as read_mcp_resource_tool,
-    search_web as search_web_tool,
-)
+from langmesh.runtime.tools.registry import bash as bash_tool
 from langchain_core.messages import ToolMessage
 from pathlib import Path
 from pydantic import ValidationError
 from typing import Any, AsyncIterator, cast
 import asyncio
-import shlex
-import time
 from langmesh.base.configuration import PermissionDenied
 from langmesh.base.serialization import compact
-from langmesh.base.errors import summary
+from langmesh.runtime.tools.execution import (
+    bind_tool_decision,
+    bind_tool_services,
+    unbind_tool_decision,
+    unbind_tool_services,
+)
 
 logger = logging.getLogger(__name__)
-
-# What an element id looks like on both surfaces, so one can be told from a description of an element.
-_ELEMENT_ID = re.compile(r"(?:f\d+)?e\d+|req\d+|ws\d+|\d+(?:\.\d+)+")
-
-
-def _goal_lines(value: Any) -> list[str]:
-    """A goal's requirements as a list of lines, however the model spelled them: a list, or one string."""
-    if isinstance(value, str):
-        value = value.splitlines()
-    if not isinstance(value, (list, tuple)):
-        return []
-    return [line for line in (str(entry).strip() for entry in value) if line]
 
 
 def _with_schema_defaults(schema: Any, arguments: dict) -> dict:
@@ -223,7 +197,7 @@ class _DispatchesTools:
             "metadata": timing_metadata,
         }
 
-    async def _drain_tools_concurrently(
+    async def _drain_tool_batch(
         self,
         tool_calls: list[dict],
         turn_tool_calls_log: list[dict],
@@ -231,75 +205,41 @@ class _DispatchesTools:
         outcomes: dict[str, dict],
         decisions: dict[str, _ResolvedToolDecision],
     ) -> AsyncIterator[TurnEvent]:
-        """Run independent calls concurrently, yielding events as they arrive, with every decision already in hand."""
-        if not tool_calls:
-            return
-
-        queue: asyncio.Queue[TurnEvent | None] = asyncio.Queue()
-        remaining = len(tool_calls)
-
-        async def runner(tool_call_data: dict) -> None:
-            nonlocal remaining
+        # One call at a time, in order; a Stop or per-call cancel reaches the running task directly.
+        for tool_call_data in tool_calls:
+            if self._abort_event.is_set() or self._stop_requested:
+                break
             tool_call_identifier = tool_call_data["id"]
-            current_task = asyncio.current_task()
-            if current_task is not None:
-                self._active_tool_tasks[tool_call_identifier] = current_task
-            try:
-                decision = decisions.get(tool_call_identifier) or _ResolvedToolDecision(
-                    tool_call_id=tool_call_identifier
-                )
-                async for event in self._run_one_tool(
-                    tool_call_data,
-                    turn_tool_calls_log,
-                    turn_tool_results_log,
-                    outcomes,
-                    decision,
-                ):
-                    await queue.put(event)
-            except Exception:
-                # _run_one_tool handles its own errors; this guards the merge.
-                pass
-            finally:
-                self._active_tool_tasks.pop(tool_call_identifier, None)
-                remaining -= 1
-                if remaining == 0:
-                    await queue.put(None)
+            pipe: asyncio.Queue[TurnEvent | None] = asyncio.Queue()
 
-        tasks = [asyncio.create_task(runner(call)) for call in tool_calls]
-        all_done = asyncio.gather(*tasks, return_exceptions=True)
-        abort_waiter = asyncio.ensure_future(self._abort_event.wait())
-        try:
-            while True:
-                running = [task for task in tasks if not task.done()]
-                if self._abort_event.is_set() and not (running and self._has_queued_steering()):
-                    # Stop won, or the steering batch already finished: nothing more to wait for.
-                    break
-                # Steering waits for the running calls to finish; a Stop cancels them and breaks.
-                get_future = asyncio.ensure_future(queue.get())
-                steering_held = self._abort_event.is_set() and self._has_queued_steering()
-                done, _ = await asyncio.wait(
-                    {get_future, all_done, abort_waiter} if not steering_held else {get_future, all_done},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if get_future in done:
-                    event = get_future.result()
+            async def run_one() -> None:
+                try:
+                    async for event in self._run_one_tool(
+                        tool_call_data,
+                        turn_tool_calls_log,
+                        turn_tool_results_log,
+                        outcomes,
+                        decisions.get(tool_call_identifier)
+                        or _ResolvedToolDecision(tool_call_id=tool_call_identifier),
+                    ):
+                        await pipe.put(event)
+                finally:
+                    await pipe.put(None)
+
+            task = asyncio.create_task(run_one())
+            self._active_tool_tasks[tool_call_identifier] = task
+            try:
+                while True:
+                    event = await pipe.get()
                     if event is None:
                         break
                     yield event
-                elif abort_waiter in done:
-                    continue  # the top of the loop decides what this interrupt means
-                else:
-                    # The batch ended (cancelled or finished) without a queue terminator; stop waiting.
-                    get_future.cancel()
+            finally:
+                self._active_tool_tasks.pop(tool_call_identifier, None)
+                if not task.done():
+                    task.cancel()
                     with suppress(BaseException):
-                        await get_future
-                    break
-        finally:
-            all_done.cancel()
-            abort_waiter.cancel()
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+                        await task
 
     def _validate_tool_call(
         self,
@@ -308,7 +248,7 @@ class _DispatchesTools:
     ) -> tuple[str, str] | None:
         tool_schemas = (
             {**self._tool_schemas, "bash": bash_tool.args_schema}
-            if self._compaction_control.phase == "waiting"
+            if self._compaction_control.waiting
             else self._tool_schemas
         )
         if not isinstance(arguments, dict):
@@ -498,13 +438,6 @@ class _DispatchesTools:
                 )
             )
 
-    async def _through_pipeline(self, tool_name: str, tool_arguments: dict, invoke) -> Any:
-        """Run one call through the caller's middleware, which asks a plain question a generator cannot answer."""
-        if self._pipeline.empty:
-            return await invoke(tool_arguments)
-        call = ToolInvocation(name=tool_name, arguments=tool_arguments)
-        return await self._pipeline.run(call, lambda made: invoke(made.arguments))
-
     async def _execute_tool(
         self,
         tool_name: str,
@@ -554,7 +487,7 @@ class _DispatchesTools:
         # Coerce JSON-string arguments up front, so validation and dispatch see the real container.
         schema = (
             bash_tool.args_schema
-            if self._compaction_control.phase == "waiting" and tool_name == "bash"
+            if self._compaction_control.waiting and tool_name == "bash"
             else self._tool_schemas.get(tool_name)
         )
         if schema is not None:
@@ -563,7 +496,7 @@ class _DispatchesTools:
             tool_arguments = _with_schema_defaults(schema, tool_arguments)
 
         if tool_name != "submit_goal_review" and not (
-            self._compaction_control.phase == "waiting"
+            self._compaction_control.waiting
             and tool_name in {"bash", "load_skill"}
         ):
             try:
@@ -600,1267 +533,33 @@ class _DispatchesTools:
                 return
         policy = self._call_policy(resolved_location)
 
-        handler_name = self._TOOL_HANDLERS.get(tool_name)
-        if handler_name is None:
-            # A supplied tool reaches this point through the identical preamble: the handler is the extension point.
-            if tool_name in self._extra_tools:
-                async for event in self._tool_supplied(
-                    tool_name,
-                    tool_arguments,
-                    tool_call_identifier,
-                ):
-                    yield event
-                return
+        # Dispatch is data-driven over the session's own tool units: a built-in or a caller's
+        # tool is the same `Tool`, so there is no name table and a caller's implementation of the
+        # same name simply replaces the built-in's.
+        unit = self._tool_units.get(tool_name)
+        if unit is None:
             yield Error(
                 id=tool_call_identifier,
                 message=f"Unknown tool '{tool_name}'",
                 tool=tool_name,
             )
             return
-        async for event in getattr(self, handler_name)(
-            tool_name,
-            tool_arguments,
-            tool_call_identifier,
-            decision,
-            policy,
-            resolved_location,
-        ):
-            yield event
-
-    async def _tool_supplied(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-    ):
-        """Run a caller's tool through LangChain's own invocation, so anything written for it works here."""
-        tool = self._extra_tools[tool_name]
+        # A handler that invokes a schema tool directly (`.ainvoke`) resolves the same services
+        # and the resolved decision.
+        services_token = bind_tool_services(self._services)
+        decision_token = bind_tool_decision(decision)
         try:
-            result = await self._through_pipeline(tool_name, tool_arguments, tool.ainvoke)
-        except Exception as error:  # noqa: BLE001 — a caller's tool failing is a tool result
-            logger.debug("supplied tool %s raised", tool_name, exc_info=True)
-            yield Error(
-                id=tool_call_identifier,
-                message=summary(error),
-                tool=tool_name,
-            )
-            return
-        yield ToolResult(
-            id=tool_call_identifier,
-            name=tool_name,
-            result=result,
-            status=ToolStatus.OK.value,
-        )
-
-    async def _tool_bash(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        raw_command = tool_arguments.get("command", "")
-        if policy.is_remote:
-            # A remote command is a local `ssh …`, so the bash machinery drives it unchanged; permission read the raw one.
-            from langmesh.locations.executor import SshExecutor
-
-            assert resolved_location is not None
-            executor = resolved_location.executor
-            # A remote policy always resolves to the ssh-backed executor.
-            assert isinstance(executor, SshExecutor)
-            tool_arguments = dict(tool_arguments)
-            tool_arguments["command"] = shlex.join(
-                executor.ssh_argv(raw_command, resolved_location.base_directory)
-            )
-        else:
-            directory = policy.working_directory
-            if directory:
-                directory_path = Path(directory).expanduser()
-                if not directory_path.is_absolute():
-                    yield Error(
-                        id=tool_call_identifier,
-                        code="invalid_working_directory",
-                        message=f"Working directory must be an absolute path: {directory}",
-                        tool=tool_name,
-                    )
-                    return
-                if not directory_path.is_dir():
-                    yield Error(
-                        id=tool_call_identifier,
-                        code="invalid_working_directory",
-                        message=f"Working directory does not exist: {directory}",
-                        tool=tool_name,
-                    )
-                    return
-                # The directory is the process's own `cwd`, not shell text a command could `cd` out of.
-                tool_context.bind(
-                    self._tool_context.for_directory(str(directory_path))
-                    .with_grants(self._access_grants)
-                    .with_attachments(self._attached_files)
-                )
-        requested, _ = parse_access_request(tool_arguments.get("access_request"))
-        # No claim is treated as mutating, which is what the lease below depends on.
-        declared_read_only = requested is not None and requested.mutates is False
-
-        # Backgrounding can be forbidden: a shell subtree outlives the turn that started it.
-        wants_background = tool_arguments.get("background", False)
-        if isinstance(wants_background, str):
-            wants_background = wants_background.lower() == "true"
-        if wants_background:
-            try:
-                self._permissions.check_bash_background()
-            except PermissionDenied as denial:
-                yield Error(
-                    id=tool_call_identifier,
-                    code="background_not_allowed",
-                    message=str(denial),
-                    tool=tool_name,
-                )
-                return
-
-        # Permission is resolved; an approved call runs inside the confinement the session holds.
-        lease_token = ""
-        # Leases guard this machine's trees, so a remote command takes none.
-        if not declared_read_only and not policy.is_remote:
-            try:
-                lease_token = await self._acquire_filesystem_lease(
-                    scope="worktree",
-                    path=self._canonical_working_directory(policy.working_directory),
-                    # Whole, since this is what another session is shown when it collides with the lease.
-                    description=f"mutating bash: {raw_command}",
-                    working_directory=policy.working_directory,
-                )
-            except FileLeaseConflict as exception:
-                yield Error(
-                    id=tool_call_identifier,
-                    code="filesystem_lease_conflict",
-                    message=str(exception),
-                    tool=tool_name,
-                )
-                return
-
-        try:
-            if decision.retry_grant is not None:
-                # An approved second run goes out with the widening and is not offered again.
-                result_data = await self._run_bash(
-                    tool_arguments,
-                    tool_call_identifier,
-                    retry_grant=decision.retry_grant,
-                )
-                yield ToolResult(id=tool_call_identifier, name=tool_name, result=result_data)
-                return
-            result_data = await self._run_bash(tool_arguments, tool_call_identifier)
-            model_guidance = ""
-            # A refused command is not a finished one, and its first run was confined, so a retry is safe to offer.
-            denial = self._sandbox_denial(result_data, policy)
-            if denial is not None:
-                retry_gate = self.retry_gate(
-                    tool_call_id=tool_call_identifier,
-                    command=raw_command,
-                    denial=denial,
-                    explanation=str(tool_arguments.get("explanation", "") or ""),
-                )
-                verdict, grant = await self.decide_retry(retry_gate)
-                if verdict == "run" and grant is not None:
-                    result_data = await self._run_bash(
-                        tool_arguments,
-                        tool_call_identifier,
-                        retry_grant=grant,
-                    )
-                elif verdict == "ask":
-                    yield RetryRequested(
-                        id=tool_call_identifier,
-                        command=raw_command,
-                        denial_kind=denial.kind,
-                        denial_evidence=denial.evidence,
-                        explanation=str(tool_arguments.get("explanation", "") or ""),
-                        result=result_data,
-                    )
-                    return
-                else:
-                    result_data = self._retry_refusal_result(retry_gate)
-                    model_guidance = retry_gate.deny_message
-            yield ToolResult(
-                id=tool_call_identifier,
-                name=tool_name,
-                result=result_data,
-                model_guidance=model_guidance,
-            )
-            if isinstance(result_data, dict) and result_data.get("code") == "bash_started":
-                job_id = result_data.get("job_id", "")
-                if job_id:
-                    self._record_event(
-                        "background_bash_started", {"job_id": job_id, "command": raw_command}
-                    )
-                    if lease_token and self._background.add_done_callback(
-                        job_id,
-                        lambda _identifier, token=lease_token: self._release_filesystem_lease(
-                            token
-                        ),
-                    ):
-                        lease_token = ""
-        finally:
-            self._release_filesystem_lease(lease_token)
-
-    async def _run_bash(
-        self,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        *,
-        retry_grant=None,
-    ) -> Any:
-        """One run of the bash tool, inside whatever confinement this attempt carries."""
-        if retry_grant is not None:
-            tool_context.bind(tool_context.current().for_retry(retry_grant))
-        background_token = bind_background_jobs(self._background)
-        tool_call_token = bind_tool_call_id(tool_call_identifier)
-        try:
-            result = await bash_tool.ainvoke(tool_arguments)
-        finally:
-            unbind_tool_call_id(tool_call_token)
-            unbind_background_jobs(background_token)
-        return _maybe_json(result)
-
-    def _sandbox_denial(self, result_data: Any, policy: CallExecutionPolicy):
-        """Whether a finished command looks like the operating system stopped it. Never remote, never backgrounded."""
-        if policy.is_remote or not isinstance(result_data, dict):
-            return None
-        if result_data.get("code") == "bash_started":
-            return None
-        exit_code = result_data.get("returncode")
-        if not isinstance(exit_code, int):
-            return None
-        output = " ".join(
-            str(result_data.get(key, "")) for key in ("stdout", "stderr", "output", "error")
-        )
-        return _confinement.denial_in(
-            exit_code=exit_code,
-            output=output,
-            attempt=_confinement.first_attempt(
-                tool_context.current().sandbox,
-                workspace=policy.working_directory,
-            ),
-        )
-
-    def _confinement_refusal(
-        self,
-        resolved: str,
-        policy: CallExecutionPolicy,
-        *,
-        writing: bool,
-    ) -> str:
-        """Why the confinement refuses this path. The file tools run in-process, so the profile is applied by hand."""
-        if policy.is_remote or not resolved:
-            return ""
-        profile = tool_context.current().sandbox
-        if profile is None:
-            return ""
-        workspace = policy.working_directory
-        permitted = (
-            profile.may_write(resolved, workspace=workspace)
-            if writing
-            else profile.may_read(resolved, workspace=workspace)
-        )
-        if permitted:
-            return ""
-        return self._prompt_loader.load(
-            "outside_confinement",
-            {
-                "path": resolved,
-                "action": "write" if writing else "read",
-            },
-        )
-
-    async def _run_slow_tool(
-        self,
-        tool_name: str,
-        tool_call_identifier: str,
-        operation: Coroutine[Any, Any, str],
-        *,
-        started_code: str,
-        sync_window: float,
-        background: bool,
-    ) -> AsyncIterator[TurnEvent]:
-        """Run a slow tool inline briefly, then return its background handle if it is still running."""
-        job_identifier = self._background.spawn(
-            tool_name,
-            operation,
-            tool_call_identifier=tool_call_identifier,
-            detached=background,
-        )
-        completion = None
-        if not background:
-            completion = await self._background.settle_inline(
-                job_identifier,
-                active_tuning().scale_timeout(sync_window),
-            )
-        if completion is not None:
-            yield ToolResult(
-                id=tool_call_identifier,
-                name=tool_name,
-                result=_maybe_json(completion.result),
-            )
-            return
-        yield ToolResult(
-            id=tool_call_identifier,
-            name=tool_name,
-            result={"code": started_code, "status": "running", "job_id": job_identifier},
-        )
-
-    async def _tool_fetch_url(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        url = str(tool_arguments.get("url", ""))
-        output_format = str(tool_arguments.get("format", "markdown") or "markdown")
-        sync_window = float(
-            tool_arguments.get("timeout", Tunable.slow_tool_sync_window.default)
-            or Tunable.slow_tool_sync_window.default
-        )
-        configured = tool_context.current().fetch_timeout_seconds
-        hard_deadline = int(tool_arguments.get("hard_deadline", configured) or configured)
-        background = bool(tool_arguments.get("background", False))
-        async for event in self._run_slow_tool(
-            tool_name,
-            tool_call_identifier,
-            fetching.fetch_url(url, output_format, hard_deadline),
-            started_code="fetch_url_started",
-            sync_window=sync_window,
-            background=background,
-        ):
-            yield event
-
-    async def _tool_download_file(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        assert resolved_location is not None
-        executor = resolved_location.executor
-        url = str(tool_arguments.get("url", ""))
-        destination = str(tool_arguments.get("path", ""))
-        sync_window = float(
-            tool_arguments.get("timeout", Tunable.slow_tool_sync_window.default)
-            or Tunable.slow_tool_sync_window.default
-        )
-        configured = tool_context.current().download_timeout_seconds
-        hard_deadline = int(tool_arguments.get("hard_deadline", configured) or configured)
-        background = bool(tool_arguments.get("background", False))
-        resolved = await asyncio.to_thread(
-            executor.resolve, resolved_location.base_directory, destination
-        )
-        refusal = self._confinement_refusal(resolved, policy, writing=True)
-        if refusal:
-            yield Error(
-                id=tool_call_identifier, code="outside_confinement", message=refusal, tool=tool_name
-            )
-            return
-        # A download is a tracked-tree write, so it holds the lease until it completes, background or not.
-        lease_token = ""
-        if not policy.is_remote:
-            try:
-                lease_token = await self._acquire_filesystem_lease(
-                    scope="file",
-                    path=resolved,
-                    description=f"{tool_name}: {resolved}",
-                    working_directory=policy.working_directory,
-                )
-            except FileLeaseConflict as exception:
-                yield Error(
-                    id=tool_call_identifier,
-                    code="filesystem_lease_conflict",
-                    message=str(exception),
-                    tool=tool_name,
-                )
-                return
-        try:
-            backgrounded_job_id = ""
-            async for event in self._run_slow_tool(
+            async for event in unit.handler(
+                self._services,
                 tool_name,
+                tool_arguments,
                 tool_call_identifier,
-                fetching.download_file(executor, url, resolved, hard_deadline),
-                started_code="download_file_started",
-                sync_window=sync_window,
-                background=background,
+                decision,
+                policy,
+                resolved_location,
             ):
-                if (
-                    isinstance(event, ToolResult)
-                    and isinstance(event.result, dict)
-                    and event.result.get("code") == "download_file_started"
-                ):
-                    backgrounded_job_id = str(event.result.get("job_id", ""))
                 yield event
-            if (
-                lease_token
-                and backgrounded_job_id
-                and self._background.add_done_callback(
-                    backgrounded_job_id,
-                    lambda _identifier, token=lease_token: self._release_filesystem_lease(token),
-                )
-            ):
-                lease_token = ""
         finally:
-            self._release_filesystem_lease(lease_token)
+            unbind_tool_decision(decision_token)
+            unbind_tool_services(services_token)
 
-    async def _tool_load_skill(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        skill_name = str(tool_arguments.get("name", ""))
-        all_skills = enabled_skills(list(self._catalogue.skills()))
-        match = next((skill for skill in all_skills if skill.identifier == skill_name), None)
-        if match is None:
-            yield Error(
-                id=tool_call_identifier,
-                message=f"No enabled skill named '{skill_name}'.",
-                tool=tool_name,
-            )
-            return
-        result = compact(
-            {
-                "code": "skill_loaded",
-                "name": match.identifier,
-                "title": match.display_title,
-                "path": match.path,
-                "content": match.body,
-            }
-        )
-        yield ToolResult(
-            id=tool_call_identifier,
-            name=tool_name,
-            result=_maybe_json(result),
-        )
-
-    async def _tool_ask_user(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        # ask_user's answers are its preflight decision: the question was gated before the batch ran.
-        answers = decision.answers
-        # Dismissed without answering: tell the model and end the turn rather than proceed on a guess.
-        if isinstance(answers, dict) and answers.get("__declined__"):
-            result = compact(
-                {
-                    "code": "user_declined",
-                    "status": ToolStatus.ERROR.value,
-                    "decision": {
-                        "actor": str(answers.get("__actor__") or "person"),
-                        "reason": answers.get("__reason__") or None,
-                    },
-                }
-            )
-            yield ToolResult(
-                id=tool_call_identifier,
-                name=tool_name,
-                result=_maybe_json(result),
-                model_guidance=self._prompt_loader.load(
-                    "question_declined",
-                    {
-                        "actor": str(answers.get("__actor__") or "person"),
-                        "reason": str(
-                            answers.get("__reason__") or "No additional reason was provided."
-                        ),
-                    },
-                ),
-            )
-            self._abort_event.set()
-            return
-        result = compact({"code": "user_answered", "answers": answers})
-        yield ToolResult(
-            id=tool_call_identifier,
-            name=tool_name,
-            result=_maybe_json(result),
-        )
-
-    async def _tool_call_mcp_server_tool(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        # Permission is resolved; an approved MCP server call runs.
-        event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-
-        async def on_mcp_event(event: dict[str, Any]) -> None:
-            await event_queue.put(event)
-
-        call_task = asyncio.create_task(
-            call_mcp_server_tool_with_events(
-                str(tool_arguments.get("server", "")),
-                str(tool_arguments.get("tool_name", "")),
-                _coerce_mcp_arguments(tool_arguments.get("arguments")),
-                on_mcp_event,
-            )
-        )
-        try:
-            while True:
-                # Once the call is done, drain what is buffered with `get_nowait` rather than racing a fresh getter.
-                if call_task.done():
-                    while not event_queue.empty():
-                        yield Mcp(
-                            id=tool_call_identifier,
-                            name="call_mcp_server_tool",
-                            server=tool_arguments.get("server", ""),
-                            tool=tool_arguments.get("tool_name", ""),
-                            event=event_queue.get_nowait(),
-                        )
-                    break
-                get_task = asyncio.create_task(event_queue.get())
-                done, pending = await asyncio.wait(
-                    {call_task, get_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if get_task in done:
-                    yield Mcp(
-                        id=tool_call_identifier,
-                        name="call_mcp_server_tool",
-                        server=tool_arguments.get("server", ""),
-                        tool=tool_arguments.get("tool_name", ""),
-                        event=get_task.result(),
-                    )
-                else:
-                    # Cancel only the getter; the loop re-checks `call_task`.
-                    get_task.cancel()
-            result_data = await call_task
-        except Exception as exception:
-            yield Error(id=tool_call_identifier, message=str(exception), tool=tool_name)
-            return
-        yield ToolResult(id=tool_call_identifier, name=tool_name, result=result_data)
-
-    async def _tool_mcp_query(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        tool_map = {
-            "list_mcp_tools": list_mcp_tools_tool,
-            "list_mcp_resources": list_mcp_resources_tool,
-            "read_mcp_resource": read_mcp_resource_tool,
-        }
-        result = await tool_map[tool_name].ainvoke(tool_arguments)
-        result_data = _maybe_json(result)
-        yield ToolResult(id=tool_call_identifier, name=tool_name, result=result_data)
-
-    async def _tool_set_tasks(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        task_definitions = tool_arguments.get("tasks", [])
-        identifiers = self._task_manager.add_tasks(task_definitions)
-        self._mark_session_dirty()
-        result_message = f"Created {len(identifiers)} task{'s' if len(identifiers) != 1 else ''}."
-        # An ordinary tool result: the task list is the model's own bookkeeping, and both sides see it.
-        yield ToolResult(
-            id=tool_call_identifier,
-            name=tool_name,
-            result={
-                "code": "tasks_updated",
-                "message": result_message,
-                "tasks": self._task_manager.to_dict_list(),
-            },
-        )
-
-    async def _tool_update_tasks(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        updates = tool_arguments.get("updates", [])
-        updated_ids, complaints = self._task_manager.update_tasks(updates)
-        if updated_ids:
-            self._mark_session_dirty()
-            result_message = (
-                f"Updated {len(updated_ids)} task{'s' if len(updated_ids) != 1 else ''}."
-            )
-        else:
-            result_message = "Nothing was updated."
-        result: dict[str, Any] = {
-            "code": "tasks_updated",
-            "message": result_message,
-            "tasks": self._task_manager.to_dict_list(),
-        }
-        # What went wrong per update, so a bad key is distinguishable from a task that does not exist.
-        if complaints:
-            result["rejected"] = complaints
-            result["status"] = (
-                ToolStatus.ERROR.value if not updated_ids else result.get("status", "")
-            )
-        yield ToolResult(id=tool_call_identifier, name=tool_name, result=result)
-
-    async def _tool_update_goal(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        goal = str(tool_arguments.get("goal", "")).strip()
-        purpose = str(tool_arguments.get("purpose", "")).strip()
-        requirements = _goal_lines(tool_arguments.get("requirements"))
-        current = self.goal
-
-        def refuse(message: str) -> dict:
-            return {
-                "code": "goal_update_error",
-                "status": ToolStatus.ERROR.value,
-                "message": message,
-            }
-
-        # All three demanded at once: this is the only moment the goal meets a fresh reading of the request.
-        if not goal:
-            result = refuse(
-                "Say what the goal is: the end state, written so it is either true or not."
-            )
-        elif not purpose:
-            result = refuse(
-                "Say what the end state is for, so a closed route can be told from a lost goal."
-            )
-        elif not requirements:
-            result = refuse(
-                "A goal needs minimum conditions: what must hold for it to be met, each one something a reader can go and check."
-            )
-        else:
-            # The allowance carries across a replacement, or restating the goal would buy an unbounded run.
-            self.write_goal(
-                Goal(
-                    text=goal,
-                    purpose=purpose,
-                    requirements=requirements,
-                    continuations=current.continuations if current is not None else 0,
-                )
-            )
-            result = {
-                "code": "goal_active",
-                "goal": goal,
-                "purpose": purpose,
-                "requirements": requirements,
-            }
-            self._record_event("goal_updated", result)
-        yield ToolResult(id=tool_call_identifier, name=tool_name, result=result)
-
-    async def _tool_session(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        """Every peer-session verb, in one handler: they differ only in which call they make."""
-        from langmesh.runtime.tools import sessions
-
-        # The create tool is built per-runtime with the installed profiles in its schema, so it is found, not imported.
-        create_tool = next((tool for tool in self._tools if tool.name == "create_session"), None)
-        background_token = bind_background_jobs(self._background)
-        try:
-            result = await sessions.invoke(tool_name, tool_arguments, create_tool)
-        finally:
-            unbind_background_jobs(background_token)
-        model_guidance = ""
-        if isinstance(result, ToolOutput):
-            model_guidance = result.model_guidance
-            result = result.result
-        yield ToolResult(
-            id=tool_call_identifier,
-            name=tool_name,
-            result=_maybe_json(result) if isinstance(result, str) else result,
-            model_guidance=model_guidance,
-        )
-
-    async def _tool_search_web(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        background_token = bind_background_jobs(self._background)
-        try:
-            result = await search_web_tool.ainvoke(tool_arguments)
-        finally:
-            unbind_background_jobs(background_token)
-        result_data = _maybe_json(result)
-        model_guidance = ""
-        if isinstance(result_data, dict) and result_data.get("code") == "web_search_started":
-            model_guidance = self._prompt_loader.load("web_search_started_note", {})
-        yield ToolResult(
-            id=tool_call_identifier,
-            name=tool_name,
-            result=result_data,
-            model_guidance=model_guidance,
-        )
-
-    async def _tool_read_turn(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        requested_turn_id = tool_arguments.get("turn_id", "")
-        # A search or background-bash handle is not an A2A task, so redirect rather than answer task_not_found.
-        background_kind = _background_handle_kind(requested_turn_id)
-        model_guidance = ""
-        if self._turn_reader is None:
-            result = {
-                "code": "read_turn_unavailable",
-                "message": "Reading turns is not available in this session.",
-            }
-        elif background_kind is not None:
-            model_guidance = self._prompt_loader.load(
-                "read_turn_background_handle",
-                {"job_id": requested_turn_id, "kind": background_kind},
-            )
-            result = {
-                "code": "not_a_readable_turn",
-                "turn_id": requested_turn_id,
-                "job_kind": background_kind,
-            }
-        else:
-            task = await self._turn_reader(requested_turn_id)
-            if task is None:
-                result = {"code": "turn_not_found", "turn_id": requested_turn_id}
-            else:
-                result = task
-        yield ToolResult(
-            id=tool_call_identifier,
-            name=tool_name,
-            result=result,
-            model_guidance=model_guidance,
-        )
-
-    @staticmethod
-    def _surface_for(surface_name: str):
-        """The live surface a screen tool names: the native macOS tree, or the user's Chrome."""
-        from langmesh.computer import engine as native_surface, web as web_surface
-
-        return native_surface.SURFACE if surface_name == "computer" else web_surface.SURFACE
-
-    async def _tool_control_screen(
-        self,
-        tool_name: str,
-        tool_arguments: dict,
-        tool_call_identifier: str,
-        decision: _ResolvedToolDecision,
-        policy: CallExecutionPolicy,
-        resolved_location: ResolvedLocation | None,
-    ) -> AsyncIterator[TurnEvent]:
-        # Run the model's Python in the killable sandbox, bridging each primitive to the chosen surface.
-        from langmesh.computer import control, retrieval, surface as surface_module
-        from langmesh.computer.surface import message_loader
-
-        from langmesh.computer import targets as target_registry, workflows as workflow_registry
-
-        script = str(tool_arguments.get("script", ""))
-        if not script.strip():
-            yield ToolResult(
-                id=tool_call_identifier,
-                name=tool_name,
-                result={"ok": False, "error": "control_screen needs a script to run."},
-            )
-            return
-        # A target is a window or tab by the identifier its platform minted, since a display name is not an identity.
-        target_id = str(tool_arguments.get("target", "") or "").strip()
-        if not target_id:
-            yield ToolResult(
-                id=tool_call_identifier,
-                name=tool_name,
-                result={
-                    "ok": False,
-                    "error": "control_screen needs a target — the window or tab to act in.",
-                    "targets": {"current": target_registry.describe_all()},
-                },
-            )
-            return
-        target = target_registry.find_target(target_id)
-        if target is None:
-            # Say what is known rather than assert a cause: an unfound target may simply be on another Space.
-            listing = target_registry.list_targets()
-            same_app = [
-                place for place in listing if place.app.lower() == target_id.strip().lower()
-            ]
-            if same_app:
-                described = target_registry.describe_all(
-                    sorted(same_app, key=target_registry._worth_naming)
-                )
-                error = f"{target_id!r} is an application, not a window — an application has no single place to act in. Its windows are listed under 'candidates', likeliest first."
-                payload = {"ok": False, "error": error, "targets": {"candidates": described}}
-            else:
-                error = f"Target {target_id!r} is not among the windows and tabs I can see."
-                payload = {
-                    "ok": False,
-                    "error": error,
-                    "targets": {
-                        "missing": [target_id],
-                        "current": target_registry.describe_all(listing),
-                    },
-                }
-            yield ToolResult(id=tool_call_identifier, name=tool_name, result=payload)
-            return
-        surface_name = target.surface
-        surface = self._surface_for(surface_name)
-        gate = surface.preflight("documents")
-        if gate is not None:
-            yield ToolResult(id=tool_call_identifier, name=tool_name, result=gate)
-            return
-
-        control_message = message_loader("control")
-        # What this call may use: the surface's primitives, less the mutating half unless it was approved.
-        from langmesh.runtime.permissions import MUTATING_SCREEN_PRIMITIVES
-
-        permitted_primitives = set(surface.primitives())
-        if not decision.screen_mutations:
-            permitted_primitives -= MUTATING_SCREEN_PRIMITIVES
-        known_ids: dict[
-            str, dict[str, str]
-        ] = {}  # id -> {id, name, role, context}, from find_* results
-        changed: list[dict[str, Any]] = []
-        read_failures: list[dict[str, Any]] = []  # structured payloads a failed read produced
-        # Everything the script did, in order, so a failure on line four says which of the first three happened.
-        ran: list[dict[str, Any]] = []
-        # One place, three questions, so the verb sets cannot disagree about what needs focus or watching.
-        element_mutating_verbs = frozenset({"click", "type", "choose", "upload", "drag"})
-        # Verbs whose first argument is an element to resolve, changed or not.
-        targeting_verbs = element_mutating_verbs | frozenset(
-            {"read", "hover", "scroll", "caret", "select", "focus"}
-        )
-        # Verbs worth bracketing with a glance. The tab verbs and `evaluate` report themselves, so they stay out.
-        watched_verbs = element_mutating_verbs | frozenset({"press", "navigate", "caret", "select"})
-        # Verbs that replace the document wholesale, whose diff is a summary rather than a list.
-        navigating_verbs = frozenset({"navigate"})
-
-        def _facets(clickable: Any, name: str, context: str) -> dict:
-            """The narrowing a caller asked for. `clickable` is tri-state: omitted means no opinion, never `False`."""
-            facets: dict = {}
-            if clickable is not None:
-                facets["clickable"] = bool(clickable)
-            if name:
-                facets["name"] = name
-            if context:
-                facets["context"] = context
-            return facets
-
-        def _matching(documents: list, facets: dict) -> list:
-            """The documents a facet admits, narrowed before ranking, which is worth 12.9% of top-1 accuracy."""
-            if not facets:
-                return documents
-
-            def admits(document) -> bool:
-                for field, wanted in facets.items():
-                    if field == "clickable":
-                        if bool(document.payload.get("clickable", False)) is not bool(wanted):
-                            return False
-                    elif field == "context":
-                        # A containment test: `context` names a region and a caller knows part of it.
-                        if str(wanted) not in str(document.payload.get(field, "") or ""):
-                            return False
-                    elif str(document.payload.get(field, "") or "") != str(wanted):
-                        # `name` is exact, because a caller quoting one has read it off a result.
-                        return False
-                return True
-
-            return [document for document in documents if admits(document)]
-
-        # What has been asked of the screen and what it turned up, kept on the runtime since this spans calls.
-        asked: list[tuple[Any, str]] = getattr(self, "_screen_queries_asked", [])
-        setattr(self, "_screen_queries_asked", asked)
-        rephrased: list[str] = []
-
-        def _note_if_rephrasing(query: str, hits: list) -> None:
-            """Notice a search going in circles and say so once, since rephrasing the same query is not retrieval failing."""
-            top = hits[0].id if hits else ""
-            if not top or rephrased:
-                return
-            vector = retrieval.intent(query)
-            if vector is None:
-                return
-            alike = active_tuning().ratio(Tunable.find_rephrasing_similarity)
-            for earlier, found in asked:
-                if found == top and float(earlier @ vector) >= alike:
-                    rephrased.append(control_message("rephrasing", query=query))
-                    return
-            asked.append((vector, top))
-            del asked[:-12]
-
-        def _rank(
-            query: str, limit: int, floor: float = 0.0, facets: dict | None = None, near: str = ""
-        ) -> list:
-            # One call, one meaning, both surfaces: the target says where to read.
-            raw = surface.documents(target_id)
-            if not raw.get("ok"):
-                # The script sees a raisable error and the structure survives to the result, target list included.
-                read_failures.append({key: value for key, value in raw.items() if key != "ok"})
-                raise RuntimeError(raw.get("error", "Could not read the screen."))
-            documents = raw.get("documents", [])
-            candidates = _matching(documents, facets or {})
-            # A facet admitting nothing falls back to the whole surface: narrowing is a preference, not a precondition.
-            if not candidates and documents:
-                logger.info(
-                    "screen find: facets %r admitted nothing; ranking the whole surface", facets
-                )
-                candidates = documents
-            index = retrieval.Index(candidates)
-            if near:
-                tuning = active_tuning()
-                try:
-                    hits = index.anchored(
-                        query,
-                        near,
-                        top_k=limit,
-                        weight=tuning.ratio(Tunable.find_near_weight),
-                        anchor_margin=tuning.ratio(Tunable.find_anchor_margin),
-                    )
-                except retrieval.WeakAnchor as weak:
-                    raise RuntimeError(
-                        control_message(
-                            "weak_anchor",
-                            query=str(query),
-                            anchor=weak.anchor,
-                        )
-                    ) from None
-            else:
-                hits = index.search(query, top_k=limit, floor=floor)
-            # What the model actually asks for, so the index can be tuned against real queries rather than invented ones.
-            logger.info(
-                "screen find: surface=%s query=%r results=%d top=%r",
-                surface_name,
-                query,
-                len(hits),
-                (hits[0].payload.get("name", "") if hits else ""),
-            )
-            _note_if_rephrasing(query, hits)
-            return hits
-
-        # How much of what appeared is spelled out, since a navigation makes "everything new" a whole document.
-        appeared_detail_limit = 12
-
-        def _hydrate(ids: frozenset[str]) -> dict:
-            """Newly-present elements as a count plus a readable sample, never as a wall."""
-            if not ids:
-                return {}
-            known = [known_ids[identifier] for identifier in ids if identifier in known_ids]
-            sample = known[:appeared_detail_limit] or [
-                {"id": identifier} for identifier in sorted(ids)[:appeared_detail_limit]
-            ]
-            report: dict[str, Any] = {"appeared": sample}
-            if len(ids) > len(sample):
-                report["appeared_total"] = len(ids)
-            return report
-
-        async def _record_change(name: str, args: list, before: surface_module.Glance):
-            """What one action changed. It observes and does not act, so nothing is retried behind the caller's back."""
-            after = await asyncio.to_thread(surface.glance, target_id)
-            moved = surface_module.changes_between(before.facts, after.facts)
-            appeared = surface_module.appeared_between(before, after)
-            record: dict[str, Any] = {"action": name}
-            if args and isinstance(args[0], str):
-                record.update(known_ids.get(args[0], {"id": args[0]}))
-            record.update(moved)
-            navigated = name in navigating_verbs or "url" in moved
-            if navigated:
-                # The document was replaced, so the new place and its size is what a person would say.
-                record["navigated"] = {
-                    "title": after.facts.get("title", ""),
-                    "url": after.facts.get("url", ""),
-                    "elements": len(after.ids),
-                }
-                record.pop("appeared", None)
-            elif appeared:
-                record.update(_hydrate(appeared))
-            if not moved and not appeared:
-                # The honest answer when nothing observable happened: the click missed, or the pane had not loaded.
-                record["changed"] = []
-            if not target.visible:
-                # Acting off-screen works, but a person deserves to be told their other desktop just moved.
-                record["visible"] = False
-            return record
-
-        def _record(hit: Any) -> dict:
-            return {"id": hit.id, **hit.payload}
-
-        def _register(record: dict) -> None:
-            known_ids[record["id"]] = {
-                "id": record["id"],
-                "name": record.get("name", ""),
-                "role": record.get("role", ""),
-                "context": record.get("context", ""),
-            }
-
-        def _identity(record: dict) -> tuple:
-            return (record.get("name", ""), record.get("role", ""), record.get("context", ""))
-
-        def _candidates(records: list) -> str:
-            """The competing elements as data rather than as a sentence about data, so nothing is parsed back out."""
-            return compact(
-                [
-                    {
-                        field: record.get(field)
-                        for field in ("id", "name", "role", "context", "parent", "bounds")
-                        if record.get(field)
-                    }
-                    for record in records
-                ]
-            )
-
-        def find_many(
-            query: Any,
-            limit: int = 8,
-            clickable: Any = None,
-            near: str = "",
-            name: str = "",
-            context: str = "",
-            **_: Any,
-        ) -> list:
-            # The caller's limit, bounded by what any caller may ask for.
-            tuning = active_tuning()
-            wanted = max(1, min(int(limit), tuning.amount(Tunable.find_many_ceiling)))
-            floor = tuning.ratio(Tunable.find_relevance_floor)
-            facets = _facets(clickable, name, context)
-            records = [_record(hit) for hit in _rank(str(query), wanted, floor, facets, str(near))]
-            for record in records:
-                _register(record)
-            # Recorded whether or not the script keeps the value, so nothing has to be parsed back out of stdout.
-            ran.append(
-                {
-                    "find_many": str(query),
-                    "matched": len(records),
-                    "ids": [record["id"] for record in records],
-                }
-            )
-            return records
-
-        def find_one(
-            query: Any,
-            clickable: Any = None,
-            near: str = "",
-            name: str = "",
-            context: str = "",
-            **_: Any,
-        ) -> dict:
-            facets = _facets(clickable, name, context)
-            # No floor: the abstention below is a margin fitted over the full ranking, which a floor would change.
-            scored = [
-                (_record(hit), float(hit.score or 0.0))
-                for hit in _rank(str(query), 8, 0.0, facets, str(near))
-            ]
-            if not scored:
-                raise RuntimeError(control_message("no_match", query=str(query)))
-            top, top_score = scored[0]
-            # How many rivals the top match is weighed against, and how many come back when it cannot be chosen.
-            shortlist = active_tuning().amount(Tunable.find_candidates)
-            # Score-competitive: within the shortlist and at least 90% of the top. A twin there means raise.
-            competitive = [
-                record
-                for record, score in scored[:shortlist]
-                if top_score <= 0 or score >= 0.9 * top_score
-            ]
-            twins = [record for record in competitive[1:] if _identity(record) == _identity(top)]
-            if twins:
-                raise RuntimeError(
-                    control_message(
-                        "ambiguous_match", query=str(query), candidates=_candidates([top, *twins])
-                    )
-                )
-            # Where the ranker had no real preference: the gap to second, as a fraction of the spread, abstains.
-            runner_up = scored[1][1] if len(scored) > 1 else 0.0
-            spread = (
-                statistics.pstdev([score for _record, score in scored]) if len(scored) > 1 else 0.0
-            )
-            margin = (top_score - runner_up) / spread if spread > 1e-9 else 1.0
-            if margin < active_tuning().ratio(Tunable.find_one_margin):
-                raise RuntimeError(
-                    control_message(
-                        "unsure_match",
-                        query=str(query),
-                        candidates=_candidates([record for record, _ in scored[:shortlist]]),
-                    )
-                )
-            _register(top)
-            # The element it settled on, named rather than reproduced: one record can run to tens of thousands of characters.
-            ran.append(
-                {
-                    "find_one": str(query),
-                    "matched": {
-                        key: top.get(key) for key in ("id", "role", "name") if top.get(key)
-                    },
-                }
-            )
-            return top
-
-        async def wait_for(
-            query: Any,
-            seconds: float = 5.0,
-            clickable: Any = None,
-            near: str = "",
-            name: str = "",
-            context: str = "",
-            **_: Any,
-        ) -> dict:
-            """Poll a find until it matches and return the element, since a screen builds and animates."""
-            deadline = time.monotonic() + max(0.0, float(seconds))
-            interval = active_tuning().settle_poll()
-            while True:
-                # By keyword: the facet order is `find_many`'s business, and positional would re-aim every call.
-                hits = await asyncio.to_thread(
-                    find_many, query, 1, clickable=clickable, near=near, name=name, context=context
-                )
-                if hits:
-                    return hits[0]
-                if time.monotonic() >= deadline:
-                    raise RuntimeError(
-                        control_message("waited_in_vain", query=str(query), seconds=f"{seconds:g}")
-                    )
-                await asyncio.sleep(interval)
-
-        def _resolve_target(verb: str, args: list) -> list:
-            if not args:
-                return args
-            target = args[0]
-            # The element a find returned, passed whole — the most reliable way to act on a result.
-            if isinstance(target, dict) and "id" in target:
-                return [target["id"], *args[1:]]
-            if not isinstance(target, str) or target in known_ids:
-                return args
-            # An id is an id even unseen here, so it goes to the surface, which is what resolves ids.
-            if _ELEMENT_ID.fullmatch(target):
-                return args
-            if verb in element_mutating_verbs:
-                resolved = find_one(target)["id"]  # unique-or-raise
-            else:  # read / hover / scroll: a wrong non-mutating target is self-correcting, so top-1
-                hits = _rank(target, 1, 0.0)
-                if not hits:
-                    raise RuntimeError(control_message("no_match", query=target))
-                record = _record(hits[0])
-                _register(record)
-                resolved = record["id"]
-            return [resolved, *args[1:]]
-
-        async def dispatch(name: str, args: list, keywords: dict) -> Any:
-            # What this session may do is enforced by `run_control_script`, which refuses before this is reached.
-            if name == "find_many":
-                return await asyncio.to_thread(find_many, *args, **keywords)
-            if name == "find_one":
-                return await asyncio.to_thread(find_one, *args, **keywords)
-            if name == "wait_for":
-                return await wait_for(*args, **keywords)
-            if name in targeting_verbs:
-                args = await asyncio.to_thread(_resolve_target, name, list(args))
-            # An action is bracketed by two cheap observations, so the result says what changed, not what was touched.
-            watched = name in watched_verbs
-            # A glance on each side, not a full read: reading rebuilds the id map and re-points every held id.
-            before = (
-                await asyncio.to_thread(surface.glance, target_id)
-                if watched
-                else surface_module.Glance()
-            )
-            outcome = await asyncio.to_thread(
-                surface.perform, target_id, name, list(args), keywords
-            )
-            if isinstance(outcome, dict):
-                if outcome.get("ok") is False:
-                    ran.append({name: args[0] if args else "", "failed": outcome.get("error", "")})
-                    # Surface a primitive failure into the script as a raised error it can try/except.
-                    raise RuntimeError(outcome.get("error", f"{name} failed"))
-                step: dict[str, Any] = {name: args[0] if args and isinstance(args[0], str) else ""}
-                if watched:
-                    record = await _record_change(name, args, before)
-                    if record is not None:
-                        changed.append(record)
-                        step.update(
-                            {key: value for key, value in record.items() if key != "action"}
-                        )
-                ran.append(step)
-                # Hand the script the useful value: a result or text directly, an action its confirmation.
-                if "result" in outcome:
-                    return outcome["result"]
-                if "lines" in outcome:
-                    return outcome["lines"]
-                return {key: value for key, value in outcome.items() if key != "ok"}
-            return outcome
-
-        active = tool_context.current()
-        # The baseline the target diff is reported against, so the model is told what its own actions did.
-        targets_before = target_registry.list_targets()
-        result = await control.run_control_script(
-            script,
-            dispatch,
-            profile=active.sandbox,
-            workspace=active.workspace,
-            # Only what this surface implements and this session may run, so a missing name fails against the surface.
-            primitives=tuple(sorted(permitted_primitives)),
-            # The place the script drives, so the child binds a `screen` already pointed at it.
-            target=target_id,
-            # Where saved workflows live, so `from workflows.x import y` reaches them.
-            import_roots=workflow_registry.import_roots(
-                self._project_directory or active.workspace or ""
-            ),
-            # And what those skills installed into, so a package with dependencies works.
-            dependency_roots=workflow_registry.dependency_roots(
-                self._project_directory or active.workspace or ""
-            ),
-            # And where those dependencies keep the shared libraries they were built against.
-            library_roots=workflow_registry.library_roots(
-                self._project_directory or active.workspace or ""
-            ),
-        )
-        if isinstance(result, dict):
-            moved = target_registry.difference(targets_before, target_registry.list_targets())
-            if moved:
-                result.setdefault("targets", moved)
-            # Whatever a failed read knew, carried alongside the message. The last one wins: it is where the script ended.
-            for failure in read_failures[-1:]:
-                for key, value in failure.items():
-                    result.setdefault(key, value)
-        if changed and isinstance(result, dict):
-            result.setdefault("changed", changed)
-        # What ran, in order, finished or not: on a failure this is the difference from starting over.
-        if ran and isinstance(result, dict):
-            result.setdefault("ran", ran)
-        # Said once per call, and beside what the script returned: this is an observation, not a failure.
-        if rephrased and isinstance(result, dict):
-            result.setdefault("note", rephrased[0])
-        yield ToolResult(id=tool_call_identifier, name=tool_name, result=result)

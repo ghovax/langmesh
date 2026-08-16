@@ -23,7 +23,7 @@ from langmesh.runtime.internals import (
     message_tokens,
     settled_arguments,
 )
-from langmesh.runtime.prompt.environment import probe_local_environment, probe_user_context
+from langmesh.runtime.prompt_environment import probe_local_environment, probe_user_context
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.values import PermissionAnswer, TurnContext
 from langmesh.base.instructions import instructions_payload
@@ -321,6 +321,7 @@ class _RunsTurns:
         response: str,
         outcome: str,
         tool_calls: list,
+        started_at: datetime,
         error: str = "",
     ) -> None:
         """Hand one completed turn to the caller's transcript: one entry per turn, not per message."""
@@ -330,7 +331,7 @@ class _RunsTurns:
         summary = TurnSummary(
             session_id=self._session_id,
             turn_id=new_id("turn"),
-            started_at=self._turn_started_at or datetime.now(timezone.utc),
+            started_at=started_at,
             ended_at=datetime.now(timezone.utc),
             request=request,
             response=response,
@@ -349,14 +350,16 @@ class _RunsTurns:
 
     async def _drain_steering_messages(self) -> list[TurnEvent]:
         events: list[TurnEvent] = []
-        while not self._steering_messages.empty():
-            message, message_id, peer_sender, accepted = self._steering_messages.get_nowait()
+        pending = self._pending_steering
+        if not pending:
+            return events
+        # Drain the whole FIFO in order; a sender learns it was accepted the moment it is drained.
+        self._pending_steering = []
+        for message, message_id, peer_sender, accepted in pending:
             self._conversation.append(HumanMessage(content=message))
             events.append(Steering(text=message, message_id=message_id, peer_sender=peer_sender))
             if not accepted.done():
                 accepted.set_result(True)
-        if self._steering_messages.empty():
-            self._steering_available.clear()
         return events
 
     async def _answer_gates(self, gates: list[SuspensionGate]) -> dict[str, Any]:
@@ -498,7 +501,8 @@ class _RunsTurns:
                 f"Context compaction failed: {self._compaction_control.failure} Retry compaction before sending more work."
             )
         self._abort_event.clear()
-        self._response_nudged = False
+        # A turn's own bookkeeping: the no-op nudge happens once, and the start time feeds the transcript.
+        response_nudged: list[bool] = [False]
         # The person's words are held until the request is assembled, so every part sent with them reads first.
         pending_user_message = None
         # A turn runs until the model is done or the user interrupts: an unfinished goal outlives this loop.
@@ -525,7 +529,7 @@ class _RunsTurns:
                 resume_answers or {},
             )
             resume_outcomes: dict[str, dict] = {}
-            async for event in self._drain_tools_concurrently(
+            async for event in self._drain_tool_batch(
                 cast(list[dict], response.tool_calls),
                 turn_tool_calls_log,
                 turn_tool_results_log,
@@ -550,15 +554,14 @@ class _RunsTurns:
             recorded_user_message = message_text(turn_message)
             # Held until compaction has had a chance to reclaim the existing conversation.
             pending_user_message = turn_message
-        self._turn_started_at = datetime.now(timezone.utc)
+        turn_started_at = datetime.now(timezone.utc)
 
         while True:
             if self._abort_event.is_set() or self._stop_requested:
-                if self._has_queued_steering() and not self._stop_requested:
-                    self._abort_event.clear()
-                else:
-                    yield Done(text="", stop_reason="cancelled")
-                    return
+                # A stop supersedes steering: drop it and tell its sender no.
+                self.discard_pending_steering()
+                yield Done(text="", stop_reason="cancelled")
+                return
 
             background_events = self._background_result_events()
             if background_events:
@@ -569,10 +572,10 @@ class _RunsTurns:
             # The threshold is a preparation boundary, not a hard cut. The reserved window
             # gives the agent room for one private recording batch before the compaction happens.
             should_compact = self._should_compact(pending_user_message)
-            if should_compact and self._compaction_control.phase == "none":
+            if should_compact and self._compaction_control.idle:
                 self._begin_compaction_preparation(reason="auto", resume_after=True)
             if (
-                self._compaction_control.phase == "waiting"
+                self._compaction_control.waiting
                 and self._compaction_control.preparation_token is None
             ):
                 self._compaction_control.preparation_token = (
@@ -580,7 +583,7 @@ class _RunsTurns:
                 )
                 self._mark_session_dirty()
             if (
-                self._compaction_control.phase == "waiting"
+                self._compaction_control.waiting
                 and self._compaction_control.preparation_token is not None
             ):
                 if await self._compaction_preparation.completed(
@@ -590,7 +593,7 @@ class _RunsTurns:
                     # was persisted. Its revision is the durable acknowledgement; do not ask the
                     # model to repeat a side effect merely because the in-memory state was lost.
                     self._record_compaction_preparation()
-            if self._compaction_control.phase == "waiting" and not self._compaction_control.started:
+            if self._compaction_control.waiting and not self._compaction_control.started:
                 # The indicator opens when the recording handoff begins, not when the compaction finally
                 # runs: preparation is the long phase, and a session restart must not drop it.
                 self._compaction_control.started = True
@@ -600,7 +603,7 @@ class _RunsTurns:
                     messages_before=len(self._without_compaction_preparation(self._conversation)),
                     tokens_before=conversation_tokens(self._conversation),
                 )
-            if self._compaction_control.phase == "recorded":
+            if self._compaction_control.recorded:
                 compaction_reason = self._compaction_control.reason
                 try:
                     self._observation_registry_metadata = (
@@ -622,13 +625,13 @@ class _RunsTurns:
                 continue
 
             # The person's words join the request exactly once, after any needed compaction.
-            if pending_user_message is not None and self._compaction_control.phase != "waiting":
+            if pending_user_message is not None and not self._compaction_control.waiting:
                 self._conversation.append(pending_user_message)
                 pending_user_message = None
 
             # Steering accepted while a new message was waiting belongs after that message. During
             # preparation it remains queued until the private segment has compacted away.
-            if self._compaction_control.phase != "waiting":
+            if not self._compaction_control.waiting:
                 for steering_event in await self._drain_steering_messages():
                     yield steering_event
 
@@ -670,7 +673,7 @@ class _RunsTurns:
                     self._latest_context_tokens = max(
                         self._latest_context_tokens, overflow.tokens or window
                     )
-                if self._compaction_control.phase != "recorded":
+                if not self._compaction_control.recorded:
                     self._compaction_control.reason = "overflow"
                     self._compaction_control.resume_after = True
                     for compaction_event in self._fail_compaction_preparation(
@@ -706,6 +709,7 @@ class _RunsTurns:
                     "",
                     "canceled",
                     turn_tool_calls_log,
+                    turn_started_at,
                 )
                 return
             if call.aborted_for_steering:
@@ -732,6 +736,8 @@ class _RunsTurns:
                     turn_tool_calls_log,
                     turn_tool_results_log,
                     step,
+                    turn_started_at,
+                    response_nudged,
                 ):
                     yield event
                 if self.compaction_failure:
@@ -744,7 +750,7 @@ class _RunsTurns:
                 continue
 
             # Calls to make: run the batch behind its checkpoint, then honour a Stop that landed during it.
-            preparing_compaction = self._compaction_control.phase == "waiting"
+            preparing_compaction = self._compaction_control.waiting
             def _valid_preparation_call(call: dict) -> bool:
                 if call.get("name") == "bash":
                     return not str((call.get("args") or {}).get("location") or "").strip() and not bool(
@@ -782,7 +788,7 @@ class _RunsTurns:
                 step,
             ):
                 yield event
-            if self._compaction_control.phase == "waiting":
+            if self._compaction_control.waiting:
                 token = self._compaction_control.preparation_token
                 if token is None:
                     raise RuntimeError("compaction preparation has no durable baseline")
@@ -793,7 +799,7 @@ class _RunsTurns:
                     self._conversation.append(pending_user_message)
                     pending_user_message = None
                 return
-            if self._compaction_control.phase == "recorded":
+            if self._compaction_control.recorded:
                 # The successful recording call is the terminal action of this model segment.
                 # The next loop iteration compacts and resumes the already-accepted work.
                 continue
@@ -813,7 +819,7 @@ class _RunsTurns:
         """This iteration's messages: the static prompt and the whole conversation."""
         system_message = SystemMessage(content=self._build_static_system_prompt())
         conversation = self._conversation
-        if self._compaction_control.phase == "waiting":
+        if self._compaction_control.waiting:
             # Normally the output reserve leaves the complete conversation enough room for
             # its recording handoff. A restored or provider-rejected oversized session is the
             # exceptional case: give the handoff the largest recent view that can actually run,
@@ -883,7 +889,7 @@ class _RunsTurns:
         abort_waiter = None
         cache_scope = ExitStack()
         try:
-            if self._compaction_control.phase == "waiting":
+            if self._compaction_control.waiting:
                 cache_scope.enter_context(cache_lane("compaction"))
             model_stream = bound_model.astream(messages)
             abort_waiter = asyncio.ensure_future(self._abort_event.wait())
@@ -892,50 +898,39 @@ class _RunsTurns:
             pending_chunk = None
             while True:
                 if self._abort_event.is_set() or self._stop_requested:
-                    if self._has_queued_steering() and not self._stop_requested:
-                        if any(
-                            getattr(chunk, "tool_call_chunks", None)
-                            or getattr(chunk, "tool_calls", None)
-                            or getattr(chunk, "invalid_tool_calls", None)
-                            for chunk in response_chunks
-                        ):
-                            # Keep reading so the in-flight call completes; the abort stays set so the steering drains right after its result, not at turn end.
-                            pass
-                        else:
-                            # Safe boundary: only a text prefix has been shown, so interrupting here cannot orphan a tool call.
-                            if pending_chunk is not None:
-                                pending_chunk.cancel()
-                                with suppress(BaseException):
-                                    await pending_chunk
-                                pending_chunk = None
-                            self._abort_event.clear()
-                            aborted_for_steering = True
-                            break
+                    # A real stop: drop the pending read and stop consuming the stream.
+                    if pending_chunk is not None:
+                        pending_chunk.cancel()
+                        with suppress(BaseException):
+                            await pending_chunk
+                        pending_chunk = None
+                    # Keep the chunks the provider already saw, so the next request's prefix stays cache-stable.
+                    if response_chunks:
+                        outcome.response = add_ai_message_chunks(
+                            response_chunks[0], *response_chunks[1:]
+                        )
+                        outcome.response.additional_kwargs["langmesh_cancelled"] = True
+                    yield Done(text="", stop_reason="cancelled")
+                    outcome.cancelled = True
+                    return
+                if self._has_queued_steering():
+                    # Steering waits at a semantic boundary; never mid-tool-call, or the call would be orphaned.
+                    if any(
+                        getattr(chunk, "tool_call_chunks", None)
+                        or getattr(chunk, "tool_calls", None)
+                        or getattr(chunk, "invalid_tool_calls", None)
+                        for chunk in response_chunks
+                    ):
+                        pass
                     else:
-                        # A real stop: drop the pending read and stop consuming the stream.
-                        if pending_chunk is not None:
-                            pending_chunk.cancel()
-                            with suppress(BaseException):
-                                await pending_chunk
-                            pending_chunk = None
-                        # The provider already saw these chunks. Keep them in the conversation so the
-                        # next request's prefix stays cache-stable, instead of replacing them with a
-                        # placeholder that would invalidate the cache at this exact point.
-                        if response_chunks:
-                            outcome.response = add_ai_message_chunks(
-                                response_chunks[0], *response_chunks[1:]
-                            )
-                            outcome.response.additional_kwargs["langmesh_cancelled"] = True
-                        yield Done(text="", stop_reason="cancelled")
-                        outcome.cancelled = True
-                        return
+                        # Only a text prefix has been shown, so the steering can replace it here.
+                        aborted_for_steering = True
+                        break
 
                 if pending_chunk is None:
                     pending_chunk = asyncio.ensure_future(_stream_next(model_stream))
-                # While steering is held behind an in-flight tool call, read this call to its end without letting the set abort waiter spin the loop.
-                steering_held = self._abort_event.is_set() and self._has_queued_steering()
                 completed, _ = await asyncio.wait(
-                    {pending_chunk, abort_waiter} if not steering_held else {pending_chunk},
+                    {pending_chunk, abort_waiter},
                     timeout=max(0.0, progress_deadline - asyncio.get_running_loop().time()),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
@@ -1066,6 +1061,8 @@ class _RunsTurns:
         turn_tool_calls_log: list[dict],
         turn_tool_results_log: list[dict],
         step: _StepOutcome,
+        started_at: datetime,
+        nudged: list[bool],
     ) -> AsyncIterator[TurnEvent]:
         """Handle a response with no tool calls: retry a malformed batch, deliver agent messages, or finish."""
         if response.invalid_tool_calls:
@@ -1081,7 +1078,7 @@ class _RunsTurns:
             step.directive = _CONTINUE
             return
 
-        if self._compaction_control.phase == "waiting":
+        if self._compaction_control.waiting:
             self._conversation.append(response)
             # Best-effort handoff: the summary is the durable memory, so an unadvanced registry must not block the fold.
             self._record_compaction_preparation()
@@ -1093,8 +1090,8 @@ class _RunsTurns:
         self._conversation.append(response)
         # A response with no prose (thinking only) is a no-op: prompt the model once to actually
         # answer, so the exchange cannot end silently. A second no-op ends the turn for real.
-        if not final_text and not self._response_nudged:
-            self._response_nudged = True
+        if not final_text and not nudged[0]:
+            nudged[0] = True
             self._conversation.append(
                 self._reminder_message(self._prompt_loader.load("response_required", {}))
             )
@@ -1118,6 +1115,7 @@ class _RunsTurns:
             final_text,
             "completed",
             turn_tool_calls_log,
+            started_at,
         )
         yield Done(text=final_text, stop_reason="completed")
         step.directive = _STOP
@@ -1138,7 +1136,7 @@ class _RunsTurns:
         ]
         if not pending:
             return
-        async for event in self._drain_tools_concurrently(
+        async for event in self._drain_tool_batch(
             pending,
             turn_tool_calls_log,
             turn_tool_results_log,
@@ -1159,12 +1157,7 @@ class _RunsTurns:
         self._conversation.append(response)
         tool_calls = cast(list[dict], response.tool_calls)
         outcomes: dict[str, dict] = {}
-        steering_waits = (
-            self._abort_event.is_set()
-            and self._has_queued_steering()
-            and not self._stop_requested
-        )
-        if (not self._abort_event.is_set() and not self._stop_requested) or steering_waits:
+        if not self._abort_event.is_set() and not self._stop_requested:
             plans, pending = await self._preflight_permissions(tool_calls)
             gates = [SuspensionGate(**gate.to_dict()) for gate in pending]
             # Automatic-mode gates are announced first, then weighed by the reviewer, so the call
@@ -1194,7 +1187,7 @@ class _RunsTurns:
             if not self._hooks.empty:
                 tool_calls = await self._hooks.before_tools(tool_calls)
             retries: list[_PreflightGate] = []
-            async for event in self._drain_tools_concurrently(
+            async for event in self._drain_tool_batch(
                 tool_calls,
                 turn_tool_calls_log,
                 turn_tool_results_log,
@@ -1254,12 +1247,6 @@ class _RunsTurns:
         yield Checkpoint()
 
         if self._abort_event.is_set() or self._stop_requested:
-            if self._has_queued_steering() and not self._stop_requested:
-                self._abort_event.clear()
-                for steering_event in await self._drain_steering_messages():
-                    yield steering_event
-                step.directive = _CONTINUE
-                return
             self._record_turn(recorded_user_message, turn_tool_calls_log, turn_tool_results_log, "")
             yield Done(text="", stop_reason="cancelled")
             step.directive = _STOP
