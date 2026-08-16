@@ -18,7 +18,7 @@ from a2a.server.tasks import BasePushNotificationSender
 from a2a.server.tasks.push_notification_config_store import PushNotificationConfigStore
 from a2a.types import PushNotificationConfig, Task
 
-from langmesh.base.net_trust import (
+from langmesh.base.confinement.outbound import (
     UntrustedHostError,
     assert_public_url,
     pin_to_ip,
