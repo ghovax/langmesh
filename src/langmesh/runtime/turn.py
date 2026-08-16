@@ -126,8 +126,12 @@ class _RunsTurns:
                 goal=self.goal.for_model() if self.goal is not None else {},
                 tasks=self._task_manager.to_dict_list(),
                 background={
-                    "running": self._background.active_by_context_key(),
-                    "active_count": self._background.active_count(),
+                    "running": self._features.background.active_by_context_key()
+                    if self._features.present("background")
+                    else {},
+                    "active_count": self._features.background.active_count()
+                    if self._features.present("background")
+                    else 0,
                     "recent_events": self._execution_history[-20:],
                 },
                 screen=self._screen_context(),

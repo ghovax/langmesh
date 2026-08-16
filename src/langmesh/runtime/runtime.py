@@ -33,8 +33,6 @@ from langmesh.base.ports import Observation
 from langmesh.runtime.tools.context import ToolContext
 from langmesh.runtime.background import (
     BackgroundJobs,
-    background_completion_event,
-    background_include_result,
 )
 
 
@@ -42,7 +40,6 @@ from langmesh.base.permission_mode import PermissionMode
 
 from langmesh.runtime.locations import CallExecutionPolicy, Location, ResolvedLocation, ToolLocationError
 from langmesh.runtime.turn_events import (
-    ToolResult,
     TurnEvent,
     Usage,
 )
@@ -60,10 +57,6 @@ from langmesh.base.toolbox import toolbox_for
 from langmesh.runtime.goal import Goal
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.internals import (
-    _cap_model_result_payload,
-    _maybe_json,
-    _model_result_status,
-    _tool_timing_metadata,
     _utc_timestamp,
     conversation_tokens,
 )
@@ -377,7 +370,6 @@ class AgentRuntime(
         session_access = components.sessions
         mcp_server_manager = components.mcp_servers
         model = components.model
-        jobs = components.jobs
         observer = components.observer
         approvals = components.approvals
         catalogue = components.catalogue
@@ -485,11 +477,6 @@ class AgentRuntime(
             permissions
             if permissions is not None
             else PermissionEvaluator(agent_configuration)
-        )
-        self._background = BackgroundJobs(
-            session_id=session_id,
-            agent_name=agent_configuration.identifier,
-            store=jobs,
         )
         # Where the audit trail goes, and who answers a gate. Both absent by default.
         self._observer = observer
@@ -599,7 +586,13 @@ class AgentRuntime(
             ),
             write_goal=self.write_goal,
             turn_reader=self._turn_reader,
-            background=self._background,
+            background=lambda: (
+                self._features.background.runner
+                if self._features.present("background")
+                else None
+            ),
+            job_store=components.jobs,
+            reminder_message=self._reminder_message,
             compaction=self._compaction,
             compaction_preparation=self._compaction_preparation,
             compaction_summarizer=self._compaction_summarizer,
@@ -633,7 +626,7 @@ class AgentRuntime(
         # every tool handler runs against. The bundle is the tool's only view of the runtime.
         self._screen_queries_asked: list[tuple[Any, str]] = []
         self._services = ToolServices(
-            background=self._background,
+            background=self._features.background.runner if self._features.present("background") else None,
             permissions=self._permissions,
             task_manager=self._task_manager,
             goal=_GoalAccess(self),
@@ -812,37 +805,44 @@ class AgentRuntime(
         return messages_to_dict(inherited_messages)
 
     @property
+    def _background(self):
+        """This runtime's background-job runner, owned by the background plugin."""
+        if not self._features.present("background"):
+            return None
+        return self._features.background.runner
+
+    @property
     def background_jobs(self) -> BackgroundJobs:
         """This runtime's background-job runner, which the executor's resume pump reads."""
         return self._background
 
     def has_pending_jobs(self) -> bool:
         """Whether any background job is still in flight, without reaching into the runner's internals."""
-        return self._background.has_pending()
+        runner = self._background
+        return bool(runner is not None and runner.has_pending())
 
     def has_completed_undelivered_jobs(self) -> bool:
         """Whether a completed background result is waiting to be delivered to the model."""
-        return self._background.has_completed_undelivered()
+        runner = self._background
+        return bool(runner is not None and runner.has_completed_undelivered())
 
     async def wait_for_jobs(self) -> None:
         """Await the next background-job completion (the resume pump's wait point)."""
-        await self._background.wait_for_completion()
+        runner = self._background
+        if runner is not None:
+            await runner.wait_for_completion()
 
     def inject_stored_background_result(
         self, *, kind: str, identifier: str, tool_call_identifier: str, result: str
     ) -> None:
         """Append a restored background result, so a rebuilt runtime replays it exactly like a live completion."""
-        capped_result = _cap_model_result_payload(result, code=f"{kind}_result_truncated")
-        metadata = _tool_timing_metadata(
-            tool_name=kind,
-            tool_call_identifier=tool_call_identifier,
-            started_at=datetime.now(timezone.utc),
-            completed_at=datetime.now(timezone.utc),
-            duration_milliseconds=0,
-            background_job_id=identifier,
-        )
-        status, code = _model_result_status(capped_result, ok=True, backgrounded=False)
-        self._append_background_result_messages(capped_result, metadata, status, code)
+        if self._features.present("background"):
+            self._features.background.inject_stored_result(
+                kind=kind,
+                identifier=identifier,
+                tool_call_identifier=tool_call_identifier,
+                result=result,
+            )
 
     def constrained_tool_named(self, tool_name: str):
         """One tool of a given name from the executable set, for a sub-session being bound down to its verdict tool."""
@@ -894,55 +894,6 @@ class AgentRuntime(
             },
         )
         return self._reminder_message(content, marks={"tool_grant": True, "tool_name": tool.name})
-
-    def _append_background_result_messages(
-        self,
-        content: str,
-        metadata: dict[str, Any],
-        status: str,
-        code: str | None,
-    ) -> None:
-        """Append background data first and any actionable guidance second."""
-        self._conversation.append(
-            self._reminder_message(
-                self._background_result_message(content, metadata, status, code),
-                marks={"background_result": metadata, "status": status, "code": code},
-            )
-        )
-        result_data = _maybe_json(content)
-        result_code = str(result_data.get("code") or "") if isinstance(result_data, dict) else ""
-        if result_code.endswith("_interrupted"):
-            self._conversation.append(
-                self._reminder_message(
-                    self._prompt_loader.load(
-                        "background_interrupted",
-                        {"kind": str(metadata.get("tool_name") or "tool")},
-                    ),
-                    marks={
-                        "background_guidance": True,
-                        "background_result": metadata,
-                    },
-                )
-            )
-
-    def _background_result_message(
-        self,
-        content: str,
-        metadata: dict[str, Any],
-        status: str,
-        code: str | None,
-    ) -> str:
-        """Render a background completion while keeping its machine metadata on the message envelope."""
-        return self._prompt_loader.load(
-            "background_result",
-            {
-                "tool_name": str(metadata.get("tool_name") or "background tool"),
-                "job_id": str(metadata.get("background_job_id") or "unknown"),
-                "status": status,
-                "code": code or "none",
-                "content": content,
-            },
-        )
 
     @property
     def token_usage(self) -> dict[str, int]:
@@ -1033,7 +984,9 @@ class AgentRuntime(
         self.discard_pending_steering()
         self._stop_requested = True
         self._abort_event.set()
-        self._background.cancel_foreground()
+        runner = self._background
+        if runner is not None:
+            runner.cancel_foreground()
         for task in list(self._active_tool_tasks.values()):
             task.cancel()
 
@@ -1050,7 +1003,9 @@ class AgentRuntime(
         """Stop live work while leaving its durable job records for startup recovery."""
         self._stop_requested = True
         self._abort_event.set()
-        self._background.cancel_all()
+        runner = self._background
+        if runner is not None:
+            runner.cancel_all()
         for task in list(self._active_tool_tasks.values()):
             task.cancel()
 
@@ -1060,14 +1015,19 @@ class AgentRuntime(
         if task is not None and not task.done():
             task.cancel()
             aborted = True
-        return self._background.cancel_by_tool_call(tool_call_identifier) or aborted
+        runner = self._background
+        return bool(
+            (runner is not None and runner.cancel_by_tool_call(tool_call_identifier)) or aborted
+        )
 
     def background_snapshots(self) -> list[dict[str, Any]]:
-        return self._background.active_snapshots()
+        runner = self._background
+        return runner.active_snapshots() if runner is not None else []
 
     def send_tool_to_background(self, tool_call_identifier: str) -> bool:
         """Push a blocking command to the background on the user's behalf, as if the model had done it."""
-        return self._background.request_background(tool_call_identifier)
+        runner = self._background
+        return bool(runner is not None and runner.request_background(tool_call_identifier))
 
     def enqueue_steering(
         self, message: str, message_id: str = "", peer_sender: str = ""
@@ -1466,49 +1426,10 @@ class AgentRuntime(
             logger.debug("dropped an awaitable observation with no running loop")
 
     def _background_result_events(self) -> list[TurnEvent]:
-        events: list[TurnEvent] = []
-        for completion in self._background.drain_completed():
-            capped_result = _cap_model_result_payload(
-                completion.result,
-                code=f"{completion.kind}_result_truncated",
-            )
-            duration_milliseconds = int(
-                (completion.completed_at - completion.started_at).total_seconds() * 1000
-            )
-            background_metadata = _tool_timing_metadata(
-                tool_name=completion.kind,
-                tool_call_identifier=completion.tool_call_identifier,
-                started_at=completion.started_at,
-                completed_at=completion.completed_at,
-                duration_milliseconds=duration_milliseconds,
-                background_job_id=completion.identifier,
-            )
-            # Append-only: the placeholder stays and the result lands as a new user-role reminder, keeping the prefix.
-            background_status, background_code = _model_result_status(
-                capped_result,
-                ok=True,
-                backgrounded=False,
-            )
-            self._append_background_result_messages(
-                capped_result,
-                background_metadata,
-                background_status,
-                background_code,
-            )
-            events.append(
-                ToolResult(
-                    id=completion.tool_call_identifier,
-                    name=completion.kind,
-                    result=_maybe_json(capped_result),
-                    status=background_status,
-                    job_id=completion.identifier,
-                )
-            )
-            completion_event_data: dict[str, Any] = {"job_id": completion.identifier}
-            if background_include_result(completion.kind):
-                completion_event_data["result"] = capped_result
-            self._record_event(background_completion_event(completion.kind), completion_event_data)
-        return events
+        """Every finished background job, as the turn events the loop yields."""
+        if not self._features.present("background"):
+            return []
+        return self._features.background.drain_events()
 
     def _model_supports_vision(self) -> bool:
         """Whether the model advertises image input. An unknown model is assumed capable, as elsewhere."""

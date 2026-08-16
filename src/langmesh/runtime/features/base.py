@@ -94,6 +94,8 @@ class FeatureServices:
     write_goal: Any = None
     turn_reader: Any = None
     background: Any = None
+    job_store: Any = None
+    reminder_message: Any = None
     compaction: Any = None
     compaction_preparation: Any = None
     compaction_summarizer: Any = None
