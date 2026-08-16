@@ -966,41 +966,33 @@ export async function transcribeDictation(samples: Float32Array): Promise<string
   return String(data.text ?? "");
 }
 
-// Whether the server can read Full-Disk-Access data. False on any error, including non-macOS.
-export async function fetchFullDiskAccess(): Promise<boolean> {
+// Which macOS system permissions the daemon holds, keyed by permission name. A missing
+// permission reads false on any error, including non-macOS.
+export type SystemPermission = "full_disk_access" | "accessibility";
+
+export async function fetchSystemPermissions(): Promise<Record<SystemPermission, boolean>> {
   try {
-    const response = await apiFetch(`/system/full-disk-access`);
-    if (!response.ok) return false;
-    return (await response.json()).granted === true;
+    const response = await apiFetch(`/system/permissions`);
+    if (!response.ok) return { full_disk_access: false, accessibility: false };
+    const body = await response.json();
+    return {
+      full_disk_access: body.permissions?.full_disk_access === true,
+      accessibility: body.permissions?.accessibility === true,
+    };
   } catch (caught) {
-    swallowed({ component: "api", operation: "read the Full Disk Access state" }, caught);
-    return false;
+    swallowed({ component: "api", operation: "read the system permission state" }, caught);
+    return { full_disk_access: false, accessibility: false };
   }
 }
 
-// Open System Settings to the Full Disk Access pane so the user can add LangMesh in one hop.
-export async function openFullDiskAccessSettings(): Promise<void> {
-  await apiFetch(`/system/full-disk-access/open`, { method: "POST" }).catch((caught) =>
-    swallowed({ component: "api", operation: "open the Full Disk Access pane" }, caught),
-  );
-}
-
-// Whether the app can control other apps, which the computer-use tool needs. False on any error.
-export async function fetchAccessibility(): Promise<boolean> {
-  try {
-    const response = await apiFetch(`/system/accessibility`);
-    if (!response.ok) return false;
-    return (await response.json()).granted === true;
-  } catch (caught) {
-    swallowed({ component: "api", operation: "read the Accessibility state" }, caught);
-    return false;
-  }
-}
-
-// Trigger the system Accessibility prompt and open its pane so the user can grant LangMesh.
-export async function openAccessibilitySettings(): Promise<void> {
-  await apiFetch(`/system/accessibility/open`, { method: "POST" }).catch((caught) =>
-    swallowed({ component: "api", operation: "open the Accessibility pane" }, caught),
+// Open (and prompt for, where required) the settings pane that grants one permission.
+export async function openSystemPermission(permission: SystemPermission): Promise<void> {
+  await apiFetch(`/system/permissions/open`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ permission }),
+  }).catch((caught) =>
+    swallowed({ component: "api", operation: `open the ${permission} pane` }, caught),
   );
 }
 

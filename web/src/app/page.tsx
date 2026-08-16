@@ -19,7 +19,7 @@ const MotionFlex = motion.create(Flex);
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   deleteSession,
-  fetchAccessibility,
+  fetchSystemPermissions,
   fetchAgents,
   fetchAgentCards,
   fetchHomeDirectory,
@@ -94,8 +94,8 @@ function Workspace() {
   useEffect(() => {
     if (!preferences.computer_control_awaiting_grant) return;
     let cancelled = false;
-    void fetchAccessibility().then(async (granted) => {
-      if (cancelled || !granted) return;
+    void fetchSystemPermissions().then(async ({ accessibility }) => {
+      if (cancelled || !accessibility) return;
       await updateComputerControlSetting(true);
       updatePreferences({ computer_control_awaiting_grant: false });
     });

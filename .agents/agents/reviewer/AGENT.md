@@ -9,7 +9,20 @@ model: deepseek-v4-flash
 provider: opencode-go
 reasoning_effort: high
 permission_mode: automatic
-tools_enabled: []
+tools_enabled:
+  - bash
+  - read_turn
+  - load_skill
+  - set_tasks
+  - update_tasks
+  - update_goal
+  - search_web
+  - fetch_url
+  - download_file
+  - list_mcp_tools
+  - call_mcp_server_tool
+  - list_mcp_resources
+  - read_mcp_resource
 tools:
   bash:
     enabled: true

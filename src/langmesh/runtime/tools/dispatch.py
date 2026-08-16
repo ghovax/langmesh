@@ -9,7 +9,6 @@ a tool name.
 from __future__ import annotations
 
 import logging
-import shlex
 import time
 
 from contextlib import suppress
@@ -43,7 +42,6 @@ from langmesh.runtime.turn_events import (
 )
 from langmesh.runtime.tools.registry import bash as bash_tool
 from langchain_core.messages import ToolMessage
-from pathlib import Path
 from pydantic import ValidationError
 from typing import Any, AsyncIterator, cast
 import asyncio
@@ -310,62 +308,6 @@ class _DispatchesTools:
             if not arguments.get("tool_name"):
                 return ("invalid_mcp_tool", "tool_name is required.")
         return None
-
-    def _path_like_token(self, token: str) -> str:
-        if not token or token in ("-", "--"):
-            return ""
-        if "://" in token:
-            return ""
-        if token.startswith("--") and "=" in token:
-            token = token.split("=", 1)[1]
-        elif token.startswith("-"):
-            return ""
-        token = token.strip("'\"")
-        if not token or token in (".",):
-            return ""
-        if token.startswith(("~", "/", "./", "../")):
-            return token
-        if "/" in token:
-            return token
-        return ""
-
-    def _outside_working_directory_reads(
-        self, command: str, working_directory: str | None = None
-    ) -> list[str]:
-        """Reads this command names outside the working directory. A signal about intent, not a boundary."""
-        if self._global_configuration.sandbox.enforce == "off":
-            return []
-        root = Path(working_directory or self._working_directory or Path.home()).expanduser()
-        try:
-            root = root.resolve(strict=False)
-        except OSError:
-            return []
-
-        outside: list[str] = []
-        seen: set[str] = set()
-        for segment in self._agent_configuration.tools.bash._extract_segments(command):
-            try:
-                tokens = shlex.split(segment)
-            except ValueError:
-                tokens = segment.split()
-            for token in tokens[1:]:
-                path_token = self._path_like_token(token)
-                if not path_token:
-                    continue
-                path = Path(path_token).expanduser()
-                if not path.is_absolute():
-                    path = root / path
-                try:
-                    resolved = path.resolve(strict=False)
-                except OSError:
-                    continue
-                if resolved == root or resolved.is_relative_to(root):
-                    continue
-                display = str(Path(path_token).expanduser())
-                if display not in seen:
-                    seen.add(display)
-                    outside.append(display)
-        return outside
 
     def _append_tool_results(self, response, outcomes: dict[str, dict]) -> None:
         """A ToolMessage per tool_call, contiguous, since providers require every result in the block that follows."""

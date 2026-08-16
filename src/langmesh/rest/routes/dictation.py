@@ -8,9 +8,6 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from langmesh.commons import state
-from langmesh.commons.services.broadcast import _publish_broadcast
-from langmesh.commons.services.settings import _persist_configuration
-from langmesh.protocol.dtos import DictationUpdateRequest
 
 logger = logging.getLogger(__name__)
 
@@ -50,19 +47,6 @@ async def dictation_status(prepare: bool = False):
         "failure": transcriber.failure if transcriber is not None else "",
         "sample_rate": 16000,
     }
-
-
-@router.post("/settings/dictation")
-async def update_dictation(request: DictationUpdateRequest):
-    """Persist and apply the toggle, releasing the worker at once since it holds a model in wired memory."""
-    assert state.global_configuration is not None
-    async with state.configuration_lock:
-        await _persist_configuration(dictation_enabled=request.enabled)
-        state.global_configuration.dictation.enabled = request.enabled
-        if not request.enabled:
-            await asyncio.to_thread(_shutdown_transcriber)
-    _publish_broadcast({"type": "settings_changed"})
-    return {"status": "saved", "enabled": state.global_configuration.dictation.enabled}
 
 
 async def _ensure_transcriber():

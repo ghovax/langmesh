@@ -115,7 +115,7 @@ async def bash(
     background: bool = False,
     timeout: float = Tunable.bash_sync_window.default,
 ) -> str:
-    """Dispatched by AgentRuntime._execute_tool; described in descriptions/bash.md."""
+    """Run a shell command inside the session's confinement."""
     from langmesh.base import confinement as _confinement
 
     active = tool_context.current()
@@ -296,7 +296,7 @@ async def search_web(
     query: str,
     result_count: int = 5,
 ) -> str:
-    """Dispatched by AgentRuntime._execute_tool; described in descriptions/search_web.md."""
+    """Search the web."""
     client = tool_context.current().exa_client
     if client is None:
         return compact(
@@ -380,7 +380,7 @@ async def search_web(
 async def list_mcp_tools(
     *, explanation: str = Field(..., description=EXPLANATION), server: str = ""
 ) -> str:
-    """Dispatched by AgentRuntime._execute_tool; described in descriptions/list_mcp_tools.md."""
+    """List a configured MCP server's tools."""
     try:
         result = await _require_mcp_server_manager().list_tools(server)
         return compact(result)
@@ -399,7 +399,7 @@ async def call_mcp_server_tool(
     access_request: dict[str, Any] = Field(..., description=ACCESS_REQUEST),
     arguments: dict[str, Any] | None = None,
 ) -> str:
-    """Dispatched by AgentRuntime._execute_tool; described in descriptions/call_mcp_server_tool.md."""
+    """Call one tool on a configured MCP server."""
     try:
         result = await _require_mcp_server_manager().call_tool(server, tool_name, arguments or {})
         return compact(result)
@@ -427,7 +427,7 @@ async def call_mcp_server_tool_with_events(
 async def list_mcp_resources(
     *, explanation: str = Field(..., description=EXPLANATION), server: str = ""
 ) -> str:
-    """Dispatched by AgentRuntime._execute_tool; described in descriptions/list_mcp_resources.md."""
+    """List a configured MCP server's resources."""
     try:
         result = await _require_mcp_server_manager().list_resources(server)
         return compact(result)
@@ -441,7 +441,7 @@ async def list_mcp_resources(
 async def read_mcp_resource(
     *, explanation: str = Field(..., description=EXPLANATION), server: str, uri: str
 ) -> str:
-    """Dispatched by AgentRuntime._execute_tool; described in descriptions/read_mcp_resource.md."""
+    """Read one resource from a configured MCP server."""
     try:
         result = await _require_mcp_server_manager().read_resource(server, uri)
         return compact(result)
@@ -1026,39 +1026,17 @@ def tool_description(tool_name: str) -> str:
     return text
 
 
-def __all_tool_names():
-    """Every built-in tool's name, the set the `Tool` units are assembled from."""
-    return tuple(entity.name for entity in _DESCRIBED)
-
-
-_DESCRIBED = (
-    bash,
-    search_web,
-    list_mcp_tools,
-    call_mcp_server_tool,
-    list_mcp_resources,
-    read_mcp_resource,
-    read_turn,
-    set_tasks,
-    update_tasks,
-    update_goal,
-    fetch_url,
-    download_file,
-    control_screen,
-    ask_user,
-    load_skill,
-    submit_goal_review,
-    submit_compaction_summary,
-)
-
-
 def _apply_descriptions() -> None:
-    """Give every tool its description, and fail at import rather than ship one offered as an empty string."""
+    """Give every built-in its model-facing description, and fail at import rather than ship one
+    offered as an empty string. A tool with no description file must carry an inline one."""
     missing = []
-    for entity in _DESCRIBED:
+    for entity in globals().values():
+        if not isinstance(entity, StructuredTool):
+            continue
         text = _DESCRIPTIONS.load(entity.name, {}).strip()
         if not text:
-            missing.append(entity.name)
+            if not (entity.description or "").strip():
+                missing.append(entity.name)
             continue
         entity.description = text
     if missing:
