@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-__all__ = ["CompactionBlockedError", "describe", "log_fields", "summary"]
+__all__ = ["MaintenanceBlockedError", "describe", "log_fields", "summary"]
 
 
-class CompactionBlockedError(RuntimeError):
-    """A session cannot accept more work until its failed context compaction is retried."""
+class MaintenanceBlockedError(RuntimeError):
+    """A session cannot accept more work until its failed context maintenance is retried."""
 
 
 #: The attributes a record already carries, which `extra=` is forbidden to overwrite.

@@ -10,8 +10,8 @@ from a2a.utils import new_task
 
 from langmesh.base.primitives.identifiers import new_id
 from langmesh.base.contracts.ports import GoalReviewContext, GoalReviewOutcome
-from langmesh.worker.host import HostServices, NullHostServices
-from langmesh.worker.sink import _TurnEventSink
+from langmeshd.worker.host import HostServices, NullHostServices
+from langmeshd.worker.sink import _TurnEventSink
 
 
 @dataclass

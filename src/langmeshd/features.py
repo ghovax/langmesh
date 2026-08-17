@@ -39,16 +39,18 @@ def compose_plugins(
     configuration: Any,
     catalogue: Any,
     job_store: Any,
+    goal_listener: Any,
     goal_review_journal: Any,
     global_configuration: Any,
 ) -> dict[str, Any]:
     """The plugins a hosted session runs and the ports they need, as one bundle."""
     reviewer = PermissionReviewer()
+    preparation = _compaction_preparation(global_configuration, runtime_directory)
     features = [
         GoalReviewFeature(journal=goal_review_journal),
         Compaction(
             strategy=None,
-            preparation=_compaction_preparation(global_configuration, runtime_directory),
+            preparation=preparation,
             summarizer=None,
         ),
         PermissionReview(reviewer=reviewer),
@@ -60,10 +62,17 @@ def compose_plugins(
         TitleAssignment(),
         ComputerUse(),
     ]
+    # The goal plugin hears every goal change through the host's listener: that is how the
+    # interface learns of one. The plugin owns the goal; the host owns the listener.
+    for feature in features:
+        if isinstance(feature, GoalReviewFeature):
+            feature.set_listener(goal_listener)
     return {
         "features": features,
-        "goal_review_journal": goal_review_journal,
-        "compaction_preparation": _compaction_preparation(global_configuration, runtime_directory),
+        "services": {
+            "goal_review_journal": goal_review_journal,
+            "compaction_preparation": preparation,
+        },
     }
 
 

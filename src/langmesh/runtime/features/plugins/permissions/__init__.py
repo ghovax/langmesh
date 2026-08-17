@@ -332,6 +332,22 @@ class PermissionReview(Feature):
             "confined_attempt": gate.refused_result,
         }
 
+    def invoke(self, name: str, *args, **kwargs):
+        """Answer the permission capabilities the core and tools ask for by name."""
+        if name == "retry_gate":
+            (gate,) = args
+            return self.retry_gate(gate, **kwargs)
+        if name == "decide_retry":
+            (gate,) = args
+            return self.decide_retry(gate)
+        if name == "retry_refusal_result":
+            (gate,) = args
+            return self.retry_refusal_result(gate, **kwargs)
+        if name == "reconsider_gate":
+            (gate,) = args
+            return self.reconsider_gate(gate)
+        return None
+
     def _rule_for(self, tool_name: str, tool_arguments: dict) -> tuple[str, str]:
         """What the configuration says about this call. The subject differs by tool, because the calls do."""
         tools = self._context.agent_configuration.tools

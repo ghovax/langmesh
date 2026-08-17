@@ -18,7 +18,7 @@ from a2a.types import Message, Part, Task, TaskState
 from a2a.utils import new_task
 from langchain_core.messages import messages_to_dict
 
-from langmesh.runtime.features import access as _features
+from langmeshd.worker import features_access as _features
 from langmesh.base.primitives import telemetry as _telemetry
 from langmesh.base.configuration import PromptLoader
 from langmesh.base.primitives.serialization import compact, conversation_snapshot_id
@@ -44,11 +44,11 @@ from langmesh.protocol.turn_record import TurnKind, TurnRecord
 from langmesh.runtime.goal import GoalReviewPhase
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import CompactionDone, SuspensionGate
-from langmesh.worker.sink import _TurnEventSink
+from langmeshd.worker.sink import _TurnEventSink
 
 if TYPE_CHECKING:
     # For the annotation only: `session` imports this module, so a real import would close the cycle.
-    from langmesh.worker.session import SessionExecutor
+    from langmeshd.worker.session import SessionExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -702,7 +702,7 @@ class _TurnRunner:
             if resolved.is_resume
             else composed.prepared.runtime.continue_stream()
             if resolved.ingested.mode is _TurnMode.COMPACTION_RESUME
-            else composed.prepared.runtime.prepare_compaction_stream()
+            else composed.prepared.runtime.prepare_maintenance_stream()
             if resolved.ingested.mode is _TurnMode.COMPACTION_PREPARE
             else composed.prepared.runtime.continue_stream()
             if resolved.ingested.mode is _TurnMode.RETRY

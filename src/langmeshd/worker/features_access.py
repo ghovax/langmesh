@@ -1,9 +1,9 @@
-"""Typed access to the installed features, for the application layer.
+"""Typed access to the installed features, for the daemon's worker.
 
-The runtime core never names a feature. The application layer — `Session`, the host — is the
-one that composed the features, so it is the only place allowed to reach them by class. These
-functions are that layer's handle: they resolve the installed feature of the relevant class and
-call it, mirroring what used to live on the runtime so the harness reads the same way.
+The runtime core never names a feature. The daemon's worker is the one that composed the
+features, so it is the only place allowed to reach them by class. These functions are that
+layer's handle: they resolve the installed feature of the relevant class and call it,
+mirroring what used to live on the runtime so the harness reads the same way.
 """
 
 from __future__ import annotations

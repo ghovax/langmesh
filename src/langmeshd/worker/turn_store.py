@@ -8,7 +8,7 @@ from typing import Any, Optional
 from a2a.server.tasks import TaskStore
 from a2a.types import Task
 from langmesh.protocol.turn_record import TurnRecord
-from langmesh.worker.host import HostServices, NullHostServices
+from langmeshd.worker.host import HostServices, NullHostServices
 
 logger = logging.getLogger(__name__)
 

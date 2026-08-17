@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from langmesh.base.primitives.tuning import Tuning, set_tuning, tuning_from_policy
-from langmesh.worker.server import METHODS
-from langmesh.worker.session import SessionExecutor
+from langmeshd.worker.server import METHODS
+from langmeshd.worker.session import SessionExecutor
 from langmeshd.commons import state as commons_state
 from langmeshd.daemon.host_services import DaemonHostServices
 from langmeshd.daemon.registry import SessionRecord

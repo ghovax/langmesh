@@ -40,6 +40,15 @@ class Feature:
         """The tools this feature provides to the session's roster, empty when it provides none."""
         return []
 
+    def invoke(self, name: str, *args, **kwargs):
+        """Answer a named capability the core asks for by string, or ``None`` to pass.
+
+        The core never names a plugin or a port: it asks for a capability by name and the
+        first installed feature that answers it does. This is how a plugin exposes its
+        services without the core knowing which plugin owns them.
+        """
+        return None
+
     def compose_prompt(self, variables: dict[str, str]) -> None:
         """Contribute named prompt sections, merging into ``variables`` in place."""
 
@@ -155,6 +164,18 @@ class Features:
         return next(
             (feature for feature in self._instances if isinstance(feature, feature_type)), None
         )
+
+    def invoke(self, name: str, *args, **kwargs):
+        """The first installed feature that answers a named capability, in composer order.
+
+        The core asks for capabilities by string name; the plugin that answers owns the
+        capability. Nothing answers (``None``) when no installed feature handles it.
+        """
+        for feature in self._instances:
+            result = feature.invoke(name, *args, **kwargs)
+            if result is not None:
+                return result
+        return None
 
     # The context and the request.
 

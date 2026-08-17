@@ -80,7 +80,7 @@ class TurnView:
 class BookkeepingView:
     """The durable session accounting the core keeps."""
 
-    mark_dirty: Callable[[], None]  #: Advances the durable-state revision after a mutation.
+    note_state_changed: Callable[[], None]  #: Advances the durable-state revision after a mutation.
     record_event: Callable[[str, dict], None]  #: Appends to the audit trail.
     session_snapshot: Callable[[], dict]  #: The durable state to persist beside the checkpoint.
     restore_session: Callable[[dict], None]  #: Rehydrates the durable state.

@@ -26,6 +26,10 @@ from langmesh.runtime.tools.registry import EXPLANATION
 
 logger = logging.getLogger(__name__)
 
+# The queries this plugin has already asked the screen, so it can tell a rephrasing from a fresh
+# question. The plugin owns its own history; the core never carries a screen-control concept.
+_asked_queries: list[tuple[Any, str]] = []
+
 # What an element id looks like on both surfaces, so one can be told from a description of an element.
 _ELEMENT_ID = re.compile(r"(?:f\d+)?e\d+|req\d+|ws\d+|\d+(?:\.\d+)+")
 
@@ -131,7 +135,7 @@ async def control_screen(
 
         return [document for document in documents if admits(document)]
 
-    asked: list[tuple[Any, str]] = services.screen_query_log
+    asked: list[tuple[Any, str]] = _asked_queries
     rephrased: list[str] = []
 
     def _note_if_rephrasing(query: str, hits: list) -> None:

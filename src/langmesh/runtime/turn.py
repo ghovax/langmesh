@@ -139,7 +139,7 @@ class _RunsTurns:
                 locations=self._locations_summary(),
                 confinement=self._confinement_summary(),
             ).model_dump(exclude_defaults=True)
-            # The features contribute what only they know — the goal, the tasks, the running jobs.
+            # The features contribute what only they know — their context, the running jobs.
             self._features.compose_context(context)
             context["background"] = {
                 "recent_events": self._execution_history[-20:],
@@ -447,13 +447,13 @@ class _RunsTurns:
             yield event
 
     async def continue_stream(self) -> AsyncIterator[TurnEvent]:
-        """Continue an already-recorded user turn after a failed compaction was retried successfully."""
+        """Continue an already-recorded user turn after a failed maintenance was retried successfully."""
         async for event in self.stream("", continue_existing=True):
             yield event
 
-    async def prepare_compaction_stream(self) -> AsyncIterator[TurnEvent]:
-        """Run the private recording segment and compaction, without inventing a user turn afterward."""
-        async for event in self.stream("", continue_existing=True, stop_after_compaction=True):
+    async def prepare_maintenance_stream(self) -> AsyncIterator[TurnEvent]:
+        """Run the private recording segment and maintenance, without inventing a user turn afterward."""
+        async for event in self.stream("", continue_existing=True, stop_after_maintenance=True):
             yield event
 
     async def stream(
@@ -465,20 +465,20 @@ class _RunsTurns:
         resume_plans: Optional[dict[str, dict]] = None,
         resume_answers: Optional[dict[str, Any]] = None,
         continue_existing: bool = False,
-        stop_after_compaction: bool = False,
+        stop_after_maintenance: bool = False,
     ) -> AsyncIterator[TurnEvent]:
-        from langmesh.base.primitives.errors import CompactionBlockedError
+        from langmesh.base.primitives.errors import MaintenanceBlockedError
 
         if self._features.blocked_reason() and not continue_existing:
-            raise CompactionBlockedError(
-                f"Context compaction failed: {self._features.blocked_reason()} Retry compaction before sending more work."
+            raise MaintenanceBlockedError(
+                f"Context maintenance failed: {self._features.blocked_reason()} Retry maintenance before sending more work."
             )
         self._abort_event.clear()
         # A turn's own bookkeeping: the no-op nudge happens once, and the start time feeds the transcript.
         response_nudged: list[bool] = [False]
         # The person's words are held until the request is assembled, so every part sent with them reads first.
         pending_user_message = None
-        # A turn runs until the model is done or the user interrupts: an unfinished goal outlives this loop.
+        # A turn runs until the model is done or the user interrupts.
         turn_tool_calls_log: list[dict] = []
         turn_tool_results_log: list[dict] = []
 
@@ -525,7 +525,7 @@ class _RunsTurns:
             )
             # The event-log recorder only wants prose from LangChain's standard blocks.
             recorded_user_message = message_text(turn_message)
-            # Held until compaction has had a chance to reclaim the existing conversation.
+            # Held until maintenance has had a chance to reclaim the existing conversation.
             pending_user_message = turn_message
         turn_started_at = datetime.now(timezone.utc)
 
@@ -569,7 +569,7 @@ class _RunsTurns:
                         self._conversation.append(pending_user_message)
                         pending_user_message = None
                     return
-                if stop_after_compaction:
+                if stop_after_maintenance:
                     return
                 continue
 
@@ -737,7 +737,7 @@ class _RunsTurns:
         """Refuse a request that cannot fit before sending it, with numbers, since the harness knows the window."""
         window = self._context_window
         if self._context_window_estimated:
-            return  # an estimate may schedule a safe compaction, but it must never impersonate a provider limit
+            return  # an estimate may schedule a safe maintenance, but it must never impersonate a provider limit
         tokens = conversation_tokens(messages)
         if not over_context_window(tokens, window):
             return
@@ -776,14 +776,14 @@ class _RunsTurns:
         thinking_started_at = time.monotonic()
         thinking_done_emitted = False
         yield Status(code="awaiting_model")
-        # The compaction checkpoint is a protocol capability: even a profile that omits ordinary shell access must be able to maintain its workspace-owned registry inside the same sandbox.
+        # The maintenance checkpoint is a protocol capability: even a profile that omits ordinary shell access must be able to maintain its workspace-owned registry inside the same sandbox.
         bound_model = self._bound_model
         model_stream = None
         abort_waiter = None
         cache_scope = ExitStack()
         try:
             if self._features.active_maintenance():
-                cache_scope.enter_context(cache_lane("compaction"))
+                cache_scope.enter_context(cache_lane("maintenance"))
             model_stream = bound_model.astream(messages)
             abort_waiter = asyncio.ensure_future(self._abort_event.wait())
             silence_limit = active_tuning().duration(Tunable.model_silence_give_up)
@@ -972,7 +972,7 @@ class _RunsTurns:
                 yield steering_event
             step.directive = _CONTINUE
             return
-        # An unfinished goal does not hold the turn open: the goal is durable, and a later turn picks it up.
+        # Outstanding feature work does not hold the turn open: it is durable, and a later turn picks it up.
         self._record_turn(
             recorded_user_message,
             turn_tool_calls_log,

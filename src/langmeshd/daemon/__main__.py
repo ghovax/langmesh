@@ -337,7 +337,7 @@ async def _serve() -> int:
     # The host holds the executors and the lifecycle drives them, wired here because this is the composition root.
     state.host = SessionHost()
     # Imported at boot rather than when the first session is built, since that import is seconds and this is not a hot path.
-    import langmesh.worker.session  # noqa: F401
+    import langmeshd.worker.session  # noqa: F401
 
     # How a call from a session's tool child is attributed back to that session.
     from langmesh.runtime import background as runtime_background

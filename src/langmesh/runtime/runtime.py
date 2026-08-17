@@ -53,11 +53,6 @@ from langmesh.runtime.turn import (
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.content.toolbox import toolbox_for
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
-from langmesh.runtime.features.plugins.continuation import Continuation
-from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
-from langmesh.runtime.features.plugins.compaction import Compaction
-from langmesh.runtime.features.plugins.permissions import PermissionReview
-from langmesh.runtime.features.plugins.background import BackgroundJobsFeature
 from langmesh.runtime.internals import (
     _utc_timestamp,
     conversation_tokens,
@@ -212,26 +207,6 @@ def _build_tool_context(
         session_id=session_id,
         toolbox=toolbox,
     )
-
-
-class _GoalAccess:
-    """The goal as a tool handler sees it: read the current one, write a new one."""
-
-    def __init__(self, runtime: Any) -> None:
-        self._runtime = runtime
-
-    def current(self) -> Any:
-        from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
-
-        feature = self._runtime._features.by_type(GoalReviewFeature)
-        return feature.goal if feature is not None else None
-
-    def write(self, goal: Any) -> None:
-        from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
-
-        feature = self._runtime._features.by_type(GoalReviewFeature)
-        if feature is not None:
-            feature.write(goal)
 
 
 class _LeaseAccess:
@@ -509,7 +484,7 @@ class AgentRuntime(
                 feature_classes=lambda: [type(feature) for feature in self._features.instances],
             ),
             bookkeeping=BookkeepingView(
-                mark_dirty=self._mark_session_dirty,
+                note_state_changed=self._note_session_changed,
                 record_event=self._record_event,
                 session_snapshot=self.session_snapshot,
                 restore_session=self.restore_session,
@@ -524,19 +499,11 @@ class AgentRuntime(
             self._tools = [*self._tools, *contributed]
             self._tool_schemas.update({tool.name: tool.args_schema for tool in contributed})
             self._bound_model = self._model.bind_tools(self._model_tools)
-        # The host's goal listener is handed to the goal plugin, which owns the goal itself.
-        goal_review = self._features.by_type(GoalReviewFeature)
-        if goal_review is not None:
-            goal_review.set_listener(components.goal_listener)
-        # Per-session state a screen-control script keeps between calls, and the services bundle every tool handler runs against. The bundle is the tool's only view of the runtime.
-        self._screen_queries_asked: list[tuple[Any, str]] = []
-        background_feature = self._features.by_type(BackgroundJobsFeature)
-        continuation_feature = self._features.by_type(Continuation)
+        # The services bundle every tool handler runs against: the tool's only view of the runtime.
+        # Plugin capabilities are reached through the opaque features handle, never by class.
         self._services = ToolServices(
-            background=background_feature.runner if background_feature is not None else None,
+            features=self._features,
             permissions=self._permissions,
-            task_manager=continuation_feature.task_manager if continuation_feature is not None else None,
-            goal=_GoalAccess(self),
             prompt_loader=self._prompt_loader,
             catalogue=self._catalogue,
             tool_context=self._tool_context,
@@ -544,31 +511,11 @@ class AgentRuntime(
             attached_files=self._attached_files,
             turn_reader=self._turn_reader,
             record_event=self._record_event,
-            mark_dirty=self._mark_session_dirty,
+            note_state_changed=self._note_session_changed,
             abort_event=self._abort_event,
-            submit_goal_review=lambda review: (
-                self._features.by_type(GoalReviewFeature).submit(review)
-                if self._features.by_type(GoalReviewFeature) is not None
-                else None
-            ),
-            submit_compaction_summary=lambda summary: (
-                self._features.by_type(Compaction).submit_summary(summary)
-                if self._features.by_type(Compaction) is not None
-                else None
-            ),
             leases=_LeaseAccess(self),
-            retry_gate=lambda **kwargs: self._features.by_type(PermissionReview).retry_gate(**kwargs)
-            if self._features.by_type(PermissionReview) is not None
-            else None,
-            decide_retry=lambda gate: self._features.by_type(PermissionReview).decide_retry(gate)
-            if self._features.by_type(PermissionReview) is not None
-            else ("ask", None),
-            retry_refusal_result=lambda gate, **kwargs: self._features.by_type(PermissionReview).retry_refusal_result(gate, **kwargs)
-            if self._features.by_type(PermissionReview) is not None
-            else {},
             pipeline=self._pipeline,
             tools=lambda: self._tools,
-            screen_query_log=self._screen_queries_asked,
             project_directory=self._project_directory or "",
         )
 
@@ -588,7 +535,7 @@ class AgentRuntime(
         self._locations = {}
         self._locations_by_name = {}
         self._build_locations(locations, executors=carried)
-        # A running prompt remains stable until its explicit refresh boundary (normally compaction).
+        # A running prompt remains stable until its explicit refresh boundary (normally a maintenance fold).
 
     def _build_locations(
         self,
@@ -709,9 +656,8 @@ class AgentRuntime(
 
     @property
     def _background(self):
-        """This runtime's background-job runner, owned by the background plugin."""
-        background_feature = self._features.by_type(BackgroundJobsFeature)
-        return background_feature.runner if background_feature is not None else None
+        """This runtime's background-job runner, owned by whatever plugin answers for it."""
+        return self._features.invoke("background")
 
     def constrained_tool_named(self, tool_name: str):
         """One tool of a given name from the executable set, for a sub-session being bound down to its verdict tool."""
@@ -742,7 +688,7 @@ class AgentRuntime(
         ] + [tool]
         self._tool_schemas[tool.name] = tool.args_schema
         self._conversation.append(self._tool_grant_message(tool))
-        self._mark_session_dirty()
+        self._note_session_changed()
 
     def _tool_grant_message(self, tool: BaseTool):
         """The conversation message that describes a granted tool, schema included, so the model
@@ -769,7 +715,7 @@ class AgentRuntime(
         return dict(self._token_usage)
 
     def _accumulate_usage(self, response: AIMessage) -> TurnEvent | None:
-        """Compaction one call's usage into the session total and answer a USAGE event, or ``None`` when none was reported."""
+        """Accumulate one call's usage into the session total and answer a USAGE event, or ``None`` when none was reported."""
         usage = getattr(response, "usage_metadata", None)
         if not usage:
             return None
@@ -942,25 +888,25 @@ class AgentRuntime(
     def mark_turn_failed(self) -> None:
         if self._turn_recovery != "retryable":
             self._turn_recovery = "retryable"
-            self._mark_session_dirty()
+            self._note_session_changed()
 
     def begin_turn_retry(self) -> bool:
         if self._turn_recovery != "retryable" or bool(self._features.blocked_reason()):
             return False
         self._turn_recovery = "retrying"
-        self._mark_session_dirty()
+        self._note_session_changed()
         return True
 
     def abandon_turn_retry(self) -> None:
         """Let newly accepted user work supersede a previously failed turn."""
         if self._turn_recovery != "none":
             self._turn_recovery = "none"
-            self._mark_session_dirty()
+            self._note_session_changed()
 
     def mark_turn_succeeded(self) -> None:
         if self._turn_recovery != "none":
             self._turn_recovery = "none"
-            self._mark_session_dirty()
+            self._note_session_changed()
 
     # The boundary and the grants: the boundary is the core's, the permission plugin fills it.
 
@@ -987,8 +933,8 @@ class AgentRuntime(
         """The revision captured beside a session-state snapshot before it is persisted."""
         return self._session_revision
 
-    def _mark_session_dirty(self) -> None:
-        """Advance the durable-state revision after a goal or task mutation."""
+    def _note_session_changed(self) -> None:
+        """Advance the durable-state revision after a session mutation."""
         self._session_revision += 1
 
     def clear_session_dirty(self, persisted_revision: int) -> None:

@@ -14,7 +14,7 @@ from langmesh.runtime.values import ToolStatus
 
 async def _submit_compaction_summary(**arguments: Any) -> str:
     services = current_tool_services()
-    services.submit_compaction_summary(CompactionSummary.model_validate(arguments))
+    services.features.invoke("submit_compaction_summary", CompactionSummary.model_validate(arguments))
     services.abort_event.set()
     return compact({"code": "compaction_summary_submitted", "status": ToolStatus.OK.value})
 

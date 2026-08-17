@@ -42,7 +42,7 @@ async def run_bash(
     """One run of the bash tool, inside whatever confinement this attempt carries."""
     if retry_grant is not None:
         tool_context.bind(tool_context.current().for_retry(retry_grant))
-    background_token = bind_background_jobs(services.background)
+    background_token = bind_background_jobs(services.features.invoke("background"))
     tool_call_token = bind_tool_call_id(tool_call_identifier)
     try:
         result = await bash_tool.ainvoke(tool_arguments)
@@ -67,7 +67,8 @@ async def run_slow_tool(
     background: bool,
 ) -> AsyncIterator[Any]:
     """Run a slow tool inline briefly, then return its background handle if it is still running."""
-    job_identifier = services.background.spawn(
+    runner = services.features.invoke("background")
+    job_identifier = runner.spawn(
         tool_name,
         operation,
         tool_call_identifier=tool_call_identifier,
@@ -75,7 +76,7 @@ async def run_slow_tool(
     )
     completion = None
     if not background:
-        completion = await services.background.settle_inline(
+        completion = await runner.settle_inline(
             job_identifier,
             active_tuning().scale_timeout(sync_window),
         )
@@ -236,13 +237,14 @@ async def handle_bash(
         model_guidance = ""
         denial = sandbox_denial(services, result_data, policy)
         if denial is not None:
-            retry_gate = services.retry_gate(
+            retry_gate = services.features.invoke(
+                "retry_gate",
                 tool_call_id=tool_call_identifier,
                 command=raw_command,
                 denial=denial,
                 explanation=str(tool_arguments.get("explanation", "") or ""),
             )
-            verdict, grant = await services.decide_retry(retry_gate)
+            verdict, grant = await services.features.invoke("decide_retry", retry_gate)
             if verdict == "run" and grant is not None:
                 result_data = await run_bash(
                     services, tool_arguments, tool_call_identifier, retry_grant=grant
@@ -258,7 +260,7 @@ async def handle_bash(
                 )
                 return
             else:
-                result_data = services.retry_refusal_result(retry_gate)
+                result_data = services.features.invoke("retry_refusal_result", retry_gate)
                 model_guidance = retry_gate.deny_message
         yield ToolResult(
             id=tool_call_identifier,
@@ -272,7 +274,7 @@ async def handle_bash(
                 services.record_event(
                     "background_bash_started", {"job_id": job_id, "command": raw_command}
                 )
-                if lease_token and services.background.add_done_callback(
+                if lease_token and services.features.invoke("background").add_done_callback(
                     job_id,
                     lambda _identifier, token=lease_token: services.leases.release(token),
                 ):
@@ -346,7 +348,7 @@ async def handle_download_file(
         if (
             lease_token
             and backgrounded_job_id
-            and services.background.add_done_callback(
+            and services.features.invoke("background").add_done_callback(
                 backgrounded_job_id,
                 lambda _identifier, token=lease_token: services.leases.release(token),
             )
@@ -421,7 +423,7 @@ async def handle_session(
     from langmesh.runtime.tools.output import ToolOutput
 
     create_tool = next((tool for tool in services.tools() if getattr(tool, "name", "") == "create_session"), None)
-    background_token = bind_background_jobs(services.background)
+    background_token = bind_background_jobs(services.features.invoke("background"))
     try:
         result = await sessions.invoke(tool_name, tool_arguments, create_tool)
     finally:
@@ -445,7 +447,7 @@ async def handle_session(
 async def handle_search_web(
     services, tool_name, tool_arguments, tool_call_identifier, decision, policy, resolved_location
 ) -> AsyncIterator[Any]:
-    background_token = bind_background_jobs(services.background)
+    background_token = bind_background_jobs(services.features.invoke("background"))
     try:
         result = await search_web_tool.ainvoke(tool_arguments)
     finally:
