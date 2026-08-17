@@ -23,9 +23,6 @@ class SessionTitle(BaseModel):
 class TitleAssignment(Feature):
     """Give a session its automatic title from its first message."""
 
-    def __init__(self) -> None:
-        pass
-
     def attach(self, context: PluginContext, host: PluginHost | None = None) -> None:
         self._context = context
         self._prompts = context.prompts("titling")
