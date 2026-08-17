@@ -138,7 +138,6 @@ class SessionExecutor(AgentExecutor):
         locations: Optional[list[dict]] = None,
         parent: str = "",
         token: str = "",
-        host_token: str = "",
         job_store: Optional[JobStore] = None,
         host: Optional[Any] = None,
     ):
@@ -196,11 +195,8 @@ class SessionExecutor(AgentExecutor):
         # One session, one conversation. The map has one entry, and exists because the machinery indexes it.
         self._conversations: dict[str, list] = {}
         self._startup_resume_tasks: set[asyncio.Task] = set()
-        # A session is named after its first message, once.
-        self._titled = False
+        # The background task that names the session after its first message, once.
         self._title_task: Optional[asyncio.Task] = None
-        # The titling plugin that names this session, composed with it; None when naming is not installed.
-        self._titling: Optional[Any] = None
         # The report reminder fires at most once for a session's whole life.
         self._nudged_to_report = False
         # This session's own MCP server connections, and the task connecting them.
@@ -971,7 +967,6 @@ class SessionExecutor(AgentExecutor):
     ):
         """The host's features for one session, its ports bound the way the host holds them."""
         from langmesh.runtime.features.battery import default_features
-        from langmesh.runtime.features.plugins.titling import TitleAssignment
 
         ports = type("FeaturePorts", (), {})()
         ports.goal_review_journal = self._goal_review_journal(session_id)
@@ -980,27 +975,7 @@ class SessionExecutor(AgentExecutor):
         ports.compaction_summarizer = None
         ports.continuations = None
         ports.jobs = self._job_store
-        features = default_features(ports)
-        # Naming the session is the host's own plugin, attached to a context the host builds.
-        self._titling = TitleAssignment()
-        self._titling.attach(self._titling_context(session_id, runtime_directory, configuration, catalogue), None)
-        return features
-
-    def _titling_context(self, session_id: str, runtime_directory: str, configuration, catalogue):
-        """The public context the titling plugin is given, built from what this host already holds."""
-        from langmesh.runtime.features import PluginBus, PluginContext, feature_prompts
-
-        return PluginContext(
-            session_id=session_id,
-            parent_session="",
-            working_directory=runtime_directory,
-            project_directory=runtime_directory,
-            agent_configuration=configuration,
-            global_configuration=self._global_configuration,
-            catalogue=catalogue,
-            prompts=lambda name: feature_prompts(name, catalogue),
-            bus=PluginBus(),
-        )
+        return default_features(ports)
 
     def _compaction_preparation(self, working_directory: str):
         from langmesh.base.persistence.observation_store import SQLiteObservationStore
@@ -1067,6 +1042,7 @@ class SessionExecutor(AgentExecutor):
                 # Announce the restored goal here: `restore_session` deliberately does not, being the write that changes nothing.
                 self._notify_goal_state(session_id, _features.goal(runtime))
             state.runtime = runtime
+            state.runtime_ready.set()
             # Replay background results the store holds but never delivered, so the model sees them at once.
             self._replay_stored_background_results(session_id, runtime)
         # A context's working directory is fixed at creation, so later turns never repoint it.
@@ -1255,10 +1231,9 @@ class SessionExecutor(AgentExecutor):
         return await identified
 
     def _title_from_first_message(self, parts: list) -> None:
-        """Name the session after what it was first asked to do, once, in the background."""
-        if self._titled:
+        """Name the session after what it was first asked to do, in the background."""
+        if self._title_task is not None:
             return
-        self._titled = True
         prose = " ".join(
             str(getattr(getattr(part, "root", part), "text", "") or "") for part in parts
         ).strip()
@@ -1267,11 +1242,18 @@ class SessionExecutor(AgentExecutor):
         self._title_task = asyncio.create_task(self._generate_title(prose))
 
     async def _generate_title(self, first_message: str) -> None:
-        """Name the session through the titling plugin, which owns the naming call and its cap."""
-        if self._titling is None:
+        """Ask the session's features for a title and publish it; the naming feature owns the cap."""
+        # The runtime (and with it the composed features) is built by the first turn, which starts
+        # after this background task does, so wait on its readiness signal.
+        state = self._contexts.get(self._session_id)
+        if state is None:
+            return
+        await state.runtime_ready.wait()
+        runtime = state.runtime
+        if runtime is None:
             return
         try:
-            title = await self._titling.assign_title(first_message)
+            title = await runtime._features.assign_title(first_message)
         except Exception:  # noqa: BLE001 — a session is not worth failing over its own name
             # Not `debug`: failing to name one session is cosmetic, failing to name every session is a fault.
             logger.warning(

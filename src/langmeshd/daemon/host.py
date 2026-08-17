@@ -74,7 +74,6 @@ class SessionHost:
                     locations=locations,
                     parent=record.parent,
                     token=record.token,
-                    host_token=daemon_token,
                     global_configuration=configuration,
                     host=DaemonHostServices(),
                 )

@@ -39,6 +39,10 @@ class Feature:
     def compose_prompt(self, variables: dict[str, str]) -> None:
         """Contribute named prompt sections, merging into ``variables`` in place."""
 
+    async def assign_title(self, first_message: str) -> str | None:
+        """A suggested title from this feature's own naming call, or ``None`` to leave it unnamed."""
+        return None
+
     def prepare_request(self, messages: list) -> list:
         """Adjust the exact request about to leave; return the list to send."""
         return messages
@@ -162,6 +166,14 @@ class Features:
         for feature in self._instances:
             messages = feature.prepare_request(messages)
         return messages
+
+    async def assign_title(self, first_message: str) -> str | None:
+        """The first feature that names the session, or ``None`` when none does."""
+        for feature in self._instances:
+            title = await feature.assign_title(first_message)
+            if title:
+                return title
+        return None
 
     # Conversation maintenance: the loop holds while a feature reclaims context.
 

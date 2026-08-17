@@ -18,7 +18,6 @@ class AgentInfo(BaseModel):
 
 
 class AgentBashConfigurationResponse(BaseModel):
-    enabled: bool
     background_allowed: bool
     permissions: dict[str, str]
 

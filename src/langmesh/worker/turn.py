@@ -133,6 +133,8 @@ class _ContextState:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # The warm runtime, preserved across turns. None until the first turn builds it.
     runtime: Optional[Any] = None
+    # Signalled once the first turn has built the runtime, for the tasks that wait on it.
+    runtime_ready: asyncio.Event = field(default_factory=asyncio.Event)
     # After a turn ends with work in flight, this waits for each result and drives a turn to deliver it.
     resume_pump: Optional[asyncio.Task] = None
     continuation: _ContinuationCoordinator = field(default_factory=_ContinuationCoordinator)
