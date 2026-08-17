@@ -77,6 +77,13 @@ function permissionAppearance(permissionMode: PermissionMode) {
         borderColor: "blue.muted",
         colorPalette: "blue",
       },
+      allow: {
+        icon: <LuShieldCheck size={14} />,
+        color: "green.fg",
+        background: "green.subtle",
+        borderColor: "green.muted",
+        colorPalette: "green",
+      },
     }[permissionMode] ?? {
       icon: <LuHand size={14} />,
       color: "fg.subtle",

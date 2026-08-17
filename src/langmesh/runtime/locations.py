@@ -10,7 +10,6 @@ from pydantic import BaseModel
 from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.locations.executor import LocationExecutor
 
-
 @dataclass(frozen=True)
 class Location:
     """One addressable execution environment, optionally with a caller-supplied executor."""
@@ -43,7 +42,6 @@ class Location:
         if self.kind == "remote" and not self.host_alias and not (self.executor and self.uri):
             raise ValueError("a remote location needs host_alias, or both uri and a custom executor")
 
-
 @dataclass
 class ResolvedLocation:
     """A location resolved for execution: its identity, its executor, its base directory, its mode."""
@@ -57,10 +55,8 @@ class ResolvedLocation:
     def is_remote(self) -> bool:
         return self.kind == "remote"
 
-
 class ToolLocationError(ValueError):
     """A tool call named a `location` that is missing, ambiguous, or unknown."""
-
 
 @dataclass(frozen=True)
 class CallExecutionPolicy:
@@ -76,13 +72,16 @@ class CallExecutionPolicy:
         return self.mode.asks
 
     @property
+    def gates(self) -> bool:
+        """Whether this call is gated at all. ``allow`` mode skips every gate."""
+        return self.mode.gates
+
+    @property
     def is_remote(self) -> bool:
         return self.location is not None and self.location.is_remote
 
-
 # The tools that act on a location's filesystem or shell, and so resolve against one.
 _LOCATION_TOOLS = frozenset({"bash", "download_file"})
-
 
 class PermissionDecision(BaseModel):
     """The reviewer's verdict. Its ``risk`` is its own reading, which the agent cannot see and did not supply."""

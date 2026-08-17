@@ -5,15 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.tools import tool
-from pydantic import Field
 
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools.execution import current_tool_services
-from langmesh.runtime.tools.registry import EXPLANATION
-
 
 @tool
-async def set_tasks(*, explanation: str = Field(..., description=EXPLANATION), tasks: list[dict]) -> str:
+async def set_tasks(*, tasks: list[dict]) -> str:
     """Create tasks; described in descriptions/set_tasks.md."""
     services = current_tool_services()
     task_manager = services.features.invoke("task_manager")
@@ -25,11 +22,8 @@ async def set_tasks(*, explanation: str = Field(..., description=EXPLANATION), t
         "tasks": task_manager.to_dict_list(),
     })
 
-
 @tool
-async def update_tasks(
-    *, explanation: str = Field(..., description=EXPLANATION), updates: list[dict]
-) -> str:
+async def update_tasks(*, updates: list[dict]) -> str:
     """Update tasks; described in descriptions/update_tasks.md."""
     services = current_tool_services()
     task_manager = services.features.invoke("task_manager")

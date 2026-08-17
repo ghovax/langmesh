@@ -7,7 +7,7 @@ gets the null implementation, whose calls are no-ops or raise.
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, Optional, Protocol, runtime_checkable
+from typing import Any, Awaitable, Optional, Protocol, runtime_checkable
 
 
 @runtime_checkable

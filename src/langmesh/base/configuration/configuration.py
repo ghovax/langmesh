@@ -514,7 +514,7 @@ class ProviderCredential(Section):
 class AgentDefaults(Section):
     """What a session gets when its creator did not say."""
 
-    permission_mode: Literal["ask", "automatic"] = Field("ask")
+    permission_mode: Literal["ask", "automatic", "allow"] = Field("ask")
 
 
 class Configuration(Section):
@@ -854,7 +854,7 @@ class AgentConfiguration(BaseModel):
     provider: Optional[str] = None
     reasoning_effort: str = "high"
     # The mode this profile starts with when the session creator does not choose one.
-    permission_mode: Literal["ask", "automatic"] = "ask"
+    permission_mode: Literal["ask", "automatic", "allow"] = "ask"
 
     # An agent's own confinement, narrowing the global one. Unset means whatever the machine says.
     sandbox: Optional[SandboxConfiguration] = None

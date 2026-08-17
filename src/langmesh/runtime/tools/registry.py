@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import signal
 from pathlib import Path
 from typing import Any, Literal
 
@@ -13,7 +11,7 @@ from pydantic import Field
 
 from langmesh.base.primitives.identifiers import new_id
 from langmesh.runtime.background import current_background_jobs, current_tool_call_id
-from langmesh.base.primitives.tuning import Tunable, active_tuning, clip_to_tokens
+from langmesh.base.primitives.tuning import Tunable, active_tuning
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools import context as tool_context, fetching
 from langmesh.runtime.tools.execution import current_tool_decision, current_tool_services
@@ -34,204 +32,18 @@ EXPLANATION = _DESCRIPTIONS.load("explanation", {}).strip()
 #: What a call reaches for beyond its confinement. A difference against the profile, not an inventory.
 ACCESS_REQUEST = _DESCRIPTIONS.load("access_request", {}).strip()
 
-
 def _require_mcp_server_manager():
     manager = tool_context.current().mcp_server_manager
     if manager is None:
         raise RuntimeError("No MCP server is configured.")
     return manager
 
-
-@tool
-async def bash(
-    *,
-    explanation: str = Field(..., description=EXPLANATION),
-    command: str,
-    access_request: dict[str, Any] = Field(..., description=ACCESS_REQUEST),
-    location: str = "",
-    background: bool = False,
-    timeout: float = Tunable.bash_sync_window.default,
-) -> str:
-    """Run a shell command inside the session's confinement."""
-    from langmesh.base import confinement as _confinement
-
-    active = tool_context.current()
-    profile, workspace = active.sandbox, active.workspace
-    output_path = active.spill_path("bash")
-    process_holder: dict[str, Any] = {}
-
-    def cancel_process() -> None:
-        process = process_holder.get("process")
-        if process is None or process.returncode is not None:
-            return
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            return
-        except Exception:
-            try:
-                process.terminate()
-            except ProcessLookupError:
-                return
-
-    async def run() -> str:
-        # The session's own tools ride in the environment the confinement builds, already on `PATH`.
-        spawn = _confinement.spawn_recipe(
-            _confinement.first_attempt(profile, workspace=workspace),
-            workspace=workspace,
-            extra_environment=active.child_environment(),
-        )
-        process = await asyncio.create_subprocess_exec(
-            # Still a shell command; the working directory is the process's own, not a `cd` the model can escape.
-            *_confinement.resolve_command(command, spawn),
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=workspace or None,
-            env=spawn.environment,
-            preexec_fn=spawn.preexec,
-            # A new session denies terminal prompts while still giving `killpg` a dedicated group.
-            start_new_session=True,
-        )
-        process_holder["process"] = process
-        process_id = process.pid
-        # Persist the group id, so a subtree orphaned by a crash is reaped on the next startup.
-        try:
-            group = os.getpgid(process_id)
-            current_background_jobs().store.record_process_group(job_id, group)
-            # And tell the host, which is how a call this child makes is attributed back to this session.
-            from langmesh.runtime.background import record_child_group
-
-            record_child_group(active.session_id, group)
-        except (ProcessLookupError, OSError):
-            pass
-
-        async def write_stream(stream, handle):
-            while True:
-                line = await stream.readline()
-                if not line:
-                    break
-                handle.write(line.decode())
-                handle.flush()
-
-        try:
-            with output_path.open("w") as file_handle:
-                await asyncio.gather(
-                    write_stream(process.stdout, file_handle),
-                    write_stream(process.stderr, file_handle),
-                )
-
-            await process.wait()
-        except asyncio.CancelledError:
-            cancel_process()
-            try:
-                await asyncio.wait_for(
-                    process.wait(), timeout=active_tuning().duration(Tunable.sigterm_grace)
-                )
-            except asyncio.TimeoutError:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                except Exception:
-                    try:
-                        process.kill()
-                    except ProcessLookupError:
-                        pass
-                await process.wait()
-            # Read off the loop: a large log would otherwise block every session sharing it.
-            output = (
-                await asyncio.to_thread(output_path.read_text, errors="replace")
-                if output_path.exists()
-                else ""
-            )
-            inline_output, output_truncated = clip_to_tokens(
-                output, active_tuning().amount(Tunable.output_tokens)
-            )
-            payload = {
-                "code": "bash_cancelled",
-                "status": "error",
-                "output": inline_output,
-                "output_file": str(output_path),
-                "truncated": output_truncated,
-                "pid": process_id,
-                "size": len(output),
-                "returncode": process.returncode,
-            }
-            return compact(payload)
-        # Off the loop, for the same reason: a multi-megabyte output must not stall it.
-        output = await asyncio.to_thread(output_path.read_text)
-        # A non-zero exit is a failure the model must see, or `exit 7` reads as success.
-        return_code = process.returncode or 0
-        result_code = "bash_completed" if return_code == 0 else "bash_failed"
-        result_status = "ok" if return_code == 0 else "error"
-        if not output:
-            return compact(
-                {
-                    "code": result_code,
-                    "status": result_status,
-                    "output": "",
-                    "output_file": str(output_path),
-                    "truncated": False,
-                    "pid": process_id,
-                    "size": 0,
-                    "returncode": return_code,
-                }
-            )
-        inline_output, truncated = clip_to_tokens(
-            output, active_tuning().amount(Tunable.output_tokens)
-        )
-        result = {
-            "code": result_code,
-            "status": result_status,
-            "output": inline_output,
-            "output_file": str(output_path),
-            "truncated": truncated,
-            "pid": process_id,
-            "size": len(output),
-            "returncode": return_code,
-        }
-        return compact(result)
-
-    jobs = current_background_jobs()
-    job_id = jobs.spawn(
-        "bash",
-        run(),
-        output_path=output_path,
-        cancel_callback=cancel_process,
-        arguments={
-            "command": command,
-            "location": location,
-            "access_request": access_request,
-            "explanation": explanation,
-            "background": background,
-        },
-        # Correlate the job with its tool call, so a blocking foreground command can be backgrounded by that id.
-        tool_call_identifier=current_tool_call_id(),
-        # A backgrounded command is detached and survives a Stop; a synchronous one is killed by it.
-        detached=background,
-    )
-    if not background:
-        # Block and hand back real output, so the model never mistakes a placeholder for unfinished work.
-        settled = await jobs.settle_inline(job_id, active_tuning().scale_timeout(timeout))
-        if settled is not None:
-            return settled.result
-    return compact(
-        {
-            "code": "bash_started",
-            "status": "running",
-            "job_id": job_id,
-            "output_file": str(output_path),
-        }
-    )
-
-
 @tool
 async def search_web(
     *,
-    explanation: str = Field(..., description=EXPLANATION),
     query: str,
     result_count: int = 5,
+    **kwargs: Any,
 ) -> str:
     """Search the web."""
     client = tool_context.current().exa_client
@@ -293,7 +105,7 @@ async def search_web(
         run(),
         identifier=job_id,
         output_path=output_path,
-        arguments={"query": query, "explanation": explanation, "result_count": result_count},
+        arguments={"query": query, "explanation": kwargs.get("explanation", ""), "result_count": result_count},
         # A search outliving the turn keeps running, so its result still lands and wakes the agent.
         detached=True,
     )
@@ -312,11 +124,8 @@ async def search_web(
         }
     )
 
-
 @tool
-async def list_mcp_tools(
-    *, explanation: str = Field(..., description=EXPLANATION), server: str = ""
-) -> str:
+async def list_mcp_tools(*, server: str = "") -> str:
     """List a configured MCP server's tools."""
     try:
         result = await _require_mcp_server_manager().list_tools(server)
@@ -326,11 +135,9 @@ async def list_mcp_tools(
             {"code": "mcp_list_tools_error", "status": "error", "message": str(exception)}
         )
 
-
 @tool
 async def call_mcp_server_tool(
     *,
-    explanation: str = Field(..., description=EXPLANATION),
     server: str,
     tool_name: str,
     access_request: dict[str, Any] = Field(..., description=ACCESS_REQUEST),
@@ -345,7 +152,6 @@ async def call_mcp_server_tool(
             {"code": "mcp_server_tool_call_error", "status": "error", "message": str(exception)}
         )
 
-
 async def call_mcp_server_tool_with_events(
     server: str,
     tool_name: str,
@@ -359,11 +165,8 @@ async def call_mcp_server_tool_with_events(
         event_callback=event_callback,
     )
 
-
 @tool
-async def list_mcp_resources(
-    *, explanation: str = Field(..., description=EXPLANATION), server: str = ""
-) -> str:
+async def list_mcp_resources(*, server: str = "") -> str:
     """List a configured MCP server's resources."""
     try:
         result = await _require_mcp_server_manager().list_resources(server)
@@ -373,11 +176,8 @@ async def list_mcp_resources(
             {"code": "mcp_list_resources_error", "status": "error", "message": str(exception)}
         )
 
-
 @tool
-async def read_mcp_resource(
-    *, explanation: str = Field(..., description=EXPLANATION), server: str, uri: str
-) -> str:
+async def read_mcp_resource(*, server: str, uri: str) -> str:
     """Read one resource from a configured MCP server."""
     try:
         result = await _require_mcp_server_manager().read_resource(server, uri)
@@ -387,9 +187,8 @@ async def read_mcp_resource(
             {"code": "mcp_read_resource_error", "status": "error", "message": str(exception)}
         )
 
-
 @tool
-async def read_turn(*, explanation: str = Field(..., description=EXPLANATION), turn_id: str = "") -> str:
+async def read_turn(*, turn_id: str = "") -> str:
     """Read a sibling turn; described in descriptions/read_turn.md."""
     services = current_tool_services()
     requested_turn_id = turn_id
@@ -403,11 +202,9 @@ async def read_turn(*, explanation: str = Field(..., description=EXPLANATION), t
         result = task if task is not None else {"code": "turn_not_found", "turn_id": requested_turn_id}
     return compact(result)
 
-
 @tool
 async def fetch_url(
     *,
-    explanation: str = Field(..., description=EXPLANATION),
     url: str,
     format: Literal["markdown", "text", "html"] = "markdown",
     timeout: float = Tunable.slow_tool_sync_window.default,
@@ -432,11 +229,9 @@ async def fetch_url(
             return completion.result
     return compact({"code": "fetch_url_started", "status": "running", "job_id": job_identifier})
 
-
 @tool
 async def download_file(
     *,
-    explanation: str = Field(..., description=EXPLANATION),
     url: str,
     path: str,
     location: str = "",
@@ -480,11 +275,9 @@ async def download_file(
             return completion.result
     return compact({"code": "download_file_started", "status": "running", "job_id": job_identifier})
 
-
 @tool
 async def ask_user(
     *,
-    explanation: str = Field(..., description=EXPLANATION),
     questions: list[dict],
 ) -> str:
     """Ask the user; described in descriptions/ask_user.md."""
@@ -502,9 +295,8 @@ async def ask_user(
         result = {"code": "user_answered", "answers": answers}
     return compact(result)
 
-
 @tool
-async def load_skill(*, explanation: str = Field(..., description=EXPLANATION), name: str) -> str:
+async def load_skill(*, name: str) -> str:
     """Load a skill; described in descriptions/load_skill.md."""
     services = current_tool_services()
     all_skills = enabled_skills(list(services.catalogue.skills()))
@@ -519,9 +311,7 @@ async def load_skill(*, explanation: str = Field(..., description=EXPLANATION), 
         "content": match.body,
     })
 
-
 # Background jobs are cancelled by whoever owns the process, since a library configures nothing unasked.
-
 
 def tool_description(tool_name: str) -> str:
     """One tool's model-facing description, for a tool built too late to be given one at import."""
@@ -531,7 +321,6 @@ def tool_description(tool_name: str) -> str:
             f"No description file in runtime/tools/descriptions for the {tool_name!r} tool."
         )
     return text
-
 
 def _apply_descriptions() -> None:
     """Give every built-in its model-facing description, and fail at import rather than ship one
@@ -551,6 +340,5 @@ def _apply_descriptions() -> None:
             "These tools have no description file in runtime/tools/descriptions: "
             + ", ".join(sorted(missing))
         )
-
 
 _apply_descriptions()

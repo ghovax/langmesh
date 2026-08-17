@@ -5,12 +5,14 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Optional
 
-
 class PermissionMode(StrEnum):
     """Who answers when a call asks to reach past its confinement."""
 
     ASK = "ask"
     AUTOMATIC = "automatic"
+    #: No gate at all: every call runs as if it had whatever it asked for. The confinement
+    #: still applies to what a call may touch; only the asking is skipped.
+    ALLOW = "allow"
 
     @classmethod
     def parse(cls, value: str | PermissionMode | None) -> Optional[PermissionMode]:
@@ -36,8 +38,12 @@ class PermissionMode(StrEnum):
 
     @property
     def restrictiveness(self) -> int:
-        """Position in the restrictiveness order: ``automatic < ask``, since only ``automatic`` runs unwatched."""
-        return 1 if self is PermissionMode.ASK else 0
+        """Position in the restrictiveness order: ``allow < automatic < ask``."""
+        return {
+            PermissionMode.ASK: 2,
+            PermissionMode.AUTOMATIC: 1,
+            PermissionMode.ALLOW: 0,
+        }[self]
 
     @classmethod
     def more_restrictive(cls, *modes: str | PermissionMode | None) -> PermissionMode:
@@ -73,9 +79,14 @@ class PermissionMode(StrEnum):
     @property
     def never_asks(self) -> bool:
         """Whether this mode can run with nobody watching."""
-        return self is PermissionMode.AUTOMATIC
+        return self in (PermissionMode.AUTOMATIC, PermissionMode.ALLOW)
 
     @property
     def asks(self) -> bool:
         """Whether a gate goes to a person."""
         return self is PermissionMode.ASK
+
+    @property
+    def gates(self) -> bool:
+        """Whether calls are gated at all. ``allow`` lets every call run without asking."""
+        return self is not PermissionMode.ALLOW

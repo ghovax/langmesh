@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-
 class RpcError(Exception):
     """A control-plane call that cannot be served, with the status a client should see."""
 
@@ -38,17 +37,14 @@ class RpcError(Exception):
         self.status_code = status_code
         self.code = code
 
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
 
 def _require(params: dict, name: str) -> str:
     value = str(params.get(name) or "").strip()
     if not value:
         raise RpcError(f"{name} is required")
     return value
-
 
 def _inherited_conversation(params: dict) -> list[dict[str, Any]]:
     """Validate a model-facing conversation snapshot supplied for a child session."""
@@ -61,20 +57,17 @@ def _inherited_conversation(params: dict) -> list[dict[str, Any]]:
         raise RpcError("inherited_conversation must be a list of serialized messages")
     return inherited_conversation
 
-
 def _session(session_id: str) -> SessionRecord:
     record = state.registry.get(session_id) if state.registry else None
     if record is None:
         raise RpcError(f"No session {session_id!r}.", status_code=404, code="no_such_session")
     return record
 
-
 def _assert_session_known(session_id: str) -> None:
     """Refuse an id nothing has heard of, since empty and unknown look identical to a caller."""
     if state.registry is not None and state.registry.get(session_id) is not None:
         return
     raise RpcError(f"No session {session_id!r}.", status_code=404, code="no_such_session")
-
 
 def _assert_agent_exists(agent: str, working_directory: str) -> None:
     """Refuse a session for a profile that is not there, rather than failing on its first message."""
@@ -97,14 +90,12 @@ def _assert_agent_exists(agent: str, working_directory: str) -> None:
             code="no_such_agent",
         )
 
-
 def _public(record: SessionRecord) -> dict:
     """A session as a client sees it, combining its record with the daemon's live turn state."""
     return {
         **record.public(busy=record.id in state._running_contexts),
         "goal": state._session_goals.get(record.id),
     }
-
 
 def _resolve_sandbox(agent: str, working_directory: str, parent, read_only: bool = False) -> dict:
     """The confinement a new session gets: the machine's, narrowed by the agent's, clamped by its creator's."""
@@ -137,7 +128,6 @@ def _resolve_sandbox(agent: str, working_directory: str, parent, read_only: bool
         )
     return profile.as_dict()
 
-
 def _agent_permission_default(agent: str, working_directory: str) -> Optional[PermissionMode]:
     """The mode the agent profile supplies when the session creator does not choose one."""
     from langmeshd.commons.services.agents import _agent_configuration_for_request
@@ -148,7 +138,6 @@ def _agent_permission_default(agent: str, working_directory: str) -> Optional[Pe
         logger.debug("could not read the permission default of agent %s", agent, exc_info=True)
         return None
     return configuration.permission_default
-
 
 async def _session_create(params: dict) -> dict:
     """Mint a session and hand back its handle. The only place a session's configuration is set."""
@@ -181,7 +170,7 @@ async def _session_create(params: dict) -> dict:
     requested_mode = params.get("permission_mode")
     if requested_mode not in (None, "") and PermissionMode.parse(requested_mode) is None:
         raise RpcError(
-            "permission_mode must be one of: ask, automatic.",
+            "permission_mode must be one of: ask, automatic, allow.",
             status_code=400,
             code="invalid_permission_mode",
         )
@@ -271,7 +260,6 @@ async def _session_create(params: dict) -> dict:
         "permission_mode": record.permission_mode,
     }
 
-
 async def _session_list(params: dict) -> dict:
     assert state.registry is not None
     include_terminal = bool(params.get("all"))
@@ -284,7 +272,6 @@ async def _session_list(params: dict) -> dict:
             _public(record) for record in sorted(records, key=lambda entry: entry.created_at)
         ]
     }
-
 
 async def _waiting_on(session_id: str) -> dict:
     """What a parked session is parked on, as locale-independent data."""
@@ -307,7 +294,6 @@ async def _waiting_on(session_id: str) -> dict:
         logger.debug("could not read what %s is waiting on", session_id, exc_info=True)
     return {}
 
-
 async def _session_get(params: dict) -> dict:
     record = _session(_require(params, "id"))
     payload = _public(record)
@@ -316,7 +302,6 @@ async def _session_get(params: dict) -> dict:
         if waiting_on:
             payload["waiting_on"] = waiting_on
     return {"session": payload}
-
 
 async def _session_tree(params: dict) -> dict:
     """A session and everything under it, so a fan-out renders as a hierarchy rather than a pile."""
@@ -327,7 +312,6 @@ async def _session_tree(params: dict) -> dict:
         "descendants": [_public(record) for record in state.registry.descendants_of(root.id)],
     }
 
-
 async def _session_end(params: dict) -> dict:
     assert state.lifecycle is not None
     record = _session(_require(params, "id"))
@@ -335,7 +319,6 @@ async def _session_end(params: dict) -> dict:
         record.id, reason=str(params.get("reason") or "killed by request")
     )
     return {"killed": record.id, "reaped": reaped}
-
 
 async def _tell_session_permission_mode(record: SessionRecord) -> None:
     """Push a mode into a hosted session. A sleeping one needs none: its next executor reads the record."""
@@ -352,7 +335,6 @@ async def _tell_session_permission_mode(record: SessionRecord) -> None:
             },
         )
 
-
 async def _session_permission_mode(params: dict) -> dict:
     """Change the mode a session runs under, while it runs, rather than making it something only `create` sets."""
     assert state.registry is not None
@@ -366,7 +348,7 @@ async def _session_permission_mode(params: dict) -> dict:
     requested = PermissionMode.parse(params.get("permission_mode"))
     if requested is None:
         raise RpcError(
-            "permission_mode must be one of: ask, automatic.",
+            "permission_mode must be one of: ask, automatic, allow.",
             status_code=400,
             code="invalid_permission_mode",
         )
@@ -384,8 +366,8 @@ async def _session_permission_mode(params: dict) -> dict:
         if not descendant.is_live:
             continue
         clamped = (
-            PermissionMode.AUTOMATIC
-            if mode is PermissionMode.AUTOMATIC
+            mode
+            if mode in (PermissionMode.AUTOMATIC, PermissionMode.ALLOW)
             else PermissionMode.resolve(descendant.permission_mode)
         )
         if descendant.permission_mode == str(clamped):
@@ -404,7 +386,6 @@ async def _session_permission_mode(params: dict) -> dict:
         "descendants_changed": [altered.id for altered in changed if altered.id != record.id],
     }
 
-
 async def _session_send(params: dict) -> dict:
     """Accept plain steering at a safe point, or serialize a structured message as a fresh turn."""
     record = _session(_require(params, "id"))
@@ -416,11 +397,9 @@ async def _session_send(params: dict) -> dict:
         )
     return await state.wake_then_relay(record, "message/send", params)
 
-
 async def _turn_cancel(params: dict) -> dict:
     record = _session(_require(params, "id"))
     return await state.wake_then_relay(record, "tasks/cancel", params)
-
 
 async def _session_respond(params: dict) -> dict:
     """Answer a session's pending human-in-the-loop gate."""
@@ -428,37 +407,31 @@ async def _session_respond(params: dict) -> dict:
     _require(params, "request_id")
     return await state.wake_then_relay(record, "input/respond", params)
 
-
 async def _session_compact(params: dict) -> dict:
     """Ask a session to compact its own conversation."""
     record = _session(_require(params, "id"))
     return await state.wake_then_relay(record, "session/compact", params)
-
 
 async def _session_retry(params: dict) -> dict:
     """Retry the failed durable turn without accepting another copy of its message."""
     record = _session(_require(params, "id"))
     return await state.wake_then_relay(record, "session/retry", params)
 
-
 async def _session_goal_clear(params: dict) -> dict:
     """Call off a session's goal; a turn already in flight finishes on its own."""
     record = _session(_require(params, "id"))
     return await state.wake_then_relay(record, "session/goal-clear", params)
-
 
 async def _jobs_list(params: dict) -> dict:
     """What background work a session has in flight, read from the executor hosting it."""
     record = _session(_require(params, "id"))
     return await state.wake_then_relay(record, "jobs/list", params)
 
-
 async def _jobs_detach(params: dict) -> dict:
     """Detach a still-blocking command so the session's turn can continue without it."""
     record = _session(_require(params, "id"))
     _require(params, "tool_call_id")
     return await state.wake_then_relay(record, "jobs/detach", params)
-
 
 async def _session_history(params: dict) -> dict:
     """A session's turns from the store, so history reads whether the session is running, parked or reaped."""
@@ -473,7 +446,6 @@ async def _session_history(params: dict) -> dict:
         ],
     }
 
-
 async def _turn_get(params: dict) -> dict:
     assert state.turn_store is not None
     turn = await state.turn_store.get(_require(params, "turn_id"))
@@ -482,7 +454,6 @@ async def _turn_get(params: dict) -> dict:
     return {
         "turn": turn.model_dump(by_alias=True, exclude_none=True, mode="json", exclude={"history"})
     }
-
 
 async def _remote_list(_params: dict) -> dict:
     """The peers registered on other hosts, listed apart because LangMesh owns neither their lifecycle nor their history."""
@@ -505,7 +476,6 @@ async def _remote_list(_params: dict) -> dict:
             }
         )
     return {"agents": sorted(agents, key=lambda entry: entry["name"])}
-
 
 async def _remote_send(params: dict) -> dict:
     """Hand one message to a remote peer and return what it produced. One-shot: a different bargain from a local one."""
@@ -534,7 +504,6 @@ async def _remote_send(params: dict) -> dict:
         ) from error
     return {"name": name, "text": "".join(collected)}
 
-
 def _remote_text_parts(event: Any) -> list[str]:
     """The prose in one streamed event, whether it arrived as a Message or as a Task's artifacts."""
     texts: list[str] = []
@@ -551,7 +520,6 @@ def _remote_text_parts(event: Any) -> list[str]:
                     texts.append(str(text))
     return texts
 
-
 async def _daemon_status(_params: dict) -> dict:
     assert state.registry is not None
     live = state.registry.live()
@@ -564,7 +532,6 @@ async def _daemon_status(_params: dict) -> dict:
         # Which image is serving, since two `langmesh` can share a runtime directory and the first one owns it.
         "image": {"executable": sys.executable, "frozen": bool(getattr(sys, "frozen", False))},
     }
-
 
 async def _daemon_restart(_params: dict) -> dict:
     """Replace this daemon with a fresh one, since macOS caches the Accessibility trust check per process."""
@@ -589,20 +556,17 @@ async def _daemon_restart(_params: dict) -> dict:
     asyncio.get_running_loop().create_task(replace())
     return {"restarting": True, "sessions_slept": hosted}
 
-
 def _daemon_argv() -> list[str]:
     """How to re-enter this program as the daemon, frozen or from a checkout."""
     if getattr(sys, "frozen", False):
         return ["langmeshd"]
     return ["-m", "langmesh", "langmeshd"]
 
-
 async def _workspace_list(params: dict) -> dict:
     """Every workspace and its locations, here because the CLI turns a path into an id and speaks no REST."""
     from langmeshd.commons.services.workspaces import _workspaces_payload
 
     return await asyncio.to_thread(_workspaces_payload)
-
 
 async def _schedule_create(params: dict) -> dict:
     """Write down a recurring prompt, validated now rather than at a first firing days away."""
@@ -623,13 +587,11 @@ async def _schedule_create(params: dict) -> dict:
     except schedules.ScheduleError as error:
         raise RpcError(str(error), code="invalid_schedule") from None
 
-
 async def _schedule_list(params: dict) -> dict:
     from langmeshd.commons.services import schedules
 
     listing = await asyncio.to_thread(schedules.listing, str(params.get("workspace_id") or ""))
     return {"schedules": listing}
-
 
 async def _schedule_get(params: dict) -> dict:
     from langmeshd.commons.services import schedules
@@ -638,7 +600,6 @@ async def _schedule_get(params: dict) -> dict:
         return await asyncio.to_thread(schedules.get, _require(params, "id"))
     except schedules.ScheduleError as error:
         raise RpcError(str(error), status_code=404, code="no_such_schedule") from None
-
 
 async def _schedule_enable(params: dict) -> dict:
     from langmeshd.commons.services import schedules
@@ -650,7 +611,6 @@ async def _schedule_enable(params: dict) -> dict:
     except schedules.ScheduleError as error:
         raise RpcError(str(error), status_code=404, code="no_such_schedule") from None
 
-
 async def _schedule_delete(params: dict) -> dict:
     from langmeshd.commons.services import schedules
 
@@ -660,7 +620,6 @@ async def _schedule_delete(params: dict) -> dict:
     except schedules.ScheduleError as error:
         raise RpcError(str(error), status_code=404, code="no_such_schedule") from None
     return {"deleted": schedule_id}
-
 
 async def _schedule_run(params: dict) -> dict:
     """Fire one now without moving its window, so a wrong agent name is found before tomorrow morning."""
@@ -682,7 +641,6 @@ async def _schedule_run(params: dict) -> dict:
         database_session.close()
     await scheduler._fire(record)
     return await asyncio.to_thread(schedules.get, schedule_id)
-
 
 METHODS: dict[str, Callable[[dict], Awaitable[dict]]] = {
     "session.create": _session_create,
@@ -714,7 +672,6 @@ METHODS: dict[str, Callable[[dict], Awaitable[dict]]] = {
     "schedule.run": _schedule_run,
 }
 
-
 #: What a session may ask on its own behalf: a capability for its work, not a second daemon token.
 _SESSION_CALLER_METHODS = frozenset(
     {
@@ -728,7 +685,6 @@ _SESSION_CALLER_METHODS = frozenset(
         "remote.send",
     }
 )
-
 
 def _refuse_session_caller(caller: str, method: str, params: dict) -> Optional[RpcError]:
     """Whether an attributed session may make this call: only its own verbs, and only within its own subtree."""
@@ -750,7 +706,6 @@ def _refuse_session_caller(caller: str, method: str, params: dict) -> Optional[R
         status_code=403,
         code="forbidden",
     )
-
 
 @router.post("/telemetry/faults")
 async def telemetry_faults(request: Request) -> JSONResponse:
@@ -804,7 +759,6 @@ async def telemetry_faults(request: Request) -> JSONResponse:
     )
     return JSONResponse({"accepted": True}, status_code=202)
 
-
 @router.post("/rpc")
 async def rpc(request: Request) -> JSONResponse:
     """One entry point for every control-plane call."""
@@ -850,7 +804,6 @@ async def rpc(request: Request) -> JSONResponse:
             {"error": {"code": "internal_error", "message": f"{method} failed: {error}"}},
             status_code=500,
         )
-
 
 def _attach_transcript(context_id: str, request: Request) -> EventSourceResponse:
     """Stream a live cut immediately, then complete durable turns newest-to-oldest behind it."""
@@ -953,7 +906,6 @@ def _attach_transcript(context_id: str, request: Request) -> EventSourceResponse
 
     return EventSourceResponse(stream())
 
-
 @router.get("/sessions/{session_id}/attach")
 async def attach(session_id: str, request: Request) -> EventSourceResponse:
     """Watch a session: a snapshot of what happened, then everything as it happens."""
@@ -964,7 +916,6 @@ async def attach(session_id: str, request: Request) -> EventSourceResponse:
         if refusal is not None:
             raise refusal
     return _attach_transcript(session_id, request)
-
 
 @router.get("/goal-reviews/{review_id}/attach")
 async def attach_goal_review(review_id: str, request: Request) -> EventSourceResponse:
@@ -981,7 +932,6 @@ async def attach_goal_review(review_id: str, request: Request) -> EventSourceRes
         if refusal is not None:
             raise refusal
     return _attach_transcript(review_id, request)
-
 
 @router.get("/events")
 async def events(request: Request) -> EventSourceResponse:
