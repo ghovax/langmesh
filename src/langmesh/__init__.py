@@ -276,17 +276,6 @@ def _apply_providers(configuration: Any, providers: Mapping[str, str | Mapping[s
         configuration.providers[name] = credential
 
 
-def _bind_retrieval_policy(configuration: Any) -> None:
-    """Bind which models rank a screen, from the loaded configuration, beside the tuning policy rather than inside it."""
-    screen = getattr(configuration, "computer_control", None)
-    section = getattr(screen, "retrieval", None)
-    if section is None:
-        return
-    from langmesh.computer.retrieval import retrieval_policy_from, set_retrieval_policy
-
-    set_retrieval_policy(retrieval_policy_from(section))
-
-
 def _require(port: type, candidate: Any, argument: str) -> Any:
     """Reject an implementation that does not satisfy its port, naming what is missing rather than failing mid-turn."""
     if candidate is None:
@@ -455,7 +444,6 @@ class Session:
 
             # The tuning policy is bound per task, so binding it here scopes it to the caller rather than the interpreter.
             set_tuning(tuning_from_policy(self._configuration.tuning))
-            _bind_retrieval_policy(self._configuration)
             # Both are bound per task, so two sessions in one interpreter can hold different credentials and tracers.
             if self._credentials is not None:
                 from langmesh.base.identity.credentials import set_credentials

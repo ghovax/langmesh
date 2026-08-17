@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from langmesh.runtime.features.plugins.background import BackgroundJobsFeature
 from langmesh.runtime.features.plugins.compaction import Compaction
+from langmesh.runtime.features.plugins.computer_use import ComputerUse
 from langmesh.runtime.features.plugins.continuation import Continuation
 from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
 from langmesh.runtime.features.plugins.observations import ObservationMemory
@@ -36,6 +37,7 @@ def default_features(components) -> list:
         BackgroundJobsFeature(store=components.jobs),
         WorkHabits(),
         TitleAssignment(),
+        ComputerUse(),
     ]
 
 
