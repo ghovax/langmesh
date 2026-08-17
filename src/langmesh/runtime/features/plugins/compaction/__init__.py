@@ -653,15 +653,21 @@ class Compaction(Feature):
         with TemporaryDirectory(prefix="langmesh-compaction-summary-") as scratch_directory:
             summarizer = self._compaction_summarizer_runtime(scratch_directory)
             try:
-                attempts = 0
+                from langmesh.runtime.verdict import drive_verdict_session
+
+                summary_attempts = (
+                    self._context.global_configuration.compaction.summary_attempts
+                )
                 last_text = ""
-                while not self._host.turn.abort_event.is_set():
+
+                async def _run_turn(current_instruction: str) -> bool:
+                    nonlocal last_text
                     streamed: dict[str, Any] = {"last_text": "", "last_usage": None}
 
                     async def _consume() -> None:
                         with cache_lane("compaction-summary"):
                             async for _event in summarizer.stream(
-                                instruction, as_system_note=False, opens_exchange=True
+                                current_instruction, as_system_note=False, opens_exchange=True
                             ):
                                 # The hidden session is private: nothing here is published.
                                 if isinstance(_event, Done):
@@ -673,46 +679,58 @@ class Compaction(Feature):
                     if await race_interrupt(stream_task, self._host.turn.abort_event):
                         summarizer.abort()
                     await stream_task
-                    if self._host.turn.abort_event.is_set():
-                        break
                     last_text = streamed["last_text"] or last_text
                     last_usage = streamed["last_usage"]
-                    submitted = summarizer._features.by_type(Compaction)
-                    if submitted is not None:
-                        submitted = submitted.submitted_summary
-                    if submitted is not None:
-                        if last_usage is not None:
-                            logger.info(
-                                "compaction summary cache lane=compaction-summary prefix_intact=%s cache_read_tokens=%d reachable_tokens=%d shared_segments=%d segments=%d input_tokens=%d output_tokens=%d",
-                                last_usage.prefix_intact,
-                                last_usage.cache_read_tokens,
-                                last_usage.reachable_tokens,
-                                last_usage.shared_segments,
-                                last_usage.segments,
-                                last_usage.input_tokens,
-                                last_usage.output_tokens,
-                            )
-                        return str(submitted.summary or "").strip() or None
-                    attempts += 1
-                    summary_attempts = (
-                        self._context.global_configuration.compaction.summary_attempts
-                    )
-                    if attempts >= summary_attempts:
-                        logger.error(
-                            "compaction summarizer did not submit after %d attempts; last text: %r",
-                            attempts,
-                            last_text,
+                    if last_usage is not None:
+                        logger.info(
+                            "compaction summary cache lane=compaction-summary prefix_intact=%s cache_read_tokens=%d reachable_tokens=%d shared_segments=%d segments=%d input_tokens=%d output_tokens=%d",
+                            last_usage.prefix_intact,
+                            last_usage.cache_read_tokens,
+                            last_usage.reachable_tokens,
+                            last_usage.shared_segments,
+                            last_usage.segments,
+                            last_usage.input_tokens,
+                            last_usage.output_tokens,
                         )
-                        raise CompactionSummaryExhausted(
-                            f"The compaction summarizer did not submit a summary after {attempts} attempts, so the conversation was not compacted."
-                        )
+                    return not self._host.turn.abort_event.is_set()
+
+                def _submitted():
+                    feature = summarizer._features.by_type(Compaction)
+                    return feature.submitted_summary if feature is not None else None
+
+                def _on_empty(attempt: int, maximum: int) -> None:
                     logger.warning(
                         "the compaction summarizer stopped without submitting its summary (attempt %d/%d); continuing it",
-                        attempts,
-                        summary_attempts,
+                        attempt,
+                        maximum,
                     )
-                    self._require_summary_submission(summarizer)
-                    instruction = self._prompts.load("compaction_summary_missing", {})
+
+                def _on_exhausted():
+                    logger.error(
+                        "compaction summarizer did not submit after %d attempts; last text: %r",
+                        summary_attempts,
+                        last_text,
+                    )
+                    raise CompactionSummaryExhausted(
+                        f"The compaction summarizer did not submit a summary after {summary_attempts} attempts, so the conversation was not compacted."
+                    )
+
+                submitted = await drive_verdict_session(
+                    attempts=summary_attempts,
+                    reason="compaction summary",
+                    run_turn=_run_turn,
+                    submitted=_submitted,
+                    require_submission=lambda: self._require_summary_submission(summarizer),
+                    missing_instruction=lambda: self._prompts.load(
+                        "compaction_summary_missing", {}
+                    ),
+                    aborted=lambda: self._host.turn.abort_event.is_set(),
+                    initial_instruction=instruction,
+                    on_empty=_on_empty,
+                    on_exhausted=_on_exhausted,
+                )
+                if submitted is not None:
+                    return str(submitted.summary or "").strip() or None
             except CompactionSummaryExhausted:
                 raise
             except Exception as error:  # noqa: BLE001 — a failed summary never blocks the compaction

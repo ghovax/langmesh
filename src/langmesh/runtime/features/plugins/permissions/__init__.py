@@ -21,7 +21,6 @@ from langmesh.base.content.model_errors import ContextWindowExceeded
 from langmesh.base.content.instructions import instructions_payload
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.primitives.tuning import Tunable, active_tuning
-from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.internals import (
     _coerce_structured_arguments,
     _PreflightGate,
@@ -169,60 +168,31 @@ class PermissionReview(Feature):
         )
         attempts = active_tuning().amount(Tunable.permission_reviewer_attempts)
         started_at = time.perf_counter()
-        with cache_lane(f"permission-review/{gate.request_id}"):
-            for attempt in range(1, attempts + 1):
-                try:
-                    response = await model.ainvoke(request)
-                except Exception:  # noqa: BLE001 — one dropped call is not a verdict
-                    logger.warning(
-                        "the permission reviewer could not be reached (attempt %d of %d)",
-                        attempt,
-                        attempts,
-                        exc_info=True,
-                    )
-                    continue
-                if len(response.tool_calls) != 1:
-                    logger.warning(
-                        "the permission reviewer returned %d decisions (attempt %d of %d)",
-                        len(response.tool_calls),
-                        attempt,
-                        attempts,
-                    )
-                    continue
-                if response.tool_calls[0].get("name") != "permission_decision":
-                    logger.warning(
-                        "the permission reviewer called %s instead of %s (attempt %d of %d)",
-                        response.tool_calls[0].get("name"),
-                        "permission_decision",
-                        attempt,
-                        attempts,
-                    )
-                    continue
-                try:
-                    decision = PermissionDecision.model_validate(response.tool_calls[0]["args"])
-                except Exception:  # noqa: BLE001 — a malformed verdict is not a verdict either
-                    logger.warning(
-                        "the permission reviewer returned a malformed decision (attempt %d of %d)",
-                        attempt,
-                        attempts,
-                        exc_info=True,
-                    )
-                    continue
-                # A verdict with no reason cannot be acted on. A failed attempt, not a refusal — the next may supply it.
-                if not decision.explanation.strip():
-                    logger.warning(
-                        "the permission reviewer gave no reason for its decision (attempt %d of %d)",
-                        attempt,
-                        attempts,
-                    )
-                    continue
-                self._record_review(
-                    decision,
-                    response=response,
-                    attempts=attempt,
-                    started_at=started_at,
-                )
-                return decision
+        from langmesh.runtime.verdict import collect_structured_call
+
+        def _only_permission_call(response: Any) -> Any | None:
+            calls = getattr(response, "tool_calls", None) or []
+            if len(calls) != 1 or calls[0].get("name") != "permission_decision":
+                return None
+            return calls[0].get("args")
+
+        decision = await collect_structured_call(
+            model,
+            request,
+            tool_name="permission_decision",
+            schema=PermissionDecision,
+            attempts=attempts,
+            cache_lane_name=f"permission-review/{gate.request_id}",
+            reason=f"the permission reviewer for {gate.request_id}",
+            select=_only_permission_call,
+            # A verdict with no reason cannot be acted on. A failed attempt, not a refusal — the next may supply it.
+            accept=lambda decision: bool(decision.explanation.strip()),
+            on_success=lambda decision, response, attempt: self._record_review(
+                decision, response=response, attempts=attempt, started_at=started_at
+            ),
+        )
+        if decision is not None:
+            return decision
         logger.warning("the permission reviewer did not decide in %d attempts; denying", attempts)
         decision = PermissionDecision(
             action="deny",
