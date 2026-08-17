@@ -13,11 +13,13 @@ from langchain_core.messages import (
 from langchain_core.tools import BaseTool
 from pydantic import SecretStr
 
-from langmesh.base.confinement import Grant
+from langmesh.base import confinement as _confinement
+from langmesh.base.confinement import Grant, Profile
 from langmesh.base.configuration import (
     AgentConfiguration,
     Configuration,
     PermissionEvaluator,
+    SandboxConfiguration,
 )
 from langchain_core.language_models.chat_models import BaseChatModel
 from langmesh.runtime.models.litellm import ChatLiteLLMModel
@@ -25,6 +27,7 @@ from langmesh.runtime.models.codex import ChatCodexModel
 from langmesh.runtime.models.cursor import ChatCursorModel
 from langmesh.base.content.models import find_model, resolve_litellm
 from langmesh.base.contracts.tools import as_tool_grants
+from langmesh.base.contracts.catalogue import project_catalogue
 from langmesh.runtime.tools.arguments import with_explanation
 from langmesh.runtime.tools.execution import Tool, ToolServices, invoke_supplied
 from langmesh.runtime.tools import registry as tools_registry
@@ -52,6 +55,21 @@ from langmesh.runtime.turn import (
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.content.toolbox import toolbox_for
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
+from langmesh.runtime.features import (
+    BoundaryView,
+    BookkeepingView,
+    ConversationView,
+    PluginBus,
+    PluginContext,
+    PluginHost,
+    ToolsView,
+    TurnView,
+    WindowView,
+    build_features,
+    feature_prompts,
+)
+from langmesh.runtime.hooks import HookRunner
+from langmesh.runtime.pipeline import ToolPipeline
 from langmesh.runtime.internals import (
     _utc_timestamp,
     conversation_tokens,
@@ -121,12 +139,8 @@ def build_chat_model(
 
 def _as_profile(sandbox: Any):
     """Whatever a caller called a sandbox, as the :class:`Profile` the runtime works with."""
-    from langmesh.base.confinement import Profile
-
     if sandbox is None:
         # The configured default, not `Profile()`: an empty writable set means "may write nowhere".
-        from langmesh.base.configuration import SandboxConfiguration
-
         return SandboxConfiguration().to_profile()
     if isinstance(sandbox, Profile):
         return sandbox
@@ -154,8 +168,6 @@ def _build_tool_context(
     toolbox = toolbox_for(session_id, enabled=global_configuration.toolbox.enabled)
     if toolbox is not None:
         toolbox.prepare()
-        from langmesh.base import confinement as _confinement
-
         sandbox = sandbox.with_grant(
             _confinement.approved(
                 _confinement.AccessRequest(mutates=True, writes=(str(toolbox.root),)),
@@ -230,9 +242,6 @@ class AgentRuntime(
         *,
         conversation: Optional[list] = None,
     ):
-        from langmesh.runtime.hooks import HookRunner
-        from langmesh.runtime.pipeline import ToolPipeline
-
         agent_configuration = profile.agent
         global_configuration = profile.configuration
         session_id = profile.session_id
@@ -368,8 +377,6 @@ class AgentRuntime(
         # Where the prompt's material comes from, supplied rather than found by walking hardcoded paths.
         # The library default discovers no skills on disk: they are voluntary, injected by the caller.
         if catalogue is None:
-            from langmesh.base.contracts.catalogue import project_catalogue
-
             catalogue = project_catalogue(global_configuration, self._project_directory)
         self._catalogue = catalogue
         self._prompt_loader = _CataloguePrompts(catalogue)
@@ -410,20 +417,6 @@ class AgentRuntime(
         # The files the person attached: like a grant, but answering what they handed over rather than what was asked.
         self._attached_files: dict[str, None] = {}
         # The pluggable sub-behaviors this runtime runs, each with its own state and templates.
-        from langmesh.runtime.features import (
-            BoundaryView,
-            BookkeepingView,
-            ConversationView,
-            PluginBus,
-            PluginContext,
-            PluginHost,
-            ToolsView,
-            TurnView,
-            WindowView,
-            build_features,
-            feature_prompts,
-        )
-
         self._plugin_bus = PluginBus()
         self._plugin_context = PluginContext(
             session_id=self._session_id,

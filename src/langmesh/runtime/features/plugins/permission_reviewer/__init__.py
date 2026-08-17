@@ -15,6 +15,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from langmesh.base import confinement
 from langmesh.base.content.model_errors import ContextWindowExceeded
 from langmesh.base.content.instructions import instructions_payload
 from langmesh.base.primitives.serialization import compact
@@ -25,6 +26,8 @@ from langmesh.runtime.features.plugins.permission_reviewer.tools import (
 )
 from langmesh.runtime.internals import _PreflightGate
 from langmesh.runtime.locations import PermissionDecision
+from langmesh.runtime.values import PermissionAnswer
+from langmesh.runtime.verdict import collect_structured_call
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +42,7 @@ class PermissionReviewer(Feature):
 
     def contribute_tools(self) -> list:
         """The reviewer's own verdict tool."""
-        from langmesh.runtime.features.plugins.permission_reviewer.tools import (
-            permission_decision,
-        )
-
-        return [permission_decision]
+        return [permission_decision_tool]
 
     async def review(self, gate: _PreflightGate) -> PermissionDecision:
         """The reviewer's verdict on one gate. Takes a gate, so it cannot reach a call that raised none."""
@@ -108,7 +107,6 @@ class PermissionReviewer(Feature):
         )
         attempts = active_tuning().amount(Tunable.permission_reviewer_attempts)
         started_at = time.perf_counter()
-        from langmesh.runtime.verdict import collect_structured_call
 
         def _only_permission_call(response: Any) -> Any | None:
             calls = getattr(response, "tool_calls", None) or []
@@ -221,9 +219,6 @@ class PermissionReviewer(Feature):
 
     async def review_automatic_gate(self, gate) -> Any | None:
         """The verdict for one automatic gate, announced before it runs."""
-        from langmesh.base import confinement
-        from langmesh.runtime.values import PermissionAnswer
-
         decision = await self.review(gate)
         if decision.action == "allow":
             gate.approved_by = confinement.APPROVED_BY_PERMISSION_REVIEWER

@@ -15,9 +15,20 @@ from itertools import accumulate, takewhile
 from tempfile import TemporaryDirectory
 from typing import Any, AsyncIterator, Literal
 
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langmesh.base.configuration import PermissionEvaluator
 from langmesh.base.content.message_content import forget_carried_reasoning
 from langmesh.base.contracts.ports import CompactionState, CompactionSummaryState
 from langmesh.base.primitives.errors import log_fields
+from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
+from langmesh.runtime.features import Feature, PluginContext, PluginHost
+from langmesh.runtime.features.events import MemoryHandoffFailed, MemoryHandoffVerified
+from langmesh.runtime.features.plugins.bash import bash as bash_tool
+from langmesh.runtime.features.plugins.compaction.tools import (
+    submit_compaction_summary as submit_compaction_summary_tool,
+)
+from langmesh.runtime.compaction import DirectCompactionPreparation
+from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.internals import (
     conversation_tokens,
     message_tokens,
@@ -31,10 +42,6 @@ from langmesh.runtime.turn_events import (
     Usage,
 )
 from langmesh.runtime.cache_trace import cache_lane
-from langmesh.runtime.features import Feature, PluginContext, PluginHost
-from langmesh.runtime.features.events import MemoryHandoffFailed, MemoryHandoffVerified
-from langmesh.runtime.compaction import DirectCompactionPreparation
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 logger = logging.getLogger(__name__)
 
@@ -149,11 +156,7 @@ class Compaction(Feature):
 
     def contribute_tools(self) -> list:
         """The summary-submission tool this plugin owns."""
-        from langmesh.runtime.features.plugins.compaction.tools import (
-            submit_compaction_summary,
-        )
-
-        return [submit_compaction_summary]
+        return [submit_compaction_summary_tool]
 
     def __init__(
         self,
@@ -315,8 +318,6 @@ class Compaction(Feature):
 
     def maintenance_tool_schemas(self) -> dict:
         """Bash is valid during the handoff even for a session whose profile omits it."""
-        from langmesh.runtime.features.plugins.bash import bash as bash_tool
-
         return {"bash": bash_tool.args_schema}
 
     def maintenance_violation_message(self) -> str:
@@ -754,13 +755,6 @@ class Compaction(Feature):
 
     def _compaction_summarizer_runtime(self, scratch_directory: str):
         """The hidden session that produces the compaction summary, mirroring the goal reviewer."""
-        from langmesh.base.configuration import PermissionEvaluator
-        from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
-        from langmesh.runtime.features.plugins.compaction.tools import (
-            submit_compaction_summary as submit_compaction_summary_tool,
-        )
-        from langmesh.runtime.runtime import AgentRuntime
-
         summarizer_configuration = self._context.agent_configuration.model_copy(
             update={"permission_mode": "automatic"}
         )

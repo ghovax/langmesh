@@ -9,6 +9,8 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel
 
+from langmesh.base.persistence.file_cache import parsed_file
+
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)", re.DOTALL)
 
 
@@ -29,8 +31,6 @@ def _as_directories(directories: str | Path | Iterable[str | Path]) -> list[Path
 
 
 def _parse_memory(path: Path) -> Memory:
-    from langmesh.base.persistence.file_cache import parsed_file
-
     content = parsed_file(path, lambda each: each.read_text()) or ""
     match = _FRONTMATTER.match(content)
     if not match:

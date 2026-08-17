@@ -10,6 +10,9 @@ from langchain_core.tools import StructuredTool
 from pydantic import Field
 
 from langmesh.base.primitives.identifiers import new_id
+from langmesh.locations import location_uri
+from langmesh.locations.location_uri import LocationTarget
+from langmesh.locations.resolver import LocationAddress, executor_for
 from langmesh.runtime.background import current_background_jobs, current_tool_call_id
 from langmesh.base.primitives.tuning import Tunable, active_tuning
 from langmesh.base.primitives.serialization import compact
@@ -25,9 +28,6 @@ logger = logging.getLogger(__name__)
 
 # What an element id looks like on both surfaces, so one can be told from a description of an element.
 _DESCRIPTIONS = PromptLoader(Path(__file__).parent / "descriptions")
-
-#: Why a call is happening, in the words the person watching reads. Every tool takes one.
-EXPLANATION = _DESCRIPTIONS.load("explanation", {}).strip()
 
 #: What a call reaches for beyond its confinement. A difference against the profile, not an inventory.
 ACCESS_REQUEST = _DESCRIPTIONS.load("access_request", {}).strip()
@@ -240,10 +240,6 @@ async def download_file(
     background: bool = False,
 ) -> str:
     """Download a file; described in descriptions/download_file.md."""
-    from langmesh.locations.resolver import LocationAddress, executor_for
-    from langmesh.locations import location_uri
-    from langmesh.locations.location_uri import LocationTarget
-
     services = current_tool_services()
     sync_window = float(timeout or Tunable.slow_tool_sync_window.default)
     configured = tool_context.current().download_timeout_seconds

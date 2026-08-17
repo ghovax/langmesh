@@ -15,9 +15,10 @@ from typing import Any
 from langchain.tools import tool
 from pydantic import Field
 
+from langmesh.base import confinement as _confinement
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.primitives.tuning import Tunable, active_tuning, clip_to_tokens
-from langmesh.runtime.background import current_background_jobs, current_tool_call_id
+from langmesh.runtime.background import current_background_jobs, current_tool_call_id, record_child_group
 from langmesh.runtime.features import Feature
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.registry import ACCESS_REQUEST
@@ -33,8 +34,6 @@ async def bash(
     **kwargs: Any,
 ) -> str:
     """Run a shell command inside the session's confinement; described in descriptions/bash.md."""
-    from langmesh.base import confinement as _confinement
-
     active = tool_context.current()
     profile, workspace = active.sandbox, active.workspace
     output_path = active.spill_path("bash")
@@ -80,8 +79,6 @@ async def bash(
             group = os.getpgid(process_id)
             current_background_jobs().store.record_process_group(job_id, group)
             # And tell the host, which is how a call this child makes is attributed back to this session.
-            from langmesh.runtime.background import record_child_group
-
             record_child_group(active.session_id, group)
         except (ProcessLookupError, OSError):
             pass

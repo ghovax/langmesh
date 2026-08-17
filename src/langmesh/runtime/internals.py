@@ -10,10 +10,12 @@ from datetime import datetime
 from langmesh.base.identity.credentials import is_signed_in
 from langmesh.base.identity.cursor_credentials import is_signed_in as cursor_is_signed_in
 from langmesh.base.configuration import Configuration
-from langmesh.base.confinement import ApprovedBy
+from langmesh.base.confinement import ApprovedBy, Grant
 from langmesh.runtime.values import ToolStatus, tool_status_from_result
 from langmesh.base.identity.providers import resolve_api_key
+from langmesh.base.content.message_content import message_text
 from langmesh.base.content.models import find_model
+from langmesh.runtime.boundary import Escape
 from langmesh.base.primitives.tuning import active_tuning, clip_to_tokens, count_tokens, Tunable
 from langchain_core.messages import AIMessageChunk
 from pathlib import Path
@@ -165,8 +167,6 @@ def _cap_model_result_payload(result: str, *, code: str = "tool_result_truncated
 
 def message_tokens(message: Any) -> int:
     """How much window one message occupies, counting the tool calls and results sent with it."""
-    from langmesh.base.content.message_content import message_text
-
     total = count_tokens(message_text(message))
     for tool_call in getattr(message, "tool_calls", None) or []:
         arguments = tool_call.get("args")
@@ -292,8 +292,6 @@ def _escape_to_dict(escape: Any) -> dict:
 
 def _escape_from_dict(data: Any) -> Any:
     """The inverse, passing through a value that is already an ``Escape``."""
-    from langmesh.runtime.boundary import Escape
-
     if isinstance(data, Escape):
         return data
     data = data or {}
@@ -427,8 +425,6 @@ class _ToolPlan:
 
     @classmethod
     def from_dict(cls, data: dict) -> _ToolPlan:
-        from langmesh.base.confinement import Grant
-
         retry = data.get("retry_grant")
         return cls(
             tool_call_id=str(data.get("tool_call_id", "")),

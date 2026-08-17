@@ -32,10 +32,12 @@ from langmesh.base.content.message_content import (
     message_text,
 )
 from langmesh.base.content.model_errors import ContextWindowExceeded, over_context_window
+from langmesh.base.contracts.ports import PromptLayer, TurnSummary
+from langmesh.base.primitives.errors import MaintenanceBlockedError
 from litellm.exceptions import ContextWindowExceededError as ProviderContextWindowExceeded
 from langchain_core.utils.json import parse_partial_json
 from langmesh.base.content.skills import enabled_skills, skills_for_agent, skills_payload
-from langmesh.base.confinement import Denial
+from langmesh.base.confinement import Denial, child_environment
 from langmesh.runtime.turn_events import (
     Checkpoint,
     Done,
@@ -233,8 +235,6 @@ class _RunsTurns:
             if self._prompt_composer is None:
                 prompt = self._prompt_loader.load("system_prompt", variables)
             else:
-                from langmesh.base.contracts.ports import PromptLayer
-
                 prompt = self._prompt_composer.compose(
                     tuple(PromptLayer(name, content) for name, content in variables.items())
                 )
@@ -249,8 +249,6 @@ class _RunsTurns:
 
     def _child_path(self) -> list[str]:
         """The `PATH` a tool child is actually given, split into entries."""
-        from langmesh.base.confinement import child_environment
-
         environment = child_environment(self._sandbox, workspace=self._working_directory or "")
         environment.update(self._tool_context.child_environment(environment))
         return [entry for entry in environment.get("PATH", "").split(os.pathsep) if entry]
@@ -298,8 +296,6 @@ class _RunsTurns:
         error: str = "",
     ) -> None:
         """Hand one completed turn to the caller's transcript: one entry per turn, not per message."""
-        from langmesh.base.contracts.ports import TurnSummary
-
         usage = self._token_usage
         summary = TurnSummary(
             session_id=self._session_id,
@@ -433,7 +429,7 @@ class _RunsTurns:
                         consumed.add(identifier)
         if len(repaired) != len(self._conversation) or changed:
             self._conversation[:] = repaired
-            self._mark_session_dirty()
+            self._note_session_changed()
 
     def abandon_suspension(self) -> None:
         """Close a parked tool batch without executing it, leaving valid append-only conversation state."""
@@ -467,8 +463,6 @@ class _RunsTurns:
         continue_existing: bool = False,
         stop_after_maintenance: bool = False,
     ) -> AsyncIterator[TurnEvent]:
-        from langmesh.base.primitives.errors import MaintenanceBlockedError
-
         if self._features.blocked_reason() and not continue_existing:
             raise MaintenanceBlockedError(
                 f"Context maintenance failed: {self._features.blocked_reason()} Retry maintenance before sending more work."

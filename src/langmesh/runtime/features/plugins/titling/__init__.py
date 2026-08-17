@@ -7,10 +7,13 @@ schema of the naming call live beside this module so both are configurable.
 
 from __future__ import annotations
 
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from langmesh.base.primitives.tuning import Tunable, active_tuning
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
+from langmesh.runtime.internals import model_is_authorized
+from langmesh.runtime.runtime import build_chat_model
 from langmesh.runtime.verdict import collect_structured_call
 
 
@@ -29,11 +32,6 @@ class TitleAssignment(Feature):
 
     async def assign_title(self, first_message: str) -> str | None:
         """Ask the model to name the session from its first message, or ``None`` if it never does."""
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        from langmesh.runtime.internals import model_is_authorized
-        from langmesh.runtime.runtime import build_chat_model
-
         agent_configuration = self._context.agent_configuration
         model_identifier = agent_configuration.model_identifier
         if not model_identifier or not model_is_authorized(

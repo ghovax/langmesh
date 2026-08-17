@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from langmesh.base.confinement.paths import configuration_file_path
+from langmesh.base.configuration import Configuration
 
 
 def load() -> dict:
@@ -97,8 +98,6 @@ def parse(raw: str) -> Any:
 
 def rejects(data: dict) -> str:
     """Why this document would not load, asked before the file is written because it is read at startup."""
-    from langmesh.base.configuration import Configuration
-
     try:
         Configuration.model_validate(data)
     except Exception as error:  # noqa: BLE001 — the validator's message is the useful part
