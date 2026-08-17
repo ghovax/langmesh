@@ -10,6 +10,7 @@ from datetime import datetime
 from langmesh.base.identity.credentials import is_signed_in
 from langmesh.base.identity.cursor_credentials import is_signed_in as cursor_is_signed_in
 from langmesh.base.configuration import Configuration
+from langmesh.base.confinement import ApprovedBy
 from langmesh.runtime.values import ToolStatus, tool_status_from_result
 from langmesh.base.identity.providers import resolve_api_key
 from langmesh.base.content.models import find_model
@@ -323,8 +324,8 @@ class _PreflightGate:
     is_bash: bool = False
     # The model-facing error if the gate is answered no.
     deny_message: str = ""
-    # Who supplied an approval. Empty until resolution; interactive answers default to the person.
-    approved_by: str = ""
+    # Who supplied an approval. One of the APPROVED_BY_* values once resolved; empty until resolution.
+    approved_by: "ApprovedBy | str" = ""
     # For an egress gate, the remote agent name (an "always allow" is remembered).
     egress_agent: str = ""
     # The widening asked for, carried so approving records exactly what the planner worked out.
