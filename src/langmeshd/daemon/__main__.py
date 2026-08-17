@@ -276,6 +276,22 @@ async def _serve() -> int:
     _reclaim_socket()
 
     commons_state.global_configuration = Configuration.load()
+    # The app's own configuration sections, read from the same file the library's Configuration reads.
+    from langmeshd.commons.configuration import ComposioConfiguration, DictationConfiguration
+    from langmesh.base.confinement.paths import configuration_file_path
+
+    import yaml as _yaml
+
+    try:
+        _document = _yaml.safe_load(configuration_file_path().read_text()) or {}
+    except OSError:
+        _document = {}
+    commons_state.dictation_configuration = DictationConfiguration.model_validate(
+        _document.get("dictation") or {}
+    )
+    commons_state.composio_configuration = ComposioConfiguration.model_validate(
+        _document.get("composio") or {}
+    )
     if commons_state.global_configuration.user_context.enabled:
         # Built here, in the background, so the first message of a conversation never waits on it.
         from langmesh.runtime.prompt_environment import warm_user_context

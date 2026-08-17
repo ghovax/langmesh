@@ -33,7 +33,7 @@ def _shutdown_transcriber() -> None:
 async def dictation_status(prepare: bool = False):
     """Whether dictation is on, which model it uses, and what that model is doing."""
     assert state.global_configuration is not None
-    dictation = state.global_configuration.dictation
+    dictation = state.dictation_configuration
     from langmeshd.dictation.transcriber import STATE_IDLE
 
     transcriber = _transcriber
@@ -56,8 +56,8 @@ async def _ensure_transcriber():
         if _transcriber is None:
             from langmeshd.dictation.transcriber import SpeechTranscriber
 
-            assert state.global_configuration is not None
-            dictation = state.global_configuration.dictation
+            assert state.dictation_configuration is not None
+            dictation = state.dictation_configuration
             from langmeshd.daemon.paths import daemon_log_path
 
             _transcriber = SpeechTranscriber(
@@ -69,12 +69,14 @@ async def _ensure_transcriber():
 @router.post("/dictation/transcribe")
 async def transcribe(request: Request):
     """Turn one recording into text. The body is raw little-endian float32 mono at 16 kHz."""
-    assert state.global_configuration is not None
-    if not state.global_configuration.dictation.enabled:
+    assert state.dictation_configuration is not None
+    if not state.dictation_configuration.enabled:
         raise HTTPException(
             status_code=409,
-            detail="Dictation is off. Turn it on in Settings to transcribe on this machine.",
-            headers={"X-LangMesh-Reason": "dictation_disabled"},
+            detail={
+                "code": "dictation_disabled",
+                "message": "Dictation is off. Turn it on in Settings to transcribe on this machine.",
+            },
         )
     body = await request.body()
     if len(body) < 4:

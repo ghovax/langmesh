@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import yaml as _yaml
+
 from langmeshd.commons.brokers.composio import composio_mcp_servers
 from langmesh.base.configuration import Configuration, save_api_keys
 from langmesh.base.confinement.paths import configuration_file_path
@@ -13,15 +15,26 @@ import hashlib
 from langmeshd.commons import state
 
 
+def _persist_app_section(section: str, changes: dict) -> None:
+    """Write one of the app's own configuration-file sections, preserving the rest of the file."""
+    path = configuration_file_path()
+    document = {}
+    if path.exists():
+        document = _yaml.safe_load(path.read_text()) or {}
+    document.setdefault(section, {}).update(changes)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_yaml.safe_dump(document, sort_keys=False))
+
+
 async def _apply_live_credentials() -> None:
     """Re-provision what the daemon itself owns after a configuration change."""
     assert state.global_configuration is not None
     configuration = state.global_configuration
-    state.composio_servers = composio_mcp_servers(configuration.composio)
+    state.composio_servers = composio_mcp_servers(state.composio_configuration)
     if state.composio_servers:
         configuration.mcp.servers.update(state.composio_servers)
     else:
-        configuration.mcp.servers.pop(configuration.composio.server_name, None)
+        configuration.mcp.servers.pop(state.composio_configuration.server_name, None)
     mcp_servers = configuration.mcp.enabled_servers()
     # Only when the servers changed: reconnecting means new subprocesses and handshakes, and the caller waits.
     fingerprint = _mcp_server_fingerprint(mcp_servers)
@@ -68,5 +81,20 @@ async def _reload_configuration_from_disk() -> None:
     # Every section, from the model rather than from a hand-kept list that fell behind the schema.
     for name in type(fresh).model_fields:
         setattr(configuration, name, getattr(fresh, name))
+    # The app's own sections, read straight from the file.
+    from langmeshd.commons.configuration import ComposioConfiguration, DictationConfiguration
+
+    import yaml as _yaml
+
+    path = configuration_file_path()
+    document = {}
+    if path.exists():
+        document = _yaml.safe_load(path.read_text()) or {}
+    state.dictation_configuration = DictationConfiguration.model_validate(
+        document.get("dictation") or {}
+    )
+    state.composio_configuration = ComposioConfiguration.model_validate(
+        document.get("composio") or {}
+    )
     await _apply_live_credentials()
     state.broadcaster.publish({"type": "settings_changed"})

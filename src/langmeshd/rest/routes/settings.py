@@ -13,7 +13,7 @@ from langmesh.base.identity.subscription import (
 )
 from langmesh.base.identity.providers import PROVIDERS
 import asyncio
-from langmesh.protocol.dtos import DictationUpdateRequest
+from langmeshd.commons.configuration import AppSettingsUpdateRequest, DictationUpdateRequest
 from langmesh.protocol.dtos import (
     AttachmentsUpdateRequest,
     CompactionUpdateRequest,
@@ -21,7 +21,6 @@ from langmesh.protocol.dtos import (
     SettingValueRequest,
     ToolboxUpdateRequest,
     SandboxUpdateRequest,
-    SettingsUpdateRequest,
     UserContextUpdateRequest,
 )
 from langmeshd.commons import state
@@ -32,6 +31,7 @@ from langmeshd.commons.services.sessions import (
 from langmeshd.commons.services.agents import _recent_models
 from langmeshd.commons.services.settings import (
     _apply_live_credentials,
+    _persist_app_section,
     _persist_configuration,
     _reload_configuration_from_disk,
 )
@@ -159,14 +159,14 @@ async def update_dictation(request: DictationUpdateRequest):
     """Persist and apply the toggle, releasing the worker at once since it holds a model in wired memory."""
     from langmeshd.rest.routes.dictation import _shutdown_transcriber
 
-    assert state.global_configuration is not None
+    assert state.dictation_configuration is not None
     async with state.configuration_lock:
-        await _persist_configuration(dictation_enabled=request.enabled)
-        state.global_configuration.dictation.enabled = request.enabled
+        await asyncio.to_thread(_persist_app_section, "dictation", {"enabled": request.enabled})
+        state.dictation_configuration.enabled = request.enabled
         if not request.enabled:
             await asyncio.to_thread(_shutdown_transcriber)
     _publish_broadcast({"type": "settings_changed"})
-    return {"status": "saved", "enabled": state.global_configuration.dictation.enabled}
+    return {"status": "saved", "enabled": state.dictation_configuration.enabled}
 
 
 @router.get("/settings")
@@ -178,7 +178,7 @@ async def get_settings():
     return {
         "permission_mode": permission_mode,
         "exa_api_key": state.global_configuration.exa.api_key,
-        "composio_api_key": state.global_configuration.composio.api_key,
+        "composio_api_key": state.composio_configuration.api_key,
         "jina_api_key": state.global_configuration.jina.api_key,
         "firecrawl_api_key": state.global_configuration.firecrawl.api_key,
         "web_fetch_proxy_url": state.global_configuration.web_fetch.proxy_url,
@@ -192,7 +192,7 @@ async def get_settings():
         "toolbox_enabled": state.global_configuration.toolbox.enabled,
         # Whether this machine could offer one at all, which the switch being on does not answer.
         "toolbox_available": _toolbox.available(),
-        "dictation_enabled": state.global_configuration.dictation.enabled,
+        "dictation_enabled": state.dictation_configuration.enabled,
         "providers": {
             identifier: {"api_key": credential.api_key, "base_url": credential.base_url}
             for identifier, credential in state.global_configuration.providers.items()
@@ -201,14 +201,13 @@ async def get_settings():
 
 
 @router.post("/settings")
-async def update_settings(request: SettingsUpdateRequest):
+async def update_settings(request: AppSettingsUpdateRequest):
     """Persist API credentials and apply them live, refreshing the clients and dropping cached runtimes."""
     assert state.global_configuration is not None
     configuration = state.global_configuration
     async with state.configuration_lock:
         await _persist_configuration(
             exa_api_key=request.exa_api_key,
-            composio_api_key=request.composio_api_key,
             jina_api_key=request.jina_api_key,
             firecrawl_api_key=request.firecrawl_api_key,
             web_fetch_proxy_url=request.web_fetch_proxy_url,
@@ -231,7 +230,8 @@ async def update_settings(request: SettingsUpdateRequest):
         if request.exa_api_key is not None:
             configuration.exa.api_key = request.exa_api_key
         if request.composio_api_key is not None:
-            configuration.composio.api_key = request.composio_api_key
+            await asyncio.to_thread(_persist_app_section, "composio", {"api_key": request.composio_api_key})
+            state.composio_configuration.api_key = request.composio_api_key
         if request.jina_api_key is not None:
             configuration.jina.api_key = request.jina_api_key
         if request.firecrawl_api_key is not None:
