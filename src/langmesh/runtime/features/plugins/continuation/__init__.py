@@ -90,9 +90,12 @@ class Continuation(Feature):
         """The tracked tasks as the model sees them."""
         context["tasks"] = self._task_manager.to_dict_list()
 
-    def compose_prompt(self, variables: dict[str, str]) -> None:
-        """The task list and goal guidance, owned by this plugin and additive onto the core prompt."""
-        variables["task_guidance"] = self._prompts.load("task_guidance", {}).strip()
+    def prepare_request(self, messages: list) -> list:
+        """The task list and goal guidance ride as their own note after the core system prompt."""
+        return [
+            *messages,
+            self._host.turn.reminder_message(self._prompts.load("task_guidance", {}).strip()),
+        ]
 
     def snapshot(self) -> dict | None:
         return {

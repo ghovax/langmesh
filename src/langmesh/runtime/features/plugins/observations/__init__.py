@@ -63,22 +63,25 @@ class ObservationMemory(Feature):
         self._pending_feedback = None
         return message
 
-    def compose_prompt(self, variables: dict[str, str]) -> None:
-        """The memory panel's metadata section for this session's model prompt."""
-        variables["observational_memory"] = self._prompts.load(
-            "observational_memory", {"metadata": compact(self._metadata)}
-        ).strip()
-
     def prepare_request(self, messages: list) -> list:
-        """A pending registry failure rides on the next model opening as a request-local note."""
-        if self._host.turn.maintenance_active():
-            return messages
-        message = self.take_feedback()
-        if not message:
+        """The memory panel's metadata and any pending registry failure ride as their own notes."""
+        notes: list[Any] = []
+        if self._metadata:
+            notes.append(
+                self._prompts.load("observational_memory", {"metadata": compact(self._metadata)})
+            )
+        if not self._host.turn.maintenance_active():
+            feedback = self.take_feedback()
+            if feedback:
+                notes.append(
+                    self._prompts.load("observation_registry_error", {"error": feedback})
+                )
+        if not notes:
             return messages
         return [
             *messages,
-            self._host.turn.reminder_message(
-                self._prompts.load("observation_registry_error", {"error": message})
+            *(
+                self._host.turn.reminder_message(note.strip())
+                for note in notes
             ),
         ]
