@@ -43,10 +43,8 @@ class Tool:
 class ToolServices:
     """The explicit services a tool handler may use, supplied by the runtime at dispatch time."""
 
-    background: Any
+    features: Any
     permissions: Any
-    task_manager: Any
-    goal: Any
     prompt_loader: Any
     catalogue: Any
     tool_context: Any
@@ -54,17 +52,11 @@ class ToolServices:
     attached_files: Sequence[Any] = field(default_factory=tuple)
     turn_reader: Any = None
     record_event: Any = None
-    mark_dirty: Any = None
+    note_state_changed: Any = None
     abort_event: Any = None
-    submit_goal_review: Any = None
-    submit_compaction_summary: Any = None
     leases: Any = None
-    retry_gate: Any = None
-    decide_retry: Any = None
-    retry_refusal_result: Any = None
     pipeline: Any = None
     tools: Any = None
-    screen_query_log: Any = None
     project_directory: str = ""
 
 

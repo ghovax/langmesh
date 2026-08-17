@@ -19,7 +19,6 @@ from langmesh.runtime.tools import context as tool_context, fetching
 from langmesh.runtime.tools.execution import current_tool_decision, current_tool_services
 from langmesh.base.content.skills import enabled_skills
 from langmesh.runtime.internals import _background_handle_kind
-from langmesh.runtime.goal import Goal
 
 from langmesh.base.configuration import PromptLoader
 
@@ -417,15 +416,16 @@ async def fetch_url(
 ) -> str:
     """Fetch a page; described in descriptions/fetch_url.md."""
     services = current_tool_services()
+    runner = services.features.invoke("background")
     sync_window = float(timeout or Tunable.slow_tool_sync_window.default)
     configured = tool_context.current().fetch_timeout_seconds
     hard_deadline = int(hard_deadline or configured or 30)
-    job_identifier = services.background.spawn(
+    job_identifier = runner.spawn(
         "fetch_url", fetching.fetch_url(url, format, hard_deadline),
         tool_call_identifier=current_tool_call_id(), detached=background,
     )
     if not background:
-        completion = await services.background.settle_inline(
+        completion = await runner.settle_inline(
             job_identifier, active_tuning().scale_timeout(sync_window)
         )
         if completion is not None:
@@ -465,14 +465,15 @@ async def download_file(
     )
     executor = executor_for(address)
     resolved = await asyncio.to_thread(executor.resolve, target.base_directory, path)
-    job_identifier = services.background.spawn(
+    runner = services.features.invoke("background")
+    job_identifier = runner.spawn(
         "download_file",
         fetching.download_file(executor, url, resolved, hard_deadline),
         tool_call_identifier=current_tool_call_id(),
         detached=background,
     )
     if not background:
-        completion = await services.background.settle_inline(
+        completion = await runner.settle_inline(
             job_identifier, active_tuning().scale_timeout(sync_window)
         )
         if completion is not None:

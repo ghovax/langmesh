@@ -18,7 +18,7 @@ from langmesh.runtime.values import ToolStatus
 
 async def _submit_goal_review(**arguments: Any) -> str:
     services = current_tool_services()
-    services.submit_goal_review(GoalReview.model_validate(arguments))
+    services.features.invoke("submit_goal_review", GoalReview.model_validate(arguments))
     services.abort_event.set()
     return compact({"code": "goal_review_submitted", "status": ToolStatus.OK.value})
 
@@ -55,9 +55,12 @@ async def update_goal(
     elif not requirement_lines:
         result = refuse("A goal needs minimum conditions: what must hold for it to be met, each one something a reader can go and check.")
     else:
-        current = services.goal.current()
-        services.goal.write(Goal(text=goal_text, purpose=purpose_text, requirements=requirement_lines,
-                                 continuations=current.continuations if current is not None else 0))
+        current = services.features.invoke("goal_current")
+        services.features.invoke(
+            "goal_write",
+            Goal(text=goal_text, purpose=purpose_text, requirements=requirement_lines,
+                 continuations=current.continuations if current is not None else 0),
+        )
         result = {"code": "goal_active", "goal": goal_text, "purpose": purpose_text, "requirements": requirement_lines}
         services.record_event("goal_updated", result)
     return compact(result)

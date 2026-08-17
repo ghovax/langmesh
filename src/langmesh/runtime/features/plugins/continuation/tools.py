@@ -16,12 +16,13 @@ from langmesh.runtime.tools.registry import EXPLANATION
 async def set_tasks(*, explanation: str = Field(..., description=EXPLANATION), tasks: list[dict]) -> str:
     """Create tasks; described in descriptions/set_tasks.md."""
     services = current_tool_services()
-    identifiers = services.task_manager.add_tasks(tasks)
-    services.mark_dirty()
+    task_manager = services.features.invoke("task_manager")
+    identifiers = task_manager.add_tasks(tasks)
+    services.note_state_changed()
     return compact({
         "code": "tasks_updated",
         "message": f"Created {len(identifiers)} task{'s' if len(identifiers) != 1 else ''}.",
-        "tasks": services.task_manager.to_dict_list(),
+        "tasks": task_manager.to_dict_list(),
     })
 
 
@@ -31,14 +32,15 @@ async def update_tasks(
 ) -> str:
     """Update tasks; described in descriptions/update_tasks.md."""
     services = current_tool_services()
-    updated_ids, complaints = services.task_manager.update_tasks(updates)
+    task_manager = services.features.invoke("task_manager")
+    updated_ids, complaints = task_manager.update_tasks(updates)
     if updated_ids:
-        services.mark_dirty()
+        services.note_state_changed()
     result: dict[str, Any] = {
         "code": "tasks_updated",
         "message": f"Updated {len(updated_ids)} task{'s' if len(updated_ids) != 1 else ''}."
         if updated_ids else "Nothing was updated.",
-        "tasks": services.task_manager.to_dict_list(),
+        "tasks": task_manager.to_dict_list(),
     }
     if complaints:
         result["rejected"] = complaints

@@ -88,15 +88,15 @@ class PendingTurn:
 
 @dataclass(frozen=True)
 class SessionState:
-    """A coherent snapshot of the controls available to an embedded caller."""
+    """A coherent snapshot of the controls available to an embedded caller.
+
+    Only the core's own controls live here. Plugin-owned state (goals, tasks, compaction,
+    background jobs) is reached through the feature seam, never through this snapshot.
+    """
 
     phase: SessionPhase
     pending: PendingTurn | None
     permission_mode: str
-    compaction_failure: str | None
-    background_jobs: tuple[Mapping[str, Any], ...]
-    unfinished_tasks: tuple[Mapping[str, Any], ...]
-    goal: Any = None
 
 
 __all__ = ["PendingTurn", "SessionPhase", "SessionState"]

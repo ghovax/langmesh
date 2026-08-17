@@ -45,7 +45,6 @@ from pydantic import ValidationError
 from typing import Any, AsyncIterator, cast
 import asyncio
 from langmesh.base.primitives.serialization import compact
-from langmesh.runtime.features.plugins.background import BackgroundJobsFeature
 from langmesh.runtime.tools.execution import (
     bind_tool_decision,
     bind_tool_services,
@@ -346,12 +345,8 @@ class _DispatchesTools:
                 (tool_call_identifier, note) for note in outcome.get("model_guidance", []) if note
             )
             background_job_id = outcome.get("background_job_id")
-            background_feature = self._features.by_type(BackgroundJobsFeature)
-            if background_job_id and background_feature is not None:
-                background_feature.runner.bind_tool_call(
-                    background_job_id,
-                    tool_call_identifier,
-                )
+            if background_job_id:
+                self._features.invoke("bind_background_tool", background_job_id, tool_call_identifier)
             denied_commands = outcome.get("denied_commands", [])
             if denied_commands:
                 guidance_notes.append(

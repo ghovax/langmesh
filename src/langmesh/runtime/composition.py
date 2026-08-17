@@ -58,15 +58,13 @@ class RuntimeComponents:
     supplied_tool_gate: str = "ask"
     hooks: Sequence[Any] = field(default_factory=tuple)
     middleware: Sequence[Any] = field(default_factory=tuple)
-    compaction: Any = None
-    compaction_preparation: Any = None
-    compaction_summarizer: Any = None
-    continuations: Any = None
     synchronize_resources: Callable[[], Awaitable[None]] | None = None
     related_turns: Callable[[str], Awaitable[Any]] | None = None
-    goal_listener: Callable[[Any], None] | None = None
-    goal_review_journal: Any = None
     features: Sequence[Any] | None = None
+    # The host's opaque plugin bundle: whatever the composing host supplies for its plugins
+    # (journals, preparations, listeners). The core never inspects it; it is carried through
+    # so plugins that reach it via services can. None means the host composed no bundle.
+    services: Any = None
     # The machine snapshot and user context, probed by the host and passed in. None means the
     # library supplies a minimal platform-only snapshot and no personal context.
     machine_snapshot: dict[str, Any] | None = None
@@ -82,12 +80,7 @@ class RuntimeComponents:
         from langmesh.base.contracts.ports import (
             Approvals,
             CatalogueLike,
-            Compaction,
-            CompactionPreparation,
-            CompactionSummarizer,
-            ContinuationPolicy,
             FileLeases,
-            GoalReviewJournal,
             JobStore,
             MCPServers,
             Observer,
@@ -101,12 +94,7 @@ class RuntimeComponents:
         ports = {
             "approvals": Approvals,
             "catalogue": CatalogueLike,
-            "compaction": Compaction,
-            "compaction_preparation": CompactionPreparation,
-            "compaction_summarizer": CompactionSummarizer,
-            "continuations": ContinuationPolicy,
             "file_leases": FileLeases,
-            "goal_review_journal": GoalReviewJournal,
             "jobs": JobStore,
             "mcp_servers": MCPServers,
             "observer": Observer,

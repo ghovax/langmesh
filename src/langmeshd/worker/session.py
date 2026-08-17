@@ -18,7 +18,7 @@ from a2a.server.tasks import TaskUpdater
 from a2a.types import DataPart, Message, MessageSendParams, Part, Role, Task, TaskState, TextPart
 from langchain_core.messages import messages_from_dict
 
-from langmesh.runtime.features import access as _features
+from langmeshd.worker import features_access as _features
 from langmesh.base.contracts.catalogue import machine_catalogue
 from langmesh.base.primitives.tuning import Tunable, active_tuning
 from langmesh.base.confinement.file_leases import FileLeaseManager
@@ -51,10 +51,10 @@ from langmesh.runtime.locations import Location
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import SuspensionGate
 from langmesh.runtime.values import PermissionAnswer
-from langmesh.worker.host import HostServices, NullHostServices
-from langmesh.worker.peers import PeerSessions
-from langmesh.worker.turn import _ContextState, _ContinuationPlan, _TurnRunner
-from langmesh.worker.turn_store import HostTurnStore
+from langmeshd.worker.host import HostServices, NullHostServices
+from langmeshd.worker.peers import PeerSessions
+from langmeshd.worker.turn import _ContextState, _ContinuationPlan, _TurnRunner
+from langmeshd.worker.turn_store import HostTurnStore
 from langmesh.base.primitives.serialization import compact
 
 logger = logging.getLogger(__name__)
@@ -290,7 +290,7 @@ class SessionExecutor(AgentExecutor):
                     return {"compacted": result is not None, **(result or {})}
                 if retry_operation == "compact":
                     should_resume = _features.resumes_after_compaction(runtime)
-                    result = await self._run_compaction_turn(session_id)
+                    result = await self._run_maintenance_turn(session_id)
                     if should_resume and result and result.get("ok") is not False:
                         await self._drive_self_sent_turn(
                             session_id,
@@ -315,7 +315,7 @@ class SessionExecutor(AgentExecutor):
                     )
                     return {"compacted": result is not None, **(result or {})}
                 should_resume = _features.resumes_after_compaction(runtime)
-                result = await self._run_compaction_turn(session_id)
+                result = await self._run_maintenance_turn(session_id)
                 if should_resume and result and result.get("ok") is not False:
                     await self._drive_self_sent_turn(
                         session_id,
@@ -605,8 +605,8 @@ class SessionExecutor(AgentExecutor):
                 exc_info=(type(error), error, error.__traceback__),
             )
 
-    async def _run_compaction_turn(self, session_id: str) -> dict | None:
-        """Drive one manual-compaction turn, so it is persisted and replayable like any other."""
+    async def _run_maintenance_turn(self, session_id: str) -> dict | None:
+        """Drive one manual-maintenance turn, so it is persisted and replayable like any other."""
         result = await self._drive_self_sent_turn(
             session_id,
             COMPACTION_KIND,
@@ -900,7 +900,7 @@ class SessionExecutor(AgentExecutor):
             update={"tools_enabled": sorted({tool.name for tool in composed})}
         )
         # The host's plugin bundle: which features run and the ports they need.
-        bundle = self._plugin_bundle(session_id, runtime_directory, configuration, catalogue)
+        bundle = self._compose_plugins(session_id, runtime_directory, configuration, catalogue)
         runtime = AgentRuntime(
             RuntimeProfile(
                 agent=configuration,
@@ -924,11 +924,9 @@ class SessionExecutor(AgentExecutor):
                 mcp_servers=self._mcp_server_manager,
                 jobs=self._job_store,
                 toolset=composed,
-                related_turns=self._make_turn_reader(),
-                goal_listener=lambda goal: self._notify_goal_state(session_id, goal),
+                related_turns=self._build_turn_reader(),
                 features=(bundle.get("features") or []),
-                compaction_preparation=bundle.get("compaction_preparation"),
-                goal_review_journal=bundle.get("goal_review_journal"),
+                services=bundle.get("services"),
                 # The host probes the machine and the user's context; the library never does.
                 machine_snapshot=self._machine_snapshot(),
                 user_context=self._user_context_snapshot(),
@@ -969,7 +967,7 @@ class SessionExecutor(AgentExecutor):
             parsed = {}
         return parsed if isinstance(parsed, dict) else {}
 
-    def _plugin_bundle(
+    def _compose_plugins(
         self, session_id: str, runtime_directory: str, configuration, catalogue
     ):
         """The session's plugin bundle (features and their ports), from the host's injected composer."""
@@ -981,11 +979,12 @@ class SessionExecutor(AgentExecutor):
             configuration=configuration,
             catalogue=catalogue,
             job_store=self._job_store,
+            goal_listener=lambda goal: self._notify_goal_state(session_id, goal),
             goal_review_journal=self._host.build_goal_review_journal(self._turn_store),
             global_configuration=self._global_configuration,
         )
 
-    def _make_turn_reader(self):
+    def _build_turn_reader(self):
         async def read_turn(turn_id: str):
             if not turn_id:
                 return None

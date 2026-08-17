@@ -189,7 +189,7 @@ class Compaction(Feature):
         """Make a failed fold durable and visible, and release the senders it held outside the conversation."""
         self._control.fail_compaction(message)
         self._host.turn.discard_pending_steering()
-        self._host.bookkeeping.mark_dirty()
+        self._host.bookkeeping.note_state_changed()
 
     @property
     def failure(self) -> str | None:
@@ -202,6 +202,16 @@ class Compaction(Feature):
     def submit_summary(self, summary: Any) -> None:
         """The summarizer's verdict tool lands here, read once the summary turn ends."""
         self._submitted_summary = summary
+
+    def invoke(self, name: str, *args, **kwargs):
+        """Answer the compaction capabilities the core and tools ask for by name."""
+        if name == "submit_compaction_summary":
+            (summary,) = args
+            self.submit_summary(summary)
+            return True
+        if name == "compaction_failure":
+            return self.failure()
+        return None
 
     @property
     def submitted_summary(self) -> Any:
@@ -332,7 +342,7 @@ class Compaction(Feature):
         """Advance the recording handoff one step, announcing the phase when it begins."""
         if self._control.waiting and self._control.preparation_token is None:
             self._control.preparation_token = await self._preparation.baseline()
-            self._host.bookkeeping.mark_dirty()
+            self._host.bookkeeping.note_state_changed()
         if self._control.waiting and self._control.preparation_token is not None:
             if await self._preparation.completed(self._control.preparation_token):
                 # The write may have committed just before a process stopped or a checkpoint was persisted. Its revision is the durable acknowledgement; do not ask the model to repeat a side effect merely because the in-memory state was lost.
@@ -340,7 +350,7 @@ class Compaction(Feature):
         if self._control.waiting and not self._control.started:
             # The indicator opens when the recording handoff begins, not when the compaction finally runs: preparation is the long phase, and a session restart must not drop it.
             self._control.started = True
-            self._host.bookkeeping.mark_dirty()
+            self._host.bookkeeping.note_state_changed()
             yield CompactionStarted(
                 reason=self._control.reason,
                 messages_before=len(self.without_preparation(self._host.conversation.messages)),
@@ -376,17 +386,17 @@ class Compaction(Feature):
                     additional_kwargs={"compaction_preparation": True},
                 )
             )
-        self._host.bookkeeping.mark_dirty()
+        self._host.bookkeeping.note_state_changed()
 
     def record_preparation(self) -> None:
         self._control.record()
-        self._host.bookkeeping.mark_dirty()
+        self._host.bookkeeping.note_state_changed()
 
     def retry(self) -> str | None:
         """Reopen exactly the failed phase and return the operation to drive."""
         if self._control.phase == "compaction_failed":
             self._control.retry_compaction()
-            self._host.bookkeeping.mark_dirty()
+            self._host.bookkeeping.note_state_changed()
             return "compaction"
         if self._control.phase != "preparation_failed":
             return None
@@ -413,7 +423,7 @@ class Compaction(Feature):
         tokens = conversation_tokens(self._host.conversation.messages)
         self._control.fail_preparation(error)
         self._host.turn.discard_pending_steering()
-        self._host.bookkeeping.mark_dirty()
+        self._host.bookkeeping.note_state_changed()
         events: list[TurnEvent] = []
         if not self._control.started:
             # A failure that never reached the model call still gets a running start, so the interface never jumps straight from nothing to a failure without a visible phase.
@@ -507,7 +517,7 @@ class Compaction(Feature):
                 )
                 return
             self._control.clear()
-            self._host.bookkeeping.mark_dirty()
+            self._host.bookkeeping.note_state_changed()
             self._host.window.refresh_cached_prompt()
             yield CompactionDone(
                 reason=reason,
@@ -549,7 +559,7 @@ class Compaction(Feature):
                     ok = False
                 else:
                     self._control.clear()
-                    self._host.bookkeeping.mark_dirty()
+                    self._host.bookkeeping.note_state_changed()
                     self._host.window.refresh_cached_prompt()
             yield CompactionDone(
                 reason=reason,
@@ -614,7 +624,7 @@ class Compaction(Feature):
             )
             return
         self._control.clear()
-        self._host.bookkeeping.mark_dirty()
+        self._host.bookkeeping.note_state_changed()
         self._host.window.refresh_cached_prompt()
         yield CompactionDone(
             reason=reason,

@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from langmesh.protocol.metadata import Metadata
-from langmesh.worker.host import HostServices, NullHostServices
+from langmeshd.worker.host import HostServices, NullHostServices
 
 logger = logging.getLogger(__name__)
 

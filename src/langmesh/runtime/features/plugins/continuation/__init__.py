@@ -11,8 +11,8 @@ from typing import Any, Sequence
 
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tasks import TaskManager
-from langmesh.runtime.continuation import TuningContinuationPolicy
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
+from langmesh.runtime.features.plugins.continuation.policy import TuningContinuationPolicy
 
 
 class Continuation(Feature):
@@ -33,6 +33,12 @@ class Continuation(Feature):
     @property
     def task_manager(self):
         return self._task_manager
+
+    def invoke(self, name: str, *args, **kwargs):
+        """Answer the task-management capabilities the core and tools ask for by name."""
+        if name == "task_manager":
+            return self._task_manager
+        return None
 
     def unfinished(self) -> list[dict]:
         return self._task_manager.unfinished()
@@ -60,13 +66,13 @@ class Continuation(Feature):
 
     def note_task_continuation(self) -> None:
         self._task_continuations += 1
-        self._host.bookkeeping.mark_dirty()
+        self._host.bookkeeping.note_state_changed()
 
     def restore_task_allowance(self) -> None:
         if self._task_continuations == 0:
             return
         self._task_continuations = 0
-        self._host.bookkeeping.mark_dirty()
+        self._host.bookkeeping.note_state_changed()
 
     def restore_task_continuations(self, value: int) -> None:
         """Rehydrate the durable allowance, which is never negative."""

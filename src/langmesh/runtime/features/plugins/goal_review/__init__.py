@@ -157,6 +157,20 @@ class GoalReviewFeature(Feature):
         """Install the callback that hears every goal change, which is how the interface learns of one."""
         self._listener = listener
 
+    def invoke(self, name: str, *args, **kwargs):
+        """Answer the goal capabilities the core and tools ask for by name."""
+        if name == "goal_current":
+            return self._goal
+        if name == "goal_write":
+            (goal,) = args
+            self.write(goal)
+            return True
+        if name == "submit_goal_review":
+            (review,) = args
+            self.submit(review)
+            return True
+        return None
+
     def compose_context(self, context: dict) -> None:
         """The goal as the model sees it, never the bookkeeping around it."""
         context["goal"] = self.goal.for_model() if self.goal is not None else {}
@@ -186,7 +200,7 @@ class GoalReviewFeature(Feature):
     def write(self, goal: Optional[Goal]) -> None:
         """Set, replace or drop the goal, and announce it. The single writer, so no path changes it silently."""
         self._goal = goal
-        self._host.bookkeeping.mark_dirty()
+        self._host.bookkeeping.note_state_changed()
         if self._listener is not None:
             self._listener(goal)
 
@@ -518,9 +532,7 @@ class GoalReviewFeature(Feature):
                 raise
             finally:
                 reviewer.abort()
-                from langmesh.runtime.features import access as _access
-
-                runner = _access.background_jobs(reviewer)
+                runner = reviewer.features.invoke("background")
                 if runner is not None:
                     runner.cancel_all()
                 if not transcript_finished:

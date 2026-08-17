@@ -44,16 +44,17 @@ class PermissionAnswer(BaseModel):
 
 
 class TurnContext(BaseModel):
-    """Session context captured in the cache-stable system prompt."""
+    """Session context captured in the cache-stable system prompt.
+
+    Only the core's own fields are declared here. The plugins contribute their own
+    context through ``compose_context``, which merges it into the prompt dict; the
+    core never names a plugin's context.
+    """
 
     now: str = ""
     pwd: str = ""
-    goal: dict[str, Any] = Field(default_factory=dict)
-    tasks: list[dict[str, Any]] = Field(default_factory=list)
-    background: dict[str, Any] = Field(default_factory=dict)
     locations: list[dict[str, Any]] = Field(default_factory=list)
     confinement: dict[str, Any] = Field(default_factory=dict)
-    screen: dict[str, Any] = Field(default_factory=dict)
 
 
 __all__ = [

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from langmesh.worker.host import HostServices  # noqa: F401 — the protocol this implements
+from langmeshd.worker.host import HostServices  # noqa: F401 — the protocol this implements
 from langmeshd.daemon import state
 from langmeshd.daemon.api import METHODS, RpcError, _refuse_session_caller
 from langmeshd.daemon.goal_review_journal import HostGoalReviewJournal
