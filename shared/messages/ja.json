@@ -480,7 +480,10 @@
     "permissionAskDescription": "セッションの制限範囲を超える要求は、すべてあなたに確認します",
     "permissionAutomaticLabel": "自分で判断する",
     "permissionAutomaticName": "自律",
-    "permissionAutomaticDescription": "レビュアーがその要求を自ら判断し、許可または拒否します。あなたに確認することはありません"
+    "permissionAutomaticDescription": "レビュアーがその要求を自ら判断し、許可または拒否します。あなたに確認することはありません",
+    "permissionAllowLabel": "すべて許可する",
+    "permissionAllowName": "許可",
+    "permissionAllowDescription": "すべての要求をそのまま許可します。停止も確認もありません"
   },
   "SessionsSidebar": {
     "activeFirst": "アクティブ順",
