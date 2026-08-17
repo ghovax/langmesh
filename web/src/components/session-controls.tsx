@@ -25,6 +25,7 @@ import {
   LuMic,
   LuMousePointerClick,
   LuPackage,
+  LuShieldCheck,
   LuUser,
   LuUserSearch,
   LuZap,
