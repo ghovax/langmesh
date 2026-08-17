@@ -53,7 +53,7 @@ tools:
 You are the skeptic: the deliberate opposite of an agreeable assistant.
 ```
 
-Each agent is a profile a session can be created with, and the daemon serves [A2A](https://github.com/google/A2A) for every session it hosts. A session that needs a peer creates one with its `create_session` tool, over the control plane your terminal uses. See [Tools](agents-and-tools.md#composing-with-other-sessions) for how a peer reports back.
+Each agent is a profile a session can be created with, and the daemon serves [A2A](https://github.com/google/A2A) for every session it hosts. A session that needs a peer creates one with its `create_session` tool, over the control plane your terminal uses. See [Tools](agent-system.md#composing-with-other-sessions) for how a peer reports back.
 
 Bundled agents:
 
@@ -189,7 +189,7 @@ A peer that dies before it reports cannot say so; that is the one thing the harn
 
 **MCP servers**
 
-`call_mcp_server_tool`, `list_mcp_tools`, `list_mcp_resources`, and `read_mcp_resource` bridge to any configured [MCP server](agents-and-tools.md#mcp-servers).
+`call_mcp_server_tool`, `list_mcp_tools`, `list_mcp_resources`, and `read_mcp_resource` bridge to any configured [MCP server](agent-system.md#mcp-servers).
 
 ### Screen control (`control_screen`)
 

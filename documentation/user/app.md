@@ -47,7 +47,7 @@ The app can drive native macOS applications and your own Chrome through the agen
 - **Accessibility**, asked once by macOS. It is tied to the app's code identity, so a signed build keeps the grant across updates.
 - **Chrome's remote-debugging port**, which the app tells you how to enable.
 
-The tool reads the accessibility tree and the page's structure, not screenshots. See [Tools](agents-and-tools.md#screen-control-control_screen) for what it can and cannot do.
+The tool reads the accessibility tree and the page's structure, not screenshots. See [Tools](agent-system.md#screen-control-control_screen) for what it can and cannot do.
 
 ## A daemon somewhere else
 
@@ -61,4 +61,4 @@ The release app asks the separately installed `LangMesh Computer Use.app` to sta
 
 - Every setting the app exposes: [Configuration](configuration.md).
 - The same operations from a terminal: [The `langmesh` command](installation.md).
-- Writing your own agents and skills: [Agent system](agents-and-tools.md).
+- Writing your own agents and skills: [Agent system](agent-system.md).

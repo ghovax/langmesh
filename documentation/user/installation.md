@@ -98,7 +98,7 @@ The daemon itself is `langmeshd` (`python -m langmesh langmeshd`), a separate pr
 
 ### What is not here
 
-There are no session, configuration, or account verbs. Creating and messaging sessions, answering permission requests, recurring work, remote agents, configuration, and sign-in all happen in the interface, or programmatically against the daemon's API. A session composes with its peers through [tools](agents-and-tools.md), over the same control plane; it does not shell out to this command.
+There are no session, configuration, or account verbs. Creating and messaging sessions, answering permission requests, recurring work, remote agents, configuration, and sign-in all happen in the interface, or programmatically against the daemon's API. A session composes with its peers through [tools](agent-system.md), over the same control plane; it does not shell out to this command.
 
 ### Output and exit codes
 
