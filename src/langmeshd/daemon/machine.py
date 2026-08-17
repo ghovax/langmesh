@@ -16,7 +16,8 @@ def load_configuration(*, seed: bool = True) -> Configuration:
 
 def load_catalogue(configuration: Configuration, directory: str | Path) -> Any:
     """The agents, skills, memories and instructions reachable from `directory`."""
-    return project_catalogue(configuration, str(Path(directory).resolve()))
+    # The daemon discovers skills on disk; the library does not unless asked.
+    return project_catalogue(configuration, str(Path(directory).resolve()), skills=True)
 
 
 def load_agent(
