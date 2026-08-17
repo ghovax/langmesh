@@ -41,7 +41,7 @@ sequenceDiagram
 - **There is no linger window.** An executor held alive for a message that may not come pays continuously to avoid paying occasionally, and rebuilding one is cheap. A session parked on a permission prompt is the clearest case: the suspension is already fully on disk, so holding anything for a person who may take hours buys nothing.
 - **A daemon restart ends executors, never sessions.** The harness derives the capability token from the session id; it does not store it, so a woken session gets the same token its creator got.
 - The daemon serves A2A (JSON-RPC) for every session it hosts, and every client reaches the daemon: the terminal, the desktop app, another session. There is one place that identifies a caller, scopes it to its own subtree, and records it.
-- **There is no in-process delegation.** A session that needs a peer creates an ordinary session and messages it. See [Tools](../user/agents-and-tools.md#composing-with-other-sessions). A child appears in `langmesh ps`, can be attached to, and is reaped when its parent ends.
+- **There is no in-process delegation.** A session that needs a peer creates an ordinary session and messages it. See [Tools](../user/agent-system.md#composing-with-other-sessions). A child appears in `langmesh ps`, can be attached to, and is reaped when its parent ends.
 - **Isolation is a property of the executor and the context it runs in.** An executor belongs to one session for its whole life, and the tool context is bound per task, so one session's state cannot reach another's. Sessions share the daemon's process: a native crash takes the daemon rather than one session. That is the price of a session costing a fraction of a millisecond.
 
 ## The daemon
@@ -178,5 +178,5 @@ Reading them together is what makes a diagnosis:
 ## Where to go next
 
 - Configure providers and behavior: [Configuration guide](../user/configuration.md).
-- Author agents, skills, memory, and MCP servers: [Agent system guide](../user/agents-and-tools.md).
-- The tool surface in detail: [Tools guide](../user/agents-and-tools.md).
+- Author agents, skills, memory, and MCP servers: [Agent system guide](../user/agent-system.md).
+- The tool surface in detail: [Tools guide](../user/agent-system.md).

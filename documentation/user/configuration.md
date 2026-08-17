@@ -65,7 +65,7 @@ Each provider also reads an environment variable, which takes precedence over th
 
 You can also **sign in with a ChatGPT or a Cursor subscription** instead of pasting a key, in Settings, under Providers. Neither has a key to store: both live as OAuth tokens in the data directory's `oauths/` folder, one file per provider, written `0600` inside a `0700` directory. They stay out of `configuration.yaml` deliberately, because that file is digest-synced and would thrash on every silent token refresh. Which models each plan serves is discovered live from the account.
 
-**Which model a session uses** is not set here; it belongs to the agent profile, in that agent's `AGENT.md` frontmatter (`model` and `provider`). See [Agent system](agents-and-tools.md#agents). A profile pinned to a provider you have no credentials for fails on its first call.
+**Which model a session uses** is not set here; it belongs to the agent profile, in that agent's `AGENT.md` frontmatter (`model` and `provider`). See [Agent system](agent-system.md#agents). A profile pinned to a provider you have no credentials for fails on its first call.
 
 ## Web search and retrieval
 
@@ -261,7 +261,7 @@ The gate keeps the character similarity from doing harm. A short query is a labe
 
 ## MCP servers
 
-`mcp.servers` mirrors what `.agents/mcp.json` declares and is normally edited there. See [Agent system](agents-and-tools.md#mcp-servers). A folder's own servers join the shared pool when a session in that folder starts; the pool only grows, so no other session loses its servers.
+`mcp.servers` mirrors what `.agents/mcp.json` declares and is normally edited there. See [Agent system](agent-system.md#mcp-servers). A folder's own servers join the shared pool when a session in that folder starts; the pool only grows, so no other session loses its servers.
 
 ## Remote peers
 
@@ -283,7 +283,7 @@ telemetry:
   sample_ratio: 1.0
 ```
 
-**There is no default agent setting**, here or anywhere. Every session is created with an explicit agent, and no profile is the one to fall back to. Add your own under `~/.agents/agents/<id>/` or `.agents/agents/<id>/` in a working directory. See [Agent system](agents-and-tools.md).
+**There is no default agent setting**, here or anywhere. Every session is created with an explicit agent, and no profile is the one to fall back to. Add your own under `~/.agents/agents/<id>/` or `.agents/agents/<id>/` in a working directory. See [Agent system](agent-system.md).
 
 
 

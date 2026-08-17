@@ -39,7 +39,7 @@ nav:
       - Installation: user/installation.md
       - Desktop app: user/app.md
       - Configuration: user/configuration.md
-      - Agents and tools: user/agents-and-tools.md
+      - Agent system: user/agent-system.md
   - Internals:
       - Architecture: internal/architecture.md
       - Development: internal/development.md
