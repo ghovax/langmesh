@@ -4,7 +4,7 @@ A feature is a pluggable sub-behavior a session runs beyond the plain model turn
 is the public surface a caller composes with: `Feature` (the hooks), `PluginContext` (what a
 feature is given to live), `PluginBus` (the decoupled channel between features), the core's own
 turn events, and `feature_prompts` for a plugin's own templates. The shipped plugins live under
-`plugins`, and `battery.default_features` composes them for a session that wants them.
+`plugins`, and the host composes which of them a session runs — never the library.
 """
 
 from langmesh.runtime.features.bus import PluginBus, TurnEnded, TurnStarted

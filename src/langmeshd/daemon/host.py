@@ -14,6 +14,7 @@ from langmesh.worker.session import SessionExecutor
 from langmeshd.commons import state as commons_state
 from langmeshd.daemon.host_services import DaemonHostServices
 from langmeshd.daemon.registry import SessionRecord
+from langmeshd.features import compose_plugins
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class SessionHost:
                     token=record.token,
                     global_configuration=configuration,
                     host=DaemonHostServices(),
+                    feature_factory=compose_plugins,
                 )
                 await executor.start()
             except Exception:  # noqa: BLE001 — a session that cannot be built is a failed start, not a crash

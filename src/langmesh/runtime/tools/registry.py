@@ -19,11 +19,7 @@ from langmesh.runtime.tools import context as tool_context, fetching
 from langmesh.runtime.tools.execution import current_tool_decision, current_tool_services
 from langmesh.base.content.skills import enabled_skills
 from langmesh.runtime.internals import _background_handle_kind
-from langmesh.runtime.features.plugins.goal_review import GoalReview
 from langmesh.runtime.goal import Goal
-from langmesh.runtime.values import ToolStatus
-from langmesh.runtime.locations import PermissionDecision
-from langmesh.runtime.compaction import CompactionSummary
 
 from langmesh.base.configuration import PromptLoader
 
@@ -45,48 +41,6 @@ def _require_mcp_server_manager():
     if manager is None:
         raise RuntimeError("No MCP server is configured.")
     return manager
-
-
-async def _submit_goal_review(**arguments: Any) -> str:
-    services = current_tool_services()
-    services.submit_goal_review(GoalReview.model_validate(arguments))
-    services.abort_event.set()
-    return compact({"code": "goal_review_submitted", "status": ToolStatus.OK.value})
-
-
-async def _permission_decision(**arguments: Any) -> str:
-    services = current_tool_services()
-    services.abort_event.set()
-    return compact({"code": "permission_decision_submitted", "status": ToolStatus.OK.value})
-
-
-async def _submit_compaction_summary(**arguments: Any) -> str:
-    services = current_tool_services()
-    services.submit_compaction_summary(CompactionSummary.model_validate(arguments))
-    services.abort_event.set()
-    return compact({"code": "compaction_summary_submitted", "status": ToolStatus.OK.value})
-
-
-submit_goal_review = StructuredTool.from_function(
-    coroutine=_submit_goal_review,
-    name="submit_goal_review",
-    description=_DESCRIPTIONS.load("submit_goal_review", {}).strip(),
-    args_schema=GoalReview,
-)
-
-permission_decision = StructuredTool.from_function(
-    coroutine=_permission_decision,
-    name="permission_decision",
-    description="Submit the automatic permission reviewer's internal verdict.",
-    args_schema=PermissionDecision,
-)
-
-submit_compaction_summary = StructuredTool.from_function(
-    coroutine=_submit_compaction_summary,
-    name="submit_compaction_summary",
-    description=_DESCRIPTIONS.load("submit_compaction_summary", {}).strip(),
-    args_schema=CompactionSummary,
-)
 
 
 @tool
@@ -448,72 +402,6 @@ async def read_turn(*, explanation: str = Field(..., description=EXPLANATION), t
     else:
         task = await services.turn_reader(requested_turn_id)
         result = task if task is not None else {"code": "turn_not_found", "turn_id": requested_turn_id}
-    return compact(result)
-
-
-@tool
-async def set_tasks(*, explanation: str = Field(..., description=EXPLANATION), tasks: list[dict]) -> str:
-    """Create tasks; described in descriptions/set_tasks.md."""
-    services = current_tool_services()
-    identifiers = services.task_manager.add_tasks(tasks)
-    services.mark_dirty()
-    return compact({
-        "code": "tasks_updated",
-        "message": f"Created {len(identifiers)} task{'s' if len(identifiers) != 1 else ''}.",
-        "tasks": services.task_manager.to_dict_list(),
-    })
-
-
-@tool
-async def update_tasks(
-    *, explanation: str = Field(..., description=EXPLANATION), updates: list[dict]
-) -> str:
-    """Update tasks; described in descriptions/update_tasks.md."""
-    services = current_tool_services()
-    updated_ids, complaints = services.task_manager.update_tasks(updates)
-    if updated_ids:
-        services.mark_dirty()
-    result: dict[str, Any] = {
-        "code": "tasks_updated",
-        "message": f"Updated {len(updated_ids)} task{'s' if len(updated_ids) != 1 else ''}."
-        if updated_ids else "Nothing was updated.",
-        "tasks": services.task_manager.to_dict_list(),
-    }
-    if complaints:
-        result["rejected"] = complaints
-        result["status"] = "error" if not updated_ids else result.get("status", "")
-    return compact(result)
-
-
-@tool
-async def update_goal(
-    *,
-    explanation: str = Field(..., description=EXPLANATION),
-    goal: str,
-    purpose: str,
-    requirements: list[str],
-) -> str:
-    """Set the goal; described in descriptions/update_goal.md."""
-    services = current_tool_services()
-    goal_text = goal.strip()
-    purpose_text = purpose.strip()
-    requirement_lines = [line for line in (str(entry).strip() for entry in requirements) if line]
-
-    def refuse(message: str) -> dict[str, Any]:
-        return {"code": "goal_update_error", "status": "error", "message": message}
-
-    if not goal_text:
-        result = refuse("Say what the goal is: the end state, written so it is either true or not.")
-    elif not purpose_text:
-        result = refuse("Say what the end state is for, so a closed route can be told from a lost goal.")
-    elif not requirement_lines:
-        result = refuse("A goal needs minimum conditions: what must hold for it to be met, each one something a reader can go and check.")
-    else:
-        current = services.goal.current()
-        services.goal.write(Goal(text=goal_text, purpose=purpose_text, requirements=requirement_lines,
-                                 continuations=current.continuations if current is not None else 0))
-        result = {"code": "goal_active", "goal": goal_text, "purpose": purpose_text, "requirements": requirement_lines}
-        services.record_event("goal_updated", result)
     return compact(result)
 
 

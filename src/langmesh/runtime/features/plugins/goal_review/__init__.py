@@ -161,6 +161,15 @@ class GoalReviewFeature(Feature):
         """The goal as the model sees it, never the bookkeeping around it."""
         context["goal"] = self.goal.for_model() if self.goal is not None else {}
 
+    def contribute_tools(self) -> list:
+        """The goal and review tools this plugin owns."""
+        from langmesh.runtime.features.plugins.goal_review.tools import (
+            submit_goal_review,
+            update_goal,
+        )
+
+        return [update_goal, submit_goal_review]
+
     def snapshot(self) -> dict | None:
         return {"goal": self.goal.model_dump() if self.goal is not None else None}
 
@@ -221,8 +230,10 @@ class GoalReviewFeature(Feature):
 
     def _goal_reviewer(self, scratch_directory: str):
         from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
+        from langmesh.runtime.features.plugins.goal_review.tools import (
+            submit_goal_review as submit_goal_review_tool,
+        )
         from langmesh.runtime.runtime import AgentRuntime
-        from langmesh.runtime.tools.registry import submit_goal_review as submit_goal_review_tool
 
         reviewer_configuration = self._context.agent_configuration.model_copy(
             update={"permission_mode": "automatic"}

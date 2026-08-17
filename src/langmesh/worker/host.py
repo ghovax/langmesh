@@ -35,6 +35,9 @@ class HostServices(Protocol):
     # A product adapter the host provides for a session's goal-review events; None turns the feature off.
     def build_goal_review_journal(self, turn_store: Any) -> Optional[Any]: ...
 
+    # The tools the host's plugins contribute, keyed by name, so the roster can resolve them.
+    def plugin_tools(self) -> dict[str, Any]: ...
+
 
 class NullHostServices:
     """The host services of a library embedding with no host behind it."""
@@ -67,3 +70,6 @@ class NullHostServices:
 
     def build_goal_review_journal(self, turn_store: Any) -> Optional[Any]:
         return None
+
+    def plugin_tools(self) -> dict[str, Any]:
+        return {}

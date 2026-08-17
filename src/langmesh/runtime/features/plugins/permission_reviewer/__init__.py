@@ -20,9 +20,11 @@ from langmesh.base.content.instructions import instructions_payload
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.primitives.tuning import Tunable, active_tuning
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
+from langmesh.runtime.features.plugins.permission_reviewer.tools import (
+    permission_decision as permission_decision_tool,
+)
 from langmesh.runtime.internals import _PreflightGate
 from langmesh.runtime.locations import PermissionDecision
-from langmesh.runtime.tools.registry import permission_decision as permission_decision_tool
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,14 @@ class PermissionReviewer(Feature):
         self._context = context
         self._host = host
         self._prompts = context.prompts("permission_reviewer")
+
+    def contribute_tools(self) -> list:
+        """The reviewer's own verdict tool."""
+        from langmesh.runtime.features.plugins.permission_reviewer.tools import (
+            permission_decision,
+        )
+
+        return [permission_decision]
 
     async def review(self, gate: _PreflightGate) -> PermissionDecision:
         """The reviewer's verdict on one gate. Takes a gate, so it cannot reach a call that raised none."""

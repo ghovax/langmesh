@@ -90,6 +90,12 @@ class Continuation(Feature):
         """The tracked tasks as the model sees them."""
         context["tasks"] = self._task_manager.to_dict_list()
 
+    def contribute_tools(self) -> list:
+        """The task-list tools this plugin owns."""
+        from langmesh.runtime.features.plugins.continuation.tools import set_tasks, update_tasks
+
+        return [set_tasks, update_tasks]
+
     def prepare_request(self, messages: list) -> list:
         """The task list and goal guidance ride as their own note after the core system prompt."""
         return [
