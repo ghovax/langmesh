@@ -18,7 +18,7 @@ The interface is the surface you work in; the daemon it talks to is started by `
 - A session is an object the daemon builds and holds, not a process; creating one costs about as much as constructing the object, so there is no pool waiting.
 - It listens on a unix socket in your runtime directory, and for GUI clients on an ephemeral loopback port. The port and the capability token are published under the runtime directory.
 
-State follows XDG, all of it created on first run: configuration in `~/.config/langmesh/`, durable state in `~/.local/share/langmesh/`, logs in `~/.local/state/langmesh/`. Add provider keys in the configuration file, in the settings panel, or through environment variables. See the [Configuration guide](configuration.md).
+State follows XDG, all of it created on first run: configuration in `~/.config/langmesh/`, durable state in `~/.local/share/langmesh/`, logs in `~/.local/state/langmesh/`. Add provider keys in the configuration file, in the settings panel, or through environment variables. See the [Configuration guide](../user/configuration.md).
 
 ## Running the web UI
 
@@ -42,7 +42,7 @@ Outside `web/`, the package layering runs `base`, then `protocol`, then `compute
 - **Nothing reaches the network at import.** A catalogue fetch at module scope blocks the daemon's boot behind a stranger's endpoint.
 - **The runtime keeps no process-wide state.** Nothing under `runtime/` parks a caller's argument in a module global, installs a signal handler, or registers an exit hook; one process may host more than one session.
 
-A new setting is a field on the configuration model, and then three things that are not in the code with it. The schema walk finds the field on its own, so the settings panel has it from the moment it exists. But the panel draws it with **a label and a sentence from `shared/messages/*.json`**, in every locale, and the [configuration reference](configuration-reference.md) needs **a row**.
+A new setting is a field on the configuration model, and then three things that are not in the code with it. The schema walk finds the field on its own, so the settings panel has it from the moment it exists. But the panel draws it with **a label and a sentence from `shared/messages/*.json`**, in every locale, and the [configuration reference](../user/configuration-reference.md) needs **a row**.
 
 ## Running the desktop app in dev
 
@@ -74,7 +74,7 @@ There are **two artifacts**, built independently, because the app is a client of
 
 The smoke test runs the frozen daemon under **throwaway XDG directories**, which is load-bearing: with your own directories it would find the lock held by the daemon you already run and stand down, and the probe would then find that daemon's socket answering, a green result for a binary the probe never exercised.
 
-For the full step-by-step with expected output, see [Installation](installation.md#every-step-and-what-you-should-see).
+For the full step-by-step with expected output, see [Installation](../user/installation.md#every-step-and-what-you-should-see).
 
 ### Stable code-signing
 

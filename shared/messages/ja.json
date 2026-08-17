@@ -269,7 +269,7 @@
     "noSavedConnections": "保存済みの接続はありません",
     "noSavedConnectionsHint": "後で接続できるよう、下にサーバーアドレスを追加してください",
     "pairingLink": "ペアリングリンク",
-    "pairingLinkHelper": "そのマシンで <code>langmesh reach</code> を実行し、表示されたリンクを貼り付けてください。アドレスとトークンが含まれ、どちらもこのマシンから出ません。",
+    "pairingLinkHelper": "そのマシンで発行された <code>langmesh://pair#…</code> リンクを貼り付けてください。アドレスとトークンが含まれ、どちらもこのマシンから出ません。",
     "pairingLinkPlaceholder": "langmesh://pair#…",
     "retry": "再試行",
     "saveConnection": "接続を保存",
@@ -846,7 +846,7 @@
       },
       "timeout_multiplier": "すべての待ち時間にかかる倍率。遅いマシンや遠いホストで一律に延ばせます。",
       "defaults": {
-        "_": "個々の既定値を名前で上書きします（`langmesh configure --all` を参照）。時間はすべて秒です。上書きは出荷時の値を置き換え、context_share と timeout_multiplier はその上に適用されます。",
+        "_": "個々の既定値を名前で上書きします（設定パネルを参照）。時間はすべて秒です。上書きは出荷時の値を置き換え、context_share と timeout_multiplier はその上に適用されます。",
         "accessibility_messaging": "アプリへのアクセシビリティ通信 1 回の待ち時間。応答しないアプリで操作全体が止まらないようにします。",
         "accessibility_prewarm_interval": "最前面アプリのアクセシビリティツリーを事前に読み込む間隔。",
         "accessibility_ready_backoff": "準備確認の待ち時間を延ばしていくときの上限。",

@@ -1,9 +1,8 @@
 # LangMesh, on a phone
 
 An Expo client for the LangMesh daemon. It is a **client** — it contains no harness and starts no
-daemon. The Mac has to be awake, `langmeshd` running, and `langmesh reach` serving.
-
-`langmesh reach` is documented with the rest of the CLI: [Reaching it from a phone](../documentation/cli.md#reaching-it-from-a-phone).
+daemon. The Mac has to be awake and `langmeshd` running, and the daemon's door has to be reachable
+from the phone.
 
 ## Running it
 
@@ -15,18 +14,11 @@ bun run start
 Then install Expo Go on your phone and scan the code. Everything the app uses — the camera for
 pairing, the keychain, the microphone — is in Expo Go, so no native build is needed.
 
-Set Tailscale up first, once: turn on **MagicDNS**, then **HTTPS Certificates**, then **Serve**,
-in that order, for your tailnet. `langmesh reach` refuses to start until they are done and says which
-one is missing.
+## Pairing
 
-Then, on the Mac, in another terminal:
-
-```sh
-langmesh reach
-```
-
-Scan *that* code from inside the app to pair. It carries a token with full control of the daemon,
-so show it to a phone rather than to a room.
+The app pairs by pasting (or scanning) the `langmesh://pair#…` link the daemon's door produced. The
+link carries the address and a token, and both stay on this machine; pair it the same way you would
+add any machine in the desktop app's connect flow.
 
 `bun run web` renders the same app in a browser via React Native Web, which is useful for looking
 at layout. The camera does not work there — pair by pasting the `langmesh://pair#…` link.
@@ -60,6 +52,6 @@ on.
 it was deleted, because a port can be faithful the day it is written and cannot stay faithful. If
 a screen belongs in LangMesh, it belongs in `web/src` where both clients get it.
 
-**The token becomes a cookie.** The app opens the interface once with `?token=…`; `langmesh reach`
-answers with an `HttpOnly` session cookie that covers every subsequent request. Nothing in the
-page ever holds the token.
+**The token becomes a cookie.** The app opens the interface once with `?token=…`; the door answers
+with an `HttpOnly` session cookie that covers every subsequent request. Nothing in the page ever
+holds the token.

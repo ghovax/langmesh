@@ -40,7 +40,7 @@ A goal is not a longer task list. The task list is the steps; the goal is the ou
 
 An open goal keeps going through its independent review machinery. If both obligations exist, the review runs first and its continuation carries the task reminder too, so neither mechanism is disabled and only one serialized next turn opens. The linked read-only reviewer session inherits the complete conversation and independently inspects the workspace with tools. Its live transcript is available in the goal-review panel without appearing as an ordinary sidebar conversation. It reads the user's requests and formal goal, challenges the working agent's claims, and submits what is still unproven, whether the contract is complete, whether the outcome is reached, and the exact next message when work remains. That generated message is shown once in the chat under "Relayed from the goal review agent," links back to its review transcript, and opens the next turn.
 
-That review is written to push. It only accepts a goal as reached after independently exploring the relevant system, naming what proves each condition, and establishing that the contract omitted nothing necessary. When the goal is too weak, the reviewer sends checkable additions back and makes replacing the goal the first part of the next turn. It only accepts an impasse once no route is left. What stops a run instead is an allowance for how long it goes with nobody watching, after which the goal is parked and waits for you, or you call it off from the bar above the composer. See [Architecture](architecture.md#goals).
+That review is written to push. It only accepts a goal as reached after independently exploring the relevant system, naming what proves each condition, and establishing that the contract omitted nothing necessary. When the goal is too weak, the reviewer sends checkable additions back and makes replacing the goal the first part of the next turn. It only accepts an impasse once no route is left. What stops a run instead is an allowance for how long it goes with nobody watching, after which the goal is parked and waits for you, or you call it off from the bar above the composer. See [Architecture](../internal/architecture.md#goals).
 
 **Peer sessions**
 
@@ -91,7 +91,7 @@ LangMesh attaches to **the Chrome you already use**, with your real logins and s
 
 **Enable it:**
 
-- Grant **Accessibility** permission to LangMesh for native apps (System Settings, then Privacy and Security, then Accessibility). macOS matches the permission to the app's code identity, so a signed build keeps the grant across updates. See the [Development guide](development.md#building-and-signing).
+- Grant **Accessibility** permission to LangMesh for native apps (System Settings, then Privacy and Security, then Accessibility). macOS matches the permission to the app's code identity, so a signed build keeps the grant across updates. See the [Development guide](../internal/development.md#building-and-signing).
 - Turn on Chrome's remote-debugging toggle once for the browser surface: open `chrome://inspect` and enable it under the remote-debugging option.
 - Set `computer_control.enabled: true` in the configuration (off by default).
 

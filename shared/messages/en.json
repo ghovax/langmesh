@@ -269,7 +269,7 @@
     "noSavedConnections": "No saved connections",
     "noSavedConnectionsHint": "Add a server address below to reach it later",
     "pairingLink": "Pairing link",
-    "pairingLinkHelper": "Run <code>langmesh reach</code> on that machine and paste the link it prints. It carries the address and a token, and both stay on this machine.",
+    "pairingLinkHelper": "Paste the <code>langmesh://pair#…</code> link that machine printed when it exposed its door. It carries the address and a token, and both stay on this machine.",
     "pairingLinkPlaceholder": "langmesh://pair#…",
     "retry": "Retry",
     "saveConnection": "Save connection",
@@ -846,7 +846,7 @@
       },
       "timeout_multiplier": "Multiplier on every wait. 2.0 doubles them for a slow machine; 1.0 is neutral.",
       "defaults": {
-        "_": "Override one tunable by its own name — see `langmesh configure --all`. Every duration is in seconds. An override replaces the shipped default, so context_share and timeout_multiplier still apply on top.",
+        "_": "Override one tunable by its own name — see the settings panel. Every duration is in seconds. An override replaces the shipped default, so context_share and timeout_multiplier still apply on top.",
         "accessibility_messaging": "How long one accessibility message to an application waits, so a hung application costs a moment rather than the whole action.",
         "accessibility_prewarm_interval": "Pause between pre-warming the frontmost application's accessibility tree.",
         "accessibility_ready_backoff": "Ceiling on the widening pause between accessibility readiness probes.",
