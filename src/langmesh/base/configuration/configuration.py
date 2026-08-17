@@ -858,11 +858,7 @@ class BashToolConfiguration(BaseModel):
         segment = BashToolConfiguration._canonical_rm_segment(segment)
         if pattern.endswith("*"):
             keyword = pattern[:-1].rstrip()
-            # A rule names a command: it matches when the segment starts with that command,
-            # never when the keyword merely appears inside a heredoc body or `-c` code. Splitting
-            # on shell operators already isolates each command, so `a && sudo rm` matches `sudo *`
-            # through its own segment; scanning the whole text would deny a doc write whose
-            # content happens to mention "sudo", "git", or "rm".
+            # A rule names a command: it matches when the segment starts with that command, never when the keyword merely appears inside a heredoc body or `-c` code. Splitting on shell operators already isolates each command, so `a && sudo rm` matches `sudo *` through its own segment; scanning the whole text would deny a doc write whose content happens to mention "sudo", "git", or "rm".
             return segment.startswith(keyword)
         return segment == pattern
 

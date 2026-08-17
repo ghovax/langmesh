@@ -109,9 +109,7 @@ class SessionEventBus:
                 and previous.get("channel") == event.get("channel")
                 and previous.get("block_id") == event.get("block_id")
             ):
-                # Internal replay records never enter a subscriber queue; snapshots copy them.
-                # Mutating this private list keeps a long response O(n), rather than repeatedly
-                # copying its entire prefix and turning token streaming into O(n²) work.
+                # Internal replay records never enter a subscriber queue; snapshots copy them. Mutating this private list keeps a long response O(n), rather than repeatedly copying its entire prefix and turning token streaming into O(n²) work.
                 previous["chunks"].extend(event.get("chunks", ()))
                 previous["seq"] = event["seq"]
                 return

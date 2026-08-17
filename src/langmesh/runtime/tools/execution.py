@@ -68,8 +68,7 @@ class ToolServices:
     project_directory: str = ""
 
 
-# The services bound around the current dispatch, so a schema tool invoked directly (`.ainvoke`)
-# resolves the same handler the runtime's generic dispatch uses.
+# The services bound around the current dispatch, so a schema tool invoked directly (`.ainvoke`) resolves the same handler the runtime's generic dispatch uses.
 _current_tool_services: contextvars.ContextVar[ToolServices | None] = contextvars.ContextVar(
     "current_tool_services", default=None
 )
@@ -90,8 +89,7 @@ def current_tool_services() -> ToolServices:
     return services
 
 
-# The permission decision for the call currently being dispatched, read by a tool whose behavior
-# depends on it (which screen primitives may run, what an ask_user answers).
+# The permission decision for the call currently being dispatched, read by a tool whose behavior depends on it (which screen primitives may run, what an ask_user answers).
 _current_tool_decision: contextvars.ContextVar[Any | None] = contextvars.ContextVar(
     "current_tool_decision", default=None
 )

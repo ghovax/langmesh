@@ -36,8 +36,7 @@ class ObservationRegistryWatcher:
         async with lock:
             if path in self._tasks and path in self._snapshots:
                 return self._snapshots[path]
-            # Install the native subscription before reading. A commit racing registration is
-            # therefore either in this snapshot or queued as the first watcher event.
+            # Install the native subscription before reading. A commit racing registration is therefore either in this snapshot or queued as the first watcher event.
             subscription = NativeFileSubscription(path)
             snapshot = await self._read(path)
             self._snapshots[path] = snapshot

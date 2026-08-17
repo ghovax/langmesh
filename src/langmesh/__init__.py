@@ -315,8 +315,7 @@ class Session:
         locations: Sequence[Location] | None = None,
         tools: Sequence[ToolLike] = (),
         components: SessionComponents = SessionComponents(),
-        # Any fsspec-backed workspace. Non-local sources are materialized for Bash and SQLite,
-        # then synchronized at tool boundaries and close.
+        # Any fsspec-backed workspace. Non-local sources are materialized for Bash and SQLite, then synchronized at tool boundaries and close.
         resources: WorkspaceResourcesLike | None = None,
     ) -> None:
         from langmesh.base.configuration import Configuration
@@ -988,8 +987,7 @@ class Session:
                     and not event.text.strip()
                     and not saw_tool_result
                 ):
-                    # A goal continuation answered the review with nothing: do not
-                    # immediately re-review, or the review loop would spin.
+                    # A goal continuation answered the review with nothing: do not immediately re-review, or the review loop would spin.
                     noop_continuation = True
                 if isinstance(event, Suspended):
                     self._pending = PendingTurn(

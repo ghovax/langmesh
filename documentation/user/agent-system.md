@@ -25,38 +25,44 @@ An agent is a directory with one file in it: **`AGENT.md`**, spelled that way fo
 ---
 name: reviewer
 title: Reviewer
-description: A rigorous skeptic that pushes back before it builds.
-role: primary
+description: Reviews a plan or a claim before it is acted on.
 enabled: true
-model: mimo-v2.5
-provider: opencode
+model: deepseek-v4-flash
+provider: opencode-go
 reasoning_effort: high
-permission_mode: ask
+permission_mode: automatic
+tools_enabled:
+  - bash
+  - read_turn
+  - load_skill
+  - set_tasks
+  - update_tasks
+  - update_goal
+  - search_web
+  - fetch_url
+  - download_file
+  - list_mcp_tools
+  - call_mcp_server_tool
+  - list_mcp_resources
+  - read_mcp_resource
 tools:
   bash:
-    enabled: true
     background_allowed: true
     permissions:
-      sudo *: deny
       rm *: ask
-  mcp:
-    permissions:
-      "*.delete_*": deny
+      sudo *: deny
 ---
 
-You are the skeptic: the deliberate opposite of an agreeable assistant.
+You are a rigorous reviewer. Your job is to make sure a plan or a claim is sound...
 ```
 
 Each agent is a profile a session can be created with, and the daemon serves [A2A](https://github.com/google/A2A) for every session it hosts. A session that needs a peer creates one with its `create_session` tool, over the control plane your terminal uses. See [Tools](agent-system.md#composing-with-other-sessions) for how a peer reports back.
 
 Bundled agents:
 
-| Agent               | Role                                                   |
-| ------------------- | ------------------------------------------------------ |
-| `general-assistant` | A capable default for everyday tasks.                  |
-| `reviewer`          | Skeptical planning and verification before building.   |
-| `code-investigator` | Reads and explains a codebase without changing it.     |
-| `code-implementer`  | Writes and edits code against a clear plan.            |
+| Agent      | Role                                                                             |
+| ---------- | -------------------------------------------------------------------------------- |
+| `reviewer` | Reviews a plan or a claim before it is acted on: reads what exists, questions assumptions, and only proceeds once the plan is clear and logically sound. |
 
 ### Skills
 
@@ -75,7 +81,7 @@ enabled: true
 ...
 ```
 
-Bundled skills include `coding`, `data-visualization`, `literature-search`, `langmesh-configuration`, and `context7-mcp`.
+Bundled skills include `consolidate-observations`, `context7-mcp`, and `observational-memory`.
 
 ### Memory
 
@@ -136,7 +142,7 @@ A session can also install what it does not have. Where the machine has Nix, eac
 
 | Tool         | What it does |
 | ------------ | ------------ |
-| `search_web` | Search the web (Exa-backed fallback). |
+| `search_web` | Search the web with Exa. |
 | `fetch_url`  | Fetch and read a page via a tiered engine: Jina, then Firecrawl, then direct. |
 
 **Orchestration and knowledge**
@@ -215,7 +221,7 @@ LangMesh attaches to **the Chrome you already use**, with your real logins and s
 
 ### Where the definitions live
 
-A built-in tool is one `Tool` unit: its schema, description, and handler joined in `langmesh.runtime.tools.units`.
+A built-in tool is one `Tool` unit: its schema, description, and handler joined in `langmesh.runtime.tools.execution`.
 
 - Schemas and the model-facing `StructuredTool`s: `src/langmesh/runtime/tools/registry.py`.
 - The execution of each built-in, over the shared `ToolServices` bundle: `src/langmesh/runtime/tools/handlers.py`.

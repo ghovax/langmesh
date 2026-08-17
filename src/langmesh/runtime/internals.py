@@ -66,8 +66,7 @@ def model_is_authorized(
         return cursor_is_signed_in()
     if provider_identifier == "custom":
         return True
-    # models.dev providers are registered while the catalogue is resolved. Authorization must
-    # trigger the same ordered discovery as model construction on a cold worker.
+    # models.dev providers are registered while the catalogue is resolved. Authorization must trigger the same ordered discovery as model construction on a cold worker.
     find_model(model_identifier)
     return bool(
         resolve_api_key(provider_identifier, global_configuration.configured_provider_keys())
@@ -469,7 +468,6 @@ class _ModelCallOutcome:
     """What one streamed model call produced: the response, or the terminal condition the loop must act on."""
 
     response: Optional[AIMessageChunk] = None
-    aborted_for_steering: bool = False
     cancelled: bool = False
 
 

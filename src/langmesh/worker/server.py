@@ -67,8 +67,7 @@ async def _send(session, params: dict) -> dict:
                     "accepted": False,
                     "compaction_required": True,
                 }
-        # The context lock serializes this with any active turn. Structured parts take this path
-        # deliberately because reducing an attachment-bearing message to steerable text would lose data.
+        # The context lock serializes this with any active turn. Structured parts take this path deliberately because reducing an attachment-bearing message to steerable text would lose data.
         turn_id = await session.start_turn(
             _message_parts(params), dict(params.get("metadata") or {})
         )

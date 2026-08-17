@@ -46,8 +46,7 @@ _BASE_ENVIRONMENT_KEYS = (
     "XDG_RUNTIME_DIR",
 )
 
-# The agent is told to recognise a refusal by its wording, and `strerror` is translated, so the message
-# locale is pinned while `LC_CTYPE` keeps the encoding a person's own text needs.
+# The agent is told to recognise a refusal by its wording, and `strerror` is translated, so the message locale is pinned while `LC_CTYPE` keeps the encoding a person's own text needs.
 _MESSAGE_LOCALE = {"LC_MESSAGES": "C"}
 
 

@@ -863,9 +863,7 @@ def _attach_transcript(context_id: str, request: Request) -> EventSourceResponse
         try:
             # A sender waits for this frame, making subscribe-before-send a transport guarantee.
             yield {"data": compact({"kind": "ready"})}
-            # If terminal persistence retires replay while the high-water query is in flight,
-            # repeat the cut. The stable row boundary and bus version form a seqlock: durable
-            # history and the replay/live suffix are disjoint and exhaustive by construction.
+            # If terminal persistence retires replay while the high-water query is in flight, repeat the cut. The stable row boundary and bus version form a seqlock: durable history and the replay/live suffix are disjoint and exhaustive by construction.
             while True:
                 before_version = state.event_bus.snapshot(context_id).version
                 through_row_id = await state.turn_store.latest_history_row_id(context_id)
@@ -897,8 +895,7 @@ def _attach_transcript(context_id: str, request: Request) -> EventSourceResponse
 
             async def encoded_history():
                 async for turn in history:
-                    # Legacy histories can contain large turns. Encoding belongs to the background
-                    # history lane too, or JSON work would briefly block a live delta on the event loop.
+                    # Legacy histories can contain large turns. Encoding belongs to the background history lane too, or JSON work would briefly block a live delta on the event loop.
                     yield await asyncio.to_thread(
                         compact,
                         {
