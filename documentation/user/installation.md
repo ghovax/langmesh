@@ -69,7 +69,6 @@ Both artifacts carry the same `CFBundleName` and identifier, so one certificate 
 
 
 
----
 
 ## The `langmesh` command
 
@@ -114,7 +113,6 @@ Diagnostics go to stderr; the exit code carries the outcome.
 | `130` | Interrupted with Ctrl-C. |
 | `141` | A pipe closed under it. |
 
----
 
 ## Run LangMesh on a server
 

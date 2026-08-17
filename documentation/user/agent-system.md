@@ -1,10 +1,4 @@
-
-
-
-
----
-
-## Agent system
+# Agent system
 
 Everything that shapes how LangMesh behaves, its agents, their reusable skills, its memory, and its tool servers, is **plain Markdown and JSON on disk**. There are two layers, and they merge by name:
 
@@ -116,7 +110,6 @@ Observational memory is separate. `.agents/observations.sqlite` is current works
 
 Their tools and resources reach the agent through `call_mcp_server_tool`, `list_mcp_tools`, `list_mcp_resources`, and `read_mcp_resource`. The repository includes a complete [stdio server example](https://github.com/ghovax/langmesh/tree/main/examples/mcp).
 
----
 
 ## Tools
 

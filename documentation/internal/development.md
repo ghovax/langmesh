@@ -137,7 +137,6 @@ Beyond the battery: lint with `uv run ruff check`, and drive the affected path t
 
 
 
----
 
 ## Building the documentation
 

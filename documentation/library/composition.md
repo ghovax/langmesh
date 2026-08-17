@@ -104,7 +104,6 @@ Components are fixed for a runtime because the model-visible tool schemas and st
 
 
 
----
 
 ## Tools, hooks, and policy
 
@@ -346,7 +345,6 @@ components = SessionComponents(mcp_servers=manager)
 
 When no manager is supplied, `async with Session(...)` starts only the servers declared in the explicit workspace's `.agents/mcp.json` and closes those connections with the session.
 
----
 
 ## Features and plugins
 
