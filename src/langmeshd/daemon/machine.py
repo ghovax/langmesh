@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from langmesh.base.contracts.catalogue import project_catalogue
 from langmesh.base.configuration import Configuration
 
 
@@ -16,8 +15,21 @@ def load_configuration(*, seed: bool = True) -> Configuration:
 
 def load_catalogue(configuration: Configuration, directory: str | Path) -> Any:
     """The agents, skills, memories and instructions reachable from `directory`."""
-    # The daemon discovers skills on disk; the library does not unless asked.
-    return project_catalogue(configuration, str(Path(directory).resolve()), skills=True)
+    from langmesh.base.contracts.catalogue import CatalogueRoots, FileCatalogue
+    from langmesh.base.contracts.catalogue import _as_paths, packaged_prompts_directory
+
+    local = Path(directory).expanduser().resolve()
+    # The daemon discovers skills on disk and passes the paths in; the library never does.
+    return FileCatalogue(
+        CatalogueRoots(
+            agents=_as_paths(configuration.agent_directories_for(str(local))),
+            skills=_as_paths(configuration.skill_directories_for(str(local))),
+            memories=_as_paths(configuration.memory_directories_for(str(local))),
+            prompts=packaged_prompts_directory(),
+            project_directory=local,
+            include_home_instructions=True,
+        )
+    )
 
 
 def load_agent(

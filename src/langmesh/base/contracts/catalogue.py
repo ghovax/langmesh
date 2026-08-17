@@ -233,11 +233,11 @@ def machine_catalogue(configuration: Any, working_directory: str = "") -> FileCa
     )
 
 
-def project_catalogue(configuration: Any, working_directory: str, *, skills: bool = False) -> FileCatalogue:
+def project_catalogue(configuration: Any, working_directory: str) -> FileCatalogue:
     """The catalogue an embedded harness gets: the working directory, and nothing of the home directory.
 
-    ``skills`` defaults to False so a bare library embedding carries no skills unless the caller
-    opts in: skills are voluntary at the library level, and only the daemon discovers them on disk.
+    No skills: skills are voluntary at the library level, supplied by the caller. Only the
+    daemon discovers them on disk and passes the paths in.
     """
     from langmesh.base.configuration import BUNDLED_DOTAGENTS_ROOT
 
@@ -249,11 +249,7 @@ def project_catalogue(configuration: Any, working_directory: str, *, skills: boo
                 local / ".agents" / "agents",
                 local / "agents",
             ),
-            skills=(
-                (BUNDLED_DOTAGENTS_ROOT / "skills", local / ".agents" / "skills", local / "skills")
-                if skills
-                else ()
-            ),
+            skills=(),
             memories=(local / ".agents" / "memories",),
             prompts=packaged_prompts_directory(),
             project_directory=local,
