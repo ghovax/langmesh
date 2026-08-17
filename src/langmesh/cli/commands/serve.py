@@ -1,10 +1,21 @@
-"""`langmesh serve`: serve the interface over HTTP, so a browser is a client like any other."""
+"""`langmesh serve`: serve the interface over HTTP, so a browser is a client like any other.
+
+With `--reach`, the same door is meant to leave the machine: it holds a durable pairing token,
+prints a `langmesh://pair#…` link a phone can pair with, and refuses every request that does not
+present the token. What carries it off the machine is Tailscale, which the door tells you how to
+set up; the tailnet identity is the outer gate and the pairing token the inner one.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
+import json
 import logging
+import os
+import secrets
+import socket
 import sys
 from pathlib import Path
 from typing import Callable, Optional
@@ -39,6 +50,9 @@ _DROPPED_RESPONSE_HEADERS = frozenset(
     }
 )
 
+# The session cookie a paired door hands a phone after its first ?token= request.
+_REACH_COOKIE = "langmesh_reach"
+
 # Served to the page so it addresses the daemon relatively rather than at a build-time default port.
 RUNTIME_PATH = "/__langmesh/runtime.json"
 
@@ -47,6 +61,37 @@ logger = logging.getLogger("langmesh.serve")
 
 # Requests this proxy may send a second time, being the ones that carry no one-shot body.
 _REPLAYABLE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "DELETE"})
+
+
+def reach_token() -> str:
+    """The door's durable pairing token, minted once and kept beside the daemon's own state."""
+    from langmesh.base.confinement.paths import reach_token_path
+
+    path = reach_token_path()
+    try:
+        existing = path.read_text().strip()
+    except OSError:
+        existing = ""
+    if existing:
+        return existing
+    token = secrets.token_urlsafe(48)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(token, encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return token
+
+
+def pairing_link(endpoint: str, token: str) -> str:
+    """The `langmesh://pair#…` link a paired device pastes or scans, carrying the address and the token."""
+    payload = json.dumps(
+        {"version": 1, "name": socket.gethostname(), "endpoint": endpoint, "token": token},
+        separators=(",", ":"),
+    )
+    encoded = base64.urlsafe_b64encode(payload.encode("utf-8")).rstrip(b"=").decode("ascii")
+    return f"langmesh://pair#{encoded}"
 
 
 def interface_directory() -> Optional[Path]:
@@ -86,6 +131,7 @@ def build_application(
     directory: Optional[Path],
     interface_url: str = "",
     rediscover: Optional[Callable[[], tuple[str, str]]] = None,
+    reach_token: str = "",
 ):
     """The ASGI application: the interface at the root, the daemon behind everything else, rediscovered when it moves."""
     import httpx
@@ -128,9 +174,14 @@ def build_application(
     )
     root = directory.resolve() if directory is not None else None
 
-    async def runtime(_request) -> JSONResponse:
+    async def runtime(request) -> JSONResponse:
+        if not _reach_authorized(request):
+            return JSONResponse(
+                {"error": {"code": "unauthorized", "message": "This door is paired; present its token."}},
+                status_code=401,
+            )
         # An empty base is the whole message: address the daemon relative to this origin.
-        return JSONResponse({"apiBase": "", "proxied": True})
+        return _stamp_reach_cookie(JSONResponse({"apiBase": "", "proxied": True}), request)
 
     def static_file(path: str) -> Optional[Path]:
         """The exported file a request path names, resolved and checked to be inside the export so `..` cannot escape."""
@@ -143,15 +194,40 @@ def build_application(
             candidate = candidate / "index.html"
         return candidate if candidate.is_file() else None
 
+    def _reach_authorized(request) -> bool:
+        """Whether a request carries the door's pairing token, by header, cookie, or first-use query."""
+        if not reach_token:
+            return True
+        if request.headers.get("authorization") == f"Bearer {reach_token}":
+            return True
+        if request.cookies.get(_REACH_COOKIE) == reach_token:
+            return True
+        return request.query_params.get("token") == reach_token
+
+    def _stamp_reach_cookie(response: Response, request) -> Response:
+        """A phone that arrived with ?token= earns the session cookie once, so nothing keeps the token in the URL."""
+        if (
+            reach_token
+            and request.query_params.get("token") == reach_token
+            and request.cookies.get(_REACH_COOKIE) != reach_token
+        ):
+            response.set_cookie(_REACH_COOKIE, reach_token, httponly=True, samesite="strict")
+        return response
+
     async def serve_or_proxy(request) -> Response:
         """A real file wins and everything else is the daemon's, which cannot be two routes."""
+        if not _reach_authorized(request):
+            return JSONResponse(
+                {"error": {"code": "unauthorized", "message": "This door is paired; present its token."}},
+                status_code=401,
+            )
         if interface is not None and _wants_interface(request.url.path):
-            return await proxy(request, interface, authorise=False)
+            return _stamp_reach_cookie(await proxy(request, interface, authorise=False), request)
         if request.method in {"GET", "HEAD"}:
             found = static_file(request.url.path)
             if found is not None:
-                return FileResponse(found)
-        return await proxy(request)
+                return _stamp_reach_cookie(FileResponse(found), request)
+        return _stamp_reach_cookie(await proxy(request), request)
 
     async def proxy(request, upstream_client=None, authorise: bool = True) -> Response:
         # Resolved per call rather than captured, so a reconnection is picked up by everything that follows.
@@ -246,6 +322,9 @@ def build_application(
     async def _relay(websocket, base: str, append_token: bool) -> None:
         import websockets as websockets_client
 
+        if reach_token and websocket.query_params.get("token") != reach_token:
+            await websocket.close(code=1008)
+            return
         query = str(websocket.url.query or "")
         if append_token:
             separator = "&" if query else ""
@@ -334,6 +413,9 @@ def run(arguments) -> int:
     from langmesh.base.confinement.paths import daemon_port_path, daemon_token_path, runtime_directory
     from langmesh.cli.client import daemon_is_up, ensure_daemon
 
+    reach = bool(getattr(arguments, "reach", False))
+    door_port = arguments.port if arguments.port is not None else (8825 if reach else 8824)
+
     directory = interface_directory()
     if directory is None:
         logger.info(
@@ -342,9 +424,9 @@ def run(arguments) -> int:
         return 1
 
     # Claim the port before starting anything, so a failed bind does not leave a daemon nobody asked for.
-    if _port_is_taken(arguments.host, arguments.port):
+    if _port_is_taken(arguments.host, door_port):
         logger.info(
-            f'langmesh: {arguments.host}:{arguments.port} is already in use — most likely another "langmesh serve". Stop it, or pass "--port" to use a different one.'
+            f'langmesh: {arguments.host}:{door_port} is already in use — most likely another "langmesh serve". Stop it, or pass "--port" to use a different one.'
         )
         return 1
 
@@ -392,17 +474,38 @@ def run(arguments) -> int:
             daemon_token_path().read_text().strip(),
         )
 
+    address = f"http://{arguments.host}:{door_port}"
+    reach_token_value = reach_token() if reach else ""
+    if reach:
+        endpoint = _tailnet_endpoint() or address
+        link = pairing_link(endpoint, reach_token_value)
+        logger.info("langmesh: pairing link: %s", link)
+        if not _tailnet_endpoint():
+            logger.info(
+                "langmesh: this door is on loopback; a phone needs the tailnet address — run tailscale serve and re-pair with its https://<machine>.ts.net address."
+            )
+        logger.info(
+            "langmesh: expose it to your tailnet only: tailscale serve --bg http://127.0.0.1:%d (needs MagicDNS and HTTPS Certificates enabled)",
+            door_port,
+        )
+
     application = build_application(
         f"http://127.0.0.1:{port}",
         token,
         directory,
         rediscover=where_is_the_daemon,
+        reach_token=reach_token_value,
     )
-    address = f"http://{arguments.host}:{arguments.port}"
-    logger.info(f"langmesh: serving the interface at {address} (daemon on :{port})")
-    logger.info(
-        "langmesh: this address carries full control of the daemon — do not expose it beyond loopback."
-    )
+    if reach:
+        logger.info("langmesh: serving the paired door at the address above; this door is for your devices only.")
+        logger.info(
+            "langmesh: pair a phone by scanning or pasting the pairing link below; it carries the token, so keep it to your devices."
+        )
+    else:
+        logger.info(f"langmesh: serving the interface at {address} (daemon on :{port})")
+        logger.info(
+            "langmesh: this address carries full control of the daemon — do not expose it beyond loopback."
+        )
 
     # Asked for, never assumed: serving and opening a window are two different acts.
     if arguments.open_browser:
@@ -412,7 +515,7 @@ def run(arguments) -> int:
         configuration = uvicorn.Config(
             application,
             host=arguments.host,
-            port=arguments.port,
+            port=door_port,
             log_level="warning",
             # This server holds connections that never end on their own, so shutdown needs a deadline or Ctrl-C hangs.
         )
@@ -423,6 +526,26 @@ def run(arguments) -> int:
         # `finally` rather than `except`, since uvicorn returns normally when it is not re-raising.
         stop_daemon_if_started()
     return 0
+
+
+def _tailnet_endpoint() -> str:
+    """This machine's tailnet name as an HTTPS URL, or ``""`` when Tailscale is not answering."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["tailscale", "status", "--json"], capture_output=True, text=True, timeout=5
+        )
+    except Exception:  # noqa: BLE001 — no Tailscale is not an error, the loopback door still works
+        return ""
+    if result.returncode != 0:
+        return ""
+    try:
+        payload = json.loads(result.stdout)
+        name = str((payload.get("Self") or {}).get("DNSName") or "").rstrip(".")
+    except Exception:  # noqa: BLE001 — a malformed status is treated as no Tailscale
+        return ""
+    return f"https://{name}" if name else ""
 
 
 def _open_when_listening(address: str) -> None:
