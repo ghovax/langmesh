@@ -261,7 +261,7 @@
     "savingChanges": "Saving changes…"
   },
   "ConnectionSettings": {
-    "connect": "Connect",
+    "connect": "Open",
     "connected": "Connected",
     "couldNotConnect": "Couldn't connect",
     "couldNotReach": "Couldn't reach {name}",

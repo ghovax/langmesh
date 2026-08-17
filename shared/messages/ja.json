@@ -261,7 +261,7 @@
     "savingChanges": "変更を保存しています…"
   },
   "ConnectionSettings": {
-    "connect": "接続",
+    "connect": "開く",
     "connected": "接続済み",
     "couldNotConnect": "接続できませんでした",
     "couldNotReach": "{name} に到達できませんでした",

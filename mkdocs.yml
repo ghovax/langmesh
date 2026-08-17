@@ -44,6 +44,7 @@ nav:
       - Installation: user/installation.md
       - Desktop app: user/app.md
       - Command line: user/cli.md
+      - Run on a server: user/headless-server.md
       - Agent system: user/agent-system.md
       - Configuration: user/configuration.md
       - Configuration reference: user/configuration-reference.md
