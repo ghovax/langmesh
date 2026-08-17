@@ -120,6 +120,7 @@
     "stop": "Stop",
     "stopUnavailableWhileCompacting": "The conversation is being compacted; it cannot be stopped mid-compaction.",
     "stopping": "Stopping",
+    "tasks": "Tasks: {completed} of {total} done",
     "total": "Total",
     "uploading": "Uploading {count}",
     "usageThisTurn": "Usage for this turn",
