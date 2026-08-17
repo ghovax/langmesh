@@ -196,7 +196,7 @@ class BackgroundJobStore:
         return row is not None
 
     def sessions_requiring_resume(self) -> list[str]:
-        """Sessions with interrupted or undelivered work that must be woken after daemon startup."""
+        """Sessions with interrupted or undelivered work that must be woken after process start."""
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT DISTINCT session_id FROM background_jobs WHERE status IN (?, ?, ?)",

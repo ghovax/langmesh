@@ -514,7 +514,7 @@ class WorkspaceManager(Protocol):
 
 @runtime_checkable
 class SessionAccess(Protocol):
-    """Creates and addresses peer sessions without coupling the core to a daemon transport."""
+    """Creates and addresses peer sessions without coupling the core to a host transport."""
 
     session_id: str
     working_directory: str

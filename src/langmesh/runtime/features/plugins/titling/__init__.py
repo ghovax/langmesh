@@ -1,7 +1,7 @@
 """The titling plugin: the automatic label a session is listed under.
 
 Given the session's first message, the model is asked, in the same shape every structured
-extraction uses, to name the conversation. The daemon publishes the result; the prompt and the
+extraction uses, to name the conversation. The host publishes the result; the prompt and the
 schema of the naming call live beside this module so both are configurable.
 """
 

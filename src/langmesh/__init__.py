@@ -1,4 +1,4 @@
-"""LangMesh as a library: the harness without the daemon, driven turn by turn through `Session`."""
+"""LangMesh as a library: the harness in-process, driven turn by turn through `Session`."""
 
 from __future__ import annotations
 
@@ -758,7 +758,7 @@ class Session:
         )
 
     def _compose(self, message: str, attachments: Sequence[str | Path]) -> object:
-        """The model-facing input for a turn, including attachments, through the same composition the daemon uses."""
+        """The model-facing input for a turn, including attachments, through the same composition the host uses."""
         if not attachments:
             return message
         resolved = []
