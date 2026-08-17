@@ -16,7 +16,7 @@
 
 ## The four layers
 
-Each layer uses the one below it and adds a single thing; the [documentation index](index.md) lists their responsibilities. The bottom layer is the whole harness; a program can embed it without starting a daemon. See the [library guide](library/index.md).
+Each layer uses the one below it and adds a single thing; the [documentation index](../index.md) lists their responsibilities. The bottom layer is the whole harness; a program can embed it without starting a daemon. See the [library guide](../library/index.md).
 
 LangMesh is one executable entered two ways. `langmesh` is the command a person runs; `langmeshd` is the daemon that hosts sessions. They are the same image, not two binaries, so packaging stays a single specification and every session carries the signed bundle's code identity. One macOS Accessibility grant covers the whole fleet instead of prompting per session.
 
@@ -41,7 +41,7 @@ sequenceDiagram
 - **There is no linger window.** An executor held alive for a message that may not come pays continuously to avoid paying occasionally, and rebuilding one is cheap. A session parked on a permission prompt is the clearest case: the suspension is already fully on disk, so holding anything for a person who may take hours buys nothing.
 - **A daemon restart ends executors, never sessions.** The harness derives the capability token from the session id; it does not store it, so a woken session gets the same token its creator got.
 - The daemon serves A2A (JSON-RPC) for every session it hosts, and every client reaches the daemon: the terminal, the desktop app, another session. There is one place that identifies a caller, scopes it to its own subtree, and records it.
-- **There is no in-process delegation.** A session that needs a peer creates an ordinary session and messages it. See [Tools](tools.md#composing-with-other-sessions). A child appears in `langmesh ps`, can be attached to, and is reaped when its parent ends.
+- **There is no in-process delegation.** A session that needs a peer creates an ordinary session and messages it. See [Tools](../user/tools.md#composing-with-other-sessions). A child appears in `langmesh ps`, can be attached to, and is reaped when its parent ends.
 - **Isolation is a property of the executor and the context it runs in.** An executor belongs to one session for its whole life, and the tool context is bound per task, so one session's state cannot reach another's. Sessions share the daemon's process: a native crash takes the daemon rather than one session. That is the price of a session costing a fraction of a millisecond.
 
 ## The daemon
@@ -67,7 +67,7 @@ The two answers are one fact read in two directions. What the kernel calls a ses
 
 ## The CLI
 
-`langmesh` adds nothing the control plane does not have; it is the ergonomic face of it. Create a session and send it work, watch with `ps` and `attach`, answer a pending call with `approve`, end a subtree with `kill`, reach a remote agent with `remote`, and set configuration with `configure`. The [CLI guide](cli.md) is the reference.
+`langmesh` adds nothing the control plane does not have; it is the ergonomic face of it. Create a session and send it work, watch with `ps` and `attach`, answer a pending call with `approve`, end a subtree with `kill`, reach a remote agent with `remote`, and set configuration with `configure`. The [CLI guide](../user/cli.md) is the reference.
 
 Everything goes to the daemon, `send` included. `langmesh` opens the daemon's unix socket and posts to `/rpc`, and the daemon relays to the owning session. One path, so a call is attributed and scoped in exactly one place whoever made it.
 
@@ -131,7 +131,7 @@ A turn ends when the model stops talking. That is the wrong unit for work asked 
 So a session can hold one **goal**: the end state, what the end state is for, and the conditions that must hold for it to be true. All three are written by the agent through `update_goal`, and all three are durable beside the conversation.
 
 - **Setting a goal is the whole of the agent's authority over it.** It cannot satisfy one, clear one, or declare one blocked. A session grading its own work is the failure this exists to prevent.
-- **Deciding where the goal stands is a review**: an isolated agent session made when a turn ends. The interface reports "Checking the work" when independent review starts. The reviewer receives the main session's exact conversation, model, and cached static prompt, while runtime policy narrows execution to read-only work. Its verdict tool, `submit_goal_review`, is granted to it like any session tool: dispatchable, and described by an appended conversation message rather than by schema binding, so the provider-cache prefix is untouched. See [Granting a tool to a session](library/customization.md#granting-a-tool-to-a-session).
+- **Deciding where the goal stands is a review**: an isolated agent session made when a turn ends. The interface reports "Checking the work" when independent review starts. The reviewer receives the main session's exact conversation, model, and cached static prompt, while runtime policy narrows execution to read-only work. Its verdict tool, `submit_goal_review`, is granted to it like any session tool: dispatchable, and described by an appended conversation message rather than by schema binding, so the provider-cache prefix is untouched. See [Granting a tool to a session](../library/customization.md#granting-a-tool-to-a-session).
 - The reviewer is linked to the working session and visible in the dedicated goal-review panel, while remaining outside the ordinary session sidebar and working from a read-only workspace and disposable scratch directory. It forms its own opinion by reading the user's requests, searching the code, inspecting the diff, running non-mutating checks, and probing suspicious results rather than grading the working agent's claims.
 - Its final action is a structured `submit_goal_review` call naming the requirements it could not prove, whether the formal contract is complete, whether the goal is unmet, satisfied, or blocked, and the exact next message when work remains.
 - The review is written to keep the work going. `unmet` is its ordinary answer; `satisfied` is rare and requires the reviewer to name what proves every requirement, establish that the contract needs no additions, and explore independently; `blocked` requires it to establish that no route is open. The tool accepts the verdict on any review, gated only by the reviewer's own evidence. If the reviewer stops without submitting, it is asked again until it does. Cancelling the parent session cancels the review.
@@ -177,6 +177,6 @@ Reading them together is what makes a diagnosis:
 
 ## Where to go next
 
-- Configure providers and behavior: [Configuration guide](configuration.md).
-- Author agents, skills, memory, and MCP servers: [Agent system guide](agent-system.md).
-- The tool surface in detail: [Tools guide](tools.md).
+- Configure providers and behavior: [Configuration guide](../user/configuration.md).
+- Author agents, skills, memory, and MCP servers: [Agent system guide](../user/agent-system.md).
+- The tool surface in detail: [Tools guide](../user/tools.md).

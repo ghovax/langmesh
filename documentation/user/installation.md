@@ -65,4 +65,4 @@ You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv`
 
 Signing (steps 6, 7, 11) is optional for a build that only runs. It is necessary for a **stable Accessibility grant**: without it, every rebuild is a new code identity and macOS asks again.
 
-Both artifacts carry the same `CFBundleName` and identifier, so one certificate over both keeps them a single **LangMesh** row. See the [Development guide](development.md#building-and-signing).
+Both artifacts carry the same `CFBundleName` and identifier, so one certificate over both keeps them a single **LangMesh** row. See the [Development guide](../internal/development.md#building-and-signing).

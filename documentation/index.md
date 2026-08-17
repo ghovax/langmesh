@@ -8,8 +8,8 @@ LangMesh is an agent harness with two delivery layers: the `langmesh` Python lib
 | --- | --- | --- |
 | Embed an agent in a Python process | `langmesh.Session` | [Library quickstart](library/index.md) |
 | Compose the runtime directly | `AgentRuntime`, `RuntimeProfile`, and `RuntimeComponents` | [Composition](library/composition.md) |
-| Keep sessions durable and remotely addressable | `langmeshd` | [Architecture](architecture.md) |
-| Operate sessions | CLI or desktop app | [Command line](cli.md) or [desktop app](app.md) |
+| Keep sessions durable and remotely addressable | `langmeshd` | [Architecture](internal/architecture.md) |
+| Operate sessions | CLI or desktop app | [Command line](user/cli.md) or [desktop app](user/app.md) |
 
 ## Core guarantees
 
@@ -20,4 +20,4 @@ LangMesh is an agent harness with two delivery layers: the `langmesh` Python lib
 - Model-visible history is append-only. Reviewer and continuation requests preserve the existing provider-cache prefix.
 - Compaction preparation, compaction, continuation, persistence, workspaces, locations, MCP server connections, and peer sessions are replaceable library ports.
 
-Start with the [library quickstart](library/index.md) when embedding LangMesh, or [installation](installation.md) when using the product.
+Start with the [library quickstart](library/index.md) when embedding LangMesh, or [installation](user/installation.md) when using the product.

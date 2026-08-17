@@ -40,16 +40,17 @@ nav:
       - Compaction and continuation: library/compaction.md
       - Resources and persistence: library/resources.md
       - API reference: library/api.md
-  - Product:
-      - Architecture: architecture.md
-      - Installation: installation.md
-      - Command line: cli.md
-      - Desktop app: app.md
-      - Agent system: agent-system.md
-      - Configuration: configuration.md
-      - Configuration reference: configuration-reference.md
-      - Tools: tools.md
-      - Development: development.md
-  - Build these docs: building.md
+  - User guide:
+      - Installation: user/installation.md
+      - Desktop app: user/app.md
+      - Command line: user/cli.md
+      - Agent system: user/agent-system.md
+      - Configuration: user/configuration.md
+      - Configuration reference: user/configuration-reference.md
+      - Tools: user/tools.md
+  - Internals:
+      - Architecture: internal/architecture.md
+      - Development: internal/development.md
+      - Build these docs: internal/building.md
   - Security: https://github.com/ghovax/langmesh/blob/main/SECURITY.md
 strict: true

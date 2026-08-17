@@ -51,7 +51,7 @@ The tool reads the accessibility tree and the page's structure, not screenshots.
 
 ## A daemon somewhere else
 
-The app is a client, so the daemon it talks to need not be on this machine. An environment on an SSH host runs its tools there while the daemon stays here. To put the _daemon_ on another machine, forward its port and point the app at it, as described in [Architecture](architecture.md#connections-local-remote-ssh).
+The app is a client, so the daemon it talks to need not be on this machine. An environment on an SSH host runs its tools there while the daemon stays here. To put the _daemon_ on another machine, forward its port and point the app at it, as described in [Architecture](../internal/architecture.md#connections-local-remote-ssh).
 
 ## When there is no daemon
 
