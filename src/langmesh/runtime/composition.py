@@ -67,6 +67,10 @@ class RuntimeComponents:
     goal_listener: Callable[[Any], None] | None = None
     goal_review_journal: Any = None
     features: Sequence[Any] | None = None
+    # The machine snapshot and user context, probed by the host and passed in. None means the
+    # library supplies a minimal platform-only snapshot and no personal context.
+    machine_snapshot: dict[str, Any] | None = None
+    user_context: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.supplied_tool_gate not in {"ask", "none"}:
