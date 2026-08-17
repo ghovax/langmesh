@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
         "serve", help="make LangMesh available: the interface and the daemon behind it"
     )
     serve.add_argument(
-        "-p", "--port", type=int, default=8824, help="port to listen on (default 8824)"
+        "-p", "--port", type=int, default=None, help="port to listen on (default 8824; 8825 with --reach)"
     )
     serve.add_argument(
         "--host",
@@ -46,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
         dest="open_browser",
         action="store_true",
         help="also open a browser at the served address (off by default: serving is not a reason to take over the screen)",
+    )
+    serve.add_argument(
+        "--reach",
+        action="store_true",
+        help="serve the paired door: a durable pairing link, token-gated, for your own devices over your tailnet",
     )
     serve.set_defaults(handler=_command_serve)
 
