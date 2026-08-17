@@ -14,7 +14,7 @@ $ direnv allow
 
 `direnv allow` enters the flake's devshell on every `cd` into the directory. Without direnv, `nix develop` does the same thing for one shell.
 
-Then follow the [Development guide](documentation/internal/development.md) to run the daemon, the web UI, and the desktop app. [`langmesh serve`](documentation/user/cli.md) makes the interface available once the daemon is running.
+Then follow the [Development guide](documentation/internal/development.md) to run the daemon, the web UI, and the desktop app. [`langmesh serve`](documentation/user/installation.md) makes the interface available once the daemon is running.
 
 ## Ground rules
 

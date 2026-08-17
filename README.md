@@ -207,7 +207,7 @@ Three design choices distinguish LangMesh:
 - **A session is addressable, not a function call.** A session has a name, a durable record and an inbox, and it outlives whatever made it. To make a peer, a session creates another session and messages it. It uses the API that a person uses, and gets an answer as a message rather than a return value.
 - **A composed script, not a click-by-click loop.** `control_screen` runs a Python program. Its primitives (`click`, `type`, `scroll`, `evaluate`) are the same on native apps and in the browser. One call can loop over rows, branch on what it finds, and call the page's own API. The other tools need one round trip for each click. LangMesh needs far fewer model turns.
 
-The trade-off: it needs an accessibility tree or DOM to read, where a screenshot approach works on anything drawn on screen. See [Tools](documentation/user/tools.md).
+The trade-off: it needs an accessibility tree or DOM to read, where a screenshot approach works on anything drawn on screen. See [Tools](documentation/user/agents-and-tools.md).
 
 Elsewhere they lead. They have more polish, more places to run, and deeper ecosystems. Claude Code has subagents, hooks, plugins, and an Agent SDK. Codex has cloud tasks, more than 90 plugins, and automatic PR review. All three tools gate actions behind approvals and a sandbox.
 
@@ -234,7 +234,7 @@ That token does not say _which_ session is calling. A session runs as the same u
 
 ## Documentation
 
-The full guides live in the **[Documentation](documentation/index.md)**. They cover the [library](documentation/library/index.md), the [command line](documentation/user/cli.md), the [desktop app](documentation/user/app.md), [installation](documentation/user/installation.md), agents and skills, configuration, the tool surface, the [architecture](documentation/internal/architecture.md), and development.
+The full guides live in the **[Documentation](documentation/index.md)**. They cover the [library](documentation/library/index.md), the [command line](documentation/user/installation.md), the [desktop app](documentation/user/app.md), [installation](documentation/user/installation.md), agents and skills, configuration, the tool surface, the [architecture](documentation/internal/architecture.md), and development.
 
 ## Built with
 

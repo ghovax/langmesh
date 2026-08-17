@@ -42,7 +42,7 @@ Outside `web/`, the package layering runs `base`, then `protocol`, then `compute
 - **Nothing reaches the network at import.** A catalogue fetch at module scope blocks the daemon's boot behind a stranger's endpoint.
 - **The runtime keeps no process-wide state.** Nothing under `runtime/` parks a caller's argument in a module global, installs a signal handler, or registers an exit hook; one process may host more than one session.
 
-A new setting is a field on the configuration model, and then three things that are not in the code with it. The schema walk finds the field on its own, so the settings panel has it from the moment it exists. But the panel draws it with **a label and a sentence from `shared/messages/*.json`**, in every locale, and the [configuration reference](../user/configuration-reference.md) needs **a row**.
+A new setting is a field on the configuration model, and then three things that are not in the code with it. The schema walk finds the field on its own, so the settings panel has it from the moment it exists. But the panel draws it with **a label and a sentence from `shared/messages/*.json`**, in every locale, and the [configuration reference](../user/configuration.md) needs **a row**.
 
 ## Running the desktop app in dev
 
@@ -134,3 +134,13 @@ Beyond the battery: lint with `uv run ruff check`, and drive the affected path t
 | `packaging/` | PyInstaller freeze and signing, plus `entry.py` for the frozen build |
 | `scripts/` | Layering, import and translation checks; the verification battery |
 | `examples/` | Example MCP servers |
+
+
+
+---
+
+## Building the documentation
+
+The published site is built with MkDocs Material. Install and serve the locked documentation environment with `uv run --group docs mkdocs serve`; verify every link and API reference with `uv run --group docs mkdocs build --strict`.
+
+The library is the core release. Start with the [library quickstart](../library/index.md), then use the product guides for [installation](../user/installation.md), the [command line](../user/installation.md), or the [desktop app](../user/app.md).

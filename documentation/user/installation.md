@@ -66,3 +66,118 @@ You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv`
 Signing (steps 6, 7, 11) is optional for a build that only runs. It is necessary for a **stable Accessibility grant**: without it, every rebuild is a new code identity and macOS asks again.
 
 Both artifacts carry the same `CFBundleName` and identifier, so one certificate over both keeps them a single **LangMesh** row. See the [Development guide](../internal/development.md#building-and-signing).
+
+
+
+---
+
+## The `langmesh` command
+
+`langmesh` has one task: **serve** — make LangMesh available over HTTP, with the daemon behind it. Everything else a person does with the harness happens in the interface (the desktop app, or the browser the serve command exposes) or over the daemon's API.
+
+```shell
+langmesh serve
+```
+
+| Flag | What it does |
+|---|---|
+| `-p`, `--port` | Port to listen on. Default `8824`. |
+| `--host` | Address to bind. Default `127.0.0.1`. |
+| `--open` | Also open a browser at the served address. Off by default. |
+
+This serves the same interface the desktop app embeds, so a browser is a client like any other. It **proxies** the daemon rather than pointing the browser at it: the page never sees the daemon's capability token, and there is no CORS to configure. `serve` starts the daemon if it is not running, and stops a daemon it started when it exits; a daemon someone else was already running is left alone.
+
+> [!WARNING]
+> Whatever can reach this address can drive the daemon, because this server holds the token. It binds `127.0.0.1` for that reason. `--host` exists for tunnelling deliberately; if you use it, put authentication in front.
+
+Needs the interface to have been built (`cd web && bun run build` in a checkout). The packaged build carries it.
+
+### The daemon
+
+The daemon itself is `langmeshd` (`python -m langmesh langmeshd`), a separate process the interface talks to. `serve` and the desktop app start it when needed; it keeps running when the interface window or serve process goes away. Its status and endpoint are reported by the interface, or read from the state directory it publishes (`port` and `token` under the runtime directory).
+
+### What is not here
+
+There are no session, configuration, or account verbs. Creating and messaging sessions, answering permission requests, recurring work, remote agents, configuration, and sign-in all happen in the interface, or programmatically against the daemon's API. A session composes with its peers through [tools](agents-and-tools.md), over the same control plane; it does not shell out to this command.
+
+### Output and exit codes
+
+Diagnostics go to stderr; the exit code carries the outcome.
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Served, then exited normally. |
+| `1` | The interface could not be served (not built, port taken, daemon failed to start). |
+| `130` | Interrupted with Ctrl-C. |
+| `141` | A pipe closed under it. |
+
+---
+
+## Run LangMesh on a server
+
+The harness is a Python library plus a daemon; nothing about the daemon requires the machine it
+runs on to have a screen. `langmeshd` will run headless on a low-end Linux VPS — a single core
+and a gigabyte of RAM is plenty — and that is how you give real, always-on cloud agents a home:
+the compute, the files, and the credentials live on the VPS, and your desktop stays a client.
+
+What does **not** work on a headless Linux box are the macOS-only parts: the desktop app, and the
+screen-control tools. Everything an agent does with a shell, the filesystem, the network, MCP
+servers, peer sessions, goals, and its durable history is fully supported.
+
+### Install
+
+Python 3.13 and `uv` are the only requirements.
+
+```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv tool install langmesh
+```
+
+That puts `langmesh` (the CLI, which only serves) and `langmeshd` (the daemon) on your `PATH`.
+Alternatively install in a virtualenv: `uv venv && uv pip install langmesh`.
+
+### Run it as a service
+
+```ini
+## /etc/systemd/system/langmeshd.service
+[Unit]
+Description=LangMesh agent daemon
+After=network.target
+
+[Service]
+ExecStart=/root/.local/bin/langmeshd
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now langmeshd
+```
+
+On first boot the daemon seeds `~/.config/langmesh/configuration.yaml`. Add a provider key there
+(or set it as an environment variable, which wins over the file), and give the server's user the
+`.agents/` tree your agents and skills live in.
+
+### Reach it
+
+The daemon binds loopback and guards itself with a capability token. Carry it off the machine
+with a transport you choose:
+
+- **SSH tunnel.** Forward the daemon's port to your laptop: `ssh -L 8823:127.0.0.1:8823 vps`. The
+  port the daemon publishes is written under its runtime directory; the token sits beside it.
+- **Tailscale.** Install Tailscale on the VPS and on your laptop, then point the desktop app's
+  connect flow at the machine's tailnet address.
+
+A remote agent created on the server is a normal session: it keeps its transcript, its goals, and
+its approvals, and it is reachable from anywhere you can reach the daemon.
+
+### Keep it small
+
+- The daemon owns one `sqlite` database and the conversation history; a low-end VPS has room for
+  thousands of sessions.
+- Set the `LANGMESH` XDG state directories if you want them under `/srv` rather than `/root`.
+- The daemon is the single process that needs to stay up; everything else (the app, `serve`) is a
+  client you can close and reopen.
