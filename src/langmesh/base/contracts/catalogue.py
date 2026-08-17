@@ -215,7 +215,8 @@ class Catalogue:
 
 def packaged_prompts_directory() -> Path:
     """Where the harness's own prompt templates live."""
-    return Path(__file__).resolve().parent.parent / "runtime" / "prompts"
+    # This module sits at langmesh/base/contracts/, so the prompts tree is three levels up at langmesh/runtime/prompts.
+    return Path(__file__).resolve().parent.parent.parent / "runtime" / "prompts"
 
 
 def machine_catalogue(configuration: Any, working_directory: str = "") -> FileCatalogue:
