@@ -9,7 +9,7 @@ from typing import Any, Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
-# The process-wide exporter, installed by `configure()` — what `langmeshd` sets up once at boot.
+# The process-wide exporter, installed by `configure()` — set up once at process boot.
 _tracer: Any = None
 _token_counter: Any = None
 _call_counter: Any = None

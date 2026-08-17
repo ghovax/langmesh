@@ -33,19 +33,18 @@ STARTUP_LOAD_FAILED = "load_failed"
 
 
 def _worker_main(
-    request_queue, response_queue, model_identifier: str, parent_process_identifier: int
+    request_queue, response_queue, model_identifier: str, parent_process_identifier: int, log_path: str = ""
 ) -> None:
     """Load the model once, then answer transcription requests until told to stop."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
-    # Spawned, so nothing about the daemon's logging is inherited; configured here against the same file.
-    from langmesh.daemon.paths import daemon_log_path
-
+    # Spawned, so nothing about the daemon's logging is inherited; configured here against the same file
+    # the host passes in (the library itself never names the daemon's log).
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
         handlers=[
             logging.StreamHandler(sys.stderr),
-            logging.FileHandler(daemon_log_path()),
+            *( [logging.FileHandler(log_path)] if log_path else [] ),
         ],
     )
 
@@ -127,8 +126,10 @@ STATE_FAILED = "failed"
 class SpeechTranscriber:
     """Owns the worker process and replaces it when it stops answering, loading off to one side."""
 
-    def __init__(self, model_identifier: str, timing) -> None:
+    def __init__(self, model_identifier: str, timing, log_path: str = "") -> None:
         self._model_identifier = model_identifier
+        # Where the daemon that hosts this worker wants its logs; empty in a library embedding.
+        self._log_path = log_path
         # The timing section, held rather than unpacked, so a replaced worker uses the limits in force now.
         self._timing = timing
         self._context = multiprocessing.get_context("spawn")
@@ -206,7 +207,13 @@ class SpeechTranscriber:
         self._responses = self._context.Queue()
         self._process = self._context.Process(
             target=_worker_main,
-            args=(self._requests, self._responses, self._model_identifier, os.getpid()),
+            args=(
+                self._requests,
+                self._responses,
+                self._model_identifier,
+                os.getpid(),
+                self._log_path,
+            ),
             name="langmesh-dictation",
             daemon=True,
         )

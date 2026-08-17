@@ -323,7 +323,7 @@ class Session:
 
         if isinstance(agent, str):
             raise TypeError(
-                "agent must be an AgentConfiguration, not a name. A name would mean this library goes looking for a profile on your machine. Build one in code, or load it yourself: `langmesh.daemon.machine.load_catalogue(...).agent(name)`."
+                "agent must be an AgentConfiguration, not a name. A name would mean this library goes looking for a profile on your machine. Build one in code, or load your own catalogue."
             )
         self._agent = agent
         if directory is None and resources is None:

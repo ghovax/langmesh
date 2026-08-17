@@ -39,7 +39,7 @@ def state_directory() -> Path:
 
 
 def runtime_directory() -> Path:
-    """Sockets and the daemon's handshake files, with a per-user fallback where the runtime variable is unset."""
+    """Sockets and the runtime's handshake files, with a per-user fallback where the runtime variable is unset."""
     raw = os.environ.get("XDG_RUNTIME_DIR", "").strip()
     if raw.startswith("/"):
         path = Path(raw) / APPLICATION
@@ -129,7 +129,7 @@ def session_socket_identifier(session_id: str) -> str:
 
 
 def reach_token_path() -> Path:
-    """The token a paired phone presents, in the data directory because it outlives a daemon."""
+    """The token a paired phone presents, in the data directory because it outlives the process."""
     return data_directory() / "reach-token"
 
 
