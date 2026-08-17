@@ -516,6 +516,14 @@ class AgentRuntime(
             ),
         )
         self._features = build_features(components.features, self._plugin_context, plugin_host)
+        # Features may contribute tools of their own (computer use, ...); bind them to the model
+        # and make them executable alongside the configured roster.
+        contributed = self._features.contributed_tools()
+        if contributed:
+            self._model_tools = [*self._model_tools, *contributed]
+            self._tools = [*self._tools, *contributed]
+            self._tool_schemas.update({tool.name: tool.args_schema for tool in contributed})
+            self._bound_model = self._model.bind_tools(self._model_tools)
         # The host's goal listener is handed to the goal plugin, which owns the goal itself.
         goal_review = self._features.by_type(GoalReviewFeature)
         if goal_review is not None:

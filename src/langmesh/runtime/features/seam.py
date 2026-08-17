@@ -36,6 +36,10 @@ class Feature:
     def compose_context(self, context: dict) -> None:
         """Contribute to the turn's model-facing context, merging into ``context`` in place."""
 
+    def contribute_tools(self) -> list:
+        """The tools this feature provides to the session's roster, empty when it provides none."""
+        return []
+
     def compose_prompt(self, variables: dict[str, str]) -> None:
         """Contribute named prompt sections, merging into ``variables`` in place."""
 
@@ -157,6 +161,13 @@ class Features:
     def compose_context(self, context: dict) -> None:
         for feature in self._instances:
             feature.compose_context(context)
+
+    def contributed_tools(self) -> list:
+        """Every tool the installed features provide, in feature order."""
+        tools: list = []
+        for feature in self._instances:
+            tools.extend(feature.contribute_tools())
+        return tools
 
     def compose_prompt(self, variables: dict[str, str]) -> None:
         for feature in self._instances:

@@ -100,7 +100,7 @@ class _RunsTurns:
     def _machine_snapshot(self) -> dict:
         """The machine snapshot the host probed, or a minimal platform-only fallback.
 
-        Probing the machine (shell history, installed apps, ...) is the daemon's job; a bare
+        Probing the machine (shell history, installed apps, ...) is the host's job; a bare
         library embedding gets only the platform name.
         """
         supplied = getattr(getattr(self, "_components", None), "machine_snapshot", None)
@@ -136,7 +136,6 @@ class _RunsTurns:
             context = TurnContext(
                 now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
                 pwd=self._working_directory or str(Path.cwd()),
-                screen=self._screen_context(),
                 locations=self._locations_summary(),
                 confinement=self._confinement_summary(),
             ).model_dump(exclude_defaults=True)
@@ -180,12 +179,6 @@ class _RunsTurns:
             user_environment = ""
             if self._user_context_enabled():
                 user_environment = self._prompt_loader.load("user_context", {})
-            # The screen tools are opt-in, so their guidance enters the prompt only when they do.
-            computer_control_guidance = ""
-            if self._global_configuration.computer_control.enabled:
-                computer_control_guidance = self._prompt_loader.load(
-                    "computer_control_guidance", {}
-                )
             # Guidance for tools this session lacks is guidance to call something that is not there.
             toolbox = (
                 self._prompt_loader.load("toolbox", {})
@@ -233,7 +226,6 @@ class _RunsTurns:
                 "skills": lines(skills_payload(agent_skills)),
                 "memories": lines(memories_payload(memories)),
                 "agent_context": agent_context,
-                "computer_control_guidance": computer_control_guidance,
                 "toolbox": toolbox,
                 "peer_sessions": peer_sessions,
                 "mcp_servers": mcp_servers,
@@ -272,31 +264,6 @@ class _RunsTurns:
         if self._access_grants:
             summary["granted"] = [grant.as_dict() for grant in self._access_grants]
         return summary
-
-    def _screen_context(self) -> dict:
-        """Every place a screen script can be pointed at, and what may be called in each."""
-        if not self._global_configuration.computer_control.enabled:
-            return {}
-        try:
-            from langmesh.computer import targets as target_registry
-            from langmesh.computer.surface import message_loader
-
-            # Skipped rather than waited on: enumerating costs ~1.8s the first time a process asks.
-            if not target_registry.warm():
-                return {"reading": message_loader("computer")("screen_warming")}
-
-            from langmesh.computer import workflows
-
-            # Every primitive is listed: what a script may call is decided per call, from what it asks to do.
-            block = target_registry.context_block()
-            # Saved workflows, read off the files without importing them, since this runs every turn.
-            saved = workflows.available(self._project_directory or self._working_directory or "")
-            if saved:
-                block["workflows"] = saved
-            return block
-        except Exception:  # noqa: BLE001 — context is an aid, never the thing that fails a turn
-            logger.debug("could not enumerate screen targets for the turn context", exc_info=True)
-            return {}
 
     def _record_turn(
         self, user_message: str, tool_calls: list, tool_results: list, final_response: str

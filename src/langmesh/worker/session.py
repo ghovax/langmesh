@@ -105,8 +105,6 @@ def _compose_session_tools(
             continue
         if name == "ask_user" and not (permission_mode is None or permission_mode.asks):
             continue
-        if name == "control_screen" and not global_configuration.computer_control.enabled:
-            continue
         if name in _MCP_TOOL_NAMES and not global_configuration.mcp.enabled_servers():
             continue
         if name in _REMOTE_TOOL_NAMES and not global_configuration.remote_agents.agents:
@@ -202,8 +200,6 @@ class SessionExecutor(AgentExecutor):
         # This session's own MCP server connections, and the task connecting them.
         self._mcp_server_manager = None
         self._mcp_connect: Optional[asyncio.Task] = None
-        # Held so the screen warm-up is not collected mid-flight; nothing ever awaits it.
-        self._screen_warm: Optional[asyncio.Task] = None
         self._goal_state_tail: Optional[asyncio.Task] = None
         self._session_state_lock = asyncio.Lock()
         # Linearizes external send decisions. Without this, two concurrent callers can both observe "idle" and start separate turns before either marks the context running.
@@ -1181,16 +1177,6 @@ class SessionExecutor(AgentExecutor):
             # Connected in the background, so a hung server does not delay the session's socket.
             self._mcp_connect = asyncio.create_task(self._mcp_server_manager.start())
 
-        # Warm the screen listing now: the first ask costs ~1.8s per running application.
-        if self._global_configuration.computer_control.enabled:
-
-            def warm_screen() -> None:
-                from langmesh.computer import targets
-
-                targets.prewarm()
-
-            self._screen_warm = asyncio.create_task(asyncio.to_thread(warm_screen))
-
         self._context(self._session_id)
         await self.resume_pending_jobs()
 
@@ -1446,14 +1432,6 @@ class SessionExecutor(AgentExecutor):
         if self._title_task is not None and not self._title_task.done():
             with contextlib.suppress(Exception):
                 await self._title_task
-        # The browser surface is closed by the session that opened it, and only if a screen tool ever ran.
-        if "langmesh.computer.web" in sys.modules:
-            with contextlib.suppress(Exception):
-                sys.modules["langmesh.computer.web"].close()
-        if self._screen_warm is not None and not self._screen_warm.done():
-            self._screen_warm.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await self._screen_warm
         if self._mcp_connect is not None and not self._mcp_connect.done():
             self._mcp_connect.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):

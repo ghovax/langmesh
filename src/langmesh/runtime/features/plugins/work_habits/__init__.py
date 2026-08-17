@@ -1,7 +1,7 @@
 """The work-habits plugin: the user's habitual shell commands, injected when the host enables it.
 
 The library core never mines the user's shell history: that is a personal-environment feature
-the daemon opts into. This plugin reads the history and contributes the habitual commands to
+the host opts into. This plugin reads the history and contributes the habitual commands to
 the turn's model-facing context, so a bare library embedding stays free of it.
 """
 

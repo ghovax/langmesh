@@ -237,7 +237,7 @@ def project_catalogue(configuration: Any, working_directory: str) -> FileCatalog
     """The catalogue an embedded harness gets: nothing from disk.
 
     The library is usable standalone in code: agents, skills and memories are environment
-    content that the daemon loads from disk and passes in. A bare library embedding carries
+    content that the host loads from disk and passes in. A bare library embedding carries
     only its own prompts and none of the machine's profiles.
     """
     local = Path(working_directory).expanduser()
