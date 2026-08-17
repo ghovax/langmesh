@@ -84,7 +84,6 @@ Compaction failures use `compaction()` instead. A blocked compaction must succee
 
 
 
----
 
 ## Events and driving patterns
 
@@ -129,7 +128,6 @@ async def drive(session, message):
 
 An application may stop consuming events without interrupting the runtime only if it continues draining in another task. To stop work, call `Session.interrupt()`; cancellation closes the provider stream, records a cancelled transcript turn, checkpoints the closed exchange, and returns the session to `idle`.
 
----
 
 ## Models, credentials, and cache behavior
 

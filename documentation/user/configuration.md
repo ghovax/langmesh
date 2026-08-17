@@ -287,7 +287,6 @@ telemetry:
 
 
 
----
 
 ## Configuration reference
 

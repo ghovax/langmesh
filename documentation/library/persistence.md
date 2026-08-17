@@ -1,10 +1,4 @@
-
-
-
-
----
-
-## Compaction and continuation
+# Compaction and continuation
 
 History management has two independent policies: preparation establishes that durable knowledge is safe; compaction chooses which model messages remain.
 
@@ -96,7 +90,6 @@ The standard `TuningContinuationPolicy` reads the independent goal and task allo
 
 A new user message restores both allowances. `await Session.clear_goal()` calls off a goal and checkpoints its final state before returning.
 
----
 
 ## Resources and persistence
 
