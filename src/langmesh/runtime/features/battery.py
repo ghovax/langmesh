@@ -12,11 +12,14 @@ from langmesh.runtime.features.plugins.compaction import Compaction
 from langmesh.runtime.features.plugins.continuation import Continuation
 from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
 from langmesh.runtime.features.plugins.observations import ObservationMemory
+from langmesh.runtime.features.plugins.permission_reviewer import PermissionReviewer
 from langmesh.runtime.features.plugins.permissions import PermissionReview
 
 
 def default_features(components) -> list:
     """The shipped features for a session, with the caller's ports bound."""
+    # The automatic permission evaluator is its own plugin; the boundary plugin calls it for a verdict.
+    reviewer = PermissionReviewer()
     return [
         GoalReviewFeature(journal=components.goal_review_journal),
         Compaction(
@@ -24,7 +27,8 @@ def default_features(components) -> list:
             preparation=components.compaction_preparation,
             summarizer=components.compaction_summarizer,
         ),
-        PermissionReview(),
+        PermissionReview(reviewer=reviewer),
+        reviewer,
         Continuation(policy=components.continuations),
         ObservationMemory(),
         BackgroundJobsFeature(store=components.jobs),
