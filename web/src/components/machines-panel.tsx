@@ -125,7 +125,7 @@ export function MachinesPanel() {
                     <Text fontSize="xs">{translation("connected")}</Text>
                   </Flex>
                 ) : (
-                  <Button size="xs" variant="outline" onClick={() => void open(machine)}>
+                  <Button size="xs" variant="ghost" onClick={() => void open(machine)}>
                     <LuArrowUpRight />
                     {translation("connect")}
                   </Button>
