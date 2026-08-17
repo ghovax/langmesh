@@ -10,6 +10,7 @@ hiddenimports = []
 # Packages whose submodules/data must be collected wholesale.
 _collect = [
     "langmesh",
+    "langmeshd",
     "litellm",
     "langchain",
     "langchain_core",
