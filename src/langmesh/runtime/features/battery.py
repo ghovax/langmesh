@@ -14,6 +14,7 @@ from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
 from langmesh.runtime.features.plugins.observations import ObservationMemory
 from langmesh.runtime.features.plugins.permission_reviewer import PermissionReviewer
 from langmesh.runtime.features.plugins.permissions import PermissionReview
+from langmesh.runtime.features.plugins.work_habits import WorkHabits
 
 
 def default_features(components) -> list:
@@ -32,6 +33,7 @@ def default_features(components) -> list:
         Continuation(policy=components.continuations),
         ObservationMemory(),
         BackgroundJobsFeature(store=components.jobs),
+        WorkHabits(),
     ]
 
 

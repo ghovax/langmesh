@@ -336,8 +336,8 @@ def probe_local_environment(path: Optional[Sequence[str]] = None) -> str:
             "present": present,
             "absent": [name for name in probed if name not in present],
         },
-        # The user's habitual commands mapped to how they invoke them, with no positional arguments or flag values.
-        "frequent_commands": _shell_command_usage(),
+        # The user's habitual commands are a plugin concern (work_habits), not core: a library
+        # embedding must not mine the user's shell history.
         "editor": os.environ.get(environment_variables.EDITOR)
         or os.environ.get(environment_variables.VISUAL),
         "path": list(path)
