@@ -409,6 +409,13 @@ class ComputerUse(Feature):
         self._context = context
         self._host = host
         self._prompts = context.prompts("computer_use")
+        # Bind which models rank a screen, from the loaded configuration.
+        screen = getattr(context.global_configuration, "computer_control", None)
+        section = getattr(screen, "retrieval", None)
+        if section is not None:
+            from langmesh.computer.retrieval import retrieval_policy_from, set_retrieval_policy
+
+            set_retrieval_policy(retrieval_policy_from(section))
 
     @property
     def _enabled(self) -> bool:
