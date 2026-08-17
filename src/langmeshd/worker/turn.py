@@ -286,7 +286,7 @@ class _TurnRunner:
             assert isinstance(prepared, _Prepared)
             if await self._reconcile_goal(prepared) is self._DONE:
                 return
-            if await self._run_compaction_turn(prepared) is self._DONE:
+            if await self._run_maintenance_turn(prepared) is self._DONE:
                 return
             composed = await self._compose_turn_input(prepared)
             await self._stream_and_finalize(composed)
@@ -596,8 +596,8 @@ class _TurnRunner:
             _features.restore_task_allowance(runtime)
         return None
 
-    async def _run_compaction_turn(self, prepared: _Prepared) -> object | None:
-        """A manual compaction runs no model turn: it compacts the older history and emits the compaction parts."""
+    async def _run_maintenance_turn(self, prepared: _Prepared) -> object | None:
+        """A manual maintenance runs no model turn: it folds the older history and emits the maintenance parts."""
         if prepared.resolved.ingested.mode is not _TurnMode.COMPACTION:
             return None
         try:
