@@ -142,7 +142,7 @@ class _ContextState:
     aborted: bool = False
     # A reset asked to drop the runtime while work was in flight, so the drop waits for idle.
     pending_reset: bool = False
-    # A fork keeps its inherited prefix in an immutable daemon snapshot and persists only the suffix it writes. Compaction that changes the prefix clears these fields and detaches it.
+    # A fork keeps its inherited prefix in an immutable snapshot and persists only the suffix it writes. Compaction that changes the prefix clears these fields and detaches it.
     inherited_snapshot_id: str = ""
     inherited_message_count: int = 0
 
@@ -331,7 +331,7 @@ class _TurnRunner:
             )
 
     async def _suspend_turn(self, interactions: list[SuspensionGate], plans: dict) -> bool:
-        # Every pause is durable, so a session waiting on a human survives a daemon restart.
+        # Every pause is durable, so a session waiting on a human survives a host restart.
         return await self._executor._suspend_durable_segment(
             self._task, self._updater, interactions, plans, self._save_runtime_conversation
         )
@@ -339,7 +339,7 @@ class _TurnRunner:
     # The phases themselves.
 
     async def _publish_usage_snapshot(self) -> None:
-        """Send the daemon what this turn learned about the account's limits. Never fatal to the turn."""
+        """Send the host what this turn learned about the account's limits. Never fatal to the turn."""
         from langmesh.base.identity.subscription import get_usage_snapshot
 
         snapshot = get_usage_snapshot()

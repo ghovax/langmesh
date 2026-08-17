@@ -1,7 +1,7 @@
 """The port a worker uses to reach its host.
 
-The worker (library) never imports the daemon: the daemon implements this
-interface and injects it into each session it hosts. A library-only embedding
+The worker (library) never imports the app: the host implements this
+interface and injects it into each session it runs. A library-only embedding
 gets the null implementation, whose calls are no-ops or raise.
 """
 
@@ -37,7 +37,7 @@ class HostServices(Protocol):
 
 
 class NullHostServices:
-    """The host services of a library embedding with no daemon behind it."""
+    """The host services of a library embedding with no host behind it."""
 
     def publish_part(self, session_id: str, part: dict) -> None:
         return None

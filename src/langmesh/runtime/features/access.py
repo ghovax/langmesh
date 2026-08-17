@@ -1,6 +1,6 @@
 """Typed access to the installed features, for the application layer.
 
-The runtime core never names a feature. The application layer — `Session`, the daemon — is the
+The runtime core never names a feature. The application layer — `Session`, the host — is the
 one that composed the features, so it is the only place allowed to reach them by class. These
 functions are that layer's handle: they resolve the installed feature of the relevant class and
 call it, mirroring what used to live on the runtime so the harness reads the same way.

@@ -34,7 +34,7 @@ async def dictation_status(prepare: bool = False):
     """Whether dictation is on, which model it uses, and what that model is doing."""
     assert state.global_configuration is not None
     dictation = state.global_configuration.dictation
-    from langmesh.dictation.transcriber import STATE_IDLE
+    from langmeshd.dictation.transcriber import STATE_IDLE
 
     transcriber = _transcriber
     if prepare and dictation.enabled:
@@ -54,7 +54,7 @@ async def _ensure_transcriber():
     global _transcriber
     async with _transcriber_lock:
         if _transcriber is None:
-            from langmesh.dictation.transcriber import SpeechTranscriber
+            from langmeshd.dictation.transcriber import SpeechTranscriber
 
             assert state.global_configuration is not None
             dictation = state.global_configuration.dictation
@@ -82,7 +82,7 @@ async def transcribe(request: Request):
     if len(body) // 4 > MAXIMUM_SAMPLES:
         raise HTTPException(status_code=413, detail="That recording is too long to transcribe.")
 
-    from langmesh.dictation.transcriber import DictationUnavailable
+    from langmeshd.dictation.transcriber import DictationUnavailable
 
     transcriber = await _ensure_transcriber()
 

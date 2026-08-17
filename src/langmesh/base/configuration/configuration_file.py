@@ -96,7 +96,7 @@ def parse(raw: str) -> Any:
 
 
 def rejects(data: dict) -> str:
-    """Why this document would not load, asked before the file is written because the daemon reads it at startup."""
+    """Why this document would not load, asked before the file is written because it is read at startup."""
     from langmesh.base.configuration import Configuration
 
     try:

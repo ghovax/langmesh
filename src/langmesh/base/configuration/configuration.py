@@ -96,7 +96,6 @@ def save_api_keys(
     toolbox_enabled: bool | None = None,
     dictation_enabled: bool | None = None,
     tuning: dict | None = None,
-    daemon: dict | None = None,
     provider_keys: dict[str, str] | None = None,
     provider_base_urls: dict[str, str] | None = None,
 ) -> None:
@@ -124,8 +123,6 @@ def save_api_keys(
         data.setdefault("compaction", {}).update(compaction)
     if tuning is not None:
         data.setdefault("tuning", {}).update(tuning)
-    if daemon is not None:
-        data.setdefault("daemon", {}).update(daemon)
     if user_context_enabled is not None:
         data.setdefault("user_context", {})["enabled"] = user_context_enabled
     if computer_control_enabled is not None:

@@ -1011,7 +1011,7 @@ def resolve_command(command: str, spawn: Spawn) -> list[str]:
 
 
 def probe() -> dict:
-    """Whether confinement actually works here, checked at daemon start rather than assumed."""
+    """Whether confinement actually works here, checked at process start rather than assumed."""
     name = backend_name()
     if name == "sandbox-exec":
         try:

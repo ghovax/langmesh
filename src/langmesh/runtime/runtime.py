@@ -299,7 +299,7 @@ class AgentRuntime(
         self._global_configuration = global_configuration
         self._working_directory = working_directory or str(Path.home())
         self._project_directory = project_directory or self._working_directory
-        # The daemon already resolved the session mode; a direct library caller falls back to the profile.
+        # The host already resolved the session mode; a direct library caller falls back to the profile.
         self._permission_mode = PermissionMode.resolve(
             profile.permission_mode, agent_configuration.permission_default
         )
@@ -411,7 +411,7 @@ class AgentRuntime(
         self._session_revision = 0
         self._persisted_session_revision = 0
         self._execution_history: list[dict] = []
-        # The permission policy as one value, resolved by the daemon before this runtime is built.
+        # The permission policy as one value, resolved by the host before this runtime is built.
         self._a2a_turn_id: str = ""
         # Reads another task by id from the shared store, so context-aware agents can coordinate.
         self._turn_reader: Optional[Callable] = components.related_turns
@@ -515,7 +515,7 @@ class AgentRuntime(
             ),
         )
         self._features = build_features(components.features, self._plugin_context, plugin_host)
-        # The daemon's goal listener is handed to the goal plugin, which owns the goal itself.
+        # The host's goal listener is handed to the goal plugin, which owns the goal itself.
         goal_review = self._features.by_type(GoalReviewFeature)
         if goal_review is not None:
             goal_review.set_listener(components.goal_listener)
@@ -900,7 +900,7 @@ class AgentRuntime(
         return bool(self._pending_steering)
 
     def set_permission_mode(self, mode: PermissionMode) -> PermissionMode:
-        """Adopt the mode the daemon resolved, reaching the very next tool call."""
+        """Adopt the mode the host resolved, reaching the very next tool call."""
         self._permission_mode = mode
         return mode
 

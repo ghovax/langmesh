@@ -939,7 +939,7 @@ class SessionExecutor(AgentExecutor):
     def _compose_features(
         self, session_id: str, runtime_directory: str, configuration, catalogue
     ):
-        """The daemon's features for one session, its ports bound the way the daemon holds them."""
+        """The host's features for one session, its ports bound the way the host holds them."""
         from langmesh.runtime.features.battery import default_features
         from langmesh.runtime.features.plugins.titling import TitleAssignment
 
@@ -951,13 +951,13 @@ class SessionExecutor(AgentExecutor):
         ports.continuations = None
         ports.jobs = self._job_store
         features = default_features(ports)
-        # Naming the session is the daemon's own plugin, attached to a context the daemon builds.
+        # Naming the session is the host's own plugin, attached to a context the host builds.
         self._titling = TitleAssignment()
         self._titling.attach(self._titling_context(session_id, runtime_directory, configuration, catalogue), None)
         return features
 
     def _titling_context(self, session_id: str, runtime_directory: str, configuration, catalogue):
-        """The public context the titling plugin is given, built from what this daemon already holds."""
+        """The public context the titling plugin is given, built from what this host already holds."""
         from langmesh.runtime.features import PluginBus, PluginContext, feature_prompts
 
         return PluginContext(
@@ -1076,7 +1076,7 @@ class SessionExecutor(AgentExecutor):
         wake_task.add_done_callback(self._startup_resume_tasks.discard)
 
     def _workspace(self, requested_working_directory: str = "") -> SessionWorktree:
-        """Where this session's work happens, resolved once by the daemon rather than renegotiated per turn."""
+        """Where this session's work happens, resolved once by the host rather than renegotiated per turn."""
         source = requested_working_directory or self._working_directory or ""
         runtime = self._runtime_working_directory or source
         return SessionWorktree(

@@ -285,7 +285,7 @@ def resolve_litellm(
     if split is None:
         raise ValueError(f"Model id has no provider prefix: {model_identifier!r}")
     provider_identifier, suffix = split
-    # `models.dev` providers are registered while the catalogue is built. Resolve the model first so a cold daemon can run its first turn without depending on the UI having listed models beforehand; model selection and provider registration become one ordered operation.
+    # `models.dev` providers are registered while the catalogue is built. Resolve the model first so a cold runtime can run its first turn without depending on the UI having listed models beforehand; model selection and provider registration become one ordered operation.
     catalog_model = find_model(model_identifier)
     definition: ProviderDefinition | None = get_provider_definition(provider_identifier)
     if definition is None:
