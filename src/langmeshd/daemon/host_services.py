@@ -48,3 +48,9 @@ class DaemonHostServices:
     def build_goal_review_journal(self, turn_store: Any) -> Any:
         """The A2A goal-review adapter, bound to the session's own turn store."""
         return HostGoalReviewJournal(turn_store, lambda: "", host=self)
+
+    def plugin_tools(self) -> dict[str, Any]:
+        """Every tool the daemon's composed plugins contribute, keyed by name."""
+        from langmeshd.features import contributed_tools
+
+        return contributed_tools()

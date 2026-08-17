@@ -51,7 +51,6 @@ from langmesh.runtime.compaction import (
     ObservationCompactionPreparation,
 )
 from langmesh.runtime.continuation import TuningContinuationPolicy
-from langmesh.runtime.features.battery import default_features
 from langmesh.runtime.features import access as _features
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile, SessionComponents
 from langmesh.runtime.hooks import MaximumToolCalls
@@ -508,11 +507,7 @@ class Session:
                         if self._materialized_resources is not None
                         else None
                     ),
-                    features=(
-                        self._components.features
-                        if self._components.features is not None
-                        else default_features(self._components)
-                    ),
+                    features=self._components.features or [],
                 ),
             )
             for grant in self._pending_grants:

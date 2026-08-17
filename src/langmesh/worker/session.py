@@ -91,16 +91,20 @@ def _compose_session_tools(
     *,
     can_reach_peers: bool = False,
     permission_mode: Any = None,
+    plugin_tools: dict[str, Any] | None = None,
 ) -> list[Any]:
     """The host's toolset for one session: the agent profile's declared built-ins, gated by
     what the machine actually has, plus the peer and remote tools the host owns. Nothing is
-    forced — an agent that declares no tools runs with none."""
+    forced — an agent that declares no tools runs with none. Plugin-owned tools resolve by
+    name from the contributed map, so the core never names a plugin."""
     from langmesh.runtime.tools import registry
     from langmesh.runtime.tools.sessions import remote_agent_tools, session_tools
 
     tools = []
     for name in configuration.tools_enabled:
         schema = getattr(registry, name, None)
+        if schema is None or not hasattr(schema, "name"):
+            schema = (plugin_tools or {}).get(name)
         if schema is None or not hasattr(schema, "name"):
             continue
         if name == "ask_user" and not (permission_mode is None or permission_mode.asks):
@@ -138,12 +142,16 @@ class SessionExecutor(AgentExecutor):
         token: str = "",
         job_store: Optional[JobStore] = None,
         host: Optional[Any] = None,
+        feature_factory: Optional[Any] = None,
     ):
         self._session_id = session_id
         self._agent_name = agent_name
         # The host services port: what a session needs from the process hosting it. The host
         # injects its implementation; a library embedding gets the null one.
         self._host: HostServices = host if host is not None else NullHostServices()
+        # The host's feature composer: which plugins a session runs is the caller's decision,
+        # never a library default. None means no features.
+        self._feature_factory = feature_factory
         # A worker is a process a restart happens to, so its jobs want the durable store. Injectable all the same.
         self._job_store: JobStore = (
             job_store if job_store is not None else get_background_job_store()
@@ -878,18 +886,21 @@ class SessionExecutor(AgentExecutor):
                 )
             )
         runtime_directory = working_directory or project_directory or str(Path.cwd())
-        # The host composes the session's tools: the agent profile's declared set, mapped onto the shipped built-ins, plus the settings-gated and peer tools it owns. The library forces nothing; this is the host assembling the toolset.
+        # The host composes the session's tools: the agent profile's declared set, mapped onto the shipped built-ins, plus the settings-gated and peer tools it owns. The library forces nothing; this is the host assembling the toolset. Plugin-owned tools come from the plugins' own contribute_tools, keyed by name.
         composed = _compose_session_tools(
             configuration,
             self._global_configuration,
             working_directory,
             can_reach_peers=self._peers is not None,
             permission_mode=self._permission_mode,
+            plugin_tools=self._host.plugin_tools(),
         )
         # The permission evaluator refuses what the profile did not declare, so the declared set is exactly the composed set.
         configuration = configuration.model_copy(
             update={"tools_enabled": sorted({tool.name for tool in composed})}
         )
+        # The host's plugin bundle: which features run and the ports they need.
+        bundle = self._plugin_bundle(session_id, runtime_directory, configuration, catalogue)
         runtime = AgentRuntime(
             RuntimeProfile(
                 agent=configuration,
@@ -913,11 +924,11 @@ class SessionExecutor(AgentExecutor):
                 mcp_servers=self._mcp_server_manager,
                 jobs=self._job_store,
                 toolset=composed,
-                compaction_preparation=self._compaction_preparation(runtime_directory),
                 related_turns=self._make_turn_reader(),
                 goal_listener=lambda goal: self._notify_goal_state(session_id, goal),
-                goal_review_journal=self._goal_review_journal(session_id),
-                features=self._compose_features(session_id, runtime_directory, configuration, catalogue),
+                features=(bundle.get("features") or []),
+                compaction_preparation=bundle.get("compaction_preparation"),
+                goal_review_journal=bundle.get("goal_review_journal"),
                 # The host probes the machine and the user's context; the library never does.
                 machine_snapshot=self._machine_snapshot(),
                 user_context=self._user_context_snapshot(),
@@ -958,29 +969,20 @@ class SessionExecutor(AgentExecutor):
             parsed = {}
         return parsed if isinstance(parsed, dict) else {}
 
-    def _compose_features(
+    def _plugin_bundle(
         self, session_id: str, runtime_directory: str, configuration, catalogue
     ):
-        """The host's features for one session, its ports bound the way the host holds them."""
-        from langmesh.runtime.features.battery import default_features
-
-        ports = type("FeaturePorts", (), {})()
-        ports.goal_review_journal = self._goal_review_journal(session_id)
-        ports.compaction = None
-        ports.compaction_preparation = self._compaction_preparation(runtime_directory)
-        ports.compaction_summarizer = None
-        ports.continuations = None
-        ports.jobs = self._job_store
-        return default_features(ports)
-
-    def _compaction_preparation(self, working_directory: str):
-        from langmesh.base.persistence.observation_store import SQLiteObservationStore
-        from langmesh.runtime.compaction import ObservationCompactionPreparation
-
-        return ObservationCompactionPreparation(
-            SQLiteObservationStore(
-                self._global_configuration.observation_database_for(working_directory)
-            )
+        """The session's plugin bundle (features and their ports), from the host's injected composer."""
+        if self._feature_factory is None:
+            return {}
+        return self._feature_factory(
+            session_id=session_id,
+            runtime_directory=runtime_directory,
+            configuration=configuration,
+            catalogue=catalogue,
+            job_store=self._job_store,
+            goal_review_journal=self._host.build_goal_review_journal(self._turn_store),
+            global_configuration=self._global_configuration,
         )
 
     def _make_turn_reader(self):
@@ -996,10 +998,6 @@ class SessionExecutor(AgentExecutor):
             )
 
         return read_turn
-
-    def _goal_review_journal(self, session_id: str):
-        """The host's goal-review journal adapter for this session, or none when the host provides none."""
-        return self._host.build_goal_review_journal(self._turn_store)
 
     async def _runtime_for(self, session_id: str, workspace: SessionWorktree) -> AgentRuntime:
         # Apply a reset deferred while work was in flight, so this turn rebuilds with the new configuration.

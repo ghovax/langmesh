@@ -151,6 +151,13 @@ def _without_provider_reasoning(messages: list) -> list:
 class Compaction(Feature):
     """Keep a conversation inside its window after the agent checkpoints workspace knowledge."""
 
+    def contribute_tools(self) -> list:
+        """The summary-submission tool this plugin owns."""
+        from langmesh.runtime.features.plugins.compaction.tools import (
+            submit_compaction_summary,
+        )
+
+        return [submit_compaction_summary]
 
     def __init__(
         self,
@@ -740,10 +747,12 @@ class Compaction(Feature):
         summarizer.constrain_toolset([summary_tool])
 
     def _compaction_summarizer_runtime(self, scratch_directory: str):
-        from langmesh.runtime.tools.registry import submit_compaction_summary as submit_compaction_summary_tool
         """The hidden session that produces the compaction summary, mirroring the goal reviewer."""
         from langmesh.base.configuration import PermissionEvaluator
         from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
+        from langmesh.runtime.features.plugins.compaction.tools import (
+            submit_compaction_summary as submit_compaction_summary_tool,
+        )
         from langmesh.runtime.runtime import AgentRuntime
 
         summarizer_configuration = self._context.agent_configuration.model_copy(

@@ -420,7 +420,7 @@ class ComputerUse(Feature):
     @property
     def _enabled(self) -> bool:
         """Whether computer use is turned on for this session."""
-        control = getattr(self._context.global_configuration, "computer_control", None)
+        control = getattr(getattr(self._context, "global_configuration", None), "computer_control", None)
         return bool(control and control.enabled)
 
     def contribute_tools(self) -> list:
