@@ -17,6 +17,7 @@ import {
   LuArrowUp,
   LuCoins,
   LuFoldVertical,
+  LuListChecks,
   LuMic,
   LuMicOff,
   LuPaperclip,
@@ -53,7 +54,7 @@ import { Tooltip } from "./ui/tooltip";
 import { ConfirmDialog } from "./ui/confirm-dialog";
 import { ModelSelect, modelSupportsVision } from "./model-select";
 // SettingsDialog moved to ChatPanel top bar
-import type { TokenUsage } from "@/lib/use-chat";
+import type { ChatTask, TokenUsage } from "@/lib/use-chat";
 import { InlineField } from "./ui/display";
 import { richTags } from "@/lib/i18n/rich-tags";
 import { swallowed } from "@/lib/swallowed";
@@ -95,6 +96,8 @@ interface ChatInputProps {
   onSandboxEnforceChange?: (enforce: SandboxEnforce) => void;
   // Running token totals for the session, null until the first turn reports usage.
   tokenUsage?: TokenUsage | null;
+  // The tracked task list, updated by the model's set_tasks/update_tasks calls.
+  tasks?: ChatTask[];
   // Compact the conversation now, offered whenever there is one.
   onCompact?: () => void;
   // True while a compaction pass is running, so the control shows progress rather than inviting another click.
@@ -116,17 +119,19 @@ const COMPOSER_FIT_ORDER = [
 ] as const;
 
 // A filling ring for how full the context window is, shifting colour as it approaches the limit.
-function ContextFillRing({ fraction }: { fraction: number }) {
+function ContextFillRing({ fraction, tone = "context" }: { fraction: number; tone?: "context" | "tasks" }) {
   const clamped = Math.max(0, Math.min(1, fraction));
   const radius = 5.5;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference * (1 - clamped);
   const stroke =
-    clamped >= 0.9
-      ? "var(--chakra-colors-red-solid)"
-      : clamped >= 0.75
-        ? "var(--chakra-colors-orange-solid)"
-        : "var(--chakra-colors-blue-solid)";
+    tone === "tasks"
+      ? "var(--chakra-colors-green-solid)"
+      : clamped >= 0.9
+        ? "var(--chakra-colors-red-solid)"
+        : clamped >= 0.75
+          ? "var(--chakra-colors-orange-solid)"
+          : "var(--chakra-colors-blue-solid)";
   return (
     <Box
       w="13px"
@@ -329,6 +334,78 @@ function ContextUsageChip({
   );
 }
 
+// The tasks chip: a completion ring beside the icon, and the list with each one's status in the tooltip.
+function TasksChip({ tasks }: { tasks: ChatTask[] }) {
+  const translation = useTranslations("ChatInput");
+  const active = tasks.filter((task) => task.status !== "completed");
+  const completed = tasks.length - active.length;
+  if (tasks.length === 0) return null;
+  const completion = completed / tasks.length;
+  const tooltipContent = (
+    <Box whiteSpace="nowrap">
+      <Text fontWeight="semibold" mb={1} color="fg">
+        {translation("tasks", { total: tasks.length, completed })}
+      </Text>
+      <Flex direction="column" ps={2} gap={1} maxH="60vh" overflowY="auto">
+        {tasks.map((task) => (
+          <Flex key={task.identifier} align="center" gap={2} minW="220px">
+            <Box
+              flexShrink={0}
+              w="8px"
+              h="8px"
+              borderRadius="full"
+              bg={
+                task.status === "completed"
+                  ? "green.500"
+                  : task.status === "in_progress"
+                    ? "blue.500"
+                    : task.status === "blocked"
+                      ? "orange.500"
+                      : "gray.400"
+              }
+            />
+            <Text
+              textStyle="bodySm"
+              color={task.status === "completed" ? "fg.subtle" : "fg"}
+              textDecoration={task.status === "completed" ? "line-through" : "none"}
+              css={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
+              {task.title || task.description}
+            </Text>
+          </Flex>
+        ))}
+      </Flex>
+    </Box>
+  );
+  return (
+    <Tooltip
+      content={tooltipContent}
+      rich
+      openDelay={200}
+      closeDelay={60}
+      positioning={{ placement: "top" }}
+    >
+      <Flex
+        align="center"
+        gap={1.5}
+        h="var(--control-height)"
+        px={2}
+        borderRadius="md"
+        border="1px solid"
+        borderColor="border"
+        bg="bg"
+        color="fg.subtle"
+        flexShrink={0}
+      >
+        <ContextFillRing fraction={completion} tone="tasks" />
+        <Box display="flex" alignItems="center" flexShrink={0}>
+          <LuListChecks size={14} />
+        </Box>
+      </Flex>
+    </Tooltip>
+  );
+}
+
 // Lucide glyphs fill their 24-unit box by different amounts, so a shared box size draws them at different heights;
 // `draw` is the box that makes this one's ink match the icon-only buttons next to it.
 function ComposerIcon({ draw, children }: { draw: number; children: ReactNode }) {
@@ -414,6 +491,7 @@ export function ChatInput({
   sandboxBackend = "",
   onSandboxEnforceChange,
   tokenUsage,
+  tasks = [],
   onCompact,
   isCompacting = false,
 }: ChatInputProps) {
@@ -1062,6 +1140,7 @@ export function ChatInput({
             chatgptUsage={chatgptUsage}
             hidden={hiddenLabels}
           />
+          <TasksChip tasks={tasks} />
         </Flex>
       </Flex>
     </fieldset>
