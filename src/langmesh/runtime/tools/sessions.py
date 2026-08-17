@@ -12,7 +12,7 @@ from langmesh.base.configuration import PromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.output import ToolOutput
-from langmesh.runtime.tools.registry import EXPLANATION, tool_description as _description
+from langmesh.runtime.tools.registry import tool_description as _description
 
 # The prompts these tools speak with. What they tell the *model* is a description, and lives with every other one.
 _PROMPTS = PromptLoader(Path(__file__).resolve().parent.parent / "prompts")
@@ -175,7 +175,6 @@ def build_create_session_tool(agent_names: list[str]) -> BaseTool:
     names = tuple(sorted(agent_names))
     arguments = create_model(
         "CreateSessionArguments",
-        explanation=(str, Field(description=EXPLANATION)),
         agent=(
             Literal[names],  # type: ignore[valid-type]
             Field(description="The agent profile the peer runs."),
@@ -203,12 +202,10 @@ message_session_tool = StructuredTool.from_function(
     description=_description("message_session"),
     args_schema=create_model(
         "MessageSessionArguments",
-        explanation=(str, Field(description=EXPLANATION)),
         session=(str, Field(description="The recipient session id.")),
         message=(str, Field(description="The message to send.")),
     ),
 )
-
 
 read_session_tool = StructuredTool.from_function(
     coroutine=_read_session,
@@ -216,11 +213,9 @@ read_session_tool = StructuredTool.from_function(
     description=_description("read_session"),
     args_schema=create_model(
         "ReadSessionArguments",
-        explanation=(str, Field(description=EXPLANATION)),
         session=(str, Field(description="The session id.")),
     ),
 )
-
 
 list_sessions_tool = StructuredTool.from_function(
     coroutine=_list_sessions,
@@ -228,10 +223,8 @@ list_sessions_tool = StructuredTool.from_function(
     description=_description("list_sessions"),
     args_schema=create_model(
         "ListSessionsArguments",
-        explanation=(str, Field(description=EXPLANATION)),
     ),
 )
-
 
 list_remote_agents_tool = StructuredTool.from_function(
     coroutine=_list_remote_agents,
@@ -239,10 +232,8 @@ list_remote_agents_tool = StructuredTool.from_function(
     description=_description("list_remote_agents"),
     args_schema=create_model(
         "ListRemoteAgentsArguments",
-        explanation=(str, Field(description=EXPLANATION)),
     ),
 )
-
 
 message_remote_agent_tool = StructuredTool.from_function(
     coroutine=_message_remote_agent,
@@ -250,7 +241,6 @@ message_remote_agent_tool = StructuredTool.from_function(
     description=_description("message_remote_agent"),
     args_schema=create_model(
         "MessageRemoteAgentArguments",
-        explanation=(str, Field(description=EXPLANATION)),
         name=(str, Field(description="The registered remote agent's name.")),
         message=(str, Field(description="The message to send.")),
     ),

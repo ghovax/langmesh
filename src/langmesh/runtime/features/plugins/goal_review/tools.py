@@ -6,22 +6,18 @@ from typing import Any
 
 from langchain.tools import tool
 from langchain_core.tools import StructuredTool
-from pydantic import Field
 
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.features.plugins.goal_review import GoalReview
 from langmesh.runtime.goal import Goal
 from langmesh.runtime.tools.execution import current_tool_services
-from langmesh.runtime.tools.registry import EXPLANATION
 from langmesh.runtime.values import ToolStatus
-
 
 async def _submit_goal_review(**arguments: Any) -> str:
     services = current_tool_services()
     services.features.invoke("submit_goal_review", GoalReview.model_validate(arguments))
     services.abort_event.set()
     return compact({"code": "goal_review_submitted", "status": ToolStatus.OK.value})
-
 
 submit_goal_review = StructuredTool.from_function(
     coroutine=_submit_goal_review,
@@ -30,11 +26,9 @@ submit_goal_review = StructuredTool.from_function(
     args_schema=GoalReview,
 )
 
-
 @tool
 async def update_goal(
     *,
-    explanation: str = Field(..., description=EXPLANATION),
     goal: str,
     purpose: str,
     requirements: list[str],

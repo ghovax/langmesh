@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import dataclasses
 import logging
-import sys
 import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -59,13 +58,11 @@ from langmesh.base.primitives.serialization import compact
 
 logger = logging.getLogger(__name__)
 
-
 # The settings-gated built-ins: only reachable when the machine actually has them.
 _MCP_TOOL_NAMES = frozenset(
     {"list_mcp_tools", "call_mcp_server_tool", "list_mcp_resources", "read_mcp_resource"}
 )
 _REMOTE_TOOL_NAMES = frozenset({"list_remote_agents", "message_remote_agent"})
-
 
 def _installed_agent_names(
     global_configuration: Configuration, working_directory: str
@@ -82,7 +79,6 @@ def _installed_agent_names(
         return [entry["id"] for entry in list_agents(directories)]
     except Exception:  # noqa: BLE001 — an unreadable profile directory must not fail the runtime
         return []
-
 
 def _compose_session_tools(
     configuration: Any,
@@ -107,7 +103,11 @@ def _compose_session_tools(
             schema = (plugin_tools or {}).get(name)
         if schema is None or not hasattr(schema, "name"):
             continue
-        if name == "ask_user" and not (permission_mode is None or permission_mode.asks):
+        if name == "ask_user" and not (
+            permission_mode is None
+            or permission_mode.asks
+            or permission_mode == "allow"
+        ):
             continue
         if name in _MCP_TOOL_NAMES and not global_configuration.mcp.enabled_servers():
             continue
@@ -121,7 +121,6 @@ def _compose_session_tools(
         if global_configuration.remote_agents.agents:
             tools.extend(remote_agent_tools())
     return tools
-
 
 class SessionExecutor(AgentExecutor):
     """The live half of one session. The machinery still speaks in contexts, but a worker only ever has one."""

@@ -12,6 +12,7 @@ from typing import Any
 from langmesh.base.persistence.observation_store import SQLiteObservationStore
 from langmesh.runtime.compaction import ObservationCompactionPreparation
 from langmesh.runtime.features.plugins.background import BackgroundJobsFeature
+from langmesh.runtime.features.plugins.bash import Bash
 from langmesh.runtime.features.plugins.compaction import Compaction
 from langmesh.runtime.features.plugins.computer_use import ComputerUse
 from langmesh.runtime.features.plugins.continuation import Continuation
@@ -21,6 +22,7 @@ from langmesh.runtime.features.plugins.permission_reviewer import PermissionRevi
 from langmesh.runtime.features.plugins.permissions import PermissionReview
 from langmesh.runtime.features.plugins.titling import TitleAssignment
 from langmesh.runtime.features.plugins.work_habits import WorkHabits
+from langmesh.runtime.tools.arguments import with_explanation
 
 
 def _compaction_preparation(global_configuration: Any, runtime_directory: str) -> Any:
@@ -30,7 +32,6 @@ def _compaction_preparation(global_configuration: Any, runtime_directory: str) -
             global_configuration.observation_database_for(runtime_directory)
         )
     )
-
 
 def compose_plugins(
     *,
@@ -60,6 +61,7 @@ def compose_plugins(
         BackgroundJobsFeature(store=job_store),
         WorkHabits(),
         TitleAssignment(),
+        Bash(),
         ComputerUse(),
     ]
     # The goal plugin hears every goal change through the host's listener: that is how the
@@ -75,7 +77,6 @@ def compose_plugins(
         },
     }
 
-
 def contributed_tools() -> dict[str, Any]:
     """Every tool the composed plugins contribute, keyed by name."""
     reviewer = PermissionReviewer()
@@ -89,6 +90,7 @@ def contributed_tools() -> dict[str, Any]:
         BackgroundJobsFeature(store=None),
         WorkHabits(),
         TitleAssignment(),
+        Bash(),
         ComputerUse(),
     ]
     tools: dict[str, Any] = {}
@@ -96,5 +98,5 @@ def contributed_tools() -> dict[str, Any]:
         for tool in (feature.contribute_tools() if hasattr(feature, "contribute_tools") else []):
             name = getattr(tool, "name", "")
             if name:
-                tools[name] = tool
+                tools[name] = with_explanation(tool)
     return tools

@@ -38,10 +38,8 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 logger = logging.getLogger(__name__)
 
-
 class CompactionSummaryExhausted(RuntimeError):
     """The summarizer never submitted within its configured attempts; the fold cannot proceed without it."""
-
 
 @dataclass
 class CompactionControl:
@@ -139,14 +137,12 @@ class CompactionControl:
             started=bool(value.get("started", False)),
         )
 
-
 def _without_provider_reasoning(messages: list) -> list:
     """The same messages with the provider-native reasoning cut out, since the turns it explained are gone."""
     # A sweep for its effect, not a transformation: `forget_carried_reasoning` edits each message in place.
     for message in messages:
         forget_carried_reasoning(message)
     return messages
-
 
 class Compaction(Feature):
     """Keep a conversation inside its window after the agent checkpoints workspace knowledge."""
@@ -319,7 +315,7 @@ class Compaction(Feature):
 
     def maintenance_tool_schemas(self) -> dict:
         """Bash is valid during the handoff even for a session whose profile omits it."""
-        from langmesh.runtime.tools.registry import bash as bash_tool
+        from langmesh.runtime.features.plugins.bash import bash as bash_tool
 
         return {"bash": bash_tool.args_schema}
 
@@ -843,6 +839,5 @@ class Compaction(Feature):
     def preparation_violation_message(self) -> str:
         """The refusal the model is given for calling outside the private handshake."""
         return self._prompts.load("compaction_preparation_violation", {})
-
 
 __all__ = ["Compaction", "CompactionControl", "CompactionSummaryExhausted"]

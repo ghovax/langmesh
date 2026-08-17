@@ -13,7 +13,6 @@ from langchain_core.messages import (
 from langchain_core.tools import BaseTool
 from pydantic import SecretStr
 
-
 from langmesh.base.confinement import Grant
 from langmesh.base.configuration import (
     AgentConfiguration,
@@ -26,13 +25,13 @@ from langmesh.runtime.models.codex import ChatCodexModel
 from langmesh.runtime.models.cursor import ChatCursorModel
 from langmesh.base.content.models import find_model, resolve_litellm
 from langmesh.base.contracts.tools import as_tool_grants
+from langmesh.runtime.tools.arguments import with_explanation
 from langmesh.runtime.tools.execution import Tool, ToolServices, invoke_supplied
 from langmesh.runtime.tools import registry as tools_registry
 from langmesh.runtime.tools.handlers import HANDLERS
 from langmesh.locations.resolver import LocationAddress, executor_for, location_uri_for
 from langmesh.base.contracts.ports import Observation
 from langmesh.runtime.tools.context import ToolContext
-
 
 from langmesh.base.configuration.permission_mode import PermissionMode
 
@@ -58,9 +57,7 @@ from langmesh.runtime.internals import (
     conversation_tokens,
 )
 
-
 logger = logging.getLogger(__name__)
-
 
 async def _drain_observer(pending) -> None:
     """Await a caller-supplied audit observer without making it part of turn control flow."""
@@ -68,7 +65,6 @@ async def _drain_observer(pending) -> None:
         await pending
     except Exception:  # noqa: BLE001 — an audit sink must never fail a turn
         logger.debug("an asynchronous audit observer raised", exc_info=True)
-
 
 class _CataloguePrompts:
     """A `PromptLoader`-shaped view of a catalogue, so the template seam cost one adapter rather than a rewrite."""
@@ -78,7 +74,6 @@ class _CataloguePrompts:
 
     def load(self, template_name: str, variables: dict[str, str]) -> str:
         return self._catalogue.prompt(template_name, variables)
-
 
 def build_chat_model(
     model_identifier: str,
@@ -124,7 +119,6 @@ def build_chat_model(
         }
     )
 
-
 def _as_profile(sandbox: Any):
     """Whatever a caller called a sandbox, as the :class:`Profile` the runtime works with."""
     from langmesh.base.confinement import Profile
@@ -144,7 +138,6 @@ def _as_profile(sandbox: Any):
     raise TypeError(
         f"sandbox must be a confinement Profile, a SandboxConfiguration, or the dict form of either — got {type(sandbox).__name__}."
     )
-
 
 def _build_tool_context(
     global_configuration: Configuration,
@@ -208,7 +201,6 @@ def _build_tool_context(
         toolbox=toolbox,
     )
 
-
 class _LeaseAccess:
     """The filesystem-lease surface a tool handler may hold across an operation."""
 
@@ -225,7 +217,6 @@ class _LeaseAccess:
 
     def canonical_working_directory(self, directory: str) -> str:
         return self._runtime._canonical_working_directory(directory)
-
 
 class AgentRuntime(
     _DispatchesTools, _RunsTurns
@@ -310,6 +301,8 @@ class AgentRuntime(
         self._supplied_tool_gate = components.supplied_tool_gate
         # The session's tools are composed by the caller, never forced: the complete roster comes from `toolset`, additions from `tools`/`grant_tool`, and nothing is injected by default.
         configured_tools = list(toolset) if toolset is not None else []
+        # Every tool a session runs carries the shared `explanation` field, added here once.
+        configured_tools = [with_explanation(tool) for tool in configured_tools]
         # The dispatchable units: every tool the session runs, assembled from the caller's set and the caller's own tools. A caller's tool of the same name replaces a built-in's execution. The model binds the configured schemas; grants ride as appended messages and only change who executes, keeping the cache prefix untouched.
         units: dict[str, Tool] = {}
         for tool in configured_tools:
@@ -491,13 +484,32 @@ class AgentRuntime(
             ),
         )
         self._features = build_features(components.features, self._plugin_context, plugin_host)
-        # Features may contribute tools of their own (computer use, ...); bind them to the model
-        # and make them executable alongside the configured roster.
-        contributed = self._features.contributed_tools()
+        # Features may contribute tools of their own (bash, computer use, ...); bind them to the
+        # model and make them executable alongside the configured roster. A feature that answers
+        # the `tool_handler` capability supplies the tool's event-rich handler; the generic path
+        # runs the rest. The core never names a tool's owning feature.
+        contributed = [with_explanation(tool) for tool in self._features.contributed_tools()]
         if contributed:
-            self._model_tools = [*self._model_tools, *contributed]
-            self._tools = [*self._tools, *contributed]
+            contributed_names = {tool.name for tool in contributed}
+            self._tools = [
+                tool
+                for tool in self._tools
+                if tool.name not in contributed_names
+            ] + list(contributed)
+            self._model_tools = [
+                tool
+                for tool in self._model_tools
+                if tool.name not in contributed_names
+            ] + list(contributed)
             self._tool_schemas.update({tool.name: tool.args_schema for tool in contributed})
+            for tool in contributed:
+                handler = self._features.invoke("tool_handler", tool.name) or invoke_supplied
+                self._tool_units[tool.name] = Tool(
+                    name=tool.name,
+                    schema=tool,
+                    description=tool.description or "",
+                    handler=handler,
+                )
             self._bound_model = self._model.bind_tools(self._model_tools)
         # The services bundle every tool handler runs against: the tool's only view of the runtime.
         # Plugin capabilities are reached through the opaque features handle, never by class.
@@ -676,6 +688,7 @@ class AgentRuntime(
         A grant of a name the session already runs replaces that tool's implementation."""
         if tool.name in self._supplied_tool_names:
             return
+        tool = with_explanation(tool)
         self._supplied_tool_names.add(tool.name)
         self._tool_units[tool.name] = Tool(
             name=tool.name,

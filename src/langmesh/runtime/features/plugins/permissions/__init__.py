@@ -52,7 +52,6 @@ MUTATING_SCREEN_PRIMITIVES = frozenset(
     }
 )
 
-
 def screen_mutations(script: str) -> tuple[str, ...]:
     """The state-changing primitives a script calls. Decides who is asked, never what is available."""
     try:
@@ -68,7 +67,6 @@ def screen_mutations(script: str) -> tuple[str, ...]:
                 found.append(name)
     return tuple(found)
 
-
 def _screen_primitive(func: ast.expr) -> str:
     """The primitive a call node names, bare or through ``screen``."""
     if isinstance(func, ast.Attribute):
@@ -76,7 +74,6 @@ def _screen_primitive(func: ast.expr) -> str:
     if isinstance(func, ast.Name):
         return func.id
     return ""
-
 
 class PermissionReview(Feature):
     """Whether a call runs, is asked about, or is refused, and what approval a session keeps."""
@@ -191,6 +188,11 @@ class PermissionReview(Feature):
                 return plan
         policy = self._host.boundary.call_policy(resolved_location)
         explanation = str(tool_arguments.get("explanation", "") or "")
+
+        # `allow` mode: every call runs as if it had whatever it asked for. The boundary still
+        # holds; only the gate is skipped.
+        if not policy.gates:
+            return plan
 
         # ask_user is the one call that is a question rather than an act.
         if tool_name == "ask_user":
@@ -571,6 +573,5 @@ class PermissionReview(Feature):
             purpose=gate.explanation,
             whole_disk=True,
         )
-
 
 __all__ = ["MUTATING_SCREEN_PRIMITIVES", "PermissionReview", "screen_mutations"]

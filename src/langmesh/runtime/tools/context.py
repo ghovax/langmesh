@@ -88,6 +88,19 @@ class ToolContext:
         """This context with its workspace repointed, as a new value rather than a mutation."""
         return replace(self, workspace=directory)
 
+    def for_remote(self) -> "ToolContext":
+        """This context for a call executing on a remote machine: local confinement has no meaning there.
+
+        The command still runs through the local `ssh` client, but the boundary that would be
+        drawn around it is the remote host's own; nothing here widens a local boundary.
+        """
+        from langmesh.base.confinement import ENFORCE_OFF
+
+        return replace(
+            self,
+            sandbox=replace(self.sandbox, enforce=ENFORCE_OFF),
+        )
+
 
 _EMPTY = ToolContext()
 

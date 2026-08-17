@@ -15,14 +15,12 @@ import time
 from typing import Any
 
 from langchain.tools import tool
-from pydantic import Field
 
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.primitives.tuning import Tunable, active_tuning
-from langmesh.runtime.features import Feature, PluginContext, PluginHost
+from langmesh.runtime.features import Feature
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.execution import current_tool_decision, current_tool_services
-from langmesh.runtime.tools.registry import EXPLANATION
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +31,15 @@ _asked_queries: list[tuple[Any, str]] = []
 # What an element id looks like on both surfaces, so one can be told from a description of an element.
 _ELEMENT_ID = re.compile(r"(?:f\d+)?e\d+|req\d+|ws\d+|\d+(?:\.\d+)+")
 
-
 def _surface_for(surface_name: str):
     """The live surface a screen tool names: the native macOS tree, or the user's Chrome."""
     from langmesh.computer import engine as native_surface, web as web_surface
 
     return native_surface.SURFACE if surface_name == "computer" else web_surface.SURFACE
 
-
 @tool
 async def control_screen(
     *,
-    explanation: str = Field(..., description=EXPLANATION),
     script: str,
     target: str = "",
 ) -> str:
@@ -89,7 +84,6 @@ async def control_screen(
     gate = surface.preflight("documents")
     if gate is not None:
         return compact(gate)
-
 
     control_message = message_loader("control")
     permitted_primitives = set(surface.primitives())
@@ -405,7 +399,6 @@ async def control_screen(
         result.setdefault("note", rephrased[0])
     return compact(result)
 
-
 class ComputerUse(Feature):
     """Drives the screen: contributes the control_screen tool and the screen context."""
 
@@ -424,7 +417,10 @@ class ComputerUse(Feature):
     @property
     def _enabled(self) -> bool:
         """Whether computer use is turned on for this session."""
-        control = getattr(getattr(self._context, "global_configuration", None), "computer_control", None)
+        context = getattr(self, "_context", None)
+        if context is None:
+            return False
+        control = getattr(context.global_configuration, "computer_control", None)
         return bool(control and control.enabled)
 
     def contribute_tools(self) -> list:
@@ -457,6 +453,5 @@ class ComputerUse(Feature):
             context["screen"] = block
         except Exception:
             context["screen"] = {}
-
 
 __all__ = ["ComputerUse", "control_screen"]
