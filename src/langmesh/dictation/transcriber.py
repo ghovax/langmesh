@@ -38,14 +38,14 @@ def _worker_main(
     """Load the model once, then answer transcription requests until told to stop."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     # Spawned, so nothing about the daemon's logging is inherited; configured here against the same file.
-    from langmesh.base.confinement.paths import log_file_path
+    from langmesh.daemon.paths import daemon_log_path
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
         handlers=[
             logging.StreamHandler(sys.stderr),
-            logging.FileHandler(log_file_path("langmeshd")),
+            logging.FileHandler(daemon_log_path()),
         ],
     )
 

@@ -26,14 +26,15 @@ from tenacity import (
     wait_fixed,
 )
 
-from langmesh.base.confinement.paths import (
+from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmesh.daemon.paths import (
+    daemon_lock_path,
+    daemon_log_path,
+    daemon_pid_path,
     daemon_port_path,
     daemon_socket_path,
     daemon_token_path,
-    log_file_path,
-    runtime_directory,
 )
-from langmesh.base.primitives.tuning import Tunable, active_tuning
 
 logger = logging.getLogger("langmesh.daemon")
 
@@ -59,7 +60,7 @@ def _write_handshake(token: str, port: int) -> None:
     port_path.write_text(str(port))
     port_path.chmod(0o600)
     # The pid is how a stop signal reaches a daemon that has stopped answering.
-    pidfile = daemon_socket_path().parent / "langmeshd.pid"
+    pidfile = daemon_pid_path()
     pidfile.write_text(str(os.getpid()))
     pidfile.chmod(0o600)
 
@@ -69,7 +70,7 @@ def _clear_handshake() -> None:
         daemon_token_path(),
         daemon_port_path(),
         daemon_socket_path(),
-        daemon_socket_path().parent / "langmeshd.pid",
+        daemon_pid_path(),
     ):
         with contextlib.suppress(OSError):
             path.unlink(missing_ok=True)
@@ -77,7 +78,7 @@ def _clear_handshake() -> None:
 
 def _acquire_singleton_lock() -> int | None:
     """An exclusive process-lifetime lock, because two daemons started at once would each unlink the other's socket."""
-    path = runtime_directory() / "langmeshd.lock"
+    path = daemon_lock_path()
     handle = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -508,7 +509,7 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
         handlers=[
             logging.StreamHandler(sys.stderr),
-            logging.FileHandler(log_file_path("langmeshd")),
+            logging.FileHandler(daemon_log_path()),
         ],
     )
     try:

@@ -18,14 +18,22 @@ else
   python=(uv run --project "$repository" python)
 fi
 
-# Start the daemon if it is not answering, then read the endpoint it published.
+# Start the daemon if it is not answering.
 "${python[@]}" -c "from langmesh.cli.client import ensure_daemon; ensure_daemon()"
 
-daemon_port="$("${python[@]}" -c "from langmesh.base.confinement.paths import daemon_port_path; print(daemon_port_path().read_text().strip())")"
-daemon_token="$("${python[@]}" -c "from langmesh.base.confinement.paths import daemon_token_path; print(daemon_token_path().read_text().strip())")"
+# The daemon publishes its handshake files in the runtime directory: the same derivation the
+# core uses, reproduced here so a shell reads them without a Python round-trip.
+if [[ -n "${XDG_RUNTIME_DIR:-}" && "${XDG_RUNTIME_DIR}" == /* ]]; then
+  runtime_directory="${XDG_RUNTIME_DIR}/langmesh"
+else
+  runtime_directory="${TMPDIR:-/tmp}/langmesh-$(id -u)"
+fi
+
+daemon_port="$(cat "$runtime_directory/port" 2>/dev/null || true)"
+daemon_token="$(cat "$runtime_directory/token" 2>/dev/null || true)"
 
 if [[ -z "$daemon_port" ]]; then
-  echo "Could not read the daemon's published port." >&2
+  echo "Could not read the daemon's published port from $runtime_directory/port." >&2
   exit 1
 fi
 

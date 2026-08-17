@@ -12,9 +12,6 @@ APPLICATION = "langmesh"
 CONFIGURATION_FILENAME = "configuration.yaml"
 DATABASE_FILENAME = "history.sqlite"
 BACKGROUND_DATABASE_FILENAME = "background.sqlite"
-DAEMON_SOCKET_FILENAME = "langmeshd.sock"
-DAEMON_TOKEN_FILENAME = "token"
-DAEMON_PORT_FILENAME = "port"
 
 
 def _xdg(variable: str, default: Path) -> Path:
@@ -101,24 +98,6 @@ def oauth_token_path(provider_identifier: str) -> Path:
 SOCKET_PATH_MAXIMUM_BYTES = 104
 
 
-class SocketPathTooLong(OSError):
-    """A unix socket path exceeds what `bind` accepts, raised as its own error so it names the path and the limit."""
-
-
-def _within_socket_limit(path: Path) -> Path:
-    """The path if it can actually be bound, checked at construction so the caller that chose the directory hears it."""
-    encoded = len(str(path).encode())
-    if encoded > SOCKET_PATH_MAXIMUM_BYTES:
-        raise SocketPathTooLong(
-            f"{path} is {encoded} bytes, and a unix socket path may be at most {SOCKET_PATH_MAXIMUM_BYTES}. The runtime directory is too deep — set XDG_RUNTIME_DIR to something shorter."
-        )
-    return path
-
-
-def daemon_socket_path() -> Path:
-    return _within_socket_limit(runtime_directory() / DAEMON_SOCKET_FILENAME)
-
-
 # How many hex characters name an SSH control socket, decided by what the path budget leaves.
 SSH_CONTROL_IDENTIFIER_LENGTH = 16
 
@@ -147,16 +126,6 @@ def ssh_control_directory() -> Path:
 def session_socket_identifier(session_id: str) -> str:
     """The short, stable filename stem for a session's socket, since a session id is too long to bind under."""
     return hashlib.sha256(session_id.encode()).hexdigest()[:16]
-
-
-def daemon_token_path() -> Path:
-    """The capability token the daemon mints at startup, written 0600 so permissions are the access control."""
-    return runtime_directory() / DAEMON_TOKEN_FILENAME
-
-
-def daemon_port_path() -> Path:
-    """The loopback port for clients that cannot open a unix socket, written beside the token."""
-    return runtime_directory() / DAEMON_PORT_FILENAME
 
 
 def reach_token_path() -> Path:

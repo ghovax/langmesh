@@ -13,8 +13,8 @@ from typing import Optional
 
 import httpx
 
-from langmesh.base.confinement.paths import daemon_socket_path, daemon_token_path
 from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmesh.daemon.paths import daemon_socket_path, daemon_token_path
 
 
 class DaemonError(RuntimeError):
