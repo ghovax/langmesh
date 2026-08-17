@@ -58,12 +58,10 @@ _GATEWAY_LITELLM_PREFIXES = {
     "@openrouter/ai-sdk-provider": "openrouter",
 }
 
-# The prefix for an auto-registered provider: the SDK's own protocol, with everything
-# unknown falling back to the OpenAI-compatible wire since that is what most expose.
+# The prefix for an auto-registered provider: the SDK's own protocol, with everything unknown falling back to the OpenAI-compatible wire since that is what most expose.
 _AUTO_PROVIDER_PREFIXES = {
     **_GATEWAY_LITELLM_PREFIXES,
-    # The Responses protocol is openai's own; third-party endpoints almost always serve
-    # the chat-completions wire instead, so auto providers use the plain openai prefix.
+    # The Responses protocol is openai's own; third-party endpoints almost always serve the chat-completions wire instead, so auto providers use the plain openai prefix.
     "@ai-sdk/openai": "openai",
 }
 
@@ -87,8 +85,7 @@ def _catalog() -> list[ModelDefinition]:
         definition = get_provider_definition(local_id)
         env_vars = tuple(str(value) for value in (provider_info.get("env") or ()) if value)
         if definition is None:
-            # Every models.dev provider is routable: register it from the catalogue's own
-            # metadata (declared env var, endpoint, wire protocol) when nothing is curated.
+            # Every models.dev provider is routable: register it from the catalogue's own metadata (declared env var, endpoint, wire protocol) when nothing is curated.
             npm = str(provider_info.get("npm") or "")
             litellm_prefix = _AUTO_PROVIDER_PREFIXES.get(npm, "openai")
             api = str(provider_info.get("api") or "")
@@ -99,8 +96,7 @@ def _catalog() -> list[ModelDefinition]:
                 env_vars=env_vars,
                 default_base_url=api,
                 openai_compatible=litellm_prefix == "openai",
-                # The base URL is resolved from the catalogue or configuration and passed through the
-                # gateway suffix logic, since a model can override the provider's own protocol.
+                # The base URL is resolved from the catalogue or configuration and passed through the gateway suffix logic, since a model can override the provider's own protocol.
                 uses_custom_base_url=True,
             )
         else:
@@ -248,9 +244,7 @@ def resolve_litellm(
     if split is None:
         raise ValueError(f"Model id has no provider prefix: {model_identifier!r}")
     provider_identifier, suffix = split
-    # `models.dev` providers are registered while the catalogue is built. Resolve the model
-    # first so a cold daemon can run its first turn without depending on the UI having listed
-    # models beforehand; model selection and provider registration become one ordered operation.
+    # `models.dev` providers are registered while the catalogue is built. Resolve the model first so a cold daemon can run its first turn without depending on the UI having listed models beforehand; model selection and provider registration become one ordered operation.
     catalog_model = find_model(model_identifier)
     definition: ProviderDefinition | None = get_provider_definition(provider_identifier)
     if definition is None:

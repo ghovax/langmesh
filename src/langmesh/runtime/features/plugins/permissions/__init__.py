@@ -417,8 +417,7 @@ class PermissionReview(Feature):
             is_bash=(tool_name == "bash"),
             deny_message=self.deny_message(tool_name),
         )
-        # Under `automatic` the reviewer decides, but the gate is still announced so the call is
-        # visible while it is weighed; the review itself runs in the turn batch, after the event.
+        # Under `automatic` the reviewer decides, but the gate is still announced so the call is visible while it is weighed; the review itself runs in the turn batch, after the event.
         if not policy.asks:
             gate.automatic_review = True
         plan.gates.append(gate)

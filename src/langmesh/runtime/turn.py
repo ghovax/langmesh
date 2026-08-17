@@ -564,9 +564,7 @@ class _RunsTurns:
                     yield background_event
                 continue
 
-            # The loop may hold while a feature reclaims context. The threshold is a preparation
-            # boundary, not a hard cut: the reserved window gives the agent room for one private
-            # recording batch before the fold happens.
+            # The loop may hold while a feature reclaims context. The threshold is a preparation boundary, not a hard cut: the reserved window gives the agent room for one private recording batch before the fold happens.
             if not self._features.active_maintenance():
                 request_tokens = max(
                     self._latest_context_tokens,
@@ -588,8 +586,7 @@ class _RunsTurns:
                 ):
                     yield fold_event
                 if self._features.blocked_reason():
-                    # The send was already accepted. Keep its user message in the durable
-                    # conversation, but do not continue into a model call until retry succeeds.
+                    # The send was already accepted. Keep its user message in the durable conversation, but do not continue into a model call until retry succeeds.
                     if pending_user_message is not None:
                         self._conversation.append(pending_user_message)
                         pending_user_message = None
@@ -603,8 +600,7 @@ class _RunsTurns:
                 self._conversation.append(pending_user_message)
                 pending_user_message = None
 
-            # Steering accepted while a new message was waiting belongs after that message. During
-            # the hold it remains queued until the private segment has compacted away.
+            # Steering accepted while a new message was waiting belongs after that message. During the hold it remains queued until the private segment has compacted away.
             if not self._features.active_maintenance():
                 for steering_event in await self._drain_steering_messages():
                     yield steering_event
@@ -648,17 +644,12 @@ class _RunsTurns:
                     yield fold_event
                 if self._features.blocked_reason():
                     return
-                # The same accepted turn retries against the newly compacted conversation;
-                # asking the user to resend would duplicate it in frontend and backend state.
+                # The same accepted turn retries against the newly compacted conversation; asking the user to resend would duplicate it in frontend and backend state.
                 continue
             if call.cancelled:
-                # Steering queued behind a cancelled read is superseded by the Stop: answer its
-                # sender now rather than leaving the accepted future pending forever.
+                # Steering queued behind a cancelled read is superseded by the Stop: answer its sender now rather than leaving the accepted future pending forever.
                 self.discard_pending_steering()
-                # The user's message was already appended before the provider call. Close the
-                # exchange explicitly so the next request cannot inherit a dangling instruction
-                # and finish the work that Stop just canceled. Keep whatever partial response the
-                # provider already saw, or the prefix cache would be invalidated by the stop.
+                # The user's message was already appended before the provider call. Close the exchange explicitly so the next request cannot inherit a dangling instruction and finish the work that Stop just canceled. Keep whatever partial response the provider already saw, or the prefix cache would be invalidated by the stop.
                 self._conversation.append(
                     call.response
                     if call.response is not None
@@ -675,10 +666,6 @@ class _RunsTurns:
                     turn_started_at,
                 )
                 return
-            if call.aborted_for_steering:
-                for steering_event in await self._drain_steering_messages():
-                    yield steering_event
-                continue
             response = call.response
 
             usage_event = self._accumulate_usage(response)
@@ -749,12 +736,10 @@ class _RunsTurns:
                     pending_user_message = None
                 return
             if self._features.maintenance_ready():
-                # The successful recording call is the terminal action of this model segment.
-                # The next loop iteration folds and resumes the already-accepted work.
+                # The successful recording call is the terminal action of this model segment. The next loop iteration folds and resumes the already-accepted work.
                 continue
             if maintaining:
-                # Inspection, repair, and recording may need several foreground Bash batches.
-                # The segment ends only when a valid revision advances or the model stops.
+                # Inspection, repair, and recording may need several foreground Bash batches. The segment ends only when a valid revision advances or the model stops.
                 continue
             if step.directive == _STOP:
                 return
@@ -801,7 +786,6 @@ class _RunsTurns:
         streaming_call_shown: dict[str, dict] = {}
         # When each call last redrew, so a fast provider cannot redraw a row faster than a screen can show it.
         streaming_call_drawn_at: dict[str, float] = {}
-        aborted_for_steering = False
         # A generation span, started rather than made current so it is safe to hold across yields.
         generation_span = _telemetry.start_span(
             "gen_ai.generation", {"gen_ai.request.model": self.model_identifier}
@@ -810,14 +794,11 @@ class _RunsTurns:
         if not self._hooks.empty:
             messages = await self._hooks.before_model(messages)
         self._refuse_if_over_window(messages)
-        # This is the truthful phase boundary: hooks and local validation have completed, and
-        # the next awaited operation starts the provider stream. The client opens its Thinking
-        # row from this status, so no optimistic or timer-driven model activity is fabricated.
+        # This is the truthful phase boundary: hooks and local validation have completed, and the next awaited operation starts the provider stream. The client opens its Thinking row from this status, so no optimistic or timer-driven model activity is fabricated.
         thinking_started_at = time.monotonic()
         thinking_done_emitted = False
         yield Status(code="awaiting_model")
-        # The compaction checkpoint is a protocol capability: even a profile that omits ordinary shell
-        # access must be able to maintain its workspace-owned registry inside the same sandbox.
+        # The compaction checkpoint is a protocol capability: even a profile that omits ordinary shell access must be able to maintain its workspace-owned registry inside the same sandbox.
         bound_model = self._bound_model
         model_stream = None
         abort_waiter = None
@@ -847,25 +828,7 @@ class _RunsTurns:
                     yield Done(text="", stop_reason="cancelled")
                     outcome.cancelled = True
                     return
-                if self._has_queued_steering():
-                    # Steering waits at a semantic boundary, and never while the model is thinking
-                    # or mid-tool-call, or the call would be orphaned and the reasoning cut short.
-                    mid_tool_call = any(
-                        getattr(chunk, "tool_call_chunks", None)
-                        or getattr(chunk, "tool_calls", None)
-                        or getattr(chunk, "invalid_tool_calls", None)
-                        for chunk in response_chunks
-                    )
-                    if not thinking_done_emitted or mid_tool_call:
-                        # The model is still reasoning (or committing a call): the steering waits,
-                        # so the thinking is never interrupted and the cache prefix stays intact.
-                        pass
-                    else:
-                        # Thinking is complete and only a text prefix has been shown, so the
-                        # steering can replace it here without disturbing a call or the reasoning.
-                        aborted_for_steering = True
-                        break
-
+                # Steering never interrupts anything the model is writing - reasoning, text, or a tool call. It stays queued and is delivered at the next available boundary, so the provider-cache prefix is never cut or reordered.
                 if pending_chunk is None:
                     pending_chunk = asyncio.ensure_future(_stream_next(model_stream))
                 completed, _ = await asyncio.wait(
@@ -891,8 +854,7 @@ class _RunsTurns:
                     continue
                 progress_deadline = asyncio.get_running_loop().time() + silence_limit
                 response_chunks.append(chunk)
-                # A call is announced the moment the model names it, and again as each argument finishes:
-                # writing a large one is seconds, and the turn would otherwise show nothing for all of them.
+                # A call is announced the moment the model names it, and again as each argument finishes: writing a large one is seconds, and the turn would otherwise show nothing for all of them.
                 for named in getattr(chunk, "tool_call_chunks", None) or []:
                     identifier = (named or {}).get("id") or streaming_call_ids.get(
                         (named or {}).get("index")
@@ -978,15 +940,6 @@ class _RunsTurns:
             yield ThinkingDone(
                 duration_milliseconds=int((time.monotonic() - thinking_started_at) * 1000),
             )
-        if aborted_for_steering:
-            if response_chunks:
-                # These chunks were already visible in the chat. Persist that exact assistant
-                # prefix before the steering message, or replay would reorder what the user saw.
-                self._conversation.append(
-                    add_ai_message_chunks(response_chunks[0], *response_chunks[1:])
-                )
-            outcome.aborted_for_steering = True
-            return
         outcome.response = (
             add_ai_message_chunks(response_chunks[0], *response_chunks[1:])
             if response_chunks
@@ -1027,8 +980,7 @@ class _RunsTurns:
         # No tool calls, so the turn ends: the resume pump wakes the agent when the next result lands.
         final_text = message_text(response)
         self._conversation.append(response)
-        # A response with no prose (thinking only) is a no-op: prompt the model once to actually
-        # answer, so the exchange cannot end silently. A second no-op ends the turn for real.
+        # A response with no prose (thinking only) is a no-op: prompt the model once to actually answer, so the exchange cannot end silently. A second no-op ends the turn for real.
         if not final_text and not nudged[0]:
             nudged[0] = True
             self._conversation.append(
@@ -1104,8 +1056,7 @@ class _RunsTurns:
                 planned = await self._features.plan_tool_calls(tool_calls)
                 plans, pending = planned if planned is not None else ({}, [])
             gates = [SuspensionGate(**gate.to_dict()) for gate in pending]
-            # Automatic-mode gates are announced first, then weighed by the reviewer, so the call
-            # is visible while the decision is pending instead of appearing only once it is made.
+            # Automatic-mode gates are announced first, then weighed by the reviewer, so the call is visible while the decision is pending instead of appearing only once it is made.
             auto_gates = [gate for gate in pending if gate.automatic_review]
             reviewed: dict[str, str] = {}
             if auto_gates:

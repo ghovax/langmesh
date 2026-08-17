@@ -222,9 +222,7 @@ class ChatCursorModel(BaseChatModel):
 
     @staticmethod
     def _system_prompt(messages: Sequence[BaseMessage]) -> str:
-        # Only the first system message is the session prompt; later ones stay in place as
-        # transcript blocks, as codex treats them, so an appended instruction (the permission
-        # review) never rewrites the cached system prefix.
+        # Only the first system message is the session prompt; later ones stay in place as transcript blocks, as codex treats them, so an appended instruction (the permission review) never rewrites the cached system prefix.
         first = next((message for message in messages if isinstance(message, SystemMessage)), None)
         content = message_text(first) if first is not None else ""
         return _PROMPTS.load("cursor_system_prompt", {"content": content}).strip()

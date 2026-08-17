@@ -60,5 +60,5 @@ The release app asks the separately installed `LangMesh Computer Use.app` to sta
 ## Where to go next
 
 - Every setting the app exposes: [Configuration](configuration.md).
-- The same operations from a terminal: [The `langmesh` command](installation.md).
+- The same interface in a browser: [`langmesh serve`](installation.md#the-langmesh-command).
 - Writing your own agents and skills: [Agent system](agent-system.md).

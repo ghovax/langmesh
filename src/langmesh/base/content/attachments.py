@@ -86,8 +86,7 @@ def _image_content_block(attachment: dict[str, Any], inline_image_bytes: int) ->
     if not path:
         return None
     mime_type = str(attachment.get("mime_type") or "application/octet-stream")
-    # The recorded size answers the budget without reading the file, so an oversized
-    # attachment costs no memory just to be dropped.
+    # The recorded size answers the budget without reading the file, so an oversized attachment costs no memory just to be dropped.
     size = attachment.get("size")
     if isinstance(size, int) and size > inline_image_bytes:
         return None
@@ -119,8 +118,7 @@ def compose_turn_input(
         for image in images
         if (block := _image_content_block(image, inline_image_bytes)) is not None
     ]
-    # Every image the model does not actually receive is one the caller must be told
-    # about: a wrong zero here silently drops the attachment with no warning.
+    # Every image the model does not actually receive is one the caller must be told about: a wrong zero here silently drops the attachment with no warning.
     images_not_inlined = len(images) - len(blocks)
     if not blocks:
         return text_payload, images_not_inlined

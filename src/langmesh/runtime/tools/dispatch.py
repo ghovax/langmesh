@@ -295,8 +295,7 @@ class _DispatchesTools:
                     schema_validator(arguments)
             except ValidationError as exception:
                 return ("invalid_tool_arguments", str(exception))
-            # The validated model is kept — see `_with_schema_defaults` — so a documented default actually applies.
-        # Validated once here, so a malformed request fails as a tool error rather than becoming a grant.
+            # The validated model is kept — see `_with_schema_defaults` — so a documented default actually applies. Validated once here, so a malformed request fails as a tool error rather than becoming a grant.
         if "access_request" in arguments:
             _, complaint = parse_access_request(arguments.get("access_request"))
             if complaint:
@@ -466,9 +465,7 @@ class _DispatchesTools:
                 return
         policy = self._call_policy(resolved_location)
 
-        # Dispatch is data-driven over the session's own tool units: a built-in or a caller's
-        # tool is the same `Tool`, so there is no name table and a caller's implementation of the
-        # same name simply replaces the built-in's.
+        # Dispatch is data-driven over the session's own tool units: a built-in or a caller's tool is the same `Tool`, so there is no name table and a caller's implementation of the same name simply replaces the built-in's.
         unit = self._tool_units.get(tool_name)
         if unit is None:
             yield Error(
@@ -477,8 +474,7 @@ class _DispatchesTools:
                 tool=tool_name,
             )
             return
-        # A handler that invokes a schema tool directly (`.ainvoke`) resolves the same services
-        # and the resolved decision.
+        # A handler that invokes a schema tool directly (`.ainvoke`) resolves the same services and the resolved decision.
         services_token = bind_tool_services(self._services)
         decision_token = bind_tool_decision(decision)
         try:

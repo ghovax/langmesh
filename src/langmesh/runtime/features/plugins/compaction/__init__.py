@@ -215,8 +215,7 @@ class Compaction(Feature):
         budget = int(self.usable_context() * fraction)
         if budget > 0 and reason != "manual":
             return budget
-        # Manual and overflow compaction must remain effective even if a provider failed to
-        # report its window. The current conversation is still an honest upper bound.
+        # Manual and overflow compaction must remain effective even if a provider failed to report its window. The current conversation is still an honest upper bound.
         measured = int(
             conversation_tokens(self._host.conversation.messages if recent is None else recent) * fraction
         )
@@ -329,13 +328,10 @@ class Compaction(Feature):
             self._host.bookkeeping.mark_dirty()
         if self._control.waiting and self._control.preparation_token is not None:
             if await self._preparation.completed(self._control.preparation_token):
-                # The write may have committed just before a process stopped or a checkpoint
-                # was persisted. Its revision is the durable acknowledgement; do not ask the
-                # model to repeat a side effect merely because the in-memory state was lost.
+                # The write may have committed just before a process stopped or a checkpoint was persisted. Its revision is the durable acknowledgement; do not ask the model to repeat a side effect merely because the in-memory state was lost.
                 self.record_preparation()
         if self._control.waiting and not self._control.started:
-            # The indicator opens when the recording handoff begins, not when the compaction finally
-            # runs: preparation is the long phase, and a session restart must not drop it.
+            # The indicator opens when the recording handoff begins, not when the compaction finally runs: preparation is the long phase, and a session restart must not drop it.
             self._control.started = True
             self._host.bookkeeping.mark_dirty()
             yield CompactionStarted(
@@ -387,8 +383,7 @@ class Compaction(Feature):
             return "compaction"
         if self._control.phase != "preparation_failed":
             return None
-        # A retry gets one unambiguous preparation notice. Retain any accepted user message
-        # that followed the failed private segment while removing that segment's discarded work.
+        # A retry gets one unambiguous preparation notice. Retain any accepted user message that followed the failed private segment while removing that segment's discarded work.
         self._host.conversation.messages[:] = self.without_preparation(self._host.conversation.messages)
         self.begin_preparation(
             reason=self._control.reason,
@@ -414,8 +409,7 @@ class Compaction(Feature):
         self._host.bookkeeping.mark_dirty()
         events: list[TurnEvent] = []
         if not self._control.started:
-            # A failure that never reached the model call still gets a running start, so the
-            # interface never jumps straight from nothing to a failure without a visible phase.
+            # A failure that never reached the model call still gets a running start, so the interface never jumps straight from nothing to a failure without a visible phase.
             self._control.started = True
             events.append(
                 CompactionStarted(reason="preparation", messages_before=messages, tokens_before=tokens)
@@ -472,8 +466,7 @@ class Compaction(Feature):
             ):
                 yield event
             return
-        # A supplied strategy replaces only the discard policy; the recording handshake and
-        # visible success/failure boundary remain the plugin's.
+        # A supplied strategy replaces only the discard policy; the recording handshake and visible success/failure boundary remain the plugin's.
         if self._strategy is not None:
             state = self._compaction_state(reason)
             messages_before = len(state.messages)
@@ -528,8 +521,7 @@ class Compaction(Feature):
         )
         kept = self.bounded_tail(compactable, reason)
         if len(kept) >= messages_before:
-            # A manual no-op is not a broken session. Automatic/overflow attempts that cannot
-            # reclaim space are failures and stop future input until the user retries.
+            # A manual no-op is not a broken session. Automatic/overflow attempts that cannot reclaim space are failures and stop future input until the user retries.
             ok = reason == "manual"
             error = "" if ok else "Compaction could not reclaim any messages."
             error_code = None if ok else "compaction_no_reclaim"
@@ -566,8 +558,7 @@ class Compaction(Feature):
         try:
             summary = await self._summarize_compacted(older, compactable) if older else None
         except CompactionSummaryExhausted as error:
-            # The summary is the durable memory the tail resumes from: without it the fold must not
-            # proceed, and the session stays blocked until the user retries the compaction.
+            # The summary is the durable memory the tail resumes from: without it the fold must not proceed, and the session stays blocked until the user retries the compaction.
             self._host.conversation.messages[:] = original
             self._host.window.set_latest_context_tokens(tokens_before)
             self.fail_compaction(str(error))

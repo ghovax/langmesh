@@ -105,8 +105,7 @@ class _TurnEventSink:
         self._thinking = _ContentBlockAccumulator(self._emit_thinking, self._emit_thinking_delta)
         self.final_text = ""
         self.stop_reason = ""
-        # How many tool results this turn emitted, so a no-op continuation turn is
-        # distinguishable from one that actually worked.
+        # How many tool results this turn emitted, so a no-op continuation turn is distinguishable from one that actually worked.
         self.tool_results = 0
 
     async def _emit_text(self, key: tuple[str, ...], text: str) -> None:
@@ -298,8 +297,7 @@ class _TurnEventSink:
                         )
                 return await self._suspend(interactions, plans)
             case PermissionReviewing():
-                # The reviewer is weighing automatic-mode gates: surface each one so the call is
-                # visible while the decision is pending, exactly as a suspended gate would be.
+                # The reviewer is weighing automatic-mode gates: surface each one so the call is visible while the decision is pending, exactly as a suspended gate would be.
                 for gate in event.interactions:
                     await self._emit(
                         _event_part(

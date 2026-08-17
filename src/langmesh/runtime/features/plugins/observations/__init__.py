@@ -51,8 +51,7 @@ class ObservationMemory(Feature):
         if not metadata_changed and not error_changed:
             return
         if metadata_changed:
-            # The memory panel receives this revision immediately, while the model's static
-            # prefix adopts it only at an explicit prompt refresh such as successful compacting.
+            # The memory panel receives this revision immediately, while the model's static prefix adopts it only at an explicit prompt refresh such as successful compacting.
             self._metadata = dict(metadata)
         self._error = normalized_error
         if error_changed:

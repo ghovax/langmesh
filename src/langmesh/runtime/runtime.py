@@ -329,24 +329,16 @@ class AgentRuntime(
         )
 
         self._file_lease_manager = components.file_leases
-        # The caller's tools, granted to this session. A grant is dispatchable and its description
-        # is appended to the conversation as a message, so the bound schema — and the provider
-        # cache prefix — never changes. A grant may therefore be added at creation or at any
-        # later moment; both are append-only.
+        # The caller's tools, granted to this session. A grant is dispatchable and its description is appended to the conversation as a message, so the bound schema — and the provider cache prefix — never changes. A grant may therefore be added at creation or at any later moment; both are append-only.
         self._tool_grants = tuple(as_tool_grants(tools))
         # What a caller's tool is gated at: asking by default, so adding one cannot silently widen a session.
         self._supplied_tool_gate = components.supplied_tool_gate
-        # The session's tools are composed by the caller, never forced: the complete roster comes
-        # from `toolset`, additions from `tools`/`grant_tool`, and nothing is injected by default.
+        # The session's tools are composed by the caller, never forced: the complete roster comes from `toolset`, additions from `tools`/`grant_tool`, and nothing is injected by default.
         configured_tools = list(toolset) if toolset is not None else []
-        # The dispatchable units: every tool the session runs, assembled from the caller's set and
-        # the caller's own tools. A caller's tool of the same name replaces a built-in's execution.
-        # The model binds the configured schemas; grants ride as appended messages and only change
-        # who executes, keeping the cache prefix untouched.
+        # The dispatchable units: every tool the session runs, assembled from the caller's set and the caller's own tools. A caller's tool of the same name replaces a built-in's execution. The model binds the configured schemas; grants ride as appended messages and only change who executes, keeping the cache prefix untouched.
         units: dict[str, Tool] = {}
         for tool in configured_tools:
-            # A built-in keeps its event-rich handler only when it is the registry's own schema; a
-            # caller's tool of the same name is theirs to run through the generic invoke path.
+            # A built-in keeps its event-rich handler only when it is the registry's own schema; a caller's tool of the same name is theirs to run through the generic invoke path.
             handler = (
                 HANDLERS.get(tool.name, invoke_supplied)
                 if tool is getattr(tools_registry, tool.name, None)
@@ -412,8 +404,7 @@ class AgentRuntime(
             catalogue = machine_catalogue(global_configuration, self._project_directory)
         self._catalogue = catalogue
         self._prompt_loader = _CataloguePrompts(catalogue)
-        # Creation-time grants are described from the first turn: their messages sit at the head
-        # of the conversation, before any user message, and are stable for the session's life.
+        # Creation-time grants are described from the first turn: their messages sit at the head of the conversation, before any user message, and are stable for the session's life.
         for grant in self._tool_grants:
             self._conversation.append(self._tool_grant_message(grant.tool))
         self._cached_system_prompt: str | None = None
@@ -431,8 +422,7 @@ class AgentRuntime(
         self._latest_context_tokens = conversation_tokens(self._conversation)
         context_window = getattr(self._model, "context_window", None)
         reported_context_window = max(0, int(context_window())) if callable(context_window) else 0
-        # Every model must advertise its own context capacity; an unknown window means the
-        # harness cannot schedule compacting or refuse an oversized request with numbers.
+        # Every model must advertise its own context capacity; an unknown window means the harness cannot schedule compacting or refuse an oversized request with numbers.
         self._context_window_estimated = reported_context_window == 0
         self._context_window = reported_context_window
         self._turn_recovery = "none"
@@ -446,8 +436,7 @@ class AgentRuntime(
             conversation_snapshot=self._peer_conversation_snapshot,
             mcp_server_manager=mcp_server_manager,
         )
-        # What was approved beyond the configured profile. The boundary is the core's; only the
-        # permission plugin adds to it, so other plugins never need to know that plugin exists.
+        # What was approved beyond the configured profile. The boundary is the core's; only the permission plugin adds to it, so other plugins never need to know that plugin exists.
         self._access_grants: list[Grant] = []
         # The files the person attached: like a grant, but answering what they handed over rather than what was asked.
         self._attached_files: dict[str, None] = {}
@@ -530,8 +519,7 @@ class AgentRuntime(
         goal_review = self._features.by_type(GoalReviewFeature)
         if goal_review is not None:
             goal_review.set_listener(components.goal_listener)
-        # Per-session state a screen-control script keeps between calls, and the services bundle
-        # every tool handler runs against. The bundle is the tool's only view of the runtime.
+        # Per-session state a screen-control script keeps between calls, and the services bundle every tool handler runs against. The bundle is the tool's only view of the runtime.
         self._screen_queries_asked: list[tuple[Any, str]] = []
         background_feature = self._features.by_type(BackgroundJobsFeature)
         continuation_feature = self._features.by_type(Continuation)
@@ -797,8 +785,7 @@ class AgentRuntime(
         # The latest call's input is the whole prompt, so it says how full the context is.
         model = getattr(self, "_model", None)
         reported_context_window = model.context_window() if model is not None else 0
-        # Some OpenAI-compatible gateways omit model metadata on a response. Never replace
-        # a catalogued non-zero window with that absence: doing so disables automatic compacting.
+        # Some OpenAI-compatible gateways omit model metadata on a response. Never replace a catalogued non-zero window with that absence: doing so disables automatic compacting.
         if reported_context_window > 0:
             self._context_window = reported_context_window
             self._context_window_estimated = False
@@ -851,8 +838,7 @@ class AgentRuntime(
         return bool(self._sandbox.filesystem.writable)
 
     def abort(self) -> None:
-        # Stop tears down the live turn only: detached work and peer sessions have their own lifecycles.
-        # A queued steering message is superseded by the Stop: deliver its false and never let it keep the cancelled turn waiting.
+        # Stop tears down the live turn only: detached work and peer sessions have their own lifecycles. A queued steering message is superseded by the Stop: deliver its false and never let it keep the cancelled turn waiting.
         self.discard_pending_steering()
         self._stop_requested = True
         self._abort_event.set()

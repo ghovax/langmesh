@@ -69,8 +69,7 @@ class NativeFileSubscription:
 
         self._observer = Observer()
         self._observer.schedule(Handler(), str(self.watch_root), recursive=False)
-        # `start()` starts each native emitter before returning, so construction is the
-        # subscription-readiness boundary and a following snapshot cannot open a race gap.
+        # `start()` starts each native emitter before returning, so construction is the subscription-readiness boundary and a following snapshot cannot open a race gap.
         self._observer.start()
 
     @property
@@ -96,9 +95,7 @@ class NativeFileSubscription:
             changes = {
                 (change, changed)
                 for change, changed in raw
-                # macOS FSEvents may coalesce creation of a missing `.agents` child into
-                # a change on its subscribed parent. That event is the signal to rebase and
-                # take the now-complete registry snapshot; it is not a polling fallback.
+                # macOS FSEvents may coalesce creation of a missing `.agents` child into a change on its subscribed parent. That event is the signal to rebase and take the now-complete registry snapshot; it is not a polling fallback.
                 if changed == target
                 or (changed == agents and change is not NativeFileChange.MODIFIED)
                 or (changed == watch_root and watch_root != agents and self.needs_rebase)

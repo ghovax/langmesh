@@ -206,8 +206,7 @@ class SessionExecutor(AgentExecutor):
         self._screen_warm: Optional[asyncio.Task] = None
         self._goal_state_tail: Optional[asyncio.Task] = None
         self._session_state_lock = asyncio.Lock()
-        # Linearizes external send decisions. Without this, two concurrent callers can both
-        # observe "idle" and start separate turns before either marks the context running.
+        # Linearizes external send decisions. Without this, two concurrent callers can both observe "idle" and start separate turns before either marks the context running.
         self._send_lock = asyncio.Lock()
         self._observation_registry_metadata: dict[str, Any] = {}
         self._observation_registry_error: str | None = None
@@ -441,8 +440,7 @@ class SessionExecutor(AgentExecutor):
         if workflow is None or workflow.done() or workflow is asyncio.current_task():
             return False
         workflow.cancel()
-        # The superseded review belongs to the old goal state: stop it rather than letting it
-        # run out a verdict nobody is waiting for.
+        # The superseded review belongs to the old goal state: stop it rather than letting it run out a verdict nobody is waiting for.
         state.continuation.cancel_review()
         with contextlib.suppress(asyncio.CancelledError):
             await workflow
@@ -525,9 +523,7 @@ class SessionExecutor(AgentExecutor):
         state = self._contexts.get(session_id)
         runtime = state.runtime if state is not None else None
         if runtime is None:
-            # A woken session has no runtime until its first turn, but the goal is durable
-            # beside the checkpoint. Build the runtime so calling the goal off also works
-            # from the parked/asleep state, instead of silently answering "nothing to clear".
+            # A woken session has no runtime until its first turn, but the goal is durable beside the checkpoint. Build the runtime so calling the goal off also works from the parked/asleep state, instead of silently answering "nothing to clear".
             runtime = await self._runtime_for(session_id, self._workspace())
         goal = _features.goal(runtime) if runtime is not None else None
         if runtime is None or goal is None:
@@ -637,8 +633,7 @@ class SessionExecutor(AgentExecutor):
             if not state.continuation.workflow.done():
                 state.continuation.workflow.cancel()
             handled = True
-        # A stop is a halt for the review too: cancel it outright rather than waiting for the
-        # reviewer's current model call to finish, so the linked review session stops now.
+        # A stop is a halt for the review too: cancel it outright rather than waiting for the reviewer's current model call to finish, so the linked review session stops now.
         if state.continuation.cancel_review():
             handled = True
         if state.continuation.clear():
@@ -897,9 +892,7 @@ class SessionExecutor(AgentExecutor):
                 )
             )
         runtime_directory = working_directory or project_directory or str(Path.cwd())
-        # The daemon composes the session's tools: the agent profile's declared set, mapped onto
-        # the shipped built-ins, plus the settings-gated and peer tools it owns. The library
-        # forces nothing; this is the daemon assembling the toolset.
+        # The daemon composes the session's tools: the agent profile's declared set, mapped onto the shipped built-ins, plus the settings-gated and peer tools it owns. The library forces nothing; this is the daemon assembling the toolset.
         composed = _compose_session_tools(
             configuration,
             self._global_configuration,
@@ -907,8 +900,7 @@ class SessionExecutor(AgentExecutor):
             can_reach_peers=self._peers is not None,
             permission_mode=self._permission_mode,
         )
-        # The permission evaluator refuses what the profile did not declare, so the declared set
-        # is exactly the composed set.
+        # The permission evaluator refuses what the profile did not declare, so the declared set is exactly the composed set.
         configuration = configuration.model_copy(
             update={"tools_enabled": sorted({tool.name for tool in composed})}
         )
@@ -1452,8 +1444,7 @@ class SessionExecutor(AgentExecutor):
         ]
         if state_publishers:
             await asyncio.gather(*state_publishers, return_exceptions=True)
-        # Title generation is async relative to the turn, but owned by the session: an immediate
-        # idle sleep may not discard a model call that is already producing the durable title.
+        # Title generation is async relative to the turn, but owned by the session: an immediate idle sleep may not discard a model call that is already producing the durable title.
         if self._title_task is not None and not self._title_task.done():
             with contextlib.suppress(Exception):
                 await self._title_task

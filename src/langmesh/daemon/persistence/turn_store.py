@@ -737,9 +737,7 @@ class AppendOnlyTaskStore(TaskStore):
                 f"non-terminal save for already-terminal task {task.id}: a terminal save must be the last save for a task"
             )
         async with self._engine.begin() as connection:
-            # The in-memory terminal guard does not survive a restart, so the durable
-            # head is consulted when the task is new to this process: a non-terminal
-            # save of a task whose head is already terminal must still be refused.
+            # The in-memory terminal guard does not survive a restart, so the durable head is consulted when the task is new to this process: a non-terminal save of a task whose head is already terminal must still be refused.
             if not terminal and task.id not in self._terminal_turns and self._persisted_counts.get(task.id) is None:
                 stored_status = (
                     await connection.execute(
@@ -791,10 +789,7 @@ class AppendOnlyTaskStore(TaskStore):
                 self._persisted_counts[task.id] = persisted + len(new_messages)
 
             if terminal:
-                # The terminal history is the canonical compacted form. Rewriting the rows
-                # wholesale keeps a repeated terminal save idempotent even after a restart,
-                # when the in-memory terminal guard and persisted-count cache are cold:
-                # a fresh store would otherwise re-insert the messages the merge folded away.
+                # The terminal history is the canonical compacted form. Rewriting the rows wholesale keeps a repeated terminal save idempotent even after a restart, when the in-memory terminal guard and persisted-count cache are cold: a fresh store would otherwise re-insert the messages the merge folded away.
                 await connection.execute(
                     delete(self._history).where(self._history.c.turn_id == task.id)
                 )
@@ -1053,8 +1048,7 @@ class AppendOnlyTaskStore(TaskStore):
         for turn_id, artifact in artifact_rows:
             artifacts[str(turn_id)].append(artifact)
 
-        # All database work is complete before the SSE consumer receives the first turn, so browser
-        # backpressure cannot pin a connection. Each turn's CPU-heavy decode still leaves the event loop.
+        # All database work is complete before the SSE consumer receives the first turn, so browser backpressure cannot pin a connection. Each turn's CPU-heavy decode still leaves the event loop.
         for turn_id in ordered_turn_ids:
             yield await asyncio.to_thread(
                 _stored_task,
@@ -1063,8 +1057,7 @@ class AppendOnlyTaskStore(TaskStore):
                 artifacts[turn_id],
             )
 
-        # Reference-only task heads carry metadata but no transcript rows. They follow the durable
-        # turns and are harmless to renderers that intentionally filter them from the main timeline.
+        # Reference-only task heads carry metadata but no transcript rows. They follow the durable turns and are harmless to renderers that intentionally filter them from the main timeline.
         for row in related_rows:
             yield Task.model_validate(
                 {

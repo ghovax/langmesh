@@ -242,8 +242,7 @@ class _FsspecMaterialization(AbstractAsyncContextManager[MaterializedResources])
         removed = set(self._baseline) - set(current)
         changed = {path: data for path, data in current.items() if self._baseline.get(path) != data}
         if removed or changed:
-            # fsspec owns protocol-specific publication and transaction semantics. Backends
-            # whose files implement commit/discard publish every changed object at commit.
+            # fsspec owns protocol-specific publication and transaction semantics. Backends whose files implement commit/discard publish every changed object at commit.
             def publish() -> None:
                 with self._resources.filesystem.transaction:
                     for relative in sorted(removed):

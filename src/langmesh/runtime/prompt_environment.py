@@ -1362,10 +1362,7 @@ def _build_user_context() -> dict:
             recent_roots.append(candidate)
     existing_roots = [root for root in recent_roots if root.is_dir()]
 
-    # Each probe is its own subprocess or scan and none needs another's answer, so they run together:
-    # sequentially the slowest few decided the total, and `system_profiler` alone was most of it.
-    # `system_profiler` is the one probe worth spawning only once, so it runs here and its output is
-    # parsed after the pool rather than started again in every field that reads it.
+    # Each probe is its own subprocess or scan and none needs another's answer, so they run together: sequentially the slowest few decided the total, and `system_profiler` alone was most of it. `system_profiler` is the one probe worth spawning only once, so it runs here and its output is parsed after the pool rather than started again in every field that reads it.
     profiler_holder: dict = {}
 
     def _collect_system_profiler() -> dict:

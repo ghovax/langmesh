@@ -142,8 +142,7 @@ class _ContextState:
     aborted: bool = False
     # A reset asked to drop the runtime while work was in flight, so the drop waits for idle.
     pending_reset: bool = False
-    # A fork keeps its inherited prefix in an immutable daemon snapshot and persists only the
-    # suffix it writes. Compaction that changes the prefix clears these fields and detaches it.
+    # A fork keeps its inherited prefix in an immutable daemon snapshot and persists only the suffix it writes. Compaction that changes the prefix clears these fields and detaches it.
     inherited_snapshot_id: str = ""
     inherited_message_count: int = 0
 
@@ -270,8 +269,7 @@ class _TurnRunner:
         if resolved is self._DONE:
             return
         assert isinstance(resolved, _Resolved)
-        # Count a queued turn before it waits on the context lock. Adjacent queued turns then
-        # present one continuous busy interval, so live clients never detach in a false idle gap.
+        # Count a queued turn before it waits on the context lock. Adjacent queued turns then present one continuous busy interval, so live clients never detach in a false idle gap.
         self._track_context_activity = self._on_turn_state is not None
         if self._track_context_activity and self._on_turn_state is not None:
             self._on_turn_state(resolved.task.context_id, True, resolved.task.id)
@@ -630,8 +628,7 @@ class _TurnRunner:
             _TurnMode.TASK_CONTINUATION,
         }
         if mode in {_TurnMode.COMPACTION_RESUME, _TurnMode.COMPACTION_PREPARE, _TurnMode.RETRY}:
-            # The accepted user message is already the conversation tail. This turn merely
-            # resumes the model call that the failed compaction prevented.
+            # The accepted user message is already the conversation tail. This turn merely resumes the model call that the failed compaction prevented.
             self._turn_input = ""
         elif mode is _TurnMode.GOAL_CONTINUATION:
             # Goal review prose stays visible, while an independent task obligation rides inside its reminder.
@@ -739,8 +736,7 @@ class _TurnRunner:
 
     async def _fail(self, exception: Exception) -> None:
         await self._save_runtime_conversation()
-        # Log the real exception, but show the user a safe category rather than raw exception text.
-        # The one it was handed, not the one in flight, since this is reached by a call rather than by a raise.
+        # Log the real exception, but show the user a safe category rather than raw exception text. The one it was handed, not the one in flight, since this is reached by a call rather than by a raise.
         logger.error("agent turn failed", exc_info=exception)
         if self._runtime is not None:
             self._runtime.mark_turn_failed()
@@ -749,9 +745,7 @@ class _TurnRunner:
         error_part = _event_part(
             ErrorEvent(**_safe_turn_error(exception, had_images=self._turn_has_images))
         )
-        # Publish the error on the live lane as well as persisting it in the failed status.
-        # Without the publish, the chat's error panel only appears after a reload re-reads
-        # the history, because the turn-end activity alone carries no error part.
+        # Publish the error on the live lane as well as persisting it in the failed status. Without the publish, the chat's error panel only appears after a reload re-reads the history, because the turn-end activity alone carries no error part.
         if self._executor._on_stream_event is not None:
             self._executor._on_stream_event(self._task.context_id, error_part)
         await self._updater.failed(self._updater.new_agent_message([error_part]))
@@ -818,9 +812,7 @@ class _TurnRunner:
         if runtime is None or _features.has_pending_jobs(runtime):
             return _ContinuationPlan()
         goal = _features.goal(runtime)
-        # A goal-continuation turn that produced neither prose nor tool work answered the
-        # review with nothing; immediately re-reviewing would only spin the review loop,
-        # so the goal parks instead and waits for a person.
+        # A goal-continuation turn that produced neither prose nor tool work answered the review with nothing; immediately re-reviewing would only spin the review loop, so the goal parks instead and waits for a person.
         if (
             self._mode is _TurnMode.GOAL_CONTINUATION
             and not (self._sink.final_text.strip() or self._sink.tool_results)
