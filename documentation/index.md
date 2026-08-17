@@ -9,7 +9,7 @@ LangMesh is an agent harness with two delivery layers: the `langmesh` Python lib
 | Embed an agent in a Python process | `langmesh.Session` | [Library quickstart](library/index.md) |
 | Compose the runtime directly | `AgentRuntime`, `RuntimeProfile`, and `RuntimeComponents` | [Composition](library/composition.md) |
 | Keep sessions durable and remotely addressable | `langmeshd` | [Architecture](internal/architecture.md) |
-| Operate sessions | CLI or desktop app | [Command line](user/cli.md) or [desktop app](user/app.md) |
+| Operate sessions | CLI or desktop app | [Command line](user/installation.md) or [desktop app](user/app.md) |
 
 ## Core guarantees
 

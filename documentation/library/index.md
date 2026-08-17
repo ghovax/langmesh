@@ -80,14 +80,14 @@ session = Session(agent, directory="/srv/checkout", tools=[incident_lookup])
 session.grant_tool(current_incident)
 ```
 
-See [Granting a tool to a session](customization.md#granting-a-tool-to-a-session).
+See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 
 ## Next
 
 - [Composition](composition.md) explains every configured value and product boundary.
-- [Models and cache behavior](models.md) covers provider construction, credentials, and stable inference prefixes.
+- [Models and cache behavior](lifecycle.md) covers provider construction, credentials, and stable inference prefixes.
 - [Lifecycle and control](lifecycle.md) covers suspension, resume, interrupts, steering, and retries.
-- [Events and driving patterns](events.md) covers the complete stream contract.
-- [Customization](customization.md) covers tools, policy, hooks, middleware, locations, peer sessions, and MCP servers.
-- [Compaction and continuation](compaction.md) covers history compaction and autonomous work.
-- [Resources and persistence](resources.md) covers virtual workspaces, checkpoints, transcripts, and background jobs.
+- [Events and driving patterns](lifecycle.md) covers the complete stream contract.
+- [Customization](composition.md) covers tools, policy, hooks, middleware, locations, peer sessions, and MCP servers.
+- [Compaction and continuation](persistence.md) covers history compaction and autonomous work.
+- [Resources and persistence](persistence.md) covers virtual workspaces, checkpoints, transcripts, and background jobs.
