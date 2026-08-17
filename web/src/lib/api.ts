@@ -1,11 +1,10 @@
 // Where the daemon lives, and the capability token that proves we may talk to it.
 import { setFaultSender, swallowed } from "./swallowed";
 
-export const LOCAL_DAEMON_PORT = 8824;
-export const LOCAL_DAEMON_URL = `http://127.0.0.1:${LOCAL_DAEMON_PORT}`;
-
+// The development server is pointed straight at the daemon by web-development.sh; a built page
+// is served by the daemon itself (or by Tauri, which reports the endpoint below).
 const DEFAULT_API_BASE =
-  (typeof process !== "undefined" ? process.env.NEXT_PUBLIC_API_BASE : "") || LOCAL_DAEMON_URL;
+  typeof process !== "undefined" ? process.env.NEXT_PUBLIC_API_BASE || "" : "";
 
 // The token a development page presents, and only ever a development page.
 const DEVELOPMENT_TOKEN =
@@ -25,18 +24,7 @@ let daemonEndpointPromise: Promise<void> | null = null;
 
 async function resolveDaemonEndpoint(): Promise<void> {
   if (!runningInTauri()) {
-    // A served build uses its origin while Next development publishes the stable local bridge.
-    try {
-      const response = await fetch("/__langmesh/runtime.json", { cache: "no-store" });
-      if (response.ok) {
-        const runtime = (await response.json()) as { apiBase?: unknown; proxied?: unknown };
-        if (runtime.proxied) API_BASE = "";
-        else if (typeof runtime.apiBase === "string")
-          API_BASE = runtime.apiBase.replace(/\/+$/, "");
-      }
-    } catch {
-      // Not served by it; nothing to learn.
-    }
+    // The daemon's address comes from the environment in development; nothing to discover on the page.
     return;
   }
   try {

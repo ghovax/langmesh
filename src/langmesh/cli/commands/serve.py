@@ -410,8 +410,8 @@ def run(arguments) -> int:
     import os
     import signal
 
-    from langmesh.base.confinement.paths import daemon_port_path, daemon_token_path, runtime_directory
     from langmesh.cli.client import daemon_is_up, ensure_daemon
+    from langmesh.daemon.paths import daemon_pid_path, daemon_port_path, daemon_token_path
 
     reach = bool(getattr(arguments, "reach", False))
     door_port = arguments.port if arguments.port is not None else (8825 if reach else 8824)
@@ -435,7 +435,7 @@ def run(arguments) -> int:
     ensure_daemon()
     try:
         started_daemon_process_id = (
-            int((runtime_directory() / "langmeshd.pid").read_text().strip())
+            int(daemon_pid_path().read_text().strip())
             if started_the_daemon
             else None
         )
@@ -448,7 +448,7 @@ def run(arguments) -> int:
             return
         try:
             current_daemon_process_id = int(
-                (runtime_directory() / "langmeshd.pid").read_text().strip()
+                daemon_pid_path().read_text().strip()
             )
         except (OSError, ValueError):
             return
