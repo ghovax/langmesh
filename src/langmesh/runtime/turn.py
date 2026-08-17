@@ -224,6 +224,8 @@ class _RunsTurns:
                 "toolbox": toolbox,
                 "peer_sessions": peer_sessions,
                 "mcp_servers": mcp_servers,
+                # Plugin-owned sections, empty when the owning plugin is not installed.
+                "task_guidance": "",
             }
             # A feature contributes the prompt sections it owns, such as the memory registry's picture.
             self._features.compose_prompt(variables)
