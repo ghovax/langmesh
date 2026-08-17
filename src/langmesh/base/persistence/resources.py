@@ -14,6 +14,7 @@ import uuid
 import fsspec
 from fsspec import AbstractFileSystem
 from fsspec.implementations.local import LocalFileSystem
+from langmesh.base.persistence.observation_store import NativeFileSubscription
 
 
 def resource_path(value: str | PurePosixPath) -> str:
@@ -93,8 +94,6 @@ class LocalResourceChanges:
         self.root = Path(root).expanduser().absolute()
 
     def subscribe(self, prefix: str = "") -> ResourceSubscription:
-        from langmesh.base.persistence.observation_store import NativeFileSubscription
-
         root = self.root
         normalized = resource_path(prefix) if prefix else ""
         if not normalized:

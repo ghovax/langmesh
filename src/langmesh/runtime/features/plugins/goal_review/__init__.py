@@ -15,9 +15,9 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Awaitable, Callable, Literal, Optional
+from typing import Any, Awaitable, Callable, Optional
 
-from pydantic import BaseModel, Field, PrivateAttr, ValidationError, model_validator
+from pydantic import ValidationError
 
 from langmesh.base.configuration import PermissionEvaluator, PromptLoader
 from langmesh.base.contracts.ports import GoalReviewContext, GoalReviewOutcome
@@ -26,7 +26,7 @@ from langmesh.base.primitives.serialization import compact
 from langmesh.base.contracts.tools import ToolGrant
 from langmesh.runtime.internals import race_interrupt
 from langmesh.runtime.cache_trace import cache_lane
-from langmesh.runtime.goal import Goal, NonBlankText
+from langmesh.runtime.goal import Goal
 from langmesh.runtime.turn_events import (
     Done,
     GoalReviewFinished,
@@ -35,6 +35,13 @@ from langmesh.runtime.turn_events import (
     TurnEvent,
 )
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
+from langmesh.runtime.features.plugins.goal_review.models import GoalReview
+from langmesh.runtime.features.plugins.goal_review.tools import (
+    submit_goal_review,
+    update_goal,
+)
+from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
+from langmesh.runtime.runtime import AgentRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +49,6 @@ logger = logging.getLogger(__name__)
 _DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
 
 #: Where a goal stands after one reading of the work, which is not the same as what the session says about it.
-GOAL_STANDING = Literal["unmet", "satisfied", "blocked"]
-GOAL_CONTRACT = Literal["complete", "needs_revision"]
 _REVIEWER_DISABLED_TOOLS = frozenset(
     {
         "ask_user",
@@ -57,75 +62,6 @@ _REVIEWER_DISABLED_TOOLS = frozenset(
         "update_tasks",
     }
 )
-
-
-class GoalReview(BaseModel):
-    """One reading of an open goal: where it stands, and what the session is told to do about it."""
-
-    # Evidence precedes the verdict so the decision follows from the review instead of leading it.
-    assessment: NonBlankText = Field(
-        description=_DESCRIPTIONS.load("goal_review_assessment", {}).strip()
-    )
-    unmet: list[NonBlankText] = Field(
-        default_factory=list,
-        description=_DESCRIPTIONS.load("goal_review_unmet", {}).strip(),
-    )
-    evidence: NonBlankText | None = Field(
-        default=None,
-        description=_DESCRIPTIONS.load("goal_review_evidence", {}).strip(),
-    )
-    blocker: NonBlankText | None = Field(
-        default=None,
-        description=_DESCRIPTIONS.load("goal_review_blocker", {}).strip(),
-    )
-    goal_contract: GOAL_CONTRACT = Field(
-        description=_DESCRIPTIONS.load("goal_review_goal_contract", {}).strip()
-    )
-    standing: GOAL_STANDING = Field(
-        description=_DESCRIPTIONS.load("goal_review_standing", {}).strip()
-    )
-    message: NonBlankText | None = Field(
-        default=None,
-        description=_DESCRIPTIONS.load("goal_review_message", {}).strip(),
-    )
-    _review_id: str = PrivateAttr("")
-
-    @model_validator(mode="after")
-    def _carry_what_the_verdict_rests_on(self):
-        """A verdict without what establishes it is not a verdict, so the pass is retried rather than believed."""
-        if self.standing == "satisfied":
-            if self.unmet:
-                raise ValueError("A satisfied goal has nothing unmet.")
-            if self.goal_contract != "complete":
-                raise ValueError("A satisfied goal needs a complete contract.")
-            if self.blocker is not None:
-                raise ValueError("A satisfied goal has no blocker.")
-            if self.message is not None:
-                raise ValueError("A satisfied goal opens no continuation message.")
-            if self.evidence is None:
-                raise ValueError(
-                    "A satisfied goal needs the evidence that proves each requirement."
-                )
-            return self
-        if self.evidence is not None:
-            raise ValueError("Only a satisfied goal carries completion evidence.")
-        if not self.unmet and self.goal_contract == "complete":
-            raise ValueError(
-                "A goal that is not satisfied has an unmet requirement or needs a stronger contract."
-            )
-        if self.goal_contract == "needs_revision" and self.standing != "unmet":
-            raise ValueError("A goal the session can revise is unmet, not satisfied or blocked.")
-        if self.standing == "blocked":
-            if self.blocker is None:
-                raise ValueError("A blocked goal needs what is in the way and what would clear it.")
-            if self.message is not None:
-                raise ValueError("A blocked goal opens no continuation message.")
-            return self
-        if self.blocker is not None:
-            raise ValueError("Only a blocked goal carries a blocker.")
-        if self.message is None:
-            raise ValueError("An unmet goal needs the message that opens its next turn.")
-        return self
 
 
 class GoalReviewFeature(Feature):
@@ -177,11 +113,6 @@ class GoalReviewFeature(Feature):
 
     def contribute_tools(self) -> list:
         """The goal and review tools this plugin owns."""
-        from langmesh.runtime.features.plugins.goal_review.tools import (
-            submit_goal_review,
-            update_goal,
-        )
-
         return [update_goal, submit_goal_review]
 
     def snapshot(self) -> dict | None:
@@ -243,12 +174,6 @@ class GoalReviewFeature(Feature):
         self._submitted = review
 
     def _goal_reviewer(self, scratch_directory: str):
-        from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
-        from langmesh.runtime.features.plugins.goal_review.tools import (
-            submit_goal_review as submit_goal_review_tool,
-        )
-        from langmesh.runtime.runtime import AgentRuntime
-
         reviewer_configuration = self._context.agent_configuration.model_copy(
             update={"permission_mode": "automatic"}
         )
@@ -312,7 +237,7 @@ class GoalReviewFeature(Feature):
                 sessions=None,
                 mcp_servers=self._host.tools.tool_context.mcp_server_manager,
                 # The verdict tool is injected here and only here: the main session never carries it.
-                tools=[ToolGrant(submit_goal_review_tool)],
+                tools=[ToolGrant(submit_goal_review)],
                 supplied_tool_gate=self._host.tools.supplied_tool_gate,
                 permissions=reviewer_permissions,
                 # What the parent's model sees, minus the tools a reviewer must never use.

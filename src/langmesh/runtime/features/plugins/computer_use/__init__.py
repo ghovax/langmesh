@@ -18,7 +18,11 @@ from langchain.tools import tool
 
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmesh.computer import control, engine as native_surface, retrieval, surface as surface_module, targets as target_registry, web as web_surface, workflows as workflow_registry
+from langmesh.computer.retrieval import retrieval_policy_from, set_retrieval_policy
+from langmesh.computer.surface import message_loader
 from langmesh.runtime.features import Feature
+from langmesh.runtime.features.plugins.permissions import MUTATING_SCREEN_PRIMITIVES
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.execution import current_tool_decision, current_tool_services
 
@@ -33,8 +37,6 @@ _ELEMENT_ID = re.compile(r"(?:f\d+)?e\d+|req\d+|ws\d+|\d+(?:\.\d+)+")
 
 def _surface_for(surface_name: str):
     """The live surface a screen tool names: the native macOS tree, or the user's Chrome."""
-    from langmesh.computer import engine as native_surface, web as web_surface
-
     return native_surface.SURFACE if surface_name == "computer" else web_surface.SURFACE
 
 @tool
@@ -44,13 +46,6 @@ async def control_screen(
     target: str = "",
 ) -> str:
     """Drive the screen; described in descriptions/control_screen.md."""
-    from langmesh.computer import control, retrieval, surface as surface_module
-    from langmesh.computer.surface import message_loader
-
-    from langmesh.computer import targets as target_registry, workflows as workflow_registry
-
-    from langmesh.runtime.features.plugins.permissions import MUTATING_SCREEN_PRIMITIVES
-
     services = current_tool_services()
     script = str(script)
     if not script.strip():
@@ -410,8 +405,6 @@ class ComputerUse(Feature):
         screen = getattr(context.global_configuration, "computer_control", None)
         section = getattr(screen, "retrieval", None)
         if section is not None:
-            from langmesh.computer.retrieval import retrieval_policy_from, set_retrieval_policy
-
             set_retrieval_policy(retrieval_policy_from(section))
 
     @property
@@ -439,9 +432,6 @@ class ComputerUse(Feature):
         """The screen targets and primitives, when the feature is enabled."""
         if not self._enabled:
             return
-        from langmesh.computer import targets as target_registry, workflows as workflow_registry
-        from langmesh.computer.surface import message_loader
-
         try:
             if not target_registry.warm():
                 context["screen"] = {"reading": message_loader("computer")("screen_warming")}

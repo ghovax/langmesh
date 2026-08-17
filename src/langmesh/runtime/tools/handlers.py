@@ -18,6 +18,7 @@ from langmesh.runtime.background import bind_background_jobs, unbind_background_
 from langmesh.runtime.internals import _coerce_mcp_arguments, _maybe_json
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools import fetching, sessions
+from langmesh.runtime.tools.output import ToolOutput
 from langmesh.runtime.tools.registry import (
     call_mcp_server_tool_with_events,
     search_web as search_web_tool,
@@ -206,8 +207,6 @@ async def handle_session(
     services, tool_name, tool_arguments, tool_call_identifier, decision, policy, resolved_location
 ) -> AsyncIterator[Any]:
     """Every peer-session verb, in one handler: they differ only in which call they make."""
-    from langmesh.runtime.tools.output import ToolOutput
-
     create_tool = next((tool for tool in services.tools() if getattr(tool, "name", "") == "create_session"), None)
     background_token = bind_background_jobs(services.features.invoke("background"))
     try:

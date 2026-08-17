@@ -10,6 +10,19 @@ from langchain_core.tools import BaseTool
 
 from langmesh.base.configuration import AgentConfiguration, Configuration
 from langmesh.base.contracts.tools import ToolGrant
+from langmesh.base.contracts.ports import (
+    Approvals,
+    CatalogueLike,
+    FileLeases,
+    JobStore,
+    MCPServers,
+    Observer,
+    PermissionPolicy,
+    PromptComposer,
+    SessionAccess,
+    Transcript,
+    describe_unmet,
+)
 from langmesh.runtime.locations import Location
 
 
@@ -77,19 +90,6 @@ class RuntimeComponents:
             object.__setattr__(self, name, tuple(getattr(self, name)))
         if self.toolset is not None:
             object.__setattr__(self, "toolset", tuple(self.toolset))
-        from langmesh.base.contracts.ports import (
-            Approvals,
-            CatalogueLike,
-            FileLeases,
-            JobStore,
-            MCPServers,
-            Observer,
-            PermissionPolicy,
-            PromptComposer,
-            SessionAccess,
-            Transcript,
-            describe_unmet,
-        )
 
         ports = {
             "approvals": Approvals,

@@ -11,9 +11,11 @@ import shlex
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from langmesh.base import confinement as _confinement
 from langmesh.base.confinement import parse_access_request
 from langmesh.base.confinement.file_leases import FileLeaseConflict
 from langmesh.base.configuration import PermissionDenied
+from langmesh.locations.executor import SshExecutor
 from langmesh.runtime.background import (
     bind_background_jobs,
     bind_tool_call_id,
@@ -42,8 +44,6 @@ async def run_bash(
 
 def sandbox_denial(services: Any, result_data: Any, policy: Any) -> Any:
     """Whether a finished command looks like the operating system stopped it. Never remote, never backgrounded."""
-    from langmesh.base import confinement as _confinement
-
     if policy.is_remote or not isinstance(result_data, dict):
         return None
     if result_data.get("code") == "bash_started":
@@ -68,8 +68,6 @@ async def handle_bash(
 ) -> AsyncIterator[Any]:
     raw_command = tool_arguments.get("command", "")
     if policy.is_remote:
-        from langmesh.locations.executor import SshExecutor
-
         assert resolved_location is not None
         executor = resolved_location.executor
         assert isinstance(executor, SshExecutor)

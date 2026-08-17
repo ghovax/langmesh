@@ -13,6 +13,7 @@ from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tasks import TaskManager
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.features.plugins.continuation.policy import TuningContinuationPolicy
+from langmesh.runtime.features.plugins.continuation.tools import set_tasks, update_tasks
 
 
 class Continuation(Feature):
@@ -98,8 +99,6 @@ class Continuation(Feature):
 
     def contribute_tools(self) -> list:
         """The task-list tools this plugin owns."""
-        from langmesh.runtime.features.plugins.continuation.tools import set_tasks, update_tasks
-
         return [set_tasks, update_tasks]
 
     def prepare_request(self, messages: list) -> list:

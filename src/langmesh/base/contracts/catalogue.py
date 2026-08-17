@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from langmesh.base.content.instructions import Instruction, as_instructions
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
+from langmesh.base.configuration import load_agent_configuration, list_agent_route_names, PromptLoader
+from langmesh.base.content.skills import load_skills
+from langmesh.base.content.memories import load_memories
+from langmesh.base.persistence.file_cache import parsed_file
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +60,6 @@ class FileCatalogue:
     # Agents
 
     def agent(self, name: str) -> Any:
-        from langmesh.base.configuration import load_agent_configuration
-
         if not self._roots.agents:
             return None
         try:
@@ -66,8 +68,6 @@ class FileCatalogue:
             return None
 
     def agents(self) -> Sequence[str]:
-        from langmesh.base.configuration import list_agent_route_names
-
         if not self._roots.agents:
             return []
         return list_agent_route_names(list(self._roots.agents))
@@ -75,15 +75,11 @@ class FileCatalogue:
     # Skills and memories, re-read each call so an edit takes effect without a restart.
 
     def skills(self) -> Sequence[Any]:
-        from langmesh.base.content.skills import load_skills
-
         if not self._roots.skills:
             return []
         return load_skills(list(self._roots.skills))
 
     def memories(self) -> Sequence[Any]:
-        from langmesh.base.content.memories import load_memories
-
         if not self._roots.memories:
             return []
         return load_memories(list(self._roots.memories))
@@ -145,8 +141,6 @@ class FileCatalogue:
     # Prompt templates
 
     def prompt(self, name: str, variables: Mapping[str, str]) -> str:
-        from langmesh.base.configuration import PromptLoader
-
         directory = self._roots.prompts
         if directory is None:
             return ""
@@ -154,8 +148,6 @@ class FileCatalogue:
 
     def prompt_override(self, name: str) -> Optional[str]:
         """A template this catalogue itself carries, or ``None`` so the caller's shipped one serves."""
-        from langmesh.base.persistence.file_cache import parsed_file
-
         directory = self._roots.prompts
         if directory is None:
             return None
@@ -200,8 +192,6 @@ class Catalogue:
         return list(self._instructions)
 
     def prompt(self, name: str, variables: Mapping[str, str]) -> str:
-        from langmesh.base.configuration import PromptLoader
-
         template = self._prompts.get(name)
         if template is not None:
             return PromptLoader.render(template, dict(variables), name)

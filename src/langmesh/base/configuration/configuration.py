@@ -18,6 +18,10 @@ from pydantic import BaseModel, Field, field_validator
 
 from langmesh.base.confinement.paths import configuration_file_path, database_file_path  # noqa: F401 — re-exported
 from langmesh.base.configuration.permission_mode import PermissionMode
+from langmesh.base import confinement
+from langmesh.base.primitives.tuning import unknown_tunable_names
+from langmesh.base.persistence.observation_store import OBSERVATIONS_FILENAME
+from langmesh.base.persistence.file_cache import parsed_file
 
 
 logger = logging.getLogger(__name__)
@@ -245,8 +249,6 @@ class SandboxConfiguration(Section):
 
     def to_profile(self):
         """This configuration as the :class:`~langmesh.base.confinement.Profile` the spawn path applies."""
-        from langmesh.base import confinement
-
         return confinement.Profile(
             filesystem=confinement.Filesystem(
                 readable=tuple(self.filesystem.readable),
@@ -339,8 +341,6 @@ class TuningConfiguration(Section):
     @field_validator("defaults")
     @classmethod
     def _known_defaults(cls, value: dict[str, float]) -> dict[str, float]:
-        from langmesh.base.primitives.tuning import unknown_tunable_names
-
         unknown = unknown_tunable_names(value)
         if unknown:
             raise ValueError(
@@ -645,8 +645,6 @@ class Configuration(Section):
 
     def observation_database_for(self, working_directory: str) -> Path:
         """The workspace-owned observation database beside that workspace's `mcp.json`."""
-        from langmesh.base.persistence.observation_store import OBSERVATIONS_FILENAME
-
         return self.project_agents_root_for(working_directory) / OBSERVATIONS_FILENAME
 
     def agents_root_directories_for(self, working_directory: str) -> list[Path]:
@@ -975,8 +973,6 @@ class PromptLoader:
             override = self._overrides(template_name)
             if override is not None:
                 return self._replace_variables(override, variables, template_name)
-        from langmesh.base.persistence.file_cache import parsed_file
-
         path = self._directory / f"{template_name}.{self._extension}"
         content = parsed_file(path, lambda each: each.read_text())
         if content is None:
