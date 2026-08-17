@@ -19,7 +19,7 @@ else
 fi
 
 # Start the daemon if it is not answering.
-"${python[@]}" -c "from langmesh.cli.client import ensure_daemon; ensure_daemon()"
+"${python[@]}" -c "from langmeshd.cli.client import ensure_daemon; ensure_daemon()"
 
 # The daemon publishes its handshake files in the runtime directory: the same derivation the
 # core uses, reproduced here so a shell reads them without a Python round-trip.
