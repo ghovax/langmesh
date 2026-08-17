@@ -926,6 +926,9 @@ class SessionExecutor(AgentExecutor):
                 goal_listener=lambda goal: self._notify_goal_state(session_id, goal),
                 goal_review_journal=self._goal_review_journal(session_id),
                 features=self._compose_features(session_id, runtime_directory, configuration, catalogue),
+                # The host probes the machine and the user's context; the library never does.
+                machine_snapshot=self._machine_snapshot(),
+                user_context=self._user_context_snapshot(),
             ),
             conversation=conversation,
         )
@@ -935,6 +938,33 @@ class SessionExecutor(AgentExecutor):
                 self._observation_registry_error,
             )
         return runtime
+
+    def _machine_snapshot(self) -> dict:
+        """The machine snapshot for this session, probed by the host and passed into the runtime."""
+        from langmesh.runtime.prompt_environment import probe_local_environment
+
+        import json as _json
+
+        try:
+            parsed = _json.loads(probe_local_environment())
+        except (ValueError, TypeError):
+            parsed = {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _user_context_snapshot(self) -> dict:
+        """The user-context snapshot for this session, probed by the host when it is enabled."""
+        user_context = getattr(self._global_configuration, "user_context", None)
+        if user_context is None or not user_context.enabled:
+            return {}
+        from langmesh.runtime.prompt_environment import probe_user_context
+
+        import json as _json
+
+        try:
+            parsed = _json.loads(probe_user_context(user_context.refresh_hours))
+        except (ValueError, TypeError):
+            parsed = {}
+        return parsed if isinstance(parsed, dict) else {}
 
     def _compose_features(
         self, session_id: str, runtime_directory: str, configuration, catalogue

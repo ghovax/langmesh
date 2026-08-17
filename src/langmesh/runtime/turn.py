@@ -22,7 +22,6 @@ from langmesh.runtime.internals import (
     conversation_tokens,
     settled_arguments,
 )
-from langmesh.runtime.prompt_environment import probe_local_environment, probe_user_context
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.values import PermissionAnswer, TurnContext
 from langmesh.base.content.instructions import instructions_payload
@@ -98,6 +97,22 @@ def _chunk_advances_model_response(chunk: Any) -> bool:
 class _RunsTurns:
     """The turn itself: what the model is told, what comes back, and when it is over."""
 
+    def _machine_snapshot(self) -> dict:
+        """The machine snapshot the host probed, or a minimal platform-only fallback.
+
+        Probing the machine (shell history, installed apps, ...) is the daemon's job; a bare
+        library embedding gets only the platform name.
+        """
+        supplied = getattr(getattr(self, "_components", None), "machine_snapshot", None)
+        if supplied:
+            return supplied
+        return {"platform": platform.system()}
+
+    def _user_context_snapshot(self) -> dict:
+        """The user-context snapshot the host probed, or none when the host supplied none."""
+        supplied = getattr(getattr(self, "_components", None), "user_context", None)
+        return dict(supplied) if supplied else {}
+
     def _locations_summary(self) -> list[dict]:
         """The locations as the model sees them: the URI to pass, and enough to choose the right one."""
         return [
@@ -142,13 +157,11 @@ class _RunsTurns:
                     "session_worktree_strategy": self._global_configuration.workspace.strategy,
                     "platform": platform.system(),
                     "today_date": datetime.now().strftime("%Y-%m-%d"),
-                    "machine": _maybe_json(probe_local_environment(self._child_path())),
+                    "machine": _maybe_json(self._machine_snapshot()),
                 }
             )
             if self._user_context_enabled():
-                user_context = _maybe_json(
-                    probe_user_context(self._global_configuration.user_context.refresh_hours)
-                )
+                user_context = _maybe_json(self._user_context_snapshot())
                 if isinstance(user_context, dict) and user_context:
                     context["user_context"] = user_context
             context_json = compact(context)
