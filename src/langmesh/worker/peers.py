@@ -6,12 +6,13 @@ import logging
 from typing import Any
 
 from langmesh.protocol.metadata import Metadata
+from langmesh.worker.host import HostServices, NullHostServices
 
 logger = logging.getLogger(__name__)
 
 
 class PeerSessionError(RuntimeError):
-    """A control-plane call that failed, carrying the daemon's own message."""
+    """A control-plane call that failed, carrying the host's own message."""
 
 
 class PeerSessions:
@@ -24,6 +25,7 @@ class PeerSessions:
         working_directory: str,
         permission_mode: str,
         parent_session: str = "",
+        host: Any = None,
     ) -> None:
         self.session_id = session_id
         self.working_directory = working_directory
@@ -31,26 +33,19 @@ class PeerSessions:
         self._parent_session = parent_session
         # Whether this session has answered its creator, tracked here because this is the only way out.
         self.reported_to_parent = False
+        self._host: HostServices = host if host is not None else NullHostServices()
 
     async def aclose(self) -> None:
-        """Nothing is held open: the control plane is the daemon this session runs inside."""
+        """Nothing is held open: the control plane is the host this session runs inside."""
         return None
 
     async def _call(self, method: str, **params: Any) -> dict:
         """Run one control-plane verb, scoped to this session exactly as the socket would have scoped it."""
-        from langmesh.daemon.api import METHODS, _refuse_session_caller, RpcError
-
-        handler = METHODS.get(method)
-        if handler is None:
-            raise PeerSessionError(f"the daemon has no verb {method!r}")
-        # The same refusal the socket applies, kept here so a session's reach does not depend on its transport.
-        refusal = _refuse_session_caller(self.session_id, method, params)
+        refusal = self._host.peer_refuse(self.session_id, method, params)
         if refusal is not None:
-            raise PeerSessionError(refusal.message)
+            raise PeerSessionError(str(refusal))
         try:
-            result = await handler({**params, "calling_session": self.session_id})
-        except RpcError as error:
-            raise PeerSessionError(error.message) from error
+            result = await self._host.peer_call(self.session_id, method, params)
         except Exception as error:  # noqa: BLE001 — surfaced to the model as a failed tool result
             raise PeerSessionError(str(error)) from error
         return result or {}
@@ -70,7 +65,7 @@ class PeerSessions:
             agent=agent,
             working_directory=working_directory,
             inherited_conversation=inherited_conversation,
-            # No mode is sent: the daemon gives a child its parent's mode.
+            # No mode is sent: the host gives a child its parent's mode.
             parent=self.session_id,
         )
         return result

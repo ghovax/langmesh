@@ -51,7 +51,10 @@ from langmesh.runtime.locations import Location
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import SuspensionGate
 from langmesh.runtime.values import PermissionAnswer
+from langmesh.worker.host import HostServices, NullHostServices
+from langmesh.worker.peers import PeerSessions
 from langmesh.worker.turn import _ContextState, _ContinuationPlan, _TurnRunner
+from langmesh.worker.turn_store import HostTurnStore
 from langmesh.base.primitives.serialization import compact
 
 logger = logging.getLogger(__name__)
@@ -89,8 +92,8 @@ def _compose_session_tools(
     can_reach_peers: bool = False,
     permission_mode: Any = None,
 ) -> list[Any]:
-    """The daemon's toolset for one session: the agent profile's declared built-ins, gated by
-    what the machine actually has, plus the peer and remote tools the daemon owns. Nothing is
+    """The host's toolset for one session: the agent profile's declared built-ins, gated by
+    what the machine actually has, plus the peer and remote tools the host owns. Nothing is
     forced — an agent that declares no tools runs with none."""
     from langmesh.runtime.tools import registry
     from langmesh.runtime.tools.sessions import remote_agent_tools, session_tools
@@ -135,20 +138,24 @@ class SessionExecutor(AgentExecutor):
         locations: Optional[list[dict]] = None,
         parent: str = "",
         token: str = "",
-        daemon_token: str = "",
+        host_token: str = "",
         job_store: Optional[JobStore] = None,
+        host: Optional[Any] = None,
     ):
         self._session_id = session_id
         self._agent_name = agent_name
+        # The host services port: what a session needs from the process hosting it. The host
+        # injects its implementation; a library embedding gets the null one.
+        self._host: HostServices = host if host is not None else NullHostServices()
         # A worker is a process a restart happens to, so its jobs want the durable store. Injectable all the same.
         self._job_store: JobStore = (
             job_store if job_store is not None else get_background_job_store()
         )
         self._working_directory = working_directory
-        # Where tools actually run, resolved by the daemon: a worktree workspace is not the project directory.
+        # Where tools actually run, resolved by the host: a worktree workspace is not the project directory.
         self._runtime_working_directory = runtime_working_directory or working_directory
         self._permission_mode = permission_mode
-        # Resolved and clamped by the daemon before this worker existed. The worker never widens it.
+        # Resolved and clamped by the host before this worker existed. The worker never widens it.
         from langmesh.base.confinement import Profile
 
         self._sandbox = Profile.from_dict(sandbox)
@@ -157,19 +164,16 @@ class SessionExecutor(AgentExecutor):
         self._token = token
         self._global_configuration = global_configuration
 
-        # The worker never opens the database: every write goes to the daemon, which is the sole writer.
-        from langmesh.worker.turn_store import DaemonTurnStore
+        # The worker never opens the database: every write goes to the host, which is the sole writer.
+        self._turn_store = HostTurnStore(session_id, host=self._host)
 
-        self._turn_store = DaemonTurnStore(session_id)
-
-        # The same daemon for composing with other sessions, carrying this session's identity.
-        from langmesh.worker.peers import PeerSessions
-
+        # The same host for composing with other sessions, carrying this session's identity.
         self._peers = PeerSessions(
             session_id=session_id,
             working_directory=runtime_working_directory or working_directory,
             permission_mode=permission_mode,
             parent_session=parent,
+            host=self._host,
         )
 
         # A2A needs a handler to drive turns; a worker serves one session, so it builds its own.
@@ -213,34 +217,24 @@ class SessionExecutor(AgentExecutor):
 
     def _publish_stream_event(self, session_id: str, part) -> None:
         """Publish one structural part directly to the in-process live bus."""
-        from langmesh.daemon import state
-
         payload = part.model_dump(by_alias=True, exclude_none=True, mode="json")
-        state.event_bus.publish_part(session_id, payload)
+        self._host.publish_part(session_id, payload)
 
     def _publish_stream_delta(
         self, session_id: str, channel: str, block_id: str, text: str
     ) -> None:
         """Publish a model delta synchronously: no task allocation, await or persistence in the hot lane."""
-        from langmesh.daemon import state
-
-        state.event_bus.publish_delta(session_id, channel, block_id, text)
+        self._host.publish_delta(session_id, channel, block_id, text)
 
     def _notify_turn_state(self, session_id: str, running: bool, turn_id: str = "") -> None:
         """Advance activity and the live bus in the calling turn, before any later delta can race it."""
-        from langmesh.daemon.ingest import set_turn_state
-
-        set_turn_state(session_id, running, self._has_live_background_work())
+        self._host.set_turn_state(session_id, running, self._has_live_background_work())
 
     def _begin_live_turn(self, session_id: str, turn_id: str) -> None:
-        from langmesh.daemon import state
-
-        state.event_bus.begin_turn(session_id, turn_id)
+        self._host.begin_turn(session_id, turn_id)
 
     def _end_live_turn(self, session_id: str, turn_id: str) -> None:
-        from langmesh.daemon import state
-
-        state.event_bus.end_turn(session_id, turn_id)
+        self._host.end_turn(session_id, turn_id)
 
     async def _settle_turn_state(self) -> None:
         """Turn state publication is synchronous, so it is already settled."""
@@ -257,7 +251,7 @@ class SessionExecutor(AgentExecutor):
         return False
 
     def _notify_permission_state(self, session_id: str, awaiting: bool) -> None:
-        """Tell the daemon this session is parked on a human, so `ps` shows waiting rather than working."""
+        """Tell the host this session is parked on a human, so `ps` shows waiting rather than working."""
         asyncio.create_task(
             self._turn_store.publish_event({"session_id": session_id, "awaiting_input": awaiting})
         )
@@ -576,7 +570,7 @@ class SessionExecutor(AgentExecutor):
     def _notify_goal_state(
         self, session_id: str, goal, review_phase: Optional[GoalReviewPhase] = None
     ) -> None:
-        """Tell the daemon the goal and its transient pre-continuation phase."""
+        """Tell the host the goal and its transient pre-continuation phase."""
         previous = self._goal_state_tail
 
         async def publish() -> None:
@@ -892,7 +886,7 @@ class SessionExecutor(AgentExecutor):
                 )
             )
         runtime_directory = working_directory or project_directory or str(Path.cwd())
-        # The daemon composes the session's tools: the agent profile's declared set, mapped onto the shipped built-ins, plus the settings-gated and peer tools it owns. The library forces nothing; this is the daemon assembling the toolset.
+        # The host composes the session's tools: the agent profile's declared set, mapped onto the shipped built-ins, plus the settings-gated and peer tools it owns. The library forces nothing; this is the host assembling the toolset.
         composed = _compose_session_tools(
             configuration,
             self._global_configuration,
@@ -1003,16 +997,8 @@ class SessionExecutor(AgentExecutor):
         return read_turn
 
     def _goal_review_journal(self, session_id: str):
-        """Bind core review events to this worker's product transcript adapter."""
-        from langmesh.worker.goal_review_journal import DaemonGoalReviewJournal
-
-        return DaemonGoalReviewJournal(
-            self._turn_store,
-            lambda: self._contexts.get(session_id).runtime.model_identifier
-            if self._contexts.get(session_id) is not None
-            and self._contexts[session_id].runtime is not None
-            else "",
-        )
+        """The host's goal-review journal adapter for this session, or none when the host provides none."""
+        return self._host.build_goal_review_journal(self._turn_store)
 
     async def _runtime_for(self, session_id: str, workspace: SessionWorktree) -> AgentRuntime:
         # Apply a reset deferred while work was in flight, so this turn rebuilds with the new configuration.

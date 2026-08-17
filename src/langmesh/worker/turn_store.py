@@ -1,4 +1,4 @@
-"""A session's view of the durable store: the daemon's own handlers, called where the session runs."""
+"""A session's view of the durable store: the host's own handlers, called where the session runs."""
 
 from __future__ import annotations
 
@@ -8,26 +8,22 @@ from typing import Any, Optional
 from a2a.server.tasks import TaskStore
 from a2a.types import Task
 from langmesh.protocol.turn_record import TurnRecord
+from langmesh.worker.host import HostServices, NullHostServices
 
 logger = logging.getLogger(__name__)
 
 
-class DaemonTurnStore(TaskStore):
-    """A :class:`TaskStore` whose writes are performed by the daemon that hosts this session."""
+class HostTurnStore(TaskStore):
+    """A :class:`TaskStore` whose writes are performed by the host that hosts this session."""
 
-    def __init__(self, session_id: str) -> None:
+    def __init__(self, session_id: str, host: Any = None) -> None:
         self._session_id = session_id
+        self._host: HostServices = host if host is not None else NullHostServices()
 
     async def _call(self, method: str, **params: Any) -> Any:
-        """Run one ingest verb directly: the daemon that would have answered over a socket is this process."""
-        from langmesh.daemon.ingest import _METHODS
-
-        handler = _METHODS.get(method)
-        if handler is None:
-            logger.warning("no ingest verb named %r", method)
-            return None
+        """Run one ingest verb directly: the host that would have answered over a socket is this process."""
         try:
-            return await handler({"session_id": self._session_id, **params})
+            return await self._host.ingest_call(self._session_id, method, params)
         except Exception:  # noqa: BLE001 — losing durability must not lose the turn
             logger.warning("persistence call %s failed", method, exc_info=True)
             return None
@@ -131,17 +127,17 @@ class DaemonTurnStore(TaskStore):
         ]
 
     async def publish_event(self, event: dict) -> None:
-        """Hand a live turn event to the daemon, so whoever is attached sees it now."""
+        """Hand a live turn event to the host, so whoever is attached sees it now."""
         await self._call("session.event", event=event)
 
     async def publish_usage(self, usage: dict) -> None:
-        """Hand the daemon the rate-limit snapshot, captured here and read by the process serving settings."""
+        """Hand the host the rate-limit snapshot, captured here and read by the process serving settings."""
         await self._call("session.usage", usage=usage)
 
     async def publish_title(self, title: str) -> None:
-        """Hand the daemon a title this session generated for itself."""
+        """Hand the host a title this session generated for itself."""
         await self._call("session.title", title=title)
 
     async def aclose(self) -> None:
-        """Nothing is held open: the store is the daemon this session runs inside."""
+        """Nothing is held open: the store is the host this session runs inside."""
         return None
