@@ -83,7 +83,6 @@ def seed_home_agents() -> list[str]:
 def save_api_keys(
     *,
     exa_api_key: str | None = None,
-    composio_api_key: str | None = None,
     jina_api_key: str | None = None,
     firecrawl_api_key: str | None = None,
     web_fetch_proxy_url: str | None = None,
@@ -94,7 +93,6 @@ def save_api_keys(
     user_context_enabled: bool | None = None,
     computer_control_enabled: bool | None = None,
     toolbox_enabled: bool | None = None,
-    dictation_enabled: bool | None = None,
     tuning: dict | None = None,
     provider_keys: dict[str, str] | None = None,
     provider_base_urls: dict[str, str] | None = None,
@@ -107,8 +105,6 @@ def save_api_keys(
         data = yaml.safe_load(packaged_configuration_yaml())
     if exa_api_key is not None:
         data.setdefault("exa", {})["api_key"] = exa_api_key
-    if composio_api_key is not None:
-        data.setdefault("composio", {})["api_key"] = composio_api_key
     if jina_api_key is not None:
         data.setdefault("jina", {})["api_key"] = jina_api_key
     if firecrawl_api_key is not None:
@@ -129,8 +125,6 @@ def save_api_keys(
         data.setdefault("computer_control", {})["enabled"] = computer_control_enabled
     if toolbox_enabled is not None:
         data.setdefault("toolbox", {})["enabled"] = toolbox_enabled
-    if dictation_enabled is not None:
-        data.setdefault("dictation", {})["enabled"] = dictation_enabled
     if provider_keys is not None or provider_base_urls is not None:
         providers_section = data.setdefault("providers", {})
         all_provider_ids = {*(provider_keys or {}), *(provider_base_urls or {})}
@@ -392,37 +386,6 @@ class ToolboxConfiguration(Section):
     enabled: bool = Field(True)
 
 
-class DictationTimingConfiguration(Section):
-    """How long dictation waits before giving up, separated because these are what a slow machine must move."""
-
-    minimum_transcription_timeout_seconds: float = Field(30.0)
-    transcription_timeout_realtime_multiplier: float = Field(0.5)
-    maximum_attempts: int = Field(2, ge=1)
-    worker_shutdown_seconds: float = Field(2.0)
-
-
-class DictationConfiguration(Section):
-    """Opt-in speech-to-text, transcribed locally. Off by default: the first use downloads about a gigabyte."""
-
-    enabled: bool = Field(False)
-    model: str = Field("mlx-community/parakeet-tdt-0.6b-v3")
-    timing: DictationTimingConfiguration = Field(default_factory=DictationTimingConfiguration)
-
-
-class ComposioConfiguration(Section):
-    """Composio's hosted MCP endpoint, exposed as an ordinary streamable_http server."""
-
-    enabled: bool = Field(False)
-    url: str = Field("https://connect.composio.dev/mcp")
-    api_key: str = Field("", json_schema_extra={"secret": True})
-    server_name: str = Field("composio")
-    timeout_seconds: float = Field(60)
-
-    @property
-    def effective_api_key(self) -> str:
-        return os.environ.get(environment_variables.COMPOSIO_API_KEY) or self.api_key
-
-
 class MCPServerConfiguration(BaseModel):
     """One MCP server from an ``mcp.json`` entry, permissive about keys it does not model."""
 
@@ -555,6 +518,10 @@ class AgentDefaults(Section):
 
 
 class Configuration(Section):
+    # The configuration file is shared with the host app, which owns sections the library does not
+    # model (dictation, composio, ...). Unknown top-level sections are tolerated, never rejected.
+    model_config = {"extra": "allow"}
+
     HOME_AGENTS_ROOT_DIRECTORY: ClassVar[str] = "~/.agents"
     AGENTS_ROOT_DIRECTORY: ClassVar[str] = ".agents"
     AGENTS_DIRECTORY: ClassVar[str] = ".agents/agents"
@@ -575,9 +542,7 @@ class Configuration(Section):
         default_factory=ComputerControlConfiguration
     )
     toolbox: ToolboxConfiguration = Field(default_factory=ToolboxConfiguration)
-    dictation: DictationConfiguration = Field(default_factory=DictationConfiguration)
     tuning: TuningConfiguration = Field(default_factory=TuningConfiguration)
-    composio: ComposioConfiguration = Field(default_factory=ComposioConfiguration)
     mcp: MCPConfiguration = Field(default_factory=MCPConfiguration)
     remote_agents: RemoteAgentsConfiguration = Field(default_factory=RemoteAgentsConfiguration)
     telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)

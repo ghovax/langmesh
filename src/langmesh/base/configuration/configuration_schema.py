@@ -201,14 +201,12 @@ SECTION_ORDER = (
     "user_context",
     # The surfaces it can reach for.
     "computer_control",
-    "dictation",
     # Who it talks to, and with what credentials.
     "providers",
     "exa",
     "jina",
     "firecrawl",
     "web_fetch",
-    "composio",
     "mcp",
     "remote_agents",
     # What is watching, and the numbers underneath everything.

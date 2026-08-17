@@ -76,7 +76,6 @@ class SessionDraftRequest(BaseModel):
 
 class SettingsUpdateRequest(BaseModel):
     exa_api_key: str | None = None
-    composio_api_key: str | None = None
     jina_api_key: str | None = None
     firecrawl_api_key: str | None = None
     web_fetch_proxy_url: str | None = None
@@ -116,12 +115,6 @@ class SettingValueRequest(BaseModel):
 
 class ToolboxUpdateRequest(BaseModel):
     """Turn a session's own tool profile on or off."""
-
-    enabled: bool
-
-
-class DictationUpdateRequest(BaseModel):
-    """Opt-in/out of transcribing the composer's dictation on this machine."""
 
     enabled: bool
 

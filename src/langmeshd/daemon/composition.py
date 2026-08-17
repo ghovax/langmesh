@@ -69,7 +69,7 @@ async def open_shared_resources() -> None:
         logger.info("swept %d toolbox(es) belonging to sessions that are gone", len(swept))
 
     # Composio's hosted endpoint is folded into the ordinary server set rather than being a second path.
-    commons_state.composio_servers = composio_mcp_servers(configuration.composio)
+    commons_state.composio_servers = composio_mcp_servers(commons_state.composio_configuration)
     configuration.mcp.servers.update(commons_state.composio_servers)
     mcp_servers = configuration.mcp.enabled_servers()
     commons_state.mcp_server_manager = MCPServerManager(mcp_servers) if mcp_servers else None
