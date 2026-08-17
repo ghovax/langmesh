@@ -1156,9 +1156,6 @@ class SessionExecutor(AgentExecutor):
 
         configuration = self._global_configuration
         set_tuning(tuning_from_policy(configuration.tuning))
-        from langmesh import _bind_retrieval_policy
-
-        _bind_retrieval_policy(configuration)
 
         telemetry = configuration.telemetry
         configure_telemetry(
