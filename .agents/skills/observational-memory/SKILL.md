@@ -1,6 +1,6 @@
 ---
 name: observational-memory
-title: Observational memory
+title: Retrieve and maintain the workspace's observational memory
 description: Retrieve or deliberately maintain the active workspace or location's current observational memory when it can materially affect the work. Use progressive disclosure with a fresh disposable Semble index for semantic retrieval and SQLite for exact lookup and mutation.
 ---
 

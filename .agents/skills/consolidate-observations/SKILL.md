@@ -1,6 +1,6 @@
 ---
 name: consolidate-observations
-title: Consolidate observations
+title: Review and consolidate the workspace's observational memory
 description: Review and deliberately consolidate the workspace-owned observational memory when the user asks. Use only on explicit user invocation; never trigger it automatically or as background housekeeping.
 ---
 
