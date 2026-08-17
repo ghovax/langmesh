@@ -234,18 +234,16 @@ def machine_catalogue(configuration: Any, working_directory: str = "") -> FileCa
 
 
 def project_catalogue(configuration: Any, working_directory: str) -> FileCatalogue:
-    """The catalogue an embedded harness gets: only the library's own bundled content.
+    """The catalogue an embedded harness gets: nothing from disk.
 
-    No environment discovery: the home and project ``.agents`` trees (agents, skills, memories)
-    belong to the environment, so only the daemon loads them and passes the paths in. A bare
-    library embedding sees exactly what ships with it and nothing of the machine.
+    The library is usable standalone in code: agents, skills and memories are environment
+    content that the daemon loads from disk and passes in. A bare library embedding carries
+    only its own prompts and none of the machine's profiles.
     """
-    from langmesh.base.configuration import BUNDLED_DOTAGENTS_ROOT
-
     local = Path(working_directory).expanduser()
     return FileCatalogue(
         CatalogueRoots(
-            agents=(BUNDLED_DOTAGENTS_ROOT / "agents",),
+            agents=(),
             skills=(),
             memories=(),
             prompts=packaged_prompts_directory(),
