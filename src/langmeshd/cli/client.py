@@ -43,7 +43,7 @@ def daemon_is_up() -> bool:
 def _daemon_command() -> list[str]:
     if getattr(sys, "frozen", False):
         return [sys.executable, "langmeshd"]
-    return [sys.executable, "-m", "langmesh", "langmeshd"]
+    return [sys.executable, "-m", "langmeshd", "langmeshd"]
 
 
 def ensure_daemon() -> None:
