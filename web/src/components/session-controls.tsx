@@ -292,6 +292,13 @@ export function PermissionModeControl({
       icon: <LuBadgeCheck size={14} />,
       colorPalette: "blue",
     },
+    {
+      value: "allow",
+      label: translation("permissionAllowLabel"),
+      description: translation("permissionAllowDescription"),
+      icon: <LuShieldCheck size={14} />,
+      colorPalette: "green",
+    },
   ];
   const permissionItems = permissionChoices.map(({ value: itemValue, label }) => ({
     value: itemValue,
