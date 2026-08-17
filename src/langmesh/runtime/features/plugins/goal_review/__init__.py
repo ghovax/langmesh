@@ -449,39 +449,56 @@ class GoalReviewFeature(Feature):
         with TemporaryDirectory(prefix="langmesh-goal-review-") as scratch_directory:
             reviewer = self._goal_reviewer(scratch_directory)
             try:
-                instruction = instructions
-                attempts = 0
-                while not self._host.turn.abort_event.is_set():
-                    if not await self._run_goal_review_turn(
+                from langmesh.runtime.verdict import drive_verdict_session
+
+                maximum_attempts = self._context.global_configuration.goal_review.maximum_attempts
+
+                async def _run_turn(instruction: str) -> bool:
+                    ran = await self._run_goal_review_turn(
                         reviewer, instruction, review_id, publish
-                    ):
+                    )
+                    if not ran:
                         await finish_transcript("canceled")
-                        return None
-                    submitted = reviewer._features.by_type(GoalReview)
-                    if submitted is not None:
-                        submitted = submitted.submitted
-                    if submitted is not None:
-                        review = submitted
-                        review._review_id = review_id
-                        await finish_transcript("completed", review)
-                        return review
-                    attempts += 1
-                    maximum_attempts = self._context.global_configuration.goal_review.maximum_attempts
-                    if attempts >= maximum_attempts:
-                        logger.error(
-                            "goal reviewer did not submit after %d attempts; last text: %r",
-                            attempts,
-                            getattr(reviewer, "_last_review_text", ""),
-                        )
-                        await finish_transcript("failed")
-                        return None
+                    return ran
+
+                def _submitted():
+                    feature = reviewer._features.by_type(GoalReview)
+                    return feature.submitted if feature is not None else None
+
+                async def _on_success(review):
+                    review._review_id = review_id
+                    await finish_transcript("completed", review)
+
+                def _on_empty(attempt: int, maximum: int) -> None:
                     logger.warning(
                         "the goal reviewer stopped without submitting its verdict (attempt %d/%d); continuing it",
-                        attempts,
-                        maximum_attempts,
+                        attempt,
+                        maximum,
                     )
-                    self._require_review_submission(reviewer)
-                    instruction = self._prompts.load("goal_review_missing", {})
+
+                async def _on_exhausted():
+                    logger.error(
+                        "goal reviewer did not submit after %d attempts; last text: %r",
+                        maximum_attempts,
+                        getattr(reviewer, "_last_review_text", ""),
+                    )
+                    await finish_transcript("failed")
+
+                review = await drive_verdict_session(
+                    attempts=maximum_attempts,
+                    reason=f"goal review {review_id}",
+                    run_turn=_run_turn,
+                    submitted=_submitted,
+                    require_submission=lambda: self._require_review_submission(reviewer),
+                    missing_instruction=lambda: self._prompts.load("goal_review_missing", {}),
+                    aborted=lambda: self._host.turn.abort_event.is_set(),
+                    initial_instruction=instructions,
+                    on_success=_on_success,
+                    on_empty=_on_empty,
+                    on_exhausted=_on_exhausted,
+                )
+                if review is not None:
+                    return review
             except asyncio.CancelledError:
                 await finish_transcript("canceled")
                 raise

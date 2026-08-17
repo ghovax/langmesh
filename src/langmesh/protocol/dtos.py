@@ -7,16 +7,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 
-class SessionTitle(BaseModel):
-    """Structured schema returned by the title-generation LLM call."""
-
-    title: str = Field(
-        description=(
-            "A concise imperative phrase starting with a verb, then the action it describes; normal sentence case (not Title Case), no surrounding quotes, no trailing punctuation."
-        ),
-    )
-
-
 class AgentInfo(BaseModel):
     id: str
     name: str

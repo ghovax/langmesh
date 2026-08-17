@@ -195,6 +195,8 @@ class SessionExecutor(AgentExecutor):
         # A session is named after its first message, once.
         self._titled = False
         self._title_task: Optional[asyncio.Task] = None
+        # The titling plugin that names this session, composed with it; None when naming is not installed.
+        self._titling: Optional[Any] = None
         # The report reminder fires at most once for a session's whole life.
         self._nudged_to_report = False
         # This session's own MCP server connections, and the task connecting them.
@@ -937,7 +939,7 @@ class SessionExecutor(AgentExecutor):
                 related_turns=self._make_turn_reader(),
                 goal_listener=lambda goal: self._notify_goal_state(session_id, goal),
                 goal_review_journal=self._goal_review_journal(session_id),
-                features=self._compose_features(session_id, runtime_directory),
+                features=self._compose_features(session_id, runtime_directory, configuration, catalogue),
             ),
             conversation=conversation,
         )
@@ -948,9 +950,12 @@ class SessionExecutor(AgentExecutor):
             )
         return runtime
 
-    def _compose_features(self, session_id: str, runtime_directory: str):
+    def _compose_features(
+        self, session_id: str, runtime_directory: str, configuration, catalogue
+    ):
         """The daemon's features for one session, its ports bound the way the daemon holds them."""
         from langmesh.runtime.features.battery import default_features
+        from langmesh.runtime.features.plugins.titling import TitleAssignment
 
         ports = type("FeaturePorts", (), {})()
         ports.goal_review_journal = self._goal_review_journal(session_id)
@@ -959,7 +964,27 @@ class SessionExecutor(AgentExecutor):
         ports.compaction_summarizer = None
         ports.continuations = None
         ports.jobs = self._job_store
-        return default_features(ports)
+        features = default_features(ports)
+        # Naming the session is the daemon's own plugin, attached to a context the daemon builds.
+        self._titling = TitleAssignment()
+        self._titling.attach(self._titling_context(session_id, runtime_directory, configuration, catalogue), None)
+        return features
+
+    def _titling_context(self, session_id: str, runtime_directory: str, configuration, catalogue):
+        """The public context the titling plugin is given, built from what this daemon already holds."""
+        from langmesh.runtime.features import PluginBus, PluginContext, feature_prompts
+
+        return PluginContext(
+            session_id=session_id,
+            parent_session="",
+            working_directory=runtime_directory,
+            project_directory=runtime_directory,
+            agent_configuration=configuration,
+            global_configuration=self._global_configuration,
+            catalogue=catalogue,
+            prompts=lambda name: feature_prompts(name, catalogue),
+            bus=PluginBus(),
+        )
 
     def _compaction_preparation(self, working_directory: str):
         from langmesh.base.persistence.observation_store import SQLiteObservationStore
@@ -1234,82 +1259,19 @@ class SessionExecutor(AgentExecutor):
         self._title_task = asyncio.create_task(self._generate_title(prose))
 
     async def _generate_title(self, first_message: str) -> None:
-        """Ask the model for a short title and hand it to the daemon, with the schema bound as a tool."""
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        from langmesh.base.configuration import PromptLoader
-        from langmesh.protocol.dtos import SessionTitle
-        from langmesh.runtime.internals import model_is_authorized
-        from langmesh.runtime.cache_trace import cache_lane
-        from langmesh.runtime.runtime import build_chat_model
-
+        """Name the session through the titling plugin, which owns the naming call and its cap."""
+        if self._titling is None:
+            return
         try:
-            configuration = machine_catalogue(
-                self._global_configuration, self._working_directory
-            ).agent(self._agent_name)
-            if configuration is None:
-                return
-            model_identifier = configuration.model_identifier
-            if not model_identifier or not model_is_authorized(
-                model_identifier, self._global_configuration
-            ):
-                return
-            titling_configuration = configuration.model_copy(update={"reasoning_effort": "low"})
-            model = build_chat_model(
-                model_identifier,
-                self._global_configuration,
-                titling_configuration,
-                self._runtime_working_directory,
-                session_id=self._session_id,
-            ).bind_tools([SessionTitle], tool_choice="auto")
-            prompt = PromptLoader(Path(__file__).resolve().parent.parent / "runtime" / "prompts")
-            request = [
-                SystemMessage(content=prompt.load("session_title", {})),
-                HumanMessage(content=first_message),
-            ]
-            # The tool is offered and the prompt insists on it: forcing it, a thinking model behind a gateway refuses.
-            attempts = active_tuning().amount(Tunable.session_title_attempts)
-            with cache_lane("session-title"):
-                for attempt in range(1, attempts + 1):
-                    try:
-                        response = await model.ainvoke(request)
-                    except Exception:  # noqa: BLE001 — one bad call is not worth the session's name
-                        logger.warning(
-                            "naming session %s failed (attempt %d of %d)",
-                            self._session_id,
-                            attempt,
-                            attempts,
-                            exc_info=True,
-                        )
-                        continue
-                    if not response.tool_calls:
-                        logger.warning(
-                            "the model answered without calling the title tool for session %s (attempt %d of %d)",
-                            self._session_id,
-                            attempt,
-                            attempts,
-                        )
-                        continue
-                    title = (
-                        SessionTitle.model_validate(response.tool_calls[0]["args"]).title or ""
-                    ).strip()
-                    if title:
-                        await self._turn_store.publish_title(title)
-                        return
-                    logger.warning(
-                        "the model returned an empty title for session %s (attempt %d of %d)",
-                        self._session_id,
-                        attempt,
-                        attempts,
-                    )
-            logger.warning(
-                "gave up naming session %s after %d attempts", self._session_id, attempts
-            )
+            title = await self._titling.assign_title(first_message)
         except Exception:  # noqa: BLE001 — a session is not worth failing over its own name
             # Not `debug`: failing to name one session is cosmetic, failing to name every session is a fault.
             logger.warning(
                 "could not generate a title for session %s", self._session_id, exc_info=True
             )
+            return
+        if title:
+            await self._turn_store.publish_title(title)
 
     async def inject(self, text: str, message_id: str = "", peer_sender: str = "") -> bool:
         """Wait until a running turn places this message at a safe point, or say it ended first."""
