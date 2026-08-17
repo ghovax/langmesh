@@ -182,6 +182,84 @@ _catalogue_cache: list[ModelDefinition] | None = None
 _catalogue_lock = threading.Lock()
 
 
+# Command Code's Provider API models, curated from its live /provider/v1/models since models.dev lacks the provider.
+# The last field is the wire protocol: Anthropic models go to /messages, the rest to /chat/completions.
+_COMMANDCODE_MODELS: tuple[tuple[str, str, int, bool, bool, str], ...] = (
+    ("claude-sonnet-5", "Claude Sonnet 5", 1000000, True, True, "anthropic"),
+    ("claude-sonnet-4-6", "Claude Sonnet 4.6", 1000000, True, True, "anthropic"),
+    ("claude-fable-5", "Claude Fable 5", 1000000, True, True, "anthropic"),
+    ("claude-opus-5", "Claude Opus 5", 1000000, True, True, "anthropic"),
+    ("claude-opus-4-8", "Claude Opus 4.8", 1000000, True, True, "anthropic"),
+    ("claude-opus-4-7", "Claude Opus 4.7", 1000000, True, True, "anthropic"),
+    ("claude-haiku-4-5-20251001", "Claude Haiku 4.5", 200000, True, True, "anthropic"),
+    ("gpt-5.6-sol", "GPT-5.6 Sol", 1050000, True, True, "openai"),
+    ("gpt-5.6-terra", "GPT-5.6 Terra", 1050000, True, True, "openai"),
+    ("gpt-5.6-luna", "GPT-5.6 Luna", 1050000, True, True, "openai"),
+    ("gpt-5.5", "GPT-5.5", 200000, True, True, "openai"),
+    ("gpt-5.4", "GPT-5.4", 400000, True, True, "openai"),
+    ("gpt-5.3-codex", "GPT-5.3 Codex", 400000, True, True, "openai"),
+    ("gpt-5.4-mini", "GPT-5.4 Mini", 400000, True, True, "openai"),
+    ("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro (latest)", 1000000, True, True, "openai"),
+    ("deepseek/deepseek-v4-flash", "DeepSeek V4 Flash (latest)", 1000000, True, True, "openai"),
+    ("moonshotai/Kimi-K3", "Kimi K3", 1000000, True, True, "openai"),
+    ("moonshotai/Kimi-K2.7-Code", "Kimi K2.7 Code", 256000, True, True, "openai"),
+    ("moonshotai/Kimi-K2.7-Code-Highspeed", "Kimi K2.7 Code HighSpeed", 262000, True, True, "openai"),
+    ("moonshotai/Kimi-K2.6", "Kimi K2.6", 256000, True, True, "openai"),
+    ("moonshotai/Kimi-K2.5", "Kimi K2.5", 256000, True, True, "openai"),
+    ("zai-org/GLM-5.3", "GLM-5.3", 1000000, True, True, "openai"),
+    ("zai-org/GLM-5.2", "GLM-5.2", 1000000, True, True, "openai"),
+    ("zai-org/GLM-5.2-Fast", "GLM-5.2 Fast", 1000000, True, True, "openai"),
+    ("zai-org/GLM-5.1", "GLM-5.1", 200000, True, True, "openai"),
+    ("zai-org/GLM-5", "GLM-5", 200000, True, True, "openai"),
+    ("MiniMaxAI/MiniMax-M3", "MiniMax M3", 1000000, True, True, "openai"),
+    ("MiniMaxAI/MiniMax-M2.7", "MiniMax M2.7", 200000, True, True, "openai"),
+    ("MiniMaxAI/MiniMax-M2.5", "MiniMax M2.5", 200000, True, True, "openai"),
+    ("xiaomi/mimo-v2.5-pro", "MiMo V2.5 Pro", 1000000, True, True, "openai"),
+    ("xiaomi/mimo-v2.5", "MiMo V2.5", 1000000, True, True, "openai"),
+    ("Qwen/Qwen3.8-Max", "Qwen 3.8 Max", 1000000, True, True, "openai"),
+    ("Qwen/Qwen3.7-Max", "Qwen 3.7 Max", 1000000, True, True, "openai"),
+    ("Qwen/Qwen3.7-Plus", "Qwen 3.7 Plus", 1000000, True, True, "openai"),
+    ("Qwen/Qwen3.7-Flash", "Qwen 3.7 Flash", 1000000, True, True, "openai"),
+    ("Qwen/Qwen3.6-Max-Preview", "Qwen 3.6 Max Preview", 200000, True, True, "openai"),
+    ("Qwen/Qwen3.6-Plus", "Qwen 3.6 Plus", 200000, True, True, "openai"),
+    ("stepfun/Step-3.7-Flash", "Step 3.7 Flash", 256000, True, True, "openai"),
+    ("stepfun/Step-3.5-Flash", "Step 3.5 Flash", 1000000, True, True, "openai"),
+    ("tencent/hy3-paid", "Tencent Hy3", 262144, True, True, "openai"),
+    ("google/gemini-3.7-flash", "Gemini 3.7 Flash", 1048576, True, True, "openai"),
+    ("google/gemini-3.6-flash", "Gemini 3.6 Flash", 1000000, True, True, "openai"),
+    ("google/gemini-3.5-flash", "Gemini 3.5 Flash", 1000000, True, True, "openai"),
+    ("google/gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite", 1000000, True, True, "openai"),
+    ("google/gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite", 1000000, True, True, "openai"),
+    ("sakana/fugu-ultra", "Fugu Ultra", 1000000, True, True, "openai"),
+    ("nvidia/nemotron-3-ultra-550b-a55b", "Nemotron 3 Ultra", 1000000, True, True, "openai"),
+    ("thinkingmachines/inkling", "Inkling", 256000, True, True, "openai"),
+    ("thinkingmachines/inkling-small", "Inkling Small", 1000000, True, True, "openai"),
+    ("poolside/laguna-s-2.1-free", "Laguna S 2.1", 256000, True, True, "openai"),
+    ("meta/muse-spark-1.1", "Muse Spark 1.1", 1048576, True, True, "openai"),
+    ("meta/muse-spark-1.2", "Muse Spark 1.2", 1048576, True, True, "openai"),
+    ("meta/muse-spark-1.2-contributor", "Muse Spark 1.2 Contributor", 1048576, True, True, "openai"),
+    ("xai/grok-4.5", "Grok 4.5", 500000, True, True, "openai"),
+    ("xai/grok-4.6", "Grok 4.6", 500000, True, True, "openai"),
+)
+
+
+def _commandcode_models() -> list[ModelDefinition]:
+    """The Command Code Provider API models, curated since models.dev does not list the provider."""
+    return [
+        ModelDefinition(
+            identifier=f"commandcode/{model_id}",
+            name=name,
+            provider="commandcode",
+            attachment=attachment,
+            vision=vision,
+            input_modalities=("image",) if vision else (),
+            context_length=context_length,
+            litellm_prefix=wire,
+        )
+        for model_id, name, context_length, attachment, vision, wire in _COMMANDCODE_MODELS
+    ]
+
+
 def list_models() -> list[ModelDefinition]:
     """The model catalogue, fetched on first use and cached, as a function because building it blocks on the network."""
     global _catalogue_cache
@@ -190,7 +268,7 @@ def list_models() -> list[ModelDefinition]:
     with _catalogue_lock:
         if _catalogue_cache is None:
             base = _catalog()
-            _catalogue_cache = base + _chatgpt_models(base)
+            _catalogue_cache = base + _chatgpt_models(base) + _commandcode_models()
         return list(_catalogue_cache)
 
 

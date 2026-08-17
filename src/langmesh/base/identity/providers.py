@@ -35,6 +35,16 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             uses_custom_base_url=True,
         ),
         ProviderDefinition(
+            # Command Code's Provider API: OpenAI-compatible, same key that signs into the CLI.
+            identifier="commandcode",
+            name="Command Code",
+            litellm_prefix="openai",
+            env_vars=("COMMAND_CODE_API_KEY",),
+            default_base_url="https://api.commandcode.ai/provider/v1",
+            openai_compatible=True,
+            uses_custom_base_url=True,
+        ),
+        ProviderDefinition(
             identifier="anthropic",
             name="Anthropic",
             litellm_prefix="anthropic",
