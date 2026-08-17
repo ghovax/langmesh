@@ -11,7 +11,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Callable, Iterable, Literal, Optional
 
 # How a missing backend is handled: `required` refuses the session, `preferred` runs POSIX-only, `off` does not confine.
 ENFORCE_REQUIRED = "required"
@@ -145,7 +145,8 @@ class Grant:
     whole_disk: bool = False
     purpose: str = ""
     granted_at: str = ""
-    approved_by: str = ""
+    #: One of the `APPROVED_BY_*` values; grants are always minted with their actor named.
+    approved_by: ApprovedBy = "person"
 
     def as_dict(self) -> dict:
         return {
@@ -172,17 +173,25 @@ class Grant:
         )
 
 
-#: Who approved a grant. Strings, because a record written by one release is read by the next.
+# Who approved a grant. Strings, because a record written by one release is read by the next.
+#: The person running the session answered the gate.
 APPROVED_BY_PERSON = "person"
+#: A configured static rule allowed the call; nobody was asked.
 APPROVED_BY_RULE = "rule"
-APPROVED_BY_REVIEWER = "reviewer"
-APPROVED_BY_APPROVER = "approver"
+#: The automatic permission reviewer, the built-in model decision under `automatic` mode.
+APPROVED_BY_PERMISSION_REVIEWER = "reviewer"
+#: A caller-supplied approval service (the `Approvals` port), which is not the built-in reviewer.
+APPROVED_BY_EXTERNAL_APPROVER = "approver"
+
+#: Who approved a grant, as one of the four `APPROVED_BY_*` values. The four are distinct actors:
+#: the person, a configured rule, the built-in permission reviewer, or a caller's approval service.
+ApprovedBy = Literal["person", "rule", "reviewer", "approver"]
 
 
 def approved(
     request: "AccessRequest | None" = None,
     *,
-    by: str,
+    by: ApprovedBy,
     purpose: str = "",
     whole_disk: bool = False,
 ) -> Grant:
@@ -190,8 +199,8 @@ def approved(
     if by not in (
         APPROVED_BY_PERSON,
         APPROVED_BY_RULE,
-        APPROVED_BY_REVIEWER,
-        APPROVED_BY_APPROVER,
+        APPROVED_BY_PERMISSION_REVIEWER,
+        APPROVED_BY_EXTERNAL_APPROVER,
     ):
         raise ValueError(f"a grant must name its authority, not {by!r}")
     return Grant(

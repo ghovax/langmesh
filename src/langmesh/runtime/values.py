@@ -39,6 +39,7 @@ class PermissionAnswer(BaseModel):
 
     allow: bool
     reason: str = ""
+    #: Who decided: the person, the built-in permission reviewer, or a caller's approval service.
     actor: Literal["person", "reviewer", "approver"]
 
 

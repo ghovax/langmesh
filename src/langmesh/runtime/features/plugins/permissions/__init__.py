@@ -431,7 +431,7 @@ class PermissionReview(Feature):
         """Review one automatic gate and return the typed answer the shared resolver consumes."""
         decision = await self.review(gate)
         if decision.action == "allow":
-            gate.approved_by = confinement.APPROVED_BY_REVIEWER
+            gate.approved_by = confinement.APPROVED_BY_PERMISSION_REVIEWER
             self._host.bookkeeping.record_event(
                 "access_allowed",
                 {
@@ -658,8 +658,8 @@ class PermissionReview(Feature):
                 # Recorded here, the only point that knows somebody said yes; preflight alone grants nothing.
                 approved_by = {
                     "person": confinement.APPROVED_BY_PERSON,
-                    "reviewer": confinement.APPROVED_BY_REVIEWER,
-                    "approver": confinement.APPROVED_BY_APPROVER,
+                    "reviewer": confinement.APPROVED_BY_PERMISSION_REVIEWER,
+                    "approver": confinement.APPROVED_BY_EXTERNAL_APPROVER,
                 }[permission_answer.actor]
                 self.approve(
                     gate,
@@ -746,7 +746,7 @@ class PermissionReview(Feature):
             },
         )
         return "run", confinement.approved(
-            by=confinement.APPROVED_BY_REVIEWER,
+            by=confinement.APPROVED_BY_PERMISSION_REVIEWER,
             purpose=gate.explanation,
             whole_disk=True,
         )
