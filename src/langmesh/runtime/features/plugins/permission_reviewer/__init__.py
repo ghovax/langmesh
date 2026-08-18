@@ -19,7 +19,7 @@ from langmesh.base import confinement
 from langmesh.base.content.model_errors import ContextWindowExceeded
 from langmesh.base.content.instructions import instructions_payload
 from langmesh.base.primitives.serialization import compact
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.features.plugins.permission_reviewer.tools import (
     permission_decision as permission_decision_tool,
@@ -28,6 +28,8 @@ from langmesh.runtime.internals import _PreflightGate
 from langmesh.runtime.locations import PermissionDecision
 from langmesh.runtime.values import PermissionAnswer
 from langmesh.runtime.verdict import collect_structured_call
+
+from langmesh.base.primitives.limits import current_limits
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +107,7 @@ class PermissionReviewer(Feature):
             tool_choice="auto",
             parallel_tool_calls=False,
         )
-        attempts = active_tuning().amount(Tunable.permission_reviewer_attempts)
+        attempts = current_limits().permission_reviewer_attempts
         started_at = time.perf_counter()
 
         def _only_permission_call(response: Any) -> Any | None:

@@ -20,7 +20,9 @@ from a2a.types import FilePart, FileWithBytes, FileWithUri
 
 from langmesh.base.content.attachments import attachment_from_path
 from langmesh.base.confinement.outbound import UntrustedHostError, pin_to_ip, resolve_public_ips
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+
+from langmesh.base.primitives.limits import current_limits
+
 
 __all__ = ["attachment_from_path"]
 
@@ -168,7 +170,7 @@ class FileUrlSigner:
 
     def sign(self, file_path: str, *, ttl_seconds: Optional[int] = None) -> str:
         ttl_seconds = (
-            ttl_seconds if ttl_seconds is not None else active_tuning().amount(Tunable.file_url_ttl)
+            ttl_seconds if ttl_seconds is not None else current_limits().file_url_ttl
         )
         if not self._within_root(file_path):
             raise PathNotServableError(f"{file_path!r} is outside the servable file root")

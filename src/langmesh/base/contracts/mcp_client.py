@@ -19,8 +19,10 @@ from pydantic import AnyUrl
 # How long to wait for one server's handshake at startup before booting without it.
 
 from langmesh.base.configuration import MCPServerConfiguration
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+
 from langmesh.base.primitives.errors import log_fields
+
+from langmesh.base.primitives.limits import current_limits
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +66,7 @@ class MCPServerManager:
                         connection = _StatefulStdioSession(name, configuration)
                         self._stdio_sessions[name] = connection
                     await asyncio.wait_for(
-                        connection._connect(), timeout=active_tuning().duration(Tunable.mcp_connect)
+                        connection._connect(), timeout=current_limits().mcp_connect
                     )
                 elif configuration.transport == "streamable_http":
                     connection = self._streamable_sessions.get(name)
@@ -72,7 +74,7 @@ class MCPServerManager:
                         connection = _StatefulStreamableHTTPSession(name, configuration)
                         self._streamable_sessions[name] = connection
                     await asyncio.wait_for(
-                        connection._connect(), timeout=active_tuning().duration(Tunable.mcp_connect)
+                        connection._connect(), timeout=current_limits().mcp_connect
                     )
             except (Exception, asyncio.TimeoutError):
                 logger.warning("MCP server %r failed to start; skipping it", name, exc_info=True)
@@ -279,7 +281,7 @@ class _StatefulStdioSession:
     ) -> AsyncIterator[ClientSession]:
         # Bounded like the startup connect, so an endpoint that never completes its handshake cannot hold the caller.
         session = await asyncio.wait_for(
-            self._connect(), timeout=active_tuning().duration(Tunable.mcp_connect)
+            self._connect(), timeout=current_limits().mcp_connect
         )
         async with self._operation_lock:
             if event_callback is not None:
@@ -358,7 +360,7 @@ class _StatefulStreamableHTTPSession:
     ) -> AsyncIterator[ClientSession]:
         # Bounded like the startup connect, so an endpoint that never completes its handshake cannot hold the caller.
         session = await asyncio.wait_for(
-            self._connect(), timeout=active_tuning().duration(Tunable.mcp_connect)
+            self._connect(), timeout=current_limits().mcp_connect
         )
         async with self._operation_lock:
             if event_callback is not None:

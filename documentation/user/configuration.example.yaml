@@ -164,12 +164,6 @@ computer_control:
   # apps and your own Chrome — the windows you are working in, not a clean automation target.
   enabled: false
 
-  # After an action a surface is polled until it stops changing, rather than slept on for a fixed
-  # guess. A fast page costs one interval; a slow one costs the ceiling.
-  settle:
-    poll_seconds: 0.05
-    give_up_seconds: 1.5
-
   # How a screen is ranked when a script asks for an element by name.
   #
   # Three signals score every element and are added: two embeddings read what a query *means*, a
@@ -200,6 +194,17 @@ dictation:
     transcription_timeout_realtime_multiplier: 0.5
     maximum_attempts: 2
     worker_shutdown_seconds: 2.0
+
+
+# The daemon's own lifecycle timings. These are the daemon process's, never the library's.
+daemon:
+  # How long to wait for the daemon to come up after starting it.
+  startup_seconds: 45.0
+  # How often a probe retries a not-yet-listening daemon, and how long each connect may wait.
+  probe_interval_seconds: 0.05
+  probe_connect_seconds: 0.5
+  # How long an idle hosted session keeps its process before it sleeps (five hours).
+  session_idle_sleep_seconds: 18000.0
 
 
 # Other tools, other machines
@@ -236,124 +241,92 @@ telemetry:
 
 
 # Tool budgets and timing
-# Size and count caps are token budgets derived from the *live* model context window, so a small
-# model gets tight caps and a large one gets room. `context_share` is the proportion of that
-# window one result may fill. Timeouts do not depend on the window and answer only to
+# Every limit ships as a plain value; nothing scales with the live window, so what you set is
+# what runs. `context_share` sizes the headline text and result budgets as percentages;
 # `timeout_multiplier` — `2.0` doubles every wait, for a slow machine or link.
 
 tuning:
   context_share:
-    # One result's own text: a command's output, a fetched page.
+    # The share the headline text budgets assume: output, fetched pages.
     text: 0.25
-    # A set of results: matches, lines, records.
+    # The share the headline result budgets assume: matches, lines, records.
     results: 0.15
   timeout_multiplier: 1.0
 
-  # `defaults` overrides one value by its own name, in its own unit. The names are the members of
-  # langmesh.base.primitives.tuning.Tunable; an unknown one is an error at load rather than a line that looks
-  # applied and is not. An override replaces what the code *ships* with, so the two knobs above
-  # still apply on top of it.
-  #
-  # The settings panel lists what each is for. The long explanations live as markdown under
-  # src/langmesh/base/tuning_notes/ and are read at runtime, so the code and the reference cannot
-  # drift apart.
+  # `defaults` overrides one limit by its own name, in its own unit. The names are the fields of
+  # langmesh.base.primitives.limits.Limits; an unknown one is an error at load rather than a line that
+  # looks applied and is not. An explicit value here wins over the percentage shares above.
   defaults:
 
-    # Text budgets, in tokens unless the name says characters.
-    output_tokens: 16000
-    fetch_tokens: 24000
-    maximum_line_chars: 2048
+    # Text budgets, in tokens (powers of two).
+    output_tokens: 16384
+    fetch_tokens: 32768
     upstream_error_detail_tokens: 256
 
-    # Listing budgets, in items.
-    read_lines: 2000
-    grep_results: 512
-    grep_per_file: 512
-    glob_results: 1000
-    web_search_maximum: 10
-    remote_listing: 32768
-
-    # What a browser session keeps of the page's own traffic, so a find can surface the API
-    # behind a rendered view.
-    web_exchanges: 250
+    # Listing budgets, in item counts (powers of two).
+    web_search_maximum: 16
+    web_exchanges: 256
     web_websockets: 32
-    web_websocket_frames: 200
+    web_websocket_frames: 256
 
-    # Screen timeouts, in milliseconds.
-    action_timeout: 5000
-    navigation_timeout: 20000
-    snapshot_timeout: 10000
-    connect_timeout: 10000
-    browser_authorization: 90000
-    drag_timeout: 8000
-    screenshot_timeout: 20000
-    read_text_timeout: 10000
-    frame_resolve_timeout: 2000
-
-    # Tool and process timeouts, in seconds.
+    # Timeouts, in seconds.
+    action_timeout: 5.0
+    navigation_timeout: 20.0
+    snapshot_timeout: 10.0
+    browser_authorization: 90.0
+    drag_timeout: 8.0
+    read_text_timeout: 10.0
+    frame_resolve_timeout: 2.0
     sigterm_grace: 3.0
-    ripgrep: 30.0
     bash_sync_window: 60.0
     slow_tool_sync_window: 10.0
     web_search_sync_window: 10.0
     accessibility_messaging: 2.0
     control_script: 120.0
     surface_guard_margin: 30.0
-    screencapture: 15.0
     open_url: 5.0
+    model_silence_give_up: 180.0
 
-    # Session and daemon lifecycle, in seconds. `session_idle_sleep` is five hours.
-    session_idle_sleep: 18000.0
-    daemon_startup: 45.0
-    control_plane_call: 60.0
-    daemon_probe_interval: 0.05
-    daemon_probe_connect: 0.5
+    # Autonomous continuation budgets, in turns.
+    goal_continuation_turns: 16
+    task_continuation_turns: 16
 
-    # Credentials, subscriptions and links, in seconds.
+    # Surface settling, in seconds and reads.
+    settle_poll_seconds: 0.05
+    settle_give_up_seconds: 1.5
+    settle_stable_reads: 2
+
+    # Synthesised input: how a click, a drag and a keystroke are physically paced (sizes are powers of two).
+    type_chunk_size: 32
+    type_chunk_interval: 0.005
+    drag_steps: 16
+    drag_step_interval: 0.01
+    click_interval: 0.01
+    focus_settle: 0.03
+    scroll_amount_pixels: 512
+    accessibility_walk_budget: 3.0
+    accessibility_ready_probe: 0.4
+    accessibility_prewarm_interval: 0.4
+    accessibility_ready_backoff: 0.2
+
+    # Screen retrieval ranking.
+    find_rephrasing_similarity: 0.45
+    find_near_weight: 0.5
+    find_anchor_margin: 0.02
+    find_candidates: 8
+    find_one_margin: 0.2
+    find_many_ceiling: 64
+    find_relevance_floor: 0.25
+
+    # Other process and identity budgets, in seconds unless named otherwise.
+    session_title_attempts: 4
+    permission_reviewer_attempts: 4
     model_catalogue_ttl: 60.0
     credential_refresh_leeway: 300.0
     oauth_poll_interval: 1.0
     oauth_poll_ceiling: 10.0
     oauth_poll_give_up: 300.0
     subscription_resume_ttl: 1800.0
-    # Empty transport keepalives do not reset this meaningful-progress deadline.
-    model_silence_give_up: 180.0
     file_url_ttl: 600.0
     mcp_connect: 20.0
     card_resolve: 20.0
-
-    # Other machines, in seconds.
-    remote_command: 120.0
-    remote_connect: 16.0
-    remote_control_persist: 120.0
-
-    # Synthesised input: how a click, a drag and a keystroke are physically paced.
-    type_chunk_size: 20
-    type_chunk_interval: 0.005
-    drag_steps: 12
-    drag_step_interval: 0.01
-    click_interval: 0.01
-    focus_settle: 0.03
-    scroll_amount_pixels: 300
-    settle_stable_reads: 2
-    stamped_image_side: 2048
-
-    # Reading an accessibility tree, in seconds.
-    accessibility_walk_budget: 3.0
-    accessibility_ready_probe: 0.4
-    accessibility_prewarm_interval: 0.4
-    accessibility_ready_backoff: 0.2
-
-    # Finding an element on a screen. `find_one_margin` is how far ahead of the runner-up the
-    # best match must score, in units of the shortlist's own spread, before it answers instead of
-    # asking which was meant — it is fitted against the ranking configured above, so changing one
-    # means re-fitting the other. `find_relevance_floor` is a plain cosine and stays one
-    # deliberately: a fused score is scaled by the query's own length and means nothing between
-    # calls.
-    find_rephrasing_similarity: 0.45
-    find_near_weight: 0.5
-    find_anchor_margin: 0.02
-    find_candidates: 5
-    find_one_margin: 0.2
-    find_many_ceiling: 50
-    find_relevance_floor: 0.25

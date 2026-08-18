@@ -26,7 +26,11 @@ from tenacity import (
     wait_fixed,
 )
 
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmeshd.commons.timing import (
+    DAEMON_PROBE_CONNECT_SECONDS,
+    DAEMON_PROBE_INTERVAL_SECONDS,
+    DAEMON_STARTUP_SECONDS,
+)
 from langmeshd.daemon.paths import (
     daemon_lock_path,
     daemon_log_path,
@@ -91,11 +95,10 @@ def _acquire_singleton_lock() -> int | None:
 async def _defer_to_running_daemon() -> int:
     """Stand down for the daemon that won the lock, once it is actually serving, since somebody is waiting on that line."""
     path = daemon_socket_path()
-    tuning = active_tuning()
 
     def probe_once() -> None:
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        probe.settimeout(tuning.duration(Tunable.daemon_probe_connect))
+        probe.settimeout(DAEMON_PROBE_CONNECT_SECONDS)
         try:
             probe.connect(str(path))
         finally:
@@ -104,8 +107,8 @@ async def _defer_to_running_daemon() -> int:
     try:
         async for attempt in AsyncRetrying(
             retry=retry_if_exception_type(OSError),
-            wait=wait_fixed(tuning.duration(Tunable.daemon_probe_interval)),
-            stop=stop_after_delay(tuning.duration(Tunable.daemon_startup)),
+            wait=wait_fixed(DAEMON_PROBE_INTERVAL_SECONDS),
+            stop=stop_after_delay(DAEMON_STARTUP_SECONDS),
         ):
             with attempt:
                 await asyncio.to_thread(probe_once)
@@ -277,7 +280,11 @@ async def _serve() -> int:
 
     commons_state.global_configuration = Configuration.load()
     # The app's own configuration sections, read from the same file the library's Configuration reads.
-    from langmeshd.commons.configuration import ComposioConfiguration, DictationConfiguration
+    from langmeshd.commons.configuration import (
+        ComposioConfiguration,
+        DaemonConfiguration,
+        DictationConfiguration,
+    )
     from langmesh.base.confinement.paths import configuration_file_path
 
     import yaml as _yaml
@@ -286,6 +293,9 @@ async def _serve() -> int:
         _document = _yaml.safe_load(configuration_file_path().read_text()) or {}
     except OSError:
         _document = {}
+    commons_state.daemon_configuration = DaemonConfiguration.model_validate(
+        _document.get("daemon") or {}
+    )
     commons_state.dictation_configuration = DictationConfiguration.model_validate(
         _document.get("dictation") or {}
     )

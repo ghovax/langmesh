@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from langmesh.base.configuration.permission_mode import PermissionMode
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmesh.base.primitives.limits import current_limits
 from langmesh.base.primitives import telemetry
 from langmeshd.daemon import state
 from langmeshd.daemon.registry import SessionRecord
@@ -545,7 +545,7 @@ async def _daemon_restart(_params: dict) -> dict:
             sleeping = asyncio.create_task(state.lifecycle.sleep_all())
             completed, _ = await asyncio.wait(
                 {sleeping},
-                timeout=active_tuning().duration(Tunable.sigterm_grace),
+                timeout=current_limits().sigterm_grace,
             )
             if completed:
                 await asyncio.gather(*completed, return_exceptions=True)

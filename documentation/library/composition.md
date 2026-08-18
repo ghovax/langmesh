@@ -88,7 +88,7 @@ The constructor keeps run facts (directory, identity, permission mode, confineme
 | `middleware` | `ToolMiddleware` sequence | None |
 | `compaction` | `Compaction` | Token-bounded recent working set |
 | `compaction_preparation` | `CompactionPreparation` | Observational-memory preparation in `Session` and the daemon; direct compaction in bare `AgentRuntime` |
-| `continuations` | `ContinuationPolicy` | Active tuning allowances |
+| `continuations` | `ContinuationPolicy` | Plain goal and task allowances from the current limits |
 | `synchronize_resources` | Async callable | No synchronization |
 | `related_turns` | Async turn reader | `read_turn` unavailable |
 | `goal_listener` | Goal callback | No callback |

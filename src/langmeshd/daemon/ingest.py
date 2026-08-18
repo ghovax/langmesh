@@ -10,7 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from a2a.types import Task
 
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmeshd.commons.timing import SESSION_IDLE_SLEEP_SECONDS
 from langmeshd.daemon import state
 
 logger = logging.getLogger(__name__)
@@ -195,8 +195,13 @@ def _sleep_when_idle(session_id: str) -> None:
     if record is None or not record.is_live or not record.hosted:
         return
     cancel_idle_sleep(session_id)
-    delay = active_tuning().duration(Tunable.session_idle_sleep)
-    _IDLE_TIMERS[session_id] = asyncio.create_task(_sleep_after_idle(session_id, delay))
+    daemon_configuration = state.daemon_configuration
+    idle_seconds = (
+        daemon_configuration.session_idle_sleep_seconds
+        if daemon_configuration is not None
+        else SESSION_IDLE_SLEEP_SECONDS
+    )
+    _IDLE_TIMERS[session_id] = asyncio.create_task(_sleep_after_idle(session_id, idle_seconds))
 
 
 async def _session_event(params: dict) -> dict:

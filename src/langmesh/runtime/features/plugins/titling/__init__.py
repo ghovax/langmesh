@@ -10,11 +10,13 @@ from __future__ import annotations
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.internals import model_is_authorized
 from langmesh.runtime.runtime import build_chat_model
 from langmesh.runtime.verdict import collect_structured_call
+
+from langmesh.base.primitives.limits import current_limits
 
 
 class SessionTitle(BaseModel):
@@ -51,7 +53,7 @@ class TitleAssignment(Feature):
             HumanMessage(content=first_message),
         ]
         # The tool is offered and the prompt insists on it: forcing it, a thinking model behind a gateway refuses.
-        attempts = active_tuning().amount(Tunable.session_title_attempts)
+        attempts = current_limits().session_title_attempts
         validated = await collect_structured_call(
             model,
             request,

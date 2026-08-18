@@ -36,6 +36,22 @@ class DictationTimingConfiguration(BaseModel):
     worker_shutdown_seconds: float = Field(2.0)
 
 
+class DaemonConfiguration(BaseModel):
+    """The daemon's own lifecycle timings, configurable in the file and never part of the library.
+
+    The library must not carry these: they are properties of the daemon process, not of a
+    session or the runtime.
+    """
+
+    # How long to wait for the daemon to come up after starting it.
+    startup_seconds: float = Field(45.0)
+    # How often a probe retries a not-yet-listening daemon, and how long each connect may wait.
+    probe_interval_seconds: float = Field(0.05)
+    probe_connect_seconds: float = Field(0.5)
+    # How long an idle hosted session sleeps before it is let go (five hours).
+    session_idle_sleep_seconds: float = Field(18_000.0)
+
+
 class DictationConfiguration(BaseModel):
     """Opt-in speech-to-text, transcribed locally. Off by default: the first use downloads about a gigabyte."""
 

@@ -6,7 +6,7 @@ import os
 from typing import Any, AsyncIterator
 
 from langmesh.base.confinement.file_leases import FileLeaseConflict
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmesh.base.primitives.limits import current_limits
 from langmesh.runtime.background import bind_background_jobs, unbind_background_jobs
 from langmesh.runtime.internals import _maybe_json
 from langmesh.runtime.tools import context as tool_context, fetching
@@ -35,7 +35,7 @@ async def run_slow_tool(
     if not background:
         completion = await runner.settle_inline(
             job_identifier,
-            active_tuning().scale_timeout(sync_window),
+            sync_window,
         )
     if completion is not None:
         yield ToolResult(
@@ -76,8 +76,8 @@ async def handle_download_file(
     url = str(tool_arguments.get("url", ""))
     destination = str(tool_arguments.get("path", ""))
     sync_window = float(
-        tool_arguments.get("timeout", Tunable.slow_tool_sync_window.default)
-        or Tunable.slow_tool_sync_window.default
+        tool_arguments.get("timeout", current_limits().slow_tool_sync_window)
+        or current_limits().slow_tool_sync_window
     )
     configured = tool_context.current().download_timeout_seconds
     hard_deadline = int(tool_arguments.get("hard_deadline", configured) or configured)

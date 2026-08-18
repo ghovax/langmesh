@@ -18,8 +18,8 @@ from typing import Any
 from langchain.tools import tool
 
 from langmesh.base.configuration import PromptLoader
+from langmesh.base.primitives.limits import current_limits
 from langmesh.base.primitives.serialization import compact
-from langmesh.base.primitives.tuning import Tunable, active_tuning
 from langmesh.computer import control, engine as native_surface, retrieval, surface as surface_module, targets as target_registry, web as web_surface, workflows as workflow_registry
 from langmesh.computer.retrieval import retrieval_policy_from, set_retrieval_policy
 from langmesh.computer.surface import message_loader
@@ -139,7 +139,7 @@ async def control_screen(
         vector = retrieval.intent(query)
         if vector is None:
             return
-        alike = active_tuning().ratio(Tunable.find_rephrasing_similarity)
+        alike = current_limits().find_rephrasing_similarity
         for earlier, found in asked:
             if found == top and float(earlier @ vector) >= alike:
                 rephrased.append(control_message("rephrasing", query=query))
@@ -159,14 +159,14 @@ async def control_screen(
             candidates = documents
         index = retrieval.Index(candidates)
         if near:
-            tuning = active_tuning()
+            limits = current_limits()
             try:
                 hits = index.anchored(
                     query,
                     near,
                     top_k=limit,
-                    weight=tuning.ratio(Tunable.find_near_weight),
-                    anchor_margin=tuning.ratio(Tunable.find_anchor_margin),
+                    weight=limits.find_near_weight,
+                    anchor_margin=limits.find_anchor_margin,
                 )
             except retrieval.WeakAnchor as weak:
                 raise RuntimeError(
@@ -249,9 +249,9 @@ async def control_screen(
         )
 
     def find_many(query, limit=8, clickable=None, near="", name="", context="", **_):
-        tuning = active_tuning()
-        wanted = max(1, min(int(limit), tuning.amount(Tunable.find_many_ceiling)))
-        floor = tuning.ratio(Tunable.find_relevance_floor)
+        limits = current_limits()
+        wanted = max(1, min(int(limit), limits.find_many_ceiling))
+        floor = limits.find_relevance_floor
         facets = _facets(clickable, name, context)
         records = [_record(hit) for hit in _rank(str(query), wanted, floor, facets, str(near))]
         for record in records:
@@ -270,7 +270,7 @@ async def control_screen(
         if not scored:
             raise RuntimeError(control_message("no_match", query=str(query)))
         top, top_score = scored[0]
-        shortlist = active_tuning().amount(Tunable.find_candidates)
+        shortlist = current_limits().find_candidates
         competitive = [
             record for record, score in scored[:shortlist] if top_score <= 0 or score >= 0.9 * top_score
         ]
@@ -282,7 +282,7 @@ async def control_screen(
         runner_up = scored[1][1] if len(scored) > 1 else 0.0
         spread = statistics.pstdev([score for _record, score in scored]) if len(scored) > 1 else 0.0
         margin = (top_score - runner_up) / spread if spread > 1e-9 else 1.0
-        if margin < active_tuning().ratio(Tunable.find_one_margin):
+        if margin < current_limits().find_one_margin:
             raise RuntimeError(
                 control_message(
                     "unsure_match",
@@ -301,7 +301,7 @@ async def control_screen(
 
     async def wait_for(query, seconds=5.0, clickable=None, near="", name="", context="", **_):
         deadline = time.monotonic() + max(0.0, float(seconds))
-        interval = active_tuning().settle_poll()
+        interval = current_limits().settle_poll_seconds
         while True:
             hits = await asyncio.to_thread(
                 find_many, query, 1, clickable=clickable, near=near, name=name, context=context

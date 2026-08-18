@@ -12,15 +12,14 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from langmesh.base.configuration import PromptLoader
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmesh.base.primitives.limits import current_limits
 
 logger = logging.getLogger(__name__)
 
 
 def machinery_ceiling() -> float:
     """How long the machinery around a control script waits on it, a margin above the script's own ceiling."""
-    tuning = active_tuning()
-    return tuning.duration(Tunable.control_script) + tuning.duration(Tunable.surface_guard_margin)
+    return current_limits().control_script + current_limits().surface_guard_margin
 
 
 def message_loader(folder: str) -> Callable[..., str]:

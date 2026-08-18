@@ -367,11 +367,11 @@ class Session:
                     raise RuntimeError(
                         "non-local resources require `async with Session(...)` so LangMesh can hold their materialized POSIX view"
                     )
-            from langmesh.base.primitives.tuning import set_tuning, tuning_from_policy
+            from langmesh.base.primitives.limits import limits_from_configuration, set_limits
             from langmesh.runtime.runtime import AgentRuntime
 
-            # The tuning policy is bound per task, so binding it here scopes it to the caller rather than the interpreter.
-            set_tuning(tuning_from_policy(self._configuration.tuning))
+            # The limits are bound for the task, scoped to the caller rather than the interpreter.
+            set_limits(limits_from_configuration(self._configuration.tuning))
             # Both are bound per task, so two sessions in one interpreter can hold different credentials and tracers.
             if self._credentials is not None:
                 from langmesh.base.identity.credentials import set_credentials

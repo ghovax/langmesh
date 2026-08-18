@@ -8,7 +8,6 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from langmesh.base.primitives.tuning import Tuning, set_tuning, tuning_from_policy
 from langmeshd.worker.server import METHODS
 from langmeshd.worker.session import SessionExecutor
 from langmeshd.commons import state as commons_state
@@ -25,10 +24,9 @@ class SessionUnreachable(RuntimeError):
 
 @dataclass
 class _Hosted:
-    """One live session: its executor, and the tuning its own configuration asks for."""
+    """One live session: its executor."""
 
     executor: Any
-    tuning: Tuning
 
 
 class SessionHost:
@@ -82,8 +80,8 @@ class SessionHost:
             except Exception:  # noqa: BLE001 — a session that cannot be built is a failed start, not a crash
                 logger.exception("could not build session %s", record.id)
                 return False
-            # Resolved once here rather than per call: it is a property of the session, not of the request.
-            self._sessions[record.id] = _Hosted(executor, tuning_from_policy(configuration.tuning))
+            # The executor is resolved once here rather than per call.
+            self._sessions[record.id] = _Hosted(executor)
             self._groups_of_session.setdefault(record.id, set())
             return True
 
@@ -95,8 +93,6 @@ class SessionHost:
         handler = METHODS.get(method)
         if handler is None:
             raise RuntimeError(f"Session {session_id} has no verb {method!r}.")
-        # Bound per call, not at start: a task inherits the context it was created in, and this is that task.
-        set_tuning(held.tuning)
         return await handler(
             held.executor, {key: value for key, value in params.items() if key != "id"}
         )
