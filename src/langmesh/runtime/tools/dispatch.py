@@ -443,9 +443,13 @@ class _DispatchesTools:
             )
             return
 
-        # Resolve the location and derive the policy as a value, so concurrent calls cannot cross them.
+        # Resolve the call's execution target. A feature may own this (the location plugin): it
+        # answers `resolve_execution` with an opaque call site (cwd + executor), and `None` means
+        # "run locally, in this process". Without such a feature the core's own location table
+        # still resolves the legacy `location` argument, so a bare embedding keeps working.
         resolved_location: ResolvedLocation | None = None
-        if tool_name in _LOCATION_TOOLS:
+        call_site = self._features.invoke("resolve_execution", tool_name, tool_arguments)
+        if call_site is None and tool_name in _LOCATION_TOOLS:
             tool_arguments = dict(tool_arguments)
             location_value = tool_arguments.pop("location", None) or None
             try:
@@ -480,7 +484,7 @@ class _DispatchesTools:
                 tool_call_identifier,
                 decision,
                 policy,
-                resolved_location,
+                call_site if call_site is not None else resolved_location,
             ):
                 yield event
         finally:

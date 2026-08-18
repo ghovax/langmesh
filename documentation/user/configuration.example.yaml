@@ -126,8 +126,12 @@ compaction:
   # How many times the hidden summarizer may be asked again after reviewing but not submitting.
   summary_attempts: 3
 
-# How an independent goal review is driven.
+# How an open goal is driven after a turn leaves it open.
 goal_review:
+  # Which strategy drives an open goal: "review" runs an independent reviewer session, while
+  # "self_managed" skips the reviewer and simply re-prompts the agent, which owns the goal
+  # through the update_goal tool.
+  mode: review
   # How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset.
   maximum_attempts: 3
 

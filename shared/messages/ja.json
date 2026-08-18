@@ -741,7 +741,8 @@
     },
     "goal_review": {
       "_": "目標レビュー",
-      "maximum_attempts": "最大レビュー試行回数"
+      "maximum_attempts": "最大レビュー試行回数",
+      "mode": "ゴール駆動モード"
     }
   },
   "SettingsAbout": {
@@ -983,6 +984,12 @@
           "http/protobuf": "HTTP (protobuf)",
           "grpc": "gRPC"
         }
+      }
+    },
+    "goal_review": {
+      "mode": {
+        "review": "独立レビューアー",
+        "self_managed": "エージェント自己管理"
       }
     }
   },

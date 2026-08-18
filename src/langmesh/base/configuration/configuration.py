@@ -300,7 +300,16 @@ class CompactionConfiguration(Section):
 
 
 class GoalReviewConfiguration(Section):
-    """How an independent goal review is driven, including how hard it is pushed to submit."""
+    """How an independent goal review is driven, including how hard it is pushed to submit.
+
+    ``mode`` chooses between the two goal-driving strategies the plugin ships: ``review`` runs
+    an independent reviewer session after a turn whose goal is still open, while
+    ``self_managed`` skips the reviewer and simply re-prompts the agent, which owns the goal
+    through the ``update_goal`` tool.
+    """
+
+    # How the goal is driven after a turn that leaves it open: "review" or "self_managed".
+    mode: Literal["review", "self_managed"] = Field("review")
 
     # How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset.
     maximum_attempts: int = Field(3)

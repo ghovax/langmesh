@@ -185,6 +185,7 @@ compaction:
   summary_attempts: 3
 
 goal_review:
+  mode: review
   maximum_attempts: 3
 ```
 
@@ -195,7 +196,9 @@ When a conversation reaches its recommended preparation threshold, LangMesh appe
 - `recent_working_set_fraction` is how much stays verbatim, measured in tokens rather than turns.
 - `summary_attempts` is how many times the hidden summarizer may be asked again after reviewing but not submitting; once exhausted, the compaction stops and the conversation is left unchanged until it is retried.
 
-`goal_review.maximum_attempts` is the same bound for the goal reviewer: after a reviewer that investigated but never submitted, it is asked again on a narrowed toolset up to this many times, then the goal carries unchanged.
+`goal_review.mode` chooses how an open goal keeps being worked after a turn ends. `review` (the default) runs an independent reviewer session that inspects the work and returns a verdict; `self_managed` skips the reviewer and simply re-prompts the agent on the goal itself, which the agent owns through the `update_goal` tool. In both modes the goal stops automatically once its continuation allowance is spent.
+
+`goal_review.maximum_attempts` is the bound for the goal reviewer in `review` mode: after a reviewer that investigated but never submitted, it is asked again on a narrowed toolset up to this many times, then the goal parks and waits for a person.
 
 Observations are workspace-owned current state and explicit. Agents retrieve and maintain them through Bash using the `observational-memory` skill. The daemon watches each active location's registry through native filesystem notifications and shares one watcher across its sessions. A committed revision broadcasts a complete validated snapshot to the memory panel. The system prompt receives only progressive-disclosure metadata, never observation rows.
 
@@ -349,7 +352,8 @@ How conversation history is compacted as it grows.
 | `compaction.output_reserve_fraction`     | number  | `0.1` | Share held back as safety space for the preparation segment and the answer. |
 | `compaction.recent_working_set_fraction` | number  | `0.15` | Share of the usable window kept verbatim after older history is discarded. Sized in tokens rather than turns. |
 | `compaction.summary_attempts`            | integer | `3` | How many times the hidden summarizer may be asked again after reviewing but not submitting; once exhausted, the compaction stops and the conversation is left unchanged until it is retried. |
-| `goal_review.maximum_attempts`           | integer | `3` | How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset before the goal carries unchanged. |
+| `goal_review.mode`                        | choice  | `review` | Which strategy drives an open goal: `review` runs an independent reviewer session, `self_managed` re-prompts the agent on the goal itself. |
+| `goal_review.maximum_attempts`           | integer | `3` | How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset before the goal parks and waits for a person. |
 
 ### User snapshot
 
