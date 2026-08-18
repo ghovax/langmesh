@@ -8,8 +8,11 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
-from langmesh.base import environment_variables
+from langmesh.base import confinement as _confinement
+from langmesh.base.confinement import ENFORCE_OFF
+from langmesh.base.confinement import environment_variables
 from langmesh.base.confinement import Grant, Profile
+from langmesh.base.primitives.identifiers import new_id
 
 
 @dataclass(frozen=True)
@@ -47,10 +50,6 @@ class ToolContext:
 
     def spill_path(self, prefix: str) -> "Path":
         """Where a tool's overflow output lands: somewhere this profile permits, never in the tree being worked in."""
-        from pathlib import Path
-        from langmesh.base import confinement as _confinement
-        from langmesh.base.identifiers import new_id
-
         scratch = _confinement.temporary_directory(self.sandbox, workspace=self.workspace)
         return Path(scratch or tempfile.gettempdir()) / f"{new_id(prefix)}.log"
 
@@ -87,6 +86,17 @@ class ToolContext:
     def for_directory(self, directory: str) -> "ToolContext":
         """This context with its workspace repointed, as a new value rather than a mutation."""
         return replace(self, workspace=directory)
+
+    def for_remote(self) -> "ToolContext":
+        """This context for a call executing on a remote machine: local confinement has no meaning there.
+
+        The command still runs through the local `ssh` client, but the boundary that would be
+        drawn around it is the remote host's own; nothing here widens a local boundary.
+        """
+        return replace(
+            self,
+            sandbox=replace(self.sandbox, enforce=ENFORCE_OFF),
+        )
 
 
 _EMPTY = ToolContext()

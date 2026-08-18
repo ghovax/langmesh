@@ -25,6 +25,7 @@ import {
   LuMic,
   LuMousePointerClick,
   LuPackage,
+  LuShieldCheck,
   LuUser,
   LuUserSearch,
   LuZap,
@@ -76,6 +77,13 @@ function permissionAppearance(permissionMode: PermissionMode) {
         background: "blue.subtle",
         borderColor: "blue.muted",
         colorPalette: "blue",
+      },
+      allow: {
+        icon: <LuShieldCheck size={14} />,
+        color: "green.fg",
+        background: "green.subtle",
+        borderColor: "green.muted",
+        colorPalette: "green",
       },
     }[permissionMode] ?? {
       icon: <LuHand size={14} />,
@@ -283,6 +291,13 @@ export function PermissionModeControl({
       description: translation("permissionAutomaticDescription"),
       icon: <LuBadgeCheck size={14} />,
       colorPalette: "blue",
+    },
+    {
+      value: "allow",
+      label: translation("permissionAllowLabel"),
+      description: translation("permissionAllowDescription"),
+      icon: <LuShieldCheck size={14} />,
+      colorPalette: "green",
     },
   ];
   const permissionItems = permissionChoices.map(({ value: itemValue, label }) => ({

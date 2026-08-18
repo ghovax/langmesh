@@ -6,7 +6,7 @@ import { Alert, Box, Button, Flex, Link, List, Text } from "@chakra-ui/react";
 import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { LuExternalLink } from "react-icons/lu";
-import { openAccessibilitySettings, openBrowserRemoteDebugging } from "@/lib/api";
+import { openSystemPermission, openBrowserRemoteDebugging } from "@/lib/api";
 import { MarkdownContent } from "../markdown-content";
 import { RelativeTime } from "../ui/relative-time";
 import {
@@ -114,20 +114,22 @@ function taskStatusAppearance(status: string): { key: string; palette: string } 
   return { key: TASK_STATUS_LABEL_KEY[kind] ?? "statusUnknown", palette: STATUS_PALETTE[kind] };
 }
 
-// "task-..." -> "#..." — the internal id is never shown to the user, only its suffix.
+// "task-..." or a bare index -> "#..." — the internal id is never shown raw, only its numeric suffix.
 function taskHashLabel(id: string): string {
   const match = id.match(/(\d+)\s*$/);
   return match ? `#${match[1]}` : id;
 }
 
-// One row shared by task creation and updates: number, status badge, prose as markdown, and dependency chips.
+// One row shared by task creation and updates: number, short title, status badge, prose as markdown, and dependency chips.
 function TaskRow({
   label,
+  title = "",
   status,
   body,
   dependencies = [],
 }: {
   label: string;
+  title?: string;
   status: string;
   body: string;
   dependencies?: string[];
@@ -136,10 +138,15 @@ function TaskRow({
   const appearance = taskStatusAppearance(status);
   return (
     <Card>
-      <Flex align="center" gap={2} mb={body ? 1.5 : 0}>
+      <Flex align="center" gap={2} mb={body || title ? 1.5 : 0}>
         <Text textStyle="sectionLabel" flexShrink={0}>
           {label}
         </Text>
+        {title && (
+          <Text fontWeight="semibold" fontSize="xs">
+            {title}
+          </Text>
+        )}
         <Box flex={1} />
         {appearance && (
           <Pill colorPalette={appearance.palette}>
@@ -172,6 +179,7 @@ function WriteTasksCallView({ args }: { args: Record<string, unknown> }) {
         <TaskRow
           key={index}
           label={`#${index + 1}`}
+          title={asString(task.title)}
           status="pending"
           body={asString(task.description)}
           dependencies={asArray(task.dependencies).map(asString)}
@@ -1084,7 +1092,7 @@ function PermissionGrantAlert() {
           colorPalette="yellow"
           variant="solid"
           onClick={async () => {
-            await openAccessibilitySettings();
+            await openSystemPermission("accessibility");
             setOpened(true);
           }}
         >
@@ -1170,6 +1178,15 @@ export function ToolResultView({
 
   // The task tools confirm with raw ids the call card already shows as numbers, so the confirmation is dropped.
   if (name === "set_tasks" || name === "update_tasks") return null;
+
+  // The verdict tools confirm with internal codes; the call card already shows the full verdict,
+  // and the goal-review panel carries the live review, so the confirmation is dropped.
+  if (
+    name === "submit_goal_review" ||
+    name === "permission_decision" ||
+    name === "submit_compaction_summary"
+  )
+    return null;
 
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
     const data = parsed as Record<string, unknown>;

@@ -9,10 +9,10 @@ from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import Field, ValidationError, create_model
 
 from langmesh.base.configuration import PromptLoader
-from langmesh.base.serialization import compact
+from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.output import ToolOutput
-from langmesh.runtime.tools.registry import EXPLANATION, tool_description as _description
+from langmesh.runtime.tools.registry import tool_description as _description
 
 # The prompts these tools speak with. What they tell the *model* is a description, and lives with every other one.
 _PROMPTS = PromptLoader(Path(__file__).resolve().parent.parent / "prompts")
@@ -29,7 +29,6 @@ def _unavailable(code: str) -> str:
 
 
 async def _create_session(
-    explanation: str,
     agent: str,
     working_directory: Optional[str] = None,
 ) -> str:
@@ -61,7 +60,7 @@ async def _create_session(
     )
 
 
-async def _message_session(session: str, message: str, explanation: str) -> str | ToolOutput:
+async def _message_session(session: str, message: str) -> str | ToolOutput:
     """Hand a session a message, reporting a peer parked on a decision as an error rather than a delivery."""
     access = tool_context.current().session_access
     if access is None:
@@ -104,7 +103,7 @@ async def _message_session(session: str, message: str, explanation: str) -> str 
     return compact({"code": "message_sent", "status": "ok", "session": session})
 
 
-async def _read_session(session: str, explanation: str) -> str:
+async def _read_session(session: str) -> str:
     """One session's record as it stands, for orienting rather than for waiting on."""
     access = tool_context.current().session_access
     if access is None:
@@ -123,7 +122,7 @@ async def _read_session(session: str, explanation: str) -> str:
     return compact({"code": "session", "status": "ok", **record})
 
 
-async def _list_sessions(explanation: str) -> str:
+async def _list_sessions() -> str:
     """This session's own subtree, which is the only part of the machine it is answerable for."""
     access = tool_context.current().session_access
     if access is None:
@@ -137,7 +136,7 @@ async def _list_sessions(explanation: str) -> str:
     return compact({"code": "sessions", "status": "ok", "sessions": records})
 
 
-async def _list_remote_agents(explanation: str) -> str:
+async def _list_remote_agents() -> str:
     """The agents registered on other hosts, with the health of each, since an unreachable one is not a choice."""
     access = tool_context.current().session_access
     if access is None:
@@ -151,7 +150,7 @@ async def _list_remote_agents(explanation: str) -> str:
     return compact({"code": "remote_agents", "status": "ok", "agents": agents})
 
 
-async def _message_remote_agent(name: str, message: str, explanation: str) -> str:
+async def _message_remote_agent(name: str, message: str) -> str:
     """One exchange with an agent on another host, whose reply is the whole of what comes back."""
     access = tool_context.current().session_access
     if access is None:
@@ -175,7 +174,6 @@ def build_create_session_tool(agent_names: list[str]) -> BaseTool:
     names = tuple(sorted(agent_names))
     arguments = create_model(
         "CreateSessionArguments",
-        explanation=(str, Field(description=EXPLANATION)),
         agent=(
             Literal[names],  # type: ignore[valid-type]
             Field(description="The agent profile the peer runs."),
@@ -203,12 +201,10 @@ message_session_tool = StructuredTool.from_function(
     description=_description("message_session"),
     args_schema=create_model(
         "MessageSessionArguments",
-        explanation=(str, Field(description=EXPLANATION)),
         session=(str, Field(description="The recipient session id.")),
         message=(str, Field(description="The message to send.")),
     ),
 )
-
 
 read_session_tool = StructuredTool.from_function(
     coroutine=_read_session,
@@ -216,11 +212,9 @@ read_session_tool = StructuredTool.from_function(
     description=_description("read_session"),
     args_schema=create_model(
         "ReadSessionArguments",
-        explanation=(str, Field(description=EXPLANATION)),
         session=(str, Field(description="The session id.")),
     ),
 )
-
 
 list_sessions_tool = StructuredTool.from_function(
     coroutine=_list_sessions,
@@ -228,10 +222,8 @@ list_sessions_tool = StructuredTool.from_function(
     description=_description("list_sessions"),
     args_schema=create_model(
         "ListSessionsArguments",
-        explanation=(str, Field(description=EXPLANATION)),
     ),
 )
-
 
 list_remote_agents_tool = StructuredTool.from_function(
     coroutine=_list_remote_agents,
@@ -239,10 +231,8 @@ list_remote_agents_tool = StructuredTool.from_function(
     description=_description("list_remote_agents"),
     args_schema=create_model(
         "ListRemoteAgentsArguments",
-        explanation=(str, Field(description=EXPLANATION)),
     ),
 )
-
 
 message_remote_agent_tool = StructuredTool.from_function(
     coroutine=_message_remote_agent,
@@ -250,7 +240,6 @@ message_remote_agent_tool = StructuredTool.from_function(
     description=_description("message_remote_agent"),
     args_schema=create_model(
         "MessageRemoteAgentArguments",
-        explanation=(str, Field(description=EXPLANATION)),
         name=(str, Field(description="The registered remote agent's name.")),
         message=(str, Field(description="The message to send.")),
     ),

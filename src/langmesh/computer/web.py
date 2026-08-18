@@ -24,14 +24,14 @@ from langmesh.computer.surface import (
     resolve_caret,
     resolve_range,
 )
-from langmesh.base.tuning import Tunable, active_tuning, settle
+from langmesh.base.primitives.limits import current_limits, settle
 
 logger = logging.getLogger(__name__)
 
 
-def _milliseconds(tunable: Tunable) -> int:
-    """A tuned wait in the milliseconds Playwright takes. Every tunable is seconds; this is the one boundary that is not."""
-    return max(1, int(active_tuning().amount(tunable) * 1000))
+def _milliseconds(seconds: float) -> int:
+    """A wait in the milliseconds Playwright takes. The limits are seconds; this is the one boundary that is not."""
+    return max(1, int(seconds * 1000))
 
 
 # A window is numbered by the window server and a tab by DevTools, so the prefix tells `_page_for` which one it has.
@@ -192,7 +192,7 @@ class _Session:
         # What to do with the next JavaScript dialog; `None` acknowledges alerts and declines questions.
         self.pending_dialog: Optional[str] = None
         # Recent network exchanges as method, url, status and body shape, never contents, in a bounded rolling window.
-        self.exchanges: deque[dict] = deque(maxlen=active_tuning().amount(Tunable.web_exchanges))
+        self.exchanges: deque[dict] = deque(maxlen=current_limits().web_exchanges)
         self._exchange_counter = count(1)
         # Live WebSockets and their recent frames, keyed by a model-facing id and pruned oldest-first.
         self.websockets: dict[str, dict] = {}
@@ -376,12 +376,12 @@ class _Session:
         def on_websocket(websocket) -> None:
             # Observe a WebSocket's frames, so the model can search them and act on the socket in-page with `evaluate`.
             identifier = f"ws{next(self._websocket_counter)}"
-            if len(self.websockets) >= active_tuning().amount(Tunable.web_websockets):
+            if len(self.websockets) >= current_limits().web_websockets:
                 self.websockets.pop(next(iter(self.websockets)))
             record: dict[str, Any] = {
                 "id": identifier,
                 "url": websocket.url,
-                "frames": deque(maxlen=active_tuning().amount(Tunable.web_websocket_frames)),
+                "frames": deque(maxlen=current_limits().web_websocket_frames),
             }
             self.websockets[identifier] = record
 
@@ -542,7 +542,7 @@ def _parse_snapshot(snapshot: str) -> tuple[list[Element], dict[str, str]]:
 def _snapshot(page) -> str:
     """The ref-carrying accessibility snapshot of the whole page (iframes inlined)."""
     return page.locator("body").aria_snapshot(
-        mode="ai", timeout=_milliseconds(Tunable.snapshot_timeout)
+        mode="ai", timeout=_milliseconds(current_limits().snapshot_timeout)
     )
 
 
@@ -686,7 +686,7 @@ def _safe_url(page) -> str:
 
 def _await_quiet(page) -> None:
     """Let the DOM parse after an action without blocking on a stalled resource, bounded and swallowed."""
-    ceiling_milliseconds = max(1, int(active_tuning().settle_give_up() * 1000))
+    ceiling_milliseconds = max(1, int(current_limits().settle_give_up_seconds * 1000))
     try:
         page.wait_for_load_state("domcontentloaded", timeout=ceiling_milliseconds)
     except Exception:
@@ -755,7 +755,7 @@ class WebSurface(Surface):
         if websocket_url is None:
             raise ToolFailure(_not_connected_payload())
         # Budgeted as a human reaction time rather than a network timeout, since the user has to find and click Allow.
-        budget = _milliseconds(Tunable.browser_authorization)
+        budget = _milliseconds(current_limits().browser_authorization)
         try:
             connected = self._playwright.chromium.connect_over_cdp(websocket_url, timeout=budget)
         except PlaywrightTimeout:
@@ -771,8 +771,8 @@ class WebSurface(Surface):
                 }
             )
         context = connected.contexts[0] if connected.contexts else connected.new_context()
-        context.set_default_timeout(_milliseconds(Tunable.action_timeout))
-        context.set_default_navigation_timeout(_milliseconds(Tunable.navigation_timeout))
+        context.set_default_timeout(_milliseconds(current_limits().action_timeout))
+        context.set_default_navigation_timeout(_milliseconds(current_limits().navigation_timeout))
         session = _Session(connected, context)
         # Pages are adopted when something first acts in them, since the listing reads from the browser and needs no handlers.
         context.on("page", session.adopt)
@@ -920,7 +920,7 @@ class WebSurface(Surface):
         frame = None
         try:
             handle = page.locator(f"aria-ref={element_ref}").element_handle(
-                timeout=_milliseconds(Tunable.frame_resolve_timeout)
+                timeout=_milliseconds(current_limits().frame_resolve_timeout)
             )
             frame = handle.content_frame() if handle is not None else None
         except Exception:
@@ -1238,7 +1238,7 @@ class WebSurface(Surface):
             session, page = bound.session, bound.page
             try:
                 self._locator(page, element).drag_to(
-                    self._locator(page, onto), timeout=_milliseconds(Tunable.drag_timeout)
+                    self._locator(page, onto), timeout=_milliseconds(current_limits().drag_timeout)
                 )
             except Exception as error:
                 raise ToolFailure(
@@ -1316,7 +1316,7 @@ class WebSurface(Surface):
     ) -> dict:
         def run() -> dict:
             session, page = bound.session, bound.page
-            timeout = _milliseconds(Tunable.read_text_timeout)
+            timeout = _milliseconds(current_limits().read_text_timeout)
             if element is not None:
                 # An element id already names its own frame, so `frame` adds nothing here.
                 source = self._locator(page, element).inner_text(timeout=timeout)

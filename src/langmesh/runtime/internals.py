@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
-from langmesh.base.credentials import is_signed_in
-from langmesh.base.cursor_credentials import is_signed_in as cursor_is_signed_in
+from langmesh.base.identity.credentials import is_signed_in
+from langmesh.base.identity.cursor_credentials import is_signed_in as cursor_is_signed_in
 from langmesh.base.configuration import Configuration
+from langmesh.base.confinement import ApprovedBy, Grant
 from langmesh.runtime.values import ToolStatus, tool_status_from_result
-from langmesh.base.providers import resolve_api_key
-from langmesh.base.models import find_model
-from langmesh.base.tuning import active_tuning, clip_to_tokens, count_tokens, Tunable
+from langmesh.base.identity.providers import resolve_api_key
+from langmesh.base.content.message_content import message_text
+from langmesh.base.content.models import find_model
+from langmesh.runtime.boundary import Escape
+from langmesh.base.primitives.limits import current_limits, clip_to_tokens, count_tokens
 from langchain_core.messages import AIMessageChunk
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
-import json
-from langmesh.base.serialization import compact
+from langmesh.base.primitives.serialization import compact
 
 
 def settled_arguments(parsed: dict, raw: str) -> dict:
@@ -39,6 +44,19 @@ async def _stream_next(iterator: AsyncIterator) -> Any:
         return _STREAM_EXHAUSTED
 
 
+async def race_interrupt(task: Any, interrupt_event: Any) -> bool:
+    """Await `task` raced against an interrupt event; True when the interrupt fired first."""
+    waiter = asyncio.ensure_future(interrupt_event.wait())
+    try:
+        finished, _ = await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        return task not in finished
+    finally:
+        waiter.cancel()
+        if not waiter.done():
+            with suppress(asyncio.CancelledError):
+                await waiter
+
+
 def model_is_authorized(
     model_identifier: str,
     global_configuration: Configuration,
@@ -51,8 +69,7 @@ def model_is_authorized(
         return cursor_is_signed_in()
     if provider_identifier == "custom":
         return True
-    # models.dev providers are registered while the catalogue is resolved. Authorization must
-    # trigger the same ordered discovery as model construction on a cold worker.
+    # models.dev providers are registered while the catalogue is resolved. Authorization must trigger the same ordered discovery as model construction on a cold worker.
     find_model(model_identifier)
     return bool(
         resolve_api_key(provider_identifier, global_configuration.configured_provider_keys())
@@ -97,7 +114,7 @@ def _background_handle_kind(turn_id: str) -> str | None:
 
 def _cap_model_result_payload(result: str, *, code: str = "tool_result_truncated") -> str:
     """Bound a model-facing result to the output budget, by dropping whole fields and saying which went."""
-    budget = active_tuning().amount(Tunable.output_tokens)
+    budget = current_limits().output_tokens
     _, was_truncated = clip_to_tokens(result, budget)
     if not was_truncated:
         return result
@@ -150,8 +167,6 @@ def _cap_model_result_payload(result: str, *, code: str = "tool_result_truncated
 
 def message_tokens(message: Any) -> int:
     """How much window one message occupies, counting the tool calls and results sent with it."""
-    from langmesh.base.message_content import message_text
-
     total = count_tokens(message_text(message))
     for tool_call in getattr(message, "tool_calls", None) or []:
         arguments = tool_call.get("args")
@@ -277,8 +292,6 @@ def _escape_to_dict(escape: Any) -> dict:
 
 def _escape_from_dict(data: Any) -> Any:
     """The inverse, passing through a value that is already an ``Escape``."""
-    from langmesh.runtime.boundary import Escape
-
     if isinstance(data, Escape):
         return data
     data = data or {}
@@ -309,8 +322,8 @@ class _PreflightGate:
     is_bash: bool = False
     # The model-facing error if the gate is answered no.
     deny_message: str = ""
-    # Who supplied an approval. Empty until resolution; interactive answers default to the person.
-    approved_by: str = ""
+    # Who supplied an approval. One of the APPROVED_BY_* values once resolved; empty until resolution.
+    approved_by: "ApprovedBy | str" = ""
     # For an egress gate, the remote agent name (an "always allow" is remembered).
     egress_agent: str = ""
     # The widening asked for, carried so approving records exactly what the planner worked out.
@@ -412,8 +425,6 @@ class _ToolPlan:
 
     @classmethod
     def from_dict(cls, data: dict) -> _ToolPlan:
-        from langmesh.base.confinement import Grant
-
         retry = data.get("retry_grant")
         return cls(
             tool_call_id=str(data.get("tool_call_id", "")),
@@ -454,7 +465,6 @@ class _ModelCallOutcome:
     """What one streamed model call produced: the response, or the terminal condition the loop must act on."""
 
     response: Optional[AIMessageChunk] = None
-    aborted_for_steering: bool = False
     cancelled: bool = False
 
 

@@ -15,7 +15,7 @@ LangMesh ships as **two independent macOS artifacts**: the harness (`LangMesh Co
 - `packaging/sign-app.sh "packaging/dist/LangMesh Computer Use.app"` — sign the harness, which is what gives it the identity the Accessibility grant is attached to.
 - `packaging/sign-app.sh web/src-tauri/target/release/bundle/macos/LangMesh.app` — the same for the app.
 
-`tauri.conf.json`'s `beforeBuildCommand` no longer invokes the freeze and `bundle.resources` no longer exists, so the app build is a Rust compile and a static export — nothing Python. Install the harness by `ditto`-ing it to `/Applications` and symlinking `Contents/MacOS/langmesh` onto `PATH`; install the app the same way. `langmesh app` then starts the daemon if needed and launches the window.
+`tauri.conf.json`'s `beforeBuildCommand` no longer invokes the freeze and `bundle.resources` no longer exists, so the app build is a Rust compile and a static export — nothing Python. Install the harness by `ditto`-ing it to `/Applications` and symlinking `Contents/MacOS/langmesh` onto `PATH`; install the app the same way. The app starts the daemon if needed and launches the window.
 
 ## Freezing the harness into a signed .app (the Accessibility identity trick)
 
@@ -31,7 +31,7 @@ The spec ends in a `BUNDLE(...)` step that wraps the frozen output as **`LangMes
 
 Why a bundle, not a bare binary: the *daemon* — not the Tauri shell — is the process that calls the macOS Accessibility API for the computer-use tool, and TCC lists whichever process exercises a permission. A bare binary shows its raw filename in System Settings ▸ Privacy ▸ Accessibility. Wrapped as a bundle carrying the **same** `CFBundleName` + identifier as the desktop app and signed with the same cert, it folds into the app's single **"LangMesh"** entry instead of a second row, and — because the identity is stable — the grant survives rebuilds. This is also why sessions run inside the daemon rather than as separate helpers: a different path is a different identity, and would prompt once per session.
 
-macOS caches `AXIsProcessTrusted` per process, so after granting, the **daemon must restart** to see the grant (it is the process that asks). Restarting the *app* no longer does that — the daemon is not its child. The Settings dialog asks the daemon to restart itself over the control plane (`daemon.restart`, also `langmesh daemon restart`), which **keeps live sessions** — the registry is durable, so each one loses only its executor and comes back asleep — then calls the `restart_app` Tauri command to reload the webview against the fresh daemon and auto-enables computer-control on return (localStorage `langmesh:pendingComputerControlEnable`).
+macOS caches `AXIsProcessTrusted` per process, so after granting, the **daemon must restart** to see the grant (it is the process that asks). Restarting the *app* no longer does that — the daemon is not its child. The Settings dialog asks the daemon to restart itself over the control plane (`daemon.restart`), which **keeps live sessions** — the registry is durable, so each one loses only its executor and comes back asleep — then calls the `restart_app` Tauri command to reload the webview against the fresh daemon and auto-enables computer-control on return (localStorage `langmesh:pendingComputerControlEnable`).
 
 ## The self-signed codesign identity (stable across rebuilds)
 

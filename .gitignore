@@ -31,3 +31,6 @@ wheels/
 # configuration is the empty template at src/langmesh/base/configuration.yaml;
 # the runtime .langmesh/configuration.yaml holds real credentials, so it is ignored.
 /.langmesh/
+
+# Command Code's per-workspace agent settings (permissions, taste) — personal tooling state.
+/.commandcode/

@@ -9,7 +9,20 @@ from typing import Any, Awaitable, Callable, Sequence
 from langchain_core.tools import BaseTool
 
 from langmesh.base.configuration import AgentConfiguration, Configuration
-from langmesh.runtime.locations import Location
+from langmesh.base.contracts.tools import ToolGrant
+from langmesh.base.contracts.ports import (
+    Approvals,
+    CatalogueLike,
+    FileLeases,
+    JobStore,
+    MCPServers,
+    Observer,
+    PermissionPolicy,
+    PromptComposer,
+    SessionAccess,
+    Transcript,
+    describe_unmet,
+)
 
 
 @dataclass(frozen=True)
@@ -23,20 +36,13 @@ class RuntimeProfile:
     project_directory: str = ""
     permission_mode: str = ""
     sandbox: Any = None
-    locations: Sequence[Location] | None = None
     parent_session: str = ""
-    accepts_goal_review: bool = False
-    accepts_compaction_summary: bool = False
 
     def __post_init__(self) -> None:
         if not self.session_id.strip():
             raise ValueError("session_id must not be empty")
         if not self.working_directory or not Path(self.working_directory).is_absolute():
             raise ValueError("working_directory must be an absolute path")
-        if self.locations is not None:
-            object.__setattr__(self, "locations", tuple(self.locations))
-            if not all(isinstance(location, Location) for location in self.locations):
-                raise TypeError("locations must contain only Location values")
 
 
 @dataclass(frozen=True)
@@ -54,19 +60,22 @@ class RuntimeComponents:
     file_leases: Any = None
     permissions: Any = None
     prompt_composer: Any = None
-    tools: Sequence[BaseTool] = field(default_factory=tuple)
+    tools: Sequence[BaseTool | ToolGrant] = field(default_factory=tuple)
     toolset: Sequence[BaseTool] | None = None
     supplied_tool_gate: str = "ask"
     hooks: Sequence[Any] = field(default_factory=tuple)
     middleware: Sequence[Any] = field(default_factory=tuple)
-    compaction: Any = None
-    compaction_preparation: Any = None
-    compaction_summarizer: Any = None
-    continuations: Any = None
     synchronize_resources: Callable[[], Awaitable[None]] | None = None
     related_turns: Callable[[str], Awaitable[Any]] | None = None
-    goal_listener: Callable[[Any], None] | None = None
-    goal_review_journal: Any = None
+    features: Sequence[Any] | None = None
+    # The host's opaque plugin bundle: whatever the composing host supplies for its plugins
+    # (journals, preparations, listeners). The core never inspects it; it is carried through
+    # so plugins that reach it via services can. None means the host composed no bundle.
+    services: Any = None
+    # The machine snapshot and user context, probed by the host and passed in. None means the
+    # library supplies a minimal platform-only snapshot and no personal context.
+    machine_snapshot: dict[str, Any] | None = None
+    user_context: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.supplied_tool_gate not in {"ask", "none"}:
@@ -75,34 +84,11 @@ class RuntimeComponents:
             object.__setattr__(self, name, tuple(getattr(self, name)))
         if self.toolset is not None:
             object.__setattr__(self, "toolset", tuple(self.toolset))
-        from langmesh.base.ports import (
-            Approvals,
-            CatalogueLike,
-            Compaction,
-            CompactionPreparation,
-            CompactionSummarizer,
-            ContinuationPolicy,
-            FileLeases,
-            GoalReviewJournal,
-            JobStore,
-            MCPServers,
-            Observer,
-            PermissionPolicy,
-            PromptComposer,
-            SessionAccess,
-            Transcript,
-            describe_unmet,
-        )
 
         ports = {
             "approvals": Approvals,
             "catalogue": CatalogueLike,
-            "compaction": Compaction,
-            "compaction_preparation": CompactionPreparation,
-            "compaction_summarizer": CompactionSummarizer,
-            "continuations": ContinuationPolicy,
             "file_leases": FileLeases,
-            "goal_review_journal": GoalReviewJournal,
             "jobs": JobStore,
             "mcp_servers": MCPServers,
             "observer": Observer,

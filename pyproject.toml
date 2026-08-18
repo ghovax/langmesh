@@ -70,14 +70,14 @@ dependencies = [
 ]
 
 [project.scripts]
-langmesh = "langmesh.__main__:main"
+langmesh = "langmeshd.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/langmesh"]
+packages = ["src/langmesh", "src/langmeshd"]
 
 [tool.hatch.build.targets.wheel.force-include]
 ".agents/agents" = "langmesh/_bundled/.agents/agents"
@@ -117,6 +117,10 @@ dev = [
     # and 596 on another, from the same source. The rules this repository is checked against
     # are stated in [tool.ruff] below rather than inherited.
     "ruff>=0.14,<0.15",
+    # The type checker. Ruff finds undefined *names* but not undefined *attributes*: a stale
+    # `self._mark_session_dirty` survives `ruff check` clean and dies in the first live session.
+    # basedpyright catches exactly that class of break, so a rename lands with its call sites.
+    "basedpyright>=1.23,<2",
 ]
 
 
@@ -140,3 +144,16 @@ docstring-code-format = true
 # several hundred findings, and compactioning those into an unrelated change is how a diff stops
 # being reviewable. It is its own piece of work.
 select = ["E4", "E7", "E9", "F"]
+
+
+[tool.basedpyright]
+# The library and daemon are one import graph. The web app and the vendored third-party
+# packages are out of scope for the Python checker.
+include = ["src"]
+# The core library must not import from the daemon package; both are checked here, and the
+# checker will flag a library file that reaches into `langmeshd` the same way a stale
+# attribute would be flagged. `basic` keeps the first pass honest: it already catches
+# undefined attributes (reportAttributeAccessIssue) without demanding full type coverage.
+typeCheckingMode = "basic"
+pythonVersion = "3.13"
+

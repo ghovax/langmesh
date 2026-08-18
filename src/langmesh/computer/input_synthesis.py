@@ -7,7 +7,7 @@ import time
 import Quartz
 
 # The pacing an operating system needs for a synthesized gesture to register lives in the central tuning policy.
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.limits import current_limits
 
 # Virtual key codes for the named non-printing keys, which map to a fixed physical key on any layout.
 _NAMED_KEY_CODES = {
@@ -130,7 +130,7 @@ def click(
         Quartz.CGEventSetIntegerValueField(up, Quartz.kCGMouseEventClickState, click_index + 1)
         Quartz.CGEventPostToPid(pid, down)
         Quartz.CGEventPostToPid(pid, up)
-        time.sleep(active_tuning().duration(Tunable.click_interval))
+        time.sleep(current_limits().click_interval)
 
 
 def move(pid: int, point_x: float, point_y: float) -> None:
@@ -160,11 +160,10 @@ def drag(
             pid, Quartz.CGEventCreateMouseEvent(None, event_type, (point_x, point_y), button_code)
         )
 
-    tuning = active_tuning()
-    step_interval = tuning.duration(Tunable.drag_step_interval)
+    step_interval = current_limits().drag_step_interval
     post(down_type, start_x, start_y)
     time.sleep(step_interval)
-    steps = tuning.amount(Tunable.drag_steps)
+    steps = current_limits().drag_steps
     for step in range(1, steps + 1):
         fraction = step / steps
         post(
@@ -178,9 +177,8 @@ def drag(
 
 def type_text(pid: int, text: str) -> None:
     """Type an arbitrary Unicode string into the target app, script-independent and without stealing focus."""
-    tuning = active_tuning()
-    chunk_size = tuning.amount(Tunable.type_chunk_size)
-    chunk_interval = tuning.duration(Tunable.type_chunk_interval)
+    chunk_size = current_limits().type_chunk_size
+    chunk_interval = current_limits().type_chunk_interval
     for chunk_start in range(0, len(text), chunk_size):
         chunk = text[chunk_start : chunk_start + chunk_size]
         utf16_length = len(chunk.encode("utf-16-le")) // 2

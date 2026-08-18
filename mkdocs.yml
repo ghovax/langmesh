@@ -32,23 +32,16 @@ nav:
   - Library:
       - Start here: library/index.md
       - Composition: library/composition.md
-      - Models and cache behavior: library/models.md
-      - Lifecycle and control: library/lifecycle.md
-      - Events and driving patterns: library/events.md
-      - Tools, hooks, and policy: library/customization.md
-      - Compaction and continuation: library/compaction.md
-      - Resources and persistence: library/resources.md
+      - Lifecycle and driving: library/lifecycle.md
+      - Persistence: library/persistence.md
       - API reference: library/api.md
-  - Product:
-      - Architecture: architecture.md
-      - Installation: installation.md
-      - Command line: cli.md
-      - Desktop app: app.md
-      - Agent system: agent-system.md
-      - Configuration: configuration.md
-      - Configuration reference: configuration-reference.md
-      - Tools: tools.md
-      - Development: development.md
-  - Build these docs: building.md
+  - User guide:
+      - Installation: user/installation.md
+      - Desktop app: user/app.md
+      - Configuration: user/configuration.md
+      - Agent system: user/agent-system.md
+  - Internals:
+      - Architecture: internal/architecture.md
+      - Development: internal/development.md
   - Security: https://github.com/ghovax/langmesh/blob/main/SECURITY.md
 strict: true

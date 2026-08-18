@@ -120,6 +120,7 @@
     "stop": "停止",
     "stopUnavailableWhileCompacting": "会話を畳み中です。途中で停止することはできません。",
     "stopping": "停止中",
+    "tasks": "タスク: {total}件中{completed}件完了",
     "total": "合計",
     "uploading": "アップロード中 {count}",
     "usageThisTurn": "今回のターンの使用量",
@@ -261,7 +262,7 @@
     "savingChanges": "変更を保存しています…"
   },
   "ConnectionSettings": {
-    "connect": "接続",
+    "connect": "開く",
     "connected": "接続済み",
     "couldNotConnect": "接続できませんでした",
     "couldNotReach": "{name} に到達できませんでした",
@@ -269,7 +270,7 @@
     "noSavedConnections": "保存済みの接続はありません",
     "noSavedConnectionsHint": "後で接続できるよう、下にサーバーアドレスを追加してください",
     "pairingLink": "ペアリングリンク",
-    "pairingLinkHelper": "そのマシンで <code>langmesh reach</code> を実行し、表示されたリンクを貼り付けてください。アドレスとトークンが含まれ、どちらもこのマシンから出ません。",
+    "pairingLinkHelper": "そのマシンで発行された <code>langmesh://pair#…</code> リンクを貼り付けてください。アドレスとトークンが含まれ、どちらもこのマシンから出ません。",
     "pairingLinkPlaceholder": "langmesh://pair#…",
     "retry": "再試行",
     "saveConnection": "接続を保存",
@@ -479,7 +480,10 @@
     "permissionAskDescription": "セッションの制限範囲を超える要求は、すべてあなたに確認します",
     "permissionAutomaticLabel": "自分で判断する",
     "permissionAutomaticName": "自律",
-    "permissionAutomaticDescription": "レビュアーがその要求を自ら判断し、許可または拒否します。あなたに確認することはありません"
+    "permissionAutomaticDescription": "レビュアーがその要求を自ら判断し、許可または拒否します。あなたに確認することはありません",
+    "permissionAllowLabel": "すべて許可する",
+    "permissionAllowName": "許可",
+    "permissionAllowDescription": "すべての要求をそのまま許可します。停止も確認もありません"
   },
   "SessionsSidebar": {
     "activeFirst": "アクティブ順",
@@ -634,7 +638,6 @@
       },
       "timeout_multiplier": "タイムアウト倍率",
       "defaults": {
-        "_": "個々の既定値",
         "accessibility_messaging": "アクセシビリティ通信のタイムアウト",
         "accessibility_prewarm_interval": "アクセシビリティ事前読み込みの間隔",
         "accessibility_ready_backoff": "アクセシビリティ準備確認の待機上限",
@@ -645,13 +648,8 @@
         "browser_authorization": "ブラウザ承認の待ち時間",
         "card_resolve": "エージェントカードの取得",
         "click_interval": "クリックの間隔",
-        "connect_timeout": "ブラウザ接続のタイムアウト",
-        "control_plane_call": "デーモン呼び出しの待ち時間",
         "control_script": "画面操作スクリプトの実行上限",
         "credential_refresh_leeway": "トークン更新の前倒し時間",
-        "daemon_probe_connect": "デーモンへの接続確認",
-        "daemon_probe_interval": "デーモン確認の間隔",
-        "daemon_startup": "デーモン起動の待ち時間",
         "drag_step_interval": "ドラッグ各段の間隔",
         "drag_steps": "ドラッグの分割数",
         "drag_timeout": "ドラッグのタイムアウト",
@@ -666,12 +664,8 @@
         "find_rephrasing_similarity": "言い換えと見なす類似度",
         "focus_settle": "フォーカス後の待ち時間",
         "frame_resolve_timeout": "フレーム解決のタイムアウト",
-        "glob_results": "glob が返すパス数",
         "goal_continuation_turns": "無人で続けられるターン数",
         "task_continuation_turns": "未完了タスクを自動継続するターン数",
-        "grep_per_file": "1 ファイルあたりの検索一致数",
-        "grep_results": "検索一致数の合計",
-        "maximum_line_chars": "1 行あたりの保持文字数",
         "mcp_connect": "MCP サーバー接続の待ち時間",
         "model_catalogue_ttl": "モデル一覧の保持時間",
         "model_silence_give_up": "モデルの無応答を打ち切るまで",
@@ -682,23 +676,13 @@
         "open_url": "URL をブラウザに渡す待ち時間",
         "output_tokens": "ツール出力の埋め込み量（トークン）",
         "permission_reviewer_attempts": "権限レビューの試行回数",
-        "read_lines": "読み取りが返す行数",
         "read_text_timeout": "ページ本文取得のタイムアウト",
-        "remote_command": "リモートコマンドの実行上限",
-        "remote_connect": "SSH 接続の待ち時間",
-        "remote_control_persist": "SSH 接続の再利用時間",
-        "remote_listing": "リモートで列挙するパス数",
-        "ripgrep": "内容検索の実行上限",
-        "screencapture": "画面キャプチャの待ち時間",
-        "screenshot_timeout": "スクリーンショットのタイムアウト",
         "scroll_amount_pixels": "1 スクロールの移動量（ピクセル）",
-        "session_idle_sleep": "セッションが休止するまでの時間",
         "session_title_attempts": "セッション名生成の試行回数",
         "settle_stable_reads": "安定と見なす連続一致回数",
         "sigterm_grace": "SIGTERM から SIGKILL までの猶予",
         "slow_tool_sync_window": "取得・ダウンロードを同期実行する時間",
         "snapshot_timeout": "ページのアクセシビリティ取得のタイムアウト",
-        "stamped_image_side": "注釈付きスクリーンショットの長辺（ピクセル）",
         "subscription_resume_ttl": "会話状態を再利用できる期間",
         "surface_guard_margin": "スクリプト上限に対する余裕",
         "type_chunk_interval": "入力チャンクの間隔",
@@ -708,7 +692,9 @@
         "web_search_maximum": "ウェブ検索の最大件数",
         "web_search_sync_window": "ウェブ検索を同期実行する時間",
         "web_websocket_frames": "WebSocket ごとに保持するフレーム数",
-        "web_websockets": "同時に追跡する WebSocket 数"
+        "web_websockets": "同時に追跡する WebSocket 数",
+        "settle_poll_seconds": "安定化ポーリング間隔",
+        "settle_give_up_seconds": "安定化の諦め時間"
       }
     },
     "user_context": {
@@ -737,7 +723,8 @@
     },
     "goal_review": {
       "_": "目標レビュー",
-      "maximum_attempts": "最大レビュー試行回数"
+      "maximum_attempts": "最大レビュー試行回数",
+      "mode": "ゴール駆動モード"
     }
   },
   "SettingsAbout": {
@@ -846,7 +833,7 @@
       },
       "timeout_multiplier": "すべての待ち時間にかかる倍率。遅いマシンや遠いホストで一律に延ばせます。",
       "defaults": {
-        "_": "個々の既定値を名前で上書きします（`langmesh configure --all` を参照）。時間はすべて秒です。上書きは出荷時の値を置き換え、context_share と timeout_multiplier はその上に適用されます。",
+        "_": "個々の既定値を名前で上書きします（設定パネルを参照）。時間はすべて秒です。上書きは出荷時の値を置き換え、context_share と timeout_multiplier はその上に適用されます。",
         "accessibility_messaging": "アプリへのアクセシビリティ通信 1 回の待ち時間。応答しないアプリで操作全体が止まらないようにします。",
         "accessibility_prewarm_interval": "最前面アプリのアクセシビリティツリーを事前に読み込む間隔。",
         "accessibility_ready_backoff": "準備確認の待ち時間を延ばしていくときの上限。",
@@ -979,6 +966,12 @@
           "http/protobuf": "HTTP (protobuf)",
           "grpc": "gRPC"
         }
+      }
+    },
+    "goal_review": {
+      "mode": {
+        "review": "独立レビューアー",
+        "self_managed": "エージェント自己管理"
       }
     }
   },

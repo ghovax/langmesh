@@ -29,12 +29,10 @@ import {
   LuUsers,
 } from "react-icons/lu";
 import {
-  fetchAccessibility,
+  fetchSystemPermissions,
   fetchAgentConfiguration,
-  fetchFullDiskAccess,
   fetchSettings,
-  openAccessibilitySettings,
-  openFullDiskAccessSettings,
+  openSystemPermission,
   restartApp,
   restartDaemon,
   saveAgentConfiguration,
@@ -313,8 +311,8 @@ export function SettingsDialog({
     if (!open || !userContextEnabled) return;
     let cancelled = false;
     const check = () => {
-      void fetchFullDiskAccess().then((granted) => {
-        if (!cancelled) setFullDiskAccess(granted);
+      void fetchSystemPermissions().then(({ full_disk_access }) => {
+        if (!cancelled) setFullDiskAccess(full_disk_access);
       });
     };
     check();
@@ -330,8 +328,8 @@ export function SettingsDialog({
     if (!open) return;
     let cancelled = false;
     const check = () => {
-      void fetchAccessibility().then((granted) => {
-        if (!cancelled) setAccessibilityGranted(granted);
+      void fetchSystemPermissions().then(({ accessibility }) => {
+        if (!cancelled) setAccessibilityGranted(accessibility);
       });
     };
     check();
@@ -346,9 +344,9 @@ export function SettingsDialog({
   useEffect(() => {
     if (!awaitingGrantReturn) return;
     const onFocus = () => {
-      void fetchAccessibility().then((granted) => {
-        setAccessibilityGranted(granted);
-        if (granted) {
+      void fetchSystemPermissions().then(({ accessibility }) => {
+        setAccessibilityGranted(accessibility);
+        if (accessibility) {
           setAwaitingGrantReturn(false);
           setRestartPromptOpen(true);
         }
@@ -735,7 +733,7 @@ export function SettingsDialog({
               colorPalette="orange"
               variant="solid"
               flexShrink={0}
-              onClick={() => void openFullDiskAccessSettings()}
+              onClick={() => void openSystemPermission("full_disk_access")}
             >
               {translation("grantFullDiskAccess")}
             </Button>
@@ -757,7 +755,7 @@ export function SettingsDialog({
                 // Recorded on the daemon rather than here, since the grant only reaches a freshly started one.
                 updatePreferences({ computer_control_awaiting_grant: true });
                 setAwaitingGrantReturn(true);
-                void openAccessibilitySettings();
+                void openSystemPermission("accessibility");
               }}
             >
               {translation("grantAccessibility")}
@@ -1476,15 +1474,6 @@ function AgentPermissionsEditor({
         <Flex gap={3} wrap="wrap" align="flex-start">
           <SettingField label={translation("bash")}>
             <Flex gap={2} minW={0} wrap="wrap">
-              <Button
-                h={8}
-                justifyContent="flex-start"
-                variant={configuration.bash.enabled ? "subtle" : "outline"}
-                colorPalette={configuration.bash.enabled ? "green" : "gray"}
-                onClick={() => updateBash({ enabled: !configuration.bash.enabled })}
-              >
-                {configuration.bash.enabled ? translation("enabled") : translation("disabled")}
-              </Button>
               <Button
                 h={8}
                 justifyContent="flex-start"

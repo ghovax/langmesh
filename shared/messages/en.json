@@ -120,6 +120,7 @@
     "stop": "Stop",
     "stopUnavailableWhileCompacting": "The conversation is being compacted; it cannot be stopped mid-compaction.",
     "stopping": "Stopping",
+    "tasks": "Tasks: {completed} of {total} done",
     "total": "Total",
     "uploading": "Uploading {count}",
     "usageThisTurn": "Usage for this turn",
@@ -261,7 +262,7 @@
     "savingChanges": "Saving changes…"
   },
   "ConnectionSettings": {
-    "connect": "Connect",
+    "connect": "Open",
     "connected": "Connected",
     "couldNotConnect": "Couldn't connect",
     "couldNotReach": "Couldn't reach {name}",
@@ -269,7 +270,7 @@
     "noSavedConnections": "No saved connections",
     "noSavedConnectionsHint": "Add a server address below to reach it later",
     "pairingLink": "Pairing link",
-    "pairingLinkHelper": "Run <code>langmesh reach</code> on that machine and paste the link it prints. It carries the address and a token, and both stay on this machine.",
+    "pairingLinkHelper": "Paste the <code>langmesh://pair#…</code> link that machine printed when it exposed its door. It carries the address and a token, and both stay on this machine.",
     "pairingLinkPlaceholder": "langmesh://pair#…",
     "retry": "Retry",
     "saveConnection": "Save connection",
@@ -479,7 +480,10 @@
     "permissionAskDescription": "Anything that reaches past the session's confinement stops for you",
     "permissionAutomaticLabel": "Decide without me",
     "permissionAutomaticName": "Autonomous",
-    "permissionAutomaticDescription": "A reviewer answers those requests on its own — it allows or refuses, and never asks you"
+    "permissionAutomaticDescription": "A reviewer answers those requests on its own — it allows or refuses, and never asks you",
+    "permissionAllowLabel": "Allow everything",
+    "permissionAllowName": "Allow",
+    "permissionAllowDescription": "Every request is allowed outright — nothing stops, nothing asks"
   },
   "SessionsSidebar": {
     "activeFirst": "Active first",
@@ -629,12 +633,11 @@
       "_": "Tuning",
       "context_share": {
         "_": "Context share",
-        "text": "Text budgets (share of window)",
-        "results": "Result counts (share of window)"
+        "text": "Text budgets (percentages)",
+        "results": "Result budgets (percentages)"
       },
       "timeout_multiplier": "Timeout multiplier",
       "defaults": {
-        "_": "Individual defaults",
         "accessibility_messaging": "Accessibility message timeout",
         "accessibility_prewarm_interval": "Accessibility prewarm interval",
         "accessibility_ready_backoff": "Accessibility readiness backoff",
@@ -645,13 +648,8 @@
         "browser_authorization": "Browser authorization",
         "card_resolve": "Agent card fetch",
         "click_interval": "Click interval",
-        "connect_timeout": "Connect timeout",
-        "control_plane_call": "Control plane call",
         "control_script": "Control script",
         "credential_refresh_leeway": "Credential refresh leeway",
-        "daemon_probe_connect": "Daemon probe connect",
-        "daemon_probe_interval": "Daemon probe interval",
-        "daemon_startup": "Daemon startup",
         "drag_step_interval": "Drag step interval",
         "drag_steps": "Steps a drag is split into",
         "drag_timeout": "Drag timeout",
@@ -666,12 +664,8 @@
         "find_rephrasing_similarity": "Rephrasing similarity",
         "focus_settle": "Focus settle",
         "frame_resolve_timeout": "Frame resolve timeout",
-        "glob_results": "Paths a glob returns",
         "goal_continuation_turns": "Goal continuation turns",
         "task_continuation_turns": "Task continuation turns",
-        "grep_per_file": "Search matches per file",
-        "grep_results": "Search matches in total",
-        "maximum_line_chars": "Longest line kept (characters)",
         "mcp_connect": "MCP connect",
         "model_catalogue_ttl": "Model catalogue lifetime",
         "model_silence_give_up": "Model silence give up",
@@ -682,23 +676,13 @@
         "open_url": "Open URL",
         "output_tokens": "Inline tool output (tokens)",
         "permission_reviewer_attempts": "Permission reviewer attempts",
-        "read_lines": "Lines a read returns",
         "read_text_timeout": "Read text timeout",
-        "remote_command": "Remote command",
-        "remote_connect": "Remote connect",
-        "remote_control_persist": "Remote control persist",
-        "remote_listing": "Paths listed on a remote machine",
-        "ripgrep": "Ripgrep",
-        "screencapture": "Screen capture",
-        "screenshot_timeout": "Screenshot timeout",
         "scroll_amount_pixels": "Pixels per scroll step",
-        "session_idle_sleep": "Session idle sleep",
         "session_title_attempts": "Session title attempts",
         "settle_stable_reads": "Identical reads that count as settled",
         "sigterm_grace": "SIGTERM grace",
         "slow_tool_sync_window": "Slow tool sync window",
         "snapshot_timeout": "Snapshot timeout",
-        "stamped_image_side": "Annotated screenshot size (pixels)",
         "subscription_resume_ttl": "Subscription resume lifetime",
         "surface_guard_margin": "Surface guard margin",
         "type_chunk_interval": "Type chunk interval",
@@ -708,7 +692,9 @@
         "web_search_maximum": "Web search maximum",
         "web_search_sync_window": "Web search sync window",
         "web_websocket_frames": "Frames kept per WebSocket",
-        "web_websockets": "Tracked WebSockets"
+        "web_websockets": "Tracked WebSockets",
+        "settle_poll_seconds": "Settle poll interval",
+        "settle_give_up_seconds": "Settle give-up time"
       }
     },
     "user_context": {
@@ -737,7 +723,8 @@
     },
     "goal_review": {
       "_": "Goal review",
-      "maximum_attempts": "Maximum review attempts"
+      "maximum_attempts": "Maximum review attempts",
+      "mode": "Goal driving mode"
     }
   },
   "SettingsAbout": {
@@ -846,7 +833,7 @@
       },
       "timeout_multiplier": "Multiplier on every wait. 2.0 doubles them for a slow machine; 1.0 is neutral.",
       "defaults": {
-        "_": "Override one tunable by its own name — see `langmesh configure --all`. Every duration is in seconds. An override replaces the shipped default, so context_share and timeout_multiplier still apply on top.",
+        "_": "Override one tunable by its own name — see the settings panel. Every duration is in seconds. An override replaces the shipped default, so context_share and timeout_multiplier still apply on top.",
         "accessibility_messaging": "How long one accessibility message to an application waits, so a hung application costs a moment rather than the whole action.",
         "accessibility_prewarm_interval": "Pause between pre-warming the frontmost application's accessibility tree.",
         "accessibility_ready_backoff": "Ceiling on the widening pause between accessibility readiness probes.",
@@ -979,6 +966,12 @@
           "http/protobuf": "HTTP (protobuf)",
           "grpc": "gRPC"
         }
+      }
+    },
+    "goal_review": {
+      "mode": {
+        "review": "Independent reviewer",
+        "self_managed": "Agent self-managed"
       }
     }
   },
