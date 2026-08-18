@@ -18,7 +18,7 @@ from langchain.tools import tool
 from langmesh.base import confinement as _confinement
 from langmesh.base.configuration import PromptLoader
 from langmesh.base.primitives.serialization import compact
-from langmesh.base.primitives.tuning import Tunable, active_tuning, clip_to_tokens
+from langmesh.base.primitives.limits import current_limits, clip_to_tokens
 from langmesh.runtime.background import current_background_jobs, current_tool_call_id, record_child_group
 from langmesh.runtime.features import Feature
 from langmesh.runtime.tools import context as tool_context
@@ -32,7 +32,7 @@ async def bash(
     *,
     command: str,
     background: bool = False,
-    timeout: float = Tunable.bash_sync_window.default,
+    timeout: float = 60.0,
     **kwargs: Any,
 ) -> str:
     """Run a shell command inside the session's confinement; described in descriptions/bash.md."""
@@ -105,7 +105,7 @@ async def bash(
             cancel_process()
             try:
                 await asyncio.wait_for(
-                    process.wait(), timeout=active_tuning().duration(Tunable.sigterm_grace)
+                    process.wait(), timeout=current_limits().sigterm_grace
                 )
             except asyncio.TimeoutError:
                 try:
@@ -125,7 +125,7 @@ async def bash(
                 else ""
             )
             inline_output, output_truncated = clip_to_tokens(
-                output, active_tuning().amount(Tunable.output_tokens)
+                output, current_limits().output_tokens
             )
             payload = {
                 "code": "bash_cancelled",
@@ -158,7 +158,7 @@ async def bash(
                 }
             )
         inline_output, truncated = clip_to_tokens(
-            output, active_tuning().amount(Tunable.output_tokens)
+            output, current_limits().output_tokens
         )
         result = {
             "code": result_code,
@@ -191,7 +191,7 @@ async def bash(
     )
     if not background:
         # Block and hand back real output, so the model never mistakes a placeholder for unfinished work.
-        settled = await jobs.settle_inline(job_id, active_tuning().scale_timeout(timeout))
+        settled = await jobs.settle_inline(job_id, timeout)
         if settled is not None:
             return settled.result
     return compact(

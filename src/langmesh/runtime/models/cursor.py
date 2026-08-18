@@ -57,8 +57,10 @@ from langmesh.base.identity.cursor_subscription import (
 )
 from langmesh.base.content.message_content import content_blocks_to_message_content, message_text
 from langmesh.base.primitives.serialization import compact, upstream_detail
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+
 from langmesh.runtime.models import cursor_wire as wire
+
+from langmesh.base.primitives.limits import current_limits
 
 
 # Everything this client says to a model is a prompt on disk, like every other prompt the harness sends.
@@ -788,7 +790,7 @@ def _digest_messages(messages: Sequence[BaseMessage]) -> str:
 
 
 def _prune_resumptions() -> None:
-    horizon = time.monotonic() - active_tuning().duration(Tunable.subscription_resume_ttl)
+    horizon = time.monotonic() - current_limits().subscription_resume_ttl
     for key in [key for key, entry in _resumptions.items() if entry.touched_at < horizon]:
         del _resumptions[key]
 

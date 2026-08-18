@@ -11,7 +11,7 @@ import minify_html
 from bs4 import BeautifulSoup
 from markdownify import markdownify as _markdownify
 
-from langmesh.base.primitives.tuning import Tunable, active_tuning, clip_to_tokens
+from langmesh.base.primitives.limits import current_limits, clip_to_tokens
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools import context as tool_context
 
@@ -68,7 +68,7 @@ async def fetch_url(url: str, output_format: str = "markdown", timeout_seconds: 
     content, engine = await _fetch_through_engines(_http_url(url), output_format, timeout_seconds)
 
     inline_content, truncated = clip_to_tokens(
-        content, active_tuning().amount(Tunable.fetch_tokens)
+        content, current_limits().fetch_tokens
     )
     fields: dict[str, object] = {
         "url": url,

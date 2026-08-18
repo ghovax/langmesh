@@ -12,7 +12,7 @@ from langchain.tools import tool
 from langmesh.base.configuration import PromptLoader
 from langmesh.base.primitives.identifiers import new_id
 from langmesh.base.primitives.serialization import compact
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmesh.base.primitives.limits import current_limits
 from langmesh.runtime.background import current_background_jobs, current_tool_call_id
 from langmesh.runtime.tools import context as tool_context, fetching
 from langmesh.runtime.tools.execution import current_tool_services
@@ -48,7 +48,7 @@ async def search_web(
             results = await asyncio.to_thread(
                 client.search,
                 query,
-                num_results=min(result_count, active_tuning().amount(Tunable.web_search_maximum)),
+                num_results=min(result_count, current_limits().web_search_maximum),
                 contents={"text": True},
             )
             entries = []
@@ -94,7 +94,7 @@ async def search_web(
     )
     # A short inline window, so the common case returns results rather than a pending handle.
     settled = await jobs.settle_inline(
-        job_id, active_tuning().duration(Tunable.web_search_sync_window)
+        job_id, current_limits().web_search_sync_window
     )
     if settled is not None:
         return settled.result
@@ -113,14 +113,14 @@ async def fetch_url(
     *,
     url: str,
     format: Literal["markdown", "text", "html"] = "markdown",
-    timeout: float = Tunable.slow_tool_sync_window.default,
+    timeout: float = 10.0,
     hard_deadline: float = 30,
     background: bool = False,
 ) -> str:
     """Fetch a page; described in descriptions/fetch_url.md."""
     services = current_tool_services()
     runner = services.features.invoke("background")
-    sync_window = float(timeout or Tunable.slow_tool_sync_window.default)
+    sync_window = float(timeout or current_limits().slow_tool_sync_window)
     configured = tool_context.current().fetch_timeout_seconds
     hard_deadline = int(hard_deadline or configured or 30)
     job_identifier = runner.spawn(
@@ -129,7 +129,7 @@ async def fetch_url(
     )
     if not background:
         completion = await runner.settle_inline(
-            job_identifier, active_tuning().scale_timeout(sync_window)
+            job_identifier, sync_window
         )
         if completion is not None:
             return completion.result
@@ -141,13 +141,13 @@ async def download_file(
     *,
     url: str,
     path: str,
-    timeout: float = Tunable.slow_tool_sync_window.default,
+    timeout: float = 10.0,
     hard_deadline: float = 120,
     background: bool = False,
 ) -> str:
     """Download a file; described in descriptions/download_file.md."""
     services = current_tool_services()
-    sync_window = float(timeout or Tunable.slow_tool_sync_window.default)
+    sync_window = float(timeout or current_limits().slow_tool_sync_window)
     configured = tool_context.current().download_timeout_seconds
     hard_deadline = int(hard_deadline or configured or 120)
     base = tool_context.current().workspace or ""
@@ -161,7 +161,7 @@ async def download_file(
     )
     if not background:
         completion = await runner.settle_inline(
-            job_identifier, active_tuning().scale_timeout(sync_window)
+            job_identifier, sync_window
         )
         if completion is not None:
             return completion.result

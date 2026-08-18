@@ -135,19 +135,20 @@ TUNING_DEFAULTS = "tuning.defaults"
 
 
 def _tuning_defaults(prefix: str) -> list[Setting]:
-    """The individual tunables, expanded under `tuning.defaults`, whose keys come from `Tunable`."""
-    from langmesh.base.primitives.tuning import Tunable
+    """The individual limits, expanded under `tuning.defaults`, whose keys come from `Limits`."""
+    from langmesh.base.primitives.limits import Limits
 
+    fields = Limits().__dataclass_fields__
     return [
         Setting(
-            path=f"{prefix}.{tunable.name}",
-            default=tunable.default,
-            # Every tunable is a number, and the shipped value says which of integer and number it is.
+            path=f"{prefix}.{name}",
+            default=field.default,
+            # Every limit is a number, and the shipped value says which of integer and number it is.
             kind=KIND_INTEGER
-            if isinstance(tunable.default, int) and not isinstance(tunable.default, bool)
+            if isinstance(field.default, int) and not isinstance(field.default, bool)
             else KIND_NUMBER,
         )
-        for tunable in Tunable
+        for name, field in fields.items()
     ]
 
 

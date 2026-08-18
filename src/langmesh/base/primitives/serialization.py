@@ -6,7 +6,7 @@ import json
 from hashlib import sha256
 from typing import Any
 
-from langmesh.base.primitives.tuning import Tunable, active_tuning, clip_to_tokens
+from langmesh.base.primitives.limits import current_limits, clip_to_tokens
 
 # Purely encoding: the value that parses back out is identical either way.
 _SEPARATORS = (",", ":")
@@ -41,6 +41,6 @@ def upstream_detail(body: str) -> str:
         payload = None
     text = body.strip() if payload is None else compact(payload)
     clipped, was_clipped = clip_to_tokens(
-        text, active_tuning().amount(Tunable.upstream_error_detail_tokens)
+        text, current_limits().upstream_error_detail_tokens
     )
     return f"{clipped}…" if was_clipped else clipped

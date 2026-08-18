@@ -16,7 +16,7 @@ from langmesh.base.identity.providers import resolve_api_key
 from langmesh.base.content.message_content import message_text
 from langmesh.base.content.models import find_model
 from langmesh.runtime.boundary import Escape
-from langmesh.base.primitives.tuning import active_tuning, clip_to_tokens, count_tokens, Tunable
+from langmesh.base.primitives.limits import current_limits, clip_to_tokens, count_tokens
 from langchain_core.messages import AIMessageChunk
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
@@ -114,7 +114,7 @@ def _background_handle_kind(turn_id: str) -> str | None:
 
 def _cap_model_result_payload(result: str, *, code: str = "tool_result_truncated") -> str:
     """Bound a model-facing result to the output budget, by dropping whole fields and saying which went."""
-    budget = active_tuning().amount(Tunable.output_tokens)
+    budget = current_limits().output_tokens
     _, was_truncated = clip_to_tokens(result, budget)
     if not was_truncated:
         return result

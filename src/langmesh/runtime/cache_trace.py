@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Generator, Optional, Sequence
 
-from langmesh.base.primitives.tuning import count_tokens
+from langmesh.base.primitives.limits import count_tokens
 
 #: The kinds of thing a request is made of, in the order every provider reads them.
 INSTRUCTIONS = "instructions"

@@ -69,7 +69,9 @@ import platform
 import time
 import uuid
 from langmesh.base.primitives.serialization import compact, lines
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+
+from langmesh.base.primitives.limits import current_limits
+
 
 
 logger = logging.getLogger(__name__)
@@ -771,7 +773,7 @@ class _RunsTurns:
                 cache_scope.enter_context(cache_lane("maintenance"))
             model_stream = bound_model.astream(messages)
             abort_waiter = asyncio.ensure_future(self._abort_event.wait())
-            silence_limit = active_tuning().duration(Tunable.model_silence_give_up)
+            silence_limit = current_limits().model_silence_give_up
             progress_deadline = asyncio.get_running_loop().time() + silence_limit
             pending_chunk = None
             while True:

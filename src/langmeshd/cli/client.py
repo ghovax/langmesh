@@ -13,7 +13,7 @@ from typing import Optional
 
 import httpx
 
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmeshd.commons.timing import DAEMON_STARTUP_SECONDS
 from langmeshd.daemon.paths import daemon_socket_path, daemon_token_path
 
 
@@ -79,7 +79,7 @@ def _await_announcement(daemon: subprocess.Popen) -> Optional[dict]:
     with ThreadPoolExecutor(max_workers=1) as pool:
         pending = pool.submit(daemon.stdout.readline)
         try:
-            line = pending.result(timeout=active_tuning().duration(Tunable.daemon_startup))
+            line = pending.result(timeout=DAEMON_STARTUP_SECONDS)
         except FuturesTimeout:
             return None
     if not line:

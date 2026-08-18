@@ -11,7 +11,9 @@ from typing import Any, Optional
 import httpx
 
 from langmesh.base.identity.credentials import ChatGPTAuthError, ChatGPTTokens, valid_tokens
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+
+from langmesh.base.primitives.limits import current_limits
+
 
 RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses"
 # The account's live, plan-specific model catalogue, gated by the client version we present.
@@ -44,7 +46,7 @@ _models_cache_lock = asyncio.Lock()
 async def fetch_subscription_models() -> dict[str, dict[str, Any]]:
     """The account's live model catalogue, answering empty on any failure so callers fall back."""
     global _models_cache
-    ttl = active_tuning().duration(Tunable.model_catalogue_ttl)
+    ttl = current_limits().model_catalogue_ttl
     if _models_cache is not None and time.monotonic() - _models_cache[0] < ttl:
         return _models_cache[1]
     async with _models_cache_lock:

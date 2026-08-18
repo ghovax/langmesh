@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from langmesh.base.confinement.paths import ssh_control_directory, ssh_control_identifier
-from langmesh.base.primitives.tuning import active_tuning
+
 
 # Baseline command and connect ceilings, scaled at each subprocess boundary by the active timeout knob.
 DEFAULT_TIMEOUT = 120.0
@@ -91,7 +91,7 @@ class LocalExecutor(LocationExecutor):
         completed = subprocess.run(
             ["bash", "-lc", _login_script(command, cwd, env)],
             capture_output=True,
-            timeout=active_tuning().scale_timeout(timeout),
+            timeout=timeout,
             check=False,
         )
         return CommandResult(
@@ -146,7 +146,7 @@ class SshExecutor(LocationExecutor):
             argv,
             input=stdin,
             capture_output=True,
-            timeout=active_tuning().scale_timeout(timeout),
+            timeout=timeout,
             check=False,
         )
 

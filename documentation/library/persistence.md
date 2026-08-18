@@ -86,7 +86,7 @@ class ServiceContinuationPolicy:
 components = SessionComponents(continuations=ServiceContinuationPolicy())
 ```
 
-The standard `TuningContinuationPolicy` reads the independent goal and task allowances from active tuning. A goal is reviewed before its continuation message is accepted. When goal and task work are both due, LangMesh composes them into one next turn so the obligations do not race or consume each other's allowance.
+The standard continuation policy reads the independent goal and task allowances from the current limits. A goal is reviewed before its continuation message is accepted. When goal and task work are both due, LangMesh composes them into one next turn so the obligations do not race or consume each other's allowance.
 
 A new user message restores both allowances. `await Session.clear_goal()` calls off a goal and checkpoints its final state before returning.
 

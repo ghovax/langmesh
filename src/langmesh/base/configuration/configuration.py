@@ -5,7 +5,6 @@ import json
 import logging
 import os
 from langmesh.base.confinement import environment_variables
-from langmesh.base.primitives.tuning import Scaling
 import re
 from fnmatch import fnmatch
 import shutil
@@ -19,7 +18,6 @@ from pydantic import BaseModel, Field, field_validator
 from langmesh.base.confinement.paths import configuration_file_path, database_file_path  # noqa: F401 — re-exported
 from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base import confinement
-from langmesh.base.primitives.tuning import unknown_tunable_names
 from langmesh.base.persistence.observation_store import OBSERVATIONS_FILENAME
 from langmesh.base.persistence.file_cache import parsed_file
 
@@ -334,14 +332,14 @@ class AttachmentsConfiguration(Section):
 
 
 class ContextShareConfiguration(Section):
-    """What proportion of the live window one result may fill, read from the scaling families."""
+    """What proportion of a budget the configured defaults assume, read as plain percentages."""
 
-    text: float = Field(Scaling.TEXT.value.calibrated)
-    results: float = Field(Scaling.RESULTS.value.calibrated)
+    text: float = Field(0.25)
+    results: float = Field(0.15)
 
 
 class TuningConfiguration(Section):
-    """How large, how many and how patient the tools are, derived from the live context window."""
+    """How large, how many and how patient the tools are, as plain values with no scaling."""
 
     context_share: ContextShareConfiguration = Field(default_factory=ContextShareConfiguration)
     timeout_multiplier: float = Field(1.0)
@@ -350,10 +348,12 @@ class TuningConfiguration(Section):
     @field_validator("defaults")
     @classmethod
     def _known_defaults(cls, value: dict[str, float]) -> dict[str, float]:
-        unknown = unknown_tunable_names(value)
+        from langmesh.base.primitives.limits import Limits
+
+        unknown = sorted(name for name in value if not hasattr(Limits, name))
         if unknown:
             raise ValueError(
-                f"unknown tuning default(s): {', '.join(unknown)}. The names that exist are the members of `langmesh.base.primitives.tuning.Tunable`; the settings panel lists them with their defaults."
+                f"unknown limits default(s): {', '.join(unknown)}. The names that exist are the fields of `langmesh.base.primitives.limits.Limits`; the settings panel lists them with their defaults."
             )
         return value
 
@@ -363,13 +363,6 @@ class UserContextConfiguration(Section):
 
     enabled: bool = Field(False)
     refresh_hours: float = Field(6.0, gt=0)
-
-
-class SettleConfiguration(Section):
-    """How long to wait for a surface to stop changing, polled so a fast page costs one interval."""
-
-    poll_seconds: float = Field(0.05)
-    give_up_seconds: float = Field(1.5)
 
 
 class RetrievalConfiguration(Section):
@@ -385,7 +378,6 @@ class ComputerControlConfiguration(Section):
     """Opt-in control of macOS apps through the screen tools. Off by default, and needs an Accessibility grant."""
 
     enabled: bool = Field(False)
-    settle: SettleConfiguration = Field(default_factory=SettleConfiguration)
     retrieval: RetrievalConfiguration = Field(default_factory=RetrievalConfiguration)
 
 

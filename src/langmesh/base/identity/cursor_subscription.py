@@ -20,7 +20,8 @@ from langmesh.base.identity.cursor_credentials import (
     CursorTokens,
     valid_tokens,
 )
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmesh.base.primitives.limits import current_limits
+
 
 RUN_PATH = "/agent.v1.AgentService/RunSSE"
 APPEND_PATH = "/aiserver.v1.BidiService/BidiAppend"
@@ -222,7 +223,7 @@ def _variant_for(model_id: str, variants: dict[str, _Variant]) -> Optional[_Vari
 async def fetch_subscription_models() -> dict[str, dict[str, Any]]:
     """The account's live model list, from the two endpoints that each know half of it."""
     global _models_cache
-    ttl = active_tuning().duration(Tunable.model_catalogue_ttl)
+    ttl = current_limits().model_catalogue_ttl
     if _models_cache is not None and time.monotonic() - _models_cache[0] < ttl:
         return _models_cache[1]
     async with _models_cache_lock:

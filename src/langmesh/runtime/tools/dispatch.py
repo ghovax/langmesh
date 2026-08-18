@@ -27,7 +27,7 @@ from langmesh.runtime.internals import (
 )
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.values import ToolStatus
-from langmesh.base.primitives.tuning import current_context_window
+
 from langmesh.runtime.turn_events import (
     DeniedInjection,
     Error,
@@ -404,9 +404,6 @@ class _DispatchesTools:
                     command=decision.denial.get("raw_command", ""),
                 )
             return
-
-        # This agent's live window, so every window-scaled cap is sized for the model actually running.
-        current_context_window.set(self._context_window)
 
         # The session state tools read at call time, bound per call so two open turns cannot see each other's.
         tool_context.bind(

@@ -12,7 +12,7 @@ from typing import Any, Sequence
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tasks import TaskManager
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
-from langmesh.runtime.features.plugins.continuation.policy import TuningContinuationPolicy
+from langmesh.runtime.features.plugins.continuation.policy import DefaultContinuationPolicy
 from langmesh.runtime.features.plugins.continuation.tools import set_tasks, update_tasks
 
 
@@ -21,7 +21,7 @@ class Continuation(Feature):
 
 
     def __init__(self, *, policy: Any = None) -> None:
-        self._policy = policy if policy is not None else TuningContinuationPolicy()
+        self._policy = policy if policy is not None else DefaultContinuationPolicy()
         # Independent from goal continuations: one may share a turn with the other, but neither consumes its allowance.
         self._task_continuations = 0
         self._task_manager = TaskManager()

@@ -202,9 +202,9 @@ When a conversation reaches its recommended preparation threshold, LangMesh appe
 
 Observations are workspace-owned current state and explicit. Agents retrieve and maintain them through Bash using the `observational-memory` skill. The daemon watches each active location's registry through native filesystem notifications and shares one watcher across its sessions. A committed revision broadcasts a complete validated snapshot to the memory panel. The system prompt receives only progressive-disclosure metadata, never observation rows.
 
-## Tool tuning
+## Tool limits
 
-How much of a model's context tool output may occupy, and how patient the tools are. Size and count caps are token budgets derived from the **live** model context window, so a small model gets tight caps and a large one gets room. Timeouts do not depend on the window and answer only to `timeout_multiplier`.
+How much of a model's context tool output may occupy, and how patient the tools are. Every limit ships as a plain value; nothing scales with the live window, so what you set is what runs.
 
 ```yaml
 tuning:
@@ -213,18 +213,18 @@ tuning:
     results: 0.15
   timeout_multiplier: 1.0
   defaults:
-    action_timeout: 10000
-    grep_results: 1024
+    output_tokens: 16384
+    web_search_maximum: 16
 ```
 
 | Setting                 | What it does                                                   |
 | ----------------------- | -------------------------------------------------------------- |
-| `context_share.text`    | The share one result's text may fill: output, fetched pages.   |
-| `context_share.results` | The share a set of results may fill: matches, lines, records.  |
+| `context_share.text`    | The share the headline text budgets assume: output, fetched pages. |
+| `context_share.results` | The share the headline result budgets assume: matches, lines, records. |
 | `timeout_multiplier`    | `2.0` doubles every wait, for a slow machine. `1.0` is neutral. |
-| `defaults`              | Overrides one value by its own name; every duration is in seconds. |
+| `defaults`              | Overrides one limit by its own name; every duration is in seconds. |
 
-Those three move whole families. `defaults` is the escape hatch for a single value. Its keys are the names in `langmesh.base.primitives.tuning.Tunable`, the same idea as `sandbox.limits` using `setrlimit` constant names. An unknown name is an error at load. An override replaces the value the code ships with, so `context_share` and `timeout_multiplier` still apply on top.
+`defaults` is the escape hatch for a single value. Its keys are the fields of `langmesh.base.primitives.limits.Limits`. An unknown name is an error at load. An explicit `defaults` value wins over the percentage shares.
 
 The settings panel lists every setting with what it ships at and what this machine runs on; what each one is _for_ is in the [configuration reference](configuration.md). [`configuration.example.yaml`](configuration.example.yaml) is the same surface as a file at its shipped values. Read it; do not copy it over your own configuration, because everything in it is already the default.
 
@@ -463,81 +463,64 @@ How large, how many, and how patient the tools are.
 | `tuning.context_share.text`            | number  | `0.25` | Share one result's text may fill: output, fetched pages. |
 | `tuning.context_share.results`         | number  | `0.15` | Share a set of results may fill: matches, lines, records. |
 | `tuning.timeout_multiplier`            | number  | `1.0` | Multiplier on every wait. `2.0` doubles them for a slow machine. |
-| `tuning.defaults`                      | section | — | Override one tunable by its own name. Every duration is in seconds. |
-| `tuning.defaults.output_tokens`        | integer | `16000` | Tokens of inline output one tool may return before the rest overflows to a file. |
-| `tuning.defaults.fetch_tokens`         | integer | `24000` | Tokens of a fetched web page's text kept inline. |
-| `tuning.defaults.maximum_line_chars`   | integer | `2048` | Characters of a single over-long line kept before it is clipped. |
+| `tuning.defaults` | section | — | Override one limit by its own name. Every duration is in seconds. |
+| `tuning.defaults.output_tokens` | integer | `16384` | Tokens of inline output one tool may return before the rest overflows to a file. |
+| `tuning.defaults.fetch_tokens` | integer | `32768` | Tokens of a fetched web page's text kept inline. |
 | `tuning.defaults.upstream_error_detail_tokens` | integer | `256` | Tokens of an upstream error body kept in the failure this harness raises. |
-| `tuning.defaults.read_lines`           | integer | `2000` | Lines a file read returns when no explicit limit is given. |
-| `tuning.defaults.grep_results`         | integer | `512` | Total matches one search returns. |
-| `tuning.defaults.grep_per_file`        | integer | `512` | Matches one search returns from any single file. |
-| `tuning.defaults.glob_results`         | integer | `1000` | Paths one glob returns. |
-| `tuning.defaults.web_search_maximum`   | integer | `10` | Ceiling on the result count a web search may ask for. |
-| `tuning.defaults.remote_listing`       | integer | `32768` | Paths listed on a remote machine before glob matching is applied locally. |
-| `tuning.defaults.web_exchanges`        | integer | `250` | Recent request/response pairs a browser session keeps. |
-| `tuning.defaults.web_websockets`       | integer | `32` | Live websockets a browser session tracks at once. |
-| `tuning.defaults.web_websocket_frames` | integer | `200` | Frames retained per tracked websocket. |
-| `tuning.defaults.action_timeout`       | integer | `5000` | How long one browser action waits for its element. |
-| `tuning.defaults.navigation_timeout`   | integer | `20000` | How long a page load or navigation waits. |
-| `tuning.defaults.snapshot_timeout`     | integer | `10000` | How long an accessibility snapshot of a page waits. |
-| `tuning.defaults.connect_timeout`      | integer | `10000` | How long attaching to a browser waits. |
-| `tuning.defaults.browser_authorization`| integer | `90000` | How long attaching waits for the user to approve Chrome's prompt. |
-| `tuning.defaults.drag_timeout`         | integer | `8000` | How long a drag between two elements waits. |
-| `tuning.defaults.screenshot_timeout`   | integer | `20000` | How long capturing a page screenshot waits. |
-| `tuning.defaults.read_text_timeout`    | integer | `10000` | How long reading a page's text waits. |
-| `tuning.defaults.frame_resolve_timeout`| integer | `2000` | How long resolving a frame reference waits. See the note below. |
-| `tuning.defaults.sigterm_grace`        | number  | `3.0` | How long a cancelled command or a reaped session has after SIGTERM before SIGKILL. |
-| `tuning.defaults.ripgrep`              | number  | `30.0` | How long one content search may run. |
-| `tuning.defaults.bash_sync_window`     | number  | `60.0` | How long a shell command runs inline before it moves to the background. |
-| `tuning.defaults.slow_tool_sync_window`| number  | `10.0` | The same inline window for fetching a URL or downloading a file. |
+| `tuning.defaults.web_search_maximum` | integer | `16` | Ceiling on the result count a web search may ask for. |
+| `tuning.defaults.web_exchanges` | integer | `256` | Recent request/response pairs a browser session keeps. |
+| `tuning.defaults.web_websockets` | integer | `32` | Live websockets a browser session tracks at once. |
+| `tuning.defaults.web_websocket_frames` | integer | `256` | Frames retained per tracked websocket. |
+| `tuning.defaults.action_timeout` | number | `5.0` | How long one browser action waits for its element. |
+| `tuning.defaults.navigation_timeout` | number | `20.0` | How long a page load or navigation waits. |
+| `tuning.defaults.snapshot_timeout` | number | `10.0` | How long an accessibility snapshot of a page waits. |
+| `tuning.defaults.browser_authorization` | number | `90.0` | How long attaching waits for the user to approve Chrome's prompt. |
+| `tuning.defaults.drag_timeout` | number | `8.0` | How long a drag between two elements waits. |
+| `tuning.defaults.read_text_timeout` | number | `10.0` | How long reading a page's text waits. |
+| `tuning.defaults.frame_resolve_timeout` | number | `2.0` | How long resolving a frame reference waits. See the note below. |
+| `tuning.defaults.sigterm_grace` | number | `3.0` | How long a cancelled command or a reaped session has after SIGTERM before SIGKILL. |
+| `tuning.defaults.bash_sync_window` | number | `60.0` | How long a shell command runs inline before it moves to the background. |
+| `tuning.defaults.slow_tool_sync_window` | number | `10.0` | The same inline window for fetching a URL or downloading a file. |
 | `tuning.defaults.web_search_sync_window` | number | `10.0` | The same inline window for a web search. |
 | `tuning.defaults.accessibility_messaging` | number | `2.0` | How long one accessibility message to an application waits. |
-| `tuning.defaults.goal_continuation_turns` | integer | `12` | How many turns in a row a session may open for its own goal before it stops and waits for the person. |
-| `tuning.defaults.task_continuation_turns` | integer | `12` | How many turns in a row unfinished tracked tasks may reopen automatically before the session waits for the person. |
-| `tuning.defaults.session_title_attempts` | integer | `3` | How many times a session asks the model to name itself before giving up. |
-| `tuning.defaults.permission_reviewer_attempts` | integer | `3` | How many times the permission reviewer is asked before its silence counts as a refusal. |
-| `tuning.defaults.session_idle_sleep`   | number  | `18000.0` | How long a session keeps its process after its last turn before it sleeps. |
-| `tuning.defaults.daemon_startup`       | number  | `45.0` | How long a command waits for a daemon it just started to become reachable. |
-| `tuning.defaults.control_plane_call`   | number  | `60.0` | How long one call to the daemon waits. |
-| `tuning.defaults.model_catalogue_ttl`  | number  | `60.0` | How long the list of available models is cached. |
-| `tuning.defaults.credential_refresh_leeway` | number | `300.0` | How far ahead of its expiry an access token is refreshed. |
-| `tuning.defaults.daemon_probe_interval`| number  | `0.05` | Pause between asks of whether another process's daemon socket answers yet. |
-| `tuning.defaults.daemon_probe_connect` | number  | `0.5` | How long one connect to a daemon socket waits before it counts as unanswered. |
-| `tuning.defaults.oauth_poll_interval`  | number  | `1.0` | First pause between asks of whether a browser sign-in has completed; it widens from here. |
-| `tuning.defaults.oauth_poll_ceiling`   | number  | `10.0` | Ceiling on the widening pause between sign-in polls. |
-| `tuning.defaults.oauth_poll_give_up`   | number  | `300.0` | How long a browser sign-in is waited for before it is abandoned. |
-| `tuning.defaults.subscription_resume_ttl` | number | `1800.0` | How long a subscription provider's server-side conversation state stays worth resuming from. |
-| `tuning.defaults.model_silence_give_up`| number  | `180.0` | How long a model stream may make no meaningful progress before the turn fails. |
-| `tuning.defaults.file_url_ttl`         | number  | `600.0` | How long a signed file URL stays valid. |
-| `tuning.defaults.mcp_connect`          | number  | `20.0` | How long connecting to one MCP server waits. |
-| `tuning.defaults.card_resolve`         | number  | `20.0` | How long fetching a remote agent's card waits. |
-| `tuning.defaults.remote_command`       | number  | `120.0` | How long a command on another machine may run. |
-| `tuning.defaults.remote_connect`       | number  | `16.0` | How long opening an SSH connection waits. |
-| `tuning.defaults.remote_control_persist` | number | `120.0` | How long a shared SSH connection lingers after its last use. |
-| `tuning.defaults.control_script`       | number  | `120.0` | How long one screen-control script may run. |
-| `tuning.defaults.surface_guard_margin` | number  | `30.0` | How far above the script's own limit the machinery waiting on it sits. |
-| `tuning.defaults.screencapture`        | number  | `15.0` | How long capturing the screen waits. |
-| `tuning.defaults.open_url`             | number  | `5.0` | How long handing a URL to the system browser waits. |
-| `tuning.defaults.type_chunk_size`      | integer | `20` | Characters sent per synthesized keyboard event. |
-| `tuning.defaults.drag_steps`           | integer | `12` | Segments a drag is split into, so it looks like a hand moved it. |
-| `tuning.defaults.scroll_amount_pixels` | integer | `300` | Pixels one scroll step moves a native window. |
-| `tuning.defaults.settle_stable_reads`  | integer | `2` | Identical consecutive reads that count a surface as having stopped changing. |
-| `tuning.defaults.find_rephrasing_similarity` | number | `0.45` | How alike two screen queries must be before a second one on the same element counts as the first asked again. |
-| `tuning.defaults.find_near_weight`     | number  | `0.5` | How much sitting beside the anchor is worth against matching the query. |
-| `tuning.defaults.find_anchor_margin`   | number  | `0.02` | How far ahead of its own runner-up a near anchor must score before a find will join on it. |
-| `tuning.defaults.find_candidates`      | integer | `5` | Elements find_one weighs against its best match. |
-| `tuning.defaults.find_one_margin`      | number  | `0.2` | How far ahead of the runner-up find_one's best match must score before it answers with one element. |
-| `tuning.defaults.find_many_ceiling`    | integer | `50` | Elements find_many will return however many are asked for. |
-| `tuning.defaults.find_relevance_floor` | number  | `0.25` | How well an element must match before find_many returns it at all. |
-| `tuning.defaults.click_interval`       | number  | `0.01` | Pause between successive synthesized clicks. |
-| `tuning.defaults.drag_step_interval`   | number  | `0.01` | Pause between the interpolated steps of a drag. |
-| `tuning.defaults.type_chunk_interval`  | number  | `0.005` | Pause between typed chunks. |
-| `tuning.defaults.focus_settle`         | number  | `0.03` | Pause after focusing a field, before typing into it. |
-| `tuning.defaults.stamped_image_side`   | integer | `2048` | Longest side, in pixels, of a screenshot annotated with element labels. |
+| `tuning.defaults.control_script` | number | `120.0` | How long one screen-control script may run. |
+| `tuning.defaults.surface_guard_margin` | number | `30.0` | How far above the script's own limit the machinery waiting on it sits. |
+| `tuning.defaults.open_url` | number | `5.0` | How long handing a URL to the system browser waits. |
+| `tuning.defaults.model_silence_give_up` | number | `180.0` | How long a model stream may make no meaningful progress before the turn fails. |
+| `tuning.defaults.goal_continuation_turns` | integer | `16` | How many turns in a row a session may open for its own goal before it stops and waits for the person. |
+| `tuning.defaults.task_continuation_turns` | integer | `16` | How many turns in a row unfinished tracked tasks may reopen automatically before the session waits for the person. |
+| `tuning.defaults.settle_poll_seconds` | number | `0.05` |  |
+| `tuning.defaults.settle_give_up_seconds` | number | `1.5` |  |
+| `tuning.defaults.settle_stable_reads` | integer | `2` | Identical consecutive reads that count a surface as having stopped changing. |
+| `tuning.defaults.type_chunk_size` | integer | `32` | Characters sent per synthesized keyboard event. |
+| `tuning.defaults.type_chunk_interval` | number | `0.005` | Pause between typed chunks. |
+| `tuning.defaults.drag_steps` | integer | `16` | Segments a drag is split into, so it looks like a hand moved it. |
+| `tuning.defaults.drag_step_interval` | number | `0.01` | Pause between the interpolated steps of a drag. |
+| `tuning.defaults.click_interval` | number | `0.01` | Pause between successive synthesized clicks. |
+| `tuning.defaults.focus_settle` | number | `0.03` | Pause after focusing a field, before typing into it. |
+| `tuning.defaults.scroll_amount_pixels` | integer | `512` | Pixels one scroll step moves a native window. |
 | `tuning.defaults.accessibility_walk_budget` | number | `3.0` | How long one read of an app's accessibility tree may take. See the note below. |
 | `tuning.defaults.accessibility_ready_probe` | number | `0.4` | How long the readiness poll may spend deciding whether an app's tree has built yet. |
 | `tuning.defaults.accessibility_prewarm_interval` | number | `0.4` | Pause between pre-warming the frontmost application's accessibility tree. |
 | `tuning.defaults.accessibility_ready_backoff` | number | `0.2` | Ceiling on the widening pause between accessibility readiness probes. |
+| `tuning.defaults.find_rephrasing_similarity` | number | `0.45` | How alike two screen queries must be before a second one on the same element counts as the first asked again. |
+| `tuning.defaults.find_near_weight` | number | `0.5` | How much sitting beside the anchor is worth against matching the query. |
+| `tuning.defaults.find_anchor_margin` | number | `0.02` | How far ahead of its own runner-up a near anchor must score before a find will join on it. |
+| `tuning.defaults.find_candidates` | integer | `8` | Elements find_one weighs against its best match. |
+| `tuning.defaults.find_one_margin` | number | `0.2` | How far ahead of the runner-up find_one's best match must score before it answers with one element. |
+| `tuning.defaults.find_many_ceiling` | integer | `64` | Elements find_many will return however many are asked for. |
+| `tuning.defaults.find_relevance_floor` | number | `0.25` | How well an element must match before find_many returns it at all. |
+| `tuning.defaults.session_title_attempts` | integer | `4` | How many times a session asks the model to name itself before giving up. |
+| `tuning.defaults.permission_reviewer_attempts` | integer | `4` | How many times the permission reviewer is asked before its silence counts as a refusal. |
+| `tuning.defaults.model_catalogue_ttl` | number | `60.0` | How long the list of available models is cached. |
+| `tuning.defaults.credential_refresh_leeway` | number | `300.0` | How far ahead of its expiry an access token is refreshed. |
+| `tuning.defaults.oauth_poll_interval` | number | `1.0` | First pause between asks of whether a browser sign-in has completed; it widens from here. |
+| `tuning.defaults.oauth_poll_ceiling` | number | `10.0` | Ceiling on the widening pause between sign-in polls. |
+| `tuning.defaults.oauth_poll_give_up` | number | `300.0` | How long a browser sign-in is waited for before it is abandoned. |
+| `tuning.defaults.subscription_resume_ttl` | number | `1800.0` | How long a subscription provider's server-side conversation state stays worth resuming from. |
+| `tuning.defaults.file_url_ttl` | number | `600.0` | How long a signed file URL stays valid. |
+| `tuning.defaults.mcp_connect` | number | `20.0` | How long connecting to one MCP server waits. |
+| `tuning.defaults.card_resolve` | number | `20.0` | How long fetching a remote agent's card waits. |
 
 ### Notes on individual tunables
 

@@ -19,7 +19,7 @@ from langchain_core.messages import messages_from_dict
 
 from langmeshd.worker import features_access as _features
 from langmesh.base.contracts.catalogue import machine_catalogue
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+from langmesh.base.primitives.limits import current_limits
 from langmesh.base.confinement.file_leases import FileLeaseManager
 from langmesh.base.configuration import Configuration
 from langmesh.base.persistence.background_store import get_background_job_store
@@ -1156,11 +1156,11 @@ class SessionExecutor(AgentExecutor):
 
     async def start(self) -> None:
         """Prepare the session before its socket opens, without building the runtime it may never need."""
+        from langmesh.base.primitives.limits import limits_from_configuration, set_limits
         from langmesh.base.primitives.telemetry import configure as configure_telemetry
-        from langmesh.base.primitives.tuning import set_tuning, tuning_from_policy
 
         configuration = self._global_configuration
-        set_tuning(tuning_from_policy(configuration.tuning))
+        set_limits(limits_from_configuration(configuration.tuning))
 
         telemetry = configuration.telemetry
         configure_telemetry(
@@ -1415,7 +1415,7 @@ class SessionExecutor(AgentExecutor):
         if owned_tasks:
             completed, pending = await asyncio.wait(
                 owned_tasks,
-                timeout=active_tuning().duration(Tunable.sigterm_grace),
+                timeout=current_limits().sigterm_grace,
             )
             if completed:
                 await asyncio.gather(*completed, return_exceptions=True)

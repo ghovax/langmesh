@@ -21,7 +21,9 @@ from typing import Any, Optional
 import httpx
 
 from langmesh.base.confinement.paths import oauth_token_path
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+
+from langmesh.base.primitives.limits import current_limits
+
 
 # Codex's public OAuth client and endpoints, reused so the consent screen mints a subscription-scoped token.
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -53,8 +55,10 @@ class ChatGPTTokens:
     expires_at: float
 
     def is_expired(
-        self, leeway_seconds: float = active_tuning().duration(Tunable.credential_refresh_leeway)
+        self, leeway_seconds: float | None = None
     ) -> bool:
+        if leeway_seconds is None:
+            leeway_seconds = current_limits().credential_refresh_leeway
         return time.time() >= (self.expires_at - leeway_seconds)
 
 

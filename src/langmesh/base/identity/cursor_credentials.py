@@ -25,7 +25,9 @@ from tenacity import (
 )
 
 from langmesh.base.confinement.paths import oauth_token_path
-from langmesh.base.primitives.tuning import Tunable, active_tuning
+
+from langmesh.base.primitives.limits import current_limits
+
 
 # Cursor's own login surface and API host, which are the addresses its own client uses.
 LOGIN_URL = "https://cursor.com/loginDeepControl"
@@ -58,8 +60,10 @@ class CursorTokens:
     expires_at: float
 
     def is_expired(
-        self, leeway_seconds: float = active_tuning().duration(Tunable.credential_refresh_leeway)
+        self, leeway_seconds: float | None = None
     ) -> bool:
+        if leeway_seconds is None:
+            leeway_seconds = current_limits().credential_refresh_leeway
         return time.time() >= (self.expires_at - leeway_seconds)
 
 
@@ -238,18 +242,18 @@ class CursorLoginFlow:
 
     async def wait(self) -> CursorTokens:
         """Wait for the browser sign-in to complete, then persist and return the tokens."""
-        tuning = active_tuning()
+        limits = current_limits()
         tokens: Optional[CursorTokens] = None
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 async for attempt in AsyncRetrying(
                     retry=retry_if_exception_type((_SignInPending, httpx.HTTPError)),
                     wait=wait_exponential(
-                        multiplier=tuning.duration(Tunable.oauth_poll_interval),
+                        multiplier=limits.oauth_poll_interval,
                         # `max` is tenacity's parameter name for the ceiling, not ours.
-                        max=tuning.duration(Tunable.oauth_poll_ceiling),
+                        max=limits.oauth_poll_ceiling,
                     ),
-                    stop=stop_after_delay(tuning.duration(Tunable.oauth_poll_give_up)),
+                    stop=stop_after_delay(limits.oauth_poll_give_up),
                 ):
                     with attempt:
                         tokens = await self._ask(client)
