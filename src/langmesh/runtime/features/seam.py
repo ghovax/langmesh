@@ -40,6 +40,15 @@ class Feature:
         """The tools this feature provides to the session's roster, empty when it provides none."""
         return []
 
+    def contribute_schema_fields(self, tool_name: str) -> dict:
+        """Extra argument fields to add to a tool's schema, by tool name.
+
+        A plugin that extends another tool's contract (the locations plugin adding a
+        ``location`` selector to bash) answers with its fields here, so the explanation of an
+        extra parameter lives with the plugin that contributes it.
+        """
+        return {}
+
     def invoke(self, name: str, *args, **kwargs):
         """Answer a named capability the core asks for by string, or ``None`` to pass.
 
@@ -189,6 +198,13 @@ class Features:
         for feature in self._instances:
             tools.extend(feature.contribute_tools())
         return tools
+
+    def contributed_schema_fields(self, tool_name: str) -> dict:
+        """Every extra argument field the installed features add to one tool, merged in feature order."""
+        fields: dict = {}
+        for feature in self._instances:
+            fields.update(feature.contribute_schema_fields(tool_name))
+        return fields
 
     def compose_prompt(self, variables: dict[str, str]) -> None:
         for feature in self._instances:

@@ -16,10 +16,11 @@ Nothing interactive:
 Saying what a command reaches:
 - Use `access_request` to state whether the command changes anything, adding paths or network only for reach beyond confinement. Ask for the narrowest reach that does the work.
 
+Running elsewhere:
+- Your context lists the workspace locations when more than the local folder is available. Leave `location` empty to run in the local folder; name one to run there instead. A command run elsewhere is subject to that place's own environment and rules, so say what you are doing there as plainly as you would locally.
+
 Arguments:
 - `command` — The shell command to run.
-- `location` — Which workspace location runs the command — its URI or name, from the locations listed in your context. Defaults to the local filesystem. Pass it only to reach a different, remote location.
-- `access_request` — What this command says about changing anything, and what it needs beyond the session's confinement. Always set `mutates`; add `writes`, `reads`, or `network` only for reach the confinement does not already provide.
-- `explanation` — Why the task needs this command.
+- `location` — The workspace location to run in, from the locations in your context. Empty runs on the local folder.
 - `background` — Run the command in the background instead of waiting for it. Use this for long work whose result you do not need now.
 - `timeout` — How many seconds to wait for the command before it moves to the background, where its result reaches you when it finishes. Raise it for a command you want to wait longer for. It does not kill the command.

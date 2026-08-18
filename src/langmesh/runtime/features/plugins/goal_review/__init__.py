@@ -26,7 +26,7 @@ from langmesh.base.primitives.serialization import compact
 from langmesh.base.contracts.tools import ToolGrant
 from langmesh.runtime.internals import race_interrupt
 from langmesh.runtime.cache_trace import cache_lane
-from langmesh.runtime.goal import Goal
+from langmesh.runtime.features.plugins.goal_review.goal import Goal
 from langmesh.runtime.turn_events import (
     Done,
     GoalReviewFinished,
@@ -262,8 +262,6 @@ class GoalReviewFeature(Feature):
             ),
             conversation=list(self._host.conversation.messages),
         )
-        reviewer._locations = dict(self._host.boundary.locations)
-        reviewer._locations_by_name = dict(self._host.boundary.locations_by_name)
         reviewer._tool_context = replace(reviewer._tool_context, toolbox=toolbox)
         reviewer.restore_session(self._host.bookkeeping.session_snapshot())
         reviewer._cached_system_prompt = self._host.turn.build_static_system_prompt()

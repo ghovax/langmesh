@@ -8,4 +8,3 @@ Arguments:
 - `goal` — The end state, written so it is either true or not: "the importer handles paginated responses and the existing tests still pass", not "work on the importer".
 - `purpose` — What that end state is for, in the user's terms; the reason a closed route can be told apart from a lost goal.
 - `requirements` — The minimum conditions that must hold, each one something a reader could go and look at. Vague ones ("tests pass", "it works") make a goal that cannot be audited.
-- `explanation` — A short reason for setting it, in the words the user reads.

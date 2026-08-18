@@ -41,7 +41,7 @@ from langmesh.protocol.parts import (
     _text_part,
 )
 from langmesh.protocol.turn_record import TurnKind, TurnRecord
-from langmesh.runtime.goal import GoalReviewPhase
+from langmesh.runtime.features.plugins.goal_review.goal import GoalReviewPhase
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import CompactionDone, SuspensionGate
 from langmeshd.worker.sink import _TurnEventSink

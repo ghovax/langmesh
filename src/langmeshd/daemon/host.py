@@ -52,7 +52,7 @@ class SessionHost:
         return held.executor if held is not None else None
 
     async def start(
-        self, record: SessionRecord, locations: Any = None, daemon_token: str = ""
+        self, record: SessionRecord, daemon_token: str = ""
     ) -> bool:
         """Build this session's executor and hold it, which is the whole of starting a session."""
         lock = self._starting.setdefault(record.id, asyncio.Lock())
@@ -72,7 +72,6 @@ class SessionHost:
                     permission_mode=record.permission_mode,
                     sandbox=record.sandbox or {},
                     workspace_id=record.workspace_id,
-                    locations=locations,
                     parent=record.parent,
                     token=record.token,
                     global_configuration=configuration,

@@ -4,4 +4,3 @@ List the resources that the configured MCP servers offer.
 
 Arguments:
 - `server` — The name of one configured MCP server. Leave it empty to list every enabled server.
-- `explanation` — A short reason for the inspection, in the words the user reads.

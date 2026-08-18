@@ -44,9 +44,8 @@ from langmesh.protocol.metadata import (
 from langmesh.protocol.events import StatusEvent
 from langmesh.protocol.parts import _event_part
 from langmesh.protocol.turn_record import PendingInteraction, ToolGate, TurnRecord
-from langmesh.runtime.goal import Goal, GoalReviewPhase
+from langmesh.runtime.features.plugins.goal_review.goal import Goal, GoalReviewPhase
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
-from langmesh.runtime.locations import Location
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import SuspensionGate
 from langmesh.runtime.values import PermissionAnswer
@@ -136,7 +135,6 @@ class SessionExecutor(AgentExecutor):
         sandbox: Optional[dict] = None,
         runtime_working_directory: str = "",
         workspace_id: str = "",
-        locations: Optional[list[dict]] = None,
         parent: str = "",
         token: str = "",
         job_store: Optional[JobStore] = None,
@@ -184,8 +182,6 @@ class SessionExecutor(AgentExecutor):
         self._registry = None
         self._handler = None
 
-        # Where this session's tools may run, resolved once at creation like the sandbox and the mode.
-        self._locations = locations
         self._on_turn_state = self._notify_turn_state
         self._on_permission_state = self._notify_permission_state
         # Structural parts take the ordinary event path; model deltas have a zero-await direct lane below.
@@ -510,7 +506,6 @@ class SessionExecutor(AgentExecutor):
     async def _continue_with_review(self, session_id, state, runtime, plan, goal) -> None:
         """Review an open goal first; a verdict that lands decides the next turn."""
         self._notify_goal_state(session_id, goal, review_phase=GoalReviewPhase.CHECKING)
-        review_phase_active = True
         review = asyncio.create_task(_features.review_goal(runtime))
         state.continuation.attach_review(review)
         try:
@@ -535,7 +530,6 @@ class SessionExecutor(AgentExecutor):
         finally:
             state.continuation.detach_review(review)
             self._notify_goal_state(session_id, _features.goal(runtime))
-            review_phase_active = False
         # Written before the turn opens: a verdict held only in memory is one a restart would lose.
         await self._persist_session_state(session_id, runtime)
 
@@ -693,15 +687,10 @@ class SessionExecutor(AgentExecutor):
 
     def set_locations(self, locations: Optional[list[dict]]) -> int:
         """Adopt the workspace's environments after an edit, so a session already open sees the new set."""
-        self._locations = locations
-        runtime_locations = (
-            tuple(Location.from_mapping(location) for location in locations)
-            if locations is not None
-            else None
-        )
         for state in self._contexts.values():
             if state.runtime is not None:
-                state.runtime.set_locations(runtime_locations)
+                # The locations plugin owns the map; a session without the plugin ignores this.
+                state.runtime.features.invoke("set_locations", locations)
         return len(locations or [])
 
     async def set_permission_mode(self, mode: str) -> str:
@@ -897,7 +886,6 @@ class SessionExecutor(AgentExecutor):
         working_directory: str,
         project_directory: str,
         conversation: Optional[list] = None,
-        locations: Optional[list[dict]] = None,
     ) -> AgentRuntime:
         # A worker serves a person's machine, so it gets the machine's catalogue; a library session gets less.
         catalogue = machine_catalogue(self._global_configuration, project_directory)
@@ -935,11 +923,6 @@ class SessionExecutor(AgentExecutor):
                 session_id=session_id,
                 working_directory=runtime_directory,
                 project_directory=project_directory or runtime_directory,
-                locations=(
-                    tuple(Location.from_mapping(location) for location in locations)
-                    if locations is not None
-                    else None
-                ),
                 parent_session=self._parent,
                 permission_mode=self._permission_mode,
                 sandbox=self._sandbox,
@@ -1048,13 +1031,11 @@ class SessionExecutor(AgentExecutor):
                 session_state = await self._turn_store.load_session_state(session_id)
             # Bound to the process-wide history for this context, so a turn picks up where the last left off.
             conversation = self._conversations.setdefault(session_id, [])
-            locations = self._locations
             runtime = self._build_runtime(
                 session_id,
                 workspace.runtime_working_directory,
                 workspace.source_working_directory,
                 conversation=conversation,
-                locations=locations,
             )
             # Restore the durable objective alongside the conversation, so a marathon run never loses what it was for.
             if session_state:

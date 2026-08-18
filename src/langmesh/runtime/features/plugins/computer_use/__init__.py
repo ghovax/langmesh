@@ -12,10 +12,12 @@ import logging
 import re
 import statistics
 import time
+from pathlib import Path
 from typing import Any
 
 from langchain.tools import tool
 
+from langmesh.base.configuration import PromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.primitives.tuning import Tunable, active_tuning
 from langmesh.computer import control, engine as native_surface, retrieval, surface as surface_module, targets as target_registry, web as web_surface, workflows as workflow_registry
@@ -27,6 +29,9 @@ from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.execution import current_tool_decision, current_tool_services
 
 logger = logging.getLogger(__name__)
+
+#: The tool's model-facing description, read from this plugin's own prompts directory.
+_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
 
 # The queries this plugin has already asked the screen, so it can tell a rephrasing from a fresh
 # question. The plugin owns its own history; the core never carries a screen-control concept.
@@ -443,5 +448,11 @@ class ComputerUse(Feature):
             context["screen"] = block
         except Exception:
             context["screen"] = {}
+
+
+# The tool's model-facing description is this plugin's own file, applied once at import.
+control_screen.description = (
+    _DESCRIPTIONS.load("control_screen", {}).strip() or control_screen.description
+)
 
 __all__ = ["ComputerUse", "control_screen"]

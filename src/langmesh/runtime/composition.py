@@ -23,7 +23,6 @@ from langmesh.base.contracts.ports import (
     Transcript,
     describe_unmet,
 )
-from langmesh.runtime.locations import Location
 
 
 @dataclass(frozen=True)
@@ -37,7 +36,6 @@ class RuntimeProfile:
     project_directory: str = ""
     permission_mode: str = ""
     sandbox: Any = None
-    locations: Sequence[Location] | None = None
     parent_session: str = ""
 
     def __post_init__(self) -> None:
@@ -45,10 +43,6 @@ class RuntimeProfile:
             raise ValueError("session_id must not be empty")
         if not self.working_directory or not Path(self.working_directory).is_absolute():
             raise ValueError("working_directory must be an absolute path")
-        if self.locations is not None:
-            object.__setattr__(self, "locations", tuple(self.locations))
-            if not all(isinstance(location, Location) for location in self.locations):
-                raise TypeError("locations must contain only Location values")
 
 
 @dataclass(frozen=True)

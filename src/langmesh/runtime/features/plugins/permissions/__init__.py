@@ -24,12 +24,7 @@ from langmesh.runtime.internals import (
 )
 from langmesh.runtime.values import PermissionAnswer, PermissionReason
 from langmesh.runtime.boundary import RULE_ALLOW, RULE_ASK, escape_of, verdict_for
-from langmesh.runtime.locations import (
-    _LOCATION_TOOLS,
-    PermissionDecision,
-    ResolvedLocation,
-    ToolLocationError,
-)
+from langmesh.runtime.locations import PermissionDecision
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 
 logger = logging.getLogger(__name__)
@@ -177,16 +172,8 @@ class PermissionReview(Feature):
         if schema is not None:
             tool_arguments = _coerce_structured_arguments(schema, tool_arguments)
 
-        resolved_location: ResolvedLocation | None = None
-        if tool_name in _LOCATION_TOOLS:
-            tool_arguments = dict(tool_arguments)
-            location_value = tool_arguments.pop("location", None) or None
-            try:
-                resolved_location = self._host.boundary.resolve_location(location_value)
-            except ToolLocationError:
-                # A bad location is an execution error, raised by _execute_tool rather than decided here.
-                return plan
-        policy = self._host.boundary.call_policy(resolved_location)
+        call_site = self._host.boundary.resolve_execution(tool_name, tool_arguments)
+        policy = self._host.boundary.call_policy(None)
         explanation = str(tool_arguments.get("explanation", "") or "")
 
         # `allow` mode: every call runs as if it had whatever it asked for. The boundary still
@@ -211,8 +198,8 @@ class PermissionReview(Feature):
             return plan
 
         subject, rule = self._rule_for(tool_name, tool_arguments)
-        # A remote call has no box here to escape, so the rules are the whole policy.
-        profile = None if policy.is_remote else self.granted_profile()
+        # A call with an execution target (a remote location) has no box here to escape, so the rules are the whole policy.
+        profile = None if call_site is not None else self.granted_profile()
         request, _ = parse_access_request(tool_arguments.get("access_request"))
         escape = escape_of(request, profile, workspace=policy.working_directory)
 

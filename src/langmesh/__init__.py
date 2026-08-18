@@ -42,10 +42,8 @@ from langmesh.base.persistence.resources import (
 )
 from langmesh.base.content.skills import Skill
 from langmesh.base.persistence.worktrees import SessionWorktree, SessionWorktreeManager
-from langmesh.locations.executor import LocationExecutor, LocalExecutor, SshExecutor
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile, SessionComponents
 from langmesh.runtime.hooks import MaximumToolCalls
-from langmesh.runtime.locations import Location
 from langmesh.runtime.session_control import PendingTurn, SessionPhase, SessionState
 from langmesh.base.contracts.ports import (
     Approval,
@@ -135,9 +133,6 @@ __all__ = [
     "MCPServerConfiguration",
     "MCPServerManager",
     "MCPServers",
-    "Location",
-    "LocationExecutor",
-    "LocalExecutor",
     "MaximumToolCalls",
     "MemoryCheckpoints",
     "MemoryJobStore",
@@ -257,7 +252,6 @@ class Session:
         # Provider credentials in code, though the environment variables still win.
         providers: Optional[Mapping[str, str | Mapping[str, str]]] = None,
         model_identifier: str = "",
-        locations: Sequence[Location] | None = None,
         tools: Sequence[ToolLike] = (),
         components: SessionComponents = SessionComponents(),
         # Any fsspec-backed workspace. Non-local sources are materialized for Bash and SQLite, then synchronized at tool boundaries and close.
@@ -336,9 +330,6 @@ class Session:
         _require(WorkspaceManager, components.workspace, "components.workspace")
         _require(SessionAccess, components.sessions, "components.sessions")
         _require(MCPServers, components.mcp_servers, "components.mcp_servers")
-        if locations is not None and not all(isinstance(location, Location) for location in locations):
-            raise TypeError("locations must contain only Location values")
-        self._locations = tuple(locations) if locations is not None else None
         self._workspace = components.workspace
         self._tracer_provider = components.tracer_provider
         self._observations = ObservationRegistry(self._resources, configuration=self._configuration)
@@ -419,7 +410,6 @@ class Session:
                     project_directory=self._directory,
                     permission_mode=self._permission_mode,
                     sandbox=self._sandbox,
-                    locations=self._resolved_locations(),
                 ),
                 self._components.for_runtime(
                     catalogue=catalogue,
@@ -451,10 +441,6 @@ class Session:
         else:
             self._runtime.grant_tool(grant.tool)
 
-    def _resolved_locations(self) -> Sequence[Location] | None:
-        """Where this session's tools may run, with `None` meaning one local location at the working directory."""
-        return self._locations
-
     async def prepare_worktree(self, strategy: str = "worktree") -> str:
         """Give this session its own git worktree and run its tools there; opt-in, because it writes to disk."""
         if self._runtime is not None:
@@ -469,15 +455,6 @@ class Session:
         prepared = await manager.prepare(self._session_id, self._directory, strategy)
         self._runtime_directory = prepared.runtime_working_directory or self._directory
         return self._runtime_directory
-
-    def set_locations(self, locations: Sequence[Location] | None) -> SessionState:
-        """Replace the addressable execution locations, reaching the next tool call in a live turn."""
-        if locations is not None and not all(isinstance(location, Location) for location in locations):
-            raise TypeError("locations must contain only Location values")
-        self._locations = tuple(locations) if locations is not None else None
-        if self._runtime is not None:
-            self._runtime.set_locations(self._locations)
-        return self.state
 
     def refresh_prompt(self) -> None:
         """Rebuild catalogue-derived static instructions at the next model boundary."""

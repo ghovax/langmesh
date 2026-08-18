@@ -27,11 +27,6 @@ from langmesh.runtime.internals import (
 )
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.values import ToolStatus
-from langmesh.runtime.locations import (
-    _LOCATION_TOOLS,
-    ResolvedLocation,
-    ToolLocationError,
-)
 from langmesh.base.primitives.tuning import current_context_window
 from langmesh.runtime.turn_events import (
     DeniedInjection,
@@ -443,26 +438,19 @@ class _DispatchesTools:
             )
             return
 
-        # Resolve the call's execution target. A feature may own this (the location plugin): it
-        # answers `resolve_execution` with an opaque call site (cwd + executor), and `None` means
-        # "run locally, in this process". Without such a feature the core's own location table
-        # still resolves the legacy `location` argument, so a bare embedding keeps working.
-        resolved_location: ResolvedLocation | None = None
-        call_site = self._features.invoke("resolve_execution", tool_name, tool_arguments)
-        if call_site is None and tool_name in _LOCATION_TOOLS:
-            tool_arguments = dict(tool_arguments)
-            location_value = tool_arguments.pop("location", None) or None
-            try:
-                resolved_location = self._resolve_location(location_value)
-            except ToolLocationError as exception:
-                yield Error(
-                    id=tool_call_identifier,
-                    code="invalid_location",
-                    message=str(exception),
-                    tool=tool_name,
-                )
-                return
-        policy = self._call_policy(resolved_location)
+        # Resolve the call's execution target: a feature answers with an opaque call site, or `None` for local.
+        call_site = None
+        try:
+            call_site = self._features.invoke("resolve_execution", tool_name, tool_arguments)
+        except ValueError as exception:
+            yield Error(
+                id=tool_call_identifier,
+                code="invalid_location",
+                message=str(exception),
+                tool=tool_name,
+            )
+            return
+        policy = self._call_policy(None)
 
         # Dispatch is data-driven over the session's own tool units: a built-in or a caller's tool is the same `Tool`, so there is no name table and a caller's implementation of the same name simply replaces the built-in's.
         unit = self._tool_units.get(tool_name)
@@ -484,7 +472,7 @@ class _DispatchesTools:
                 tool_call_identifier,
                 decision,
                 policy,
-                call_site if call_site is not None else resolved_location,
+                call_site,
             ):
                 yield event
         finally:

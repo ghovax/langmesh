@@ -8,4 +8,3 @@ Create a peer session.
 Arguments:
 - `agent` — The agent profile the peer runs, from the list this tool enumerates. Required, and never invented.
 - `working_directory` — Where the peer works. Defaults to yours.
-- `explanation` — A short reason for creating this peer, in the words the user reads.

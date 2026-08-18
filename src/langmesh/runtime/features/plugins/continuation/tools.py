@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from langchain.tools import tool
 
+from langmesh.base.configuration import PromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools.execution import current_tool_services
+
+#: The tools' model-facing descriptions, read from this plugin's own prompts directory.
+_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
 
 @tool
 async def set_tasks(*, tasks: list[dict]) -> str:
@@ -40,3 +45,8 @@ async def update_tasks(*, updates: list[dict]) -> str:
         result["rejected"] = complaints
         result["status"] = "error" if not updated_ids else result.get("status", "")
     return compact(result)
+
+
+# The tools' model-facing descriptions are this plugin's own files, applied once at import.
+set_tasks.description = _DESCRIPTIONS.load("set_tasks", {}).strip() or set_tasks.description
+update_tasks.description = _DESCRIPTIONS.load("update_tasks", {}).strip() or update_tasks.description

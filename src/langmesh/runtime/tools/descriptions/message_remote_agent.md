@@ -6,4 +6,3 @@ Hand a message to an agent on another host, and return its reply.
 Arguments:
 - `name` — The registered name of the remote agent, from `list_remote_agents`. Required.
 - `message` — What to send. It leaves this machine, so send the content the task needs and nothing beside it.
-- `explanation` — A short reason for the message, in the words the user reads.

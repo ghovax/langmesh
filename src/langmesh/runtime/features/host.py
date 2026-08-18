@@ -13,7 +13,7 @@ from typing import Any, Callable, Iterable
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from langmesh.base.confinement import Grant, Profile
-from langmesh.runtime.locations import CallExecutionPolicy, ResolvedLocation
+from langmesh.runtime.locations import CallExecutionPolicy
 from langmesh.runtime.tools.context import ToolContext
 
 
@@ -30,10 +30,8 @@ class BoundaryView:
     """The confinement a feature is held to, and the reach approved so far."""
 
     sandbox: Profile  #: The configured confinement the operating system will enforce.
-    locations: dict[str, ResolvedLocation]  #: The resolved locations, keyed by uri.
-    locations_by_name: dict[str, ResolvedLocation]  #: The resolved locations, keyed by name.
-    resolve_location: Callable[[str | None], ResolvedLocation]  #: Resolves a call's location value.
-    call_policy: Callable[[ResolvedLocation | None], CallExecutionPolicy]  #: One call's policy.
+    resolve_execution: Callable[[str, dict], Any]  #: A call's opaque execution target, from the features; ``None`` means local.
+    call_policy: Callable[[Any], CallExecutionPolicy]  #: One call's policy.
     granted_profile: Callable[[], Profile]  #: The confinement with every standing grant compacted in.
     access_grants: Callable[[], list[Grant]]  #: The standing grants approved for this session.
     record_grant: Callable[[Grant], None]  #: Records an approved widening on the boundary.
@@ -96,6 +94,7 @@ class PluginHost:
     window: WindowView
     turn: TurnView
     bookkeeping: BookkeepingView
+    services: Any = None  #: The host's opaque plugin bundle: what the composer chose to hand its plugins.
 
 
 __all__ = [
