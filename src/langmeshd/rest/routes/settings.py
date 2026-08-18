@@ -270,7 +270,7 @@ async def update_settings(request: AppSettingsUpdateRequest):
 @router.get("/settings/schema")
 async def settings_schema():
     """Every setting there is, with what it holds and what it is set to, as one endpoint for the whole file."""
-    from langmesh.base.configuration import configuration_file
+    from langmeshd.commons import configuration_file
     from langmesh.base.configuration.configuration_schema import KIND_SECTION, settings as all_settings
 
     document = await asyncio.to_thread(configuration_file.load)
@@ -308,7 +308,7 @@ async def settings_schema():
 @router.post("/settings/value")
 async def update_setting(request: SettingValueRequest):
     """Set one setting by its path, validated first, because the daemon reads this file at every start."""
-    from langmesh.base.configuration import configuration_file
+    from langmeshd.commons import configuration_file
     from langmesh.base.configuration.configuration_schema import setting_for
 
     if setting_for(request.path) is None:
@@ -334,7 +334,7 @@ async def update_setting(request: SettingValueRequest):
 @router.delete("/settings/value")
 async def reset_setting(path: str):
     """Put one setting back to what the code ships by removing it, so it follows the default from here on."""
-    from langmesh.base.configuration import configuration_file
+    from langmeshd.commons import configuration_file
     from langmesh.base.configuration.configuration_schema import setting_for
 
     if setting_for(path) is None:

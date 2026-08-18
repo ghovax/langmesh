@@ -7,12 +7,10 @@ import os
 from langmesh.base.confinement import environment_variables
 import re
 from fnmatch import fnmatch
-import shutil
 import sys
 from pathlib import Path
 from typing import Callable, ClassVar, Literal, Optional
 
-import yaml
 from pydantic import BaseModel, Field, field_validator
 
 from langmesh.base.confinement.paths import configuration_file_path, database_file_path  # noqa: F401 — re-exported
@@ -26,14 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 # Where state lives is the placement layer's business, resolved in `langmesh.base.confinement.paths`.
-
-# The packaged configuration is a sibling YAML file, so editing the template is a data change.
-PACKAGED_CONFIGURATION_PATH = Path(__file__).resolve().parent / "configuration.yaml"
-
-
-def packaged_configuration_yaml() -> str:
-    return PACKAGED_CONFIGURATION_PATH.read_text()
-
 
 def _bundled_dotagents_root() -> Path:
     """The ``.agents`` directory shipped with the harness, so every folder sees the base profiles."""
@@ -52,94 +42,6 @@ def _bundled_dotagents_root() -> Path:
 
 
 BUNDLED_DOTAGENTS_ROOT = _bundled_dotagents_root()
-
-
-def seed_home_agents() -> list[str]:
-    """Seed ``~/.agents`` with editable copies, filling only what is missing so a person's edits survive."""
-    home_root = Path(Configuration.HOME_AGENTS_ROOT_DIRECTORY).expanduser()
-    seeded: list[str] = []
-    for kind in ("agents", "skills"):
-        source_root = BUNDLED_DOTAGENTS_ROOT / kind
-        if not source_root.is_dir():
-            continue
-        target_root = home_root / kind
-        target_root.mkdir(parents=True, exist_ok=True)
-        for entry in sorted(source_root.iterdir()):
-            if entry.name.startswith("."):  # skip .DS_Store and other dotfiles
-                continue
-            target = target_root / entry.name
-            if target.exists():
-                continue  # a home copy already exists (possibly user-edited) — leave it
-            try:
-                if entry.is_dir():
-                    shutil.copytree(entry, target)
-                else:
-                    shutil.copy2(entry, target)
-                seeded.append(f"{kind}/{entry.name}")
-            except OSError:
-                # A single unseedable profile must never block startup or the others.
-                continue
-    return seeded
-
-
-def save_api_keys(
-    *,
-    exa_api_key: str | None = None,
-    jina_api_key: str | None = None,
-    firecrawl_api_key: str | None = None,
-    web_fetch_proxy_url: str | None = None,
-    permission_mode: str | None = None,
-    sandbox: dict | None = None,
-    worktree_strategy: str | None = None,
-    compaction: dict | None = None,
-    user_context_enabled: bool | None = None,
-    computer_control_enabled: bool | None = None,
-    toolbox_enabled: bool | None = None,
-    tuning: dict | None = None,
-    provider_keys: dict[str, str] | None = None,
-    provider_base_urls: dict[str, str] | None = None,
-) -> None:
-    """Persist settings into the configuration file, preserving the rest and writing only what was given."""
-    path = configuration_file_path()
-    if path.exists():
-        data = yaml.safe_load(path.read_text()) or {}
-    else:
-        data = yaml.safe_load(packaged_configuration_yaml())
-    if exa_api_key is not None:
-        data.setdefault("exa", {})["api_key"] = exa_api_key
-    if jina_api_key is not None:
-        data.setdefault("jina", {})["api_key"] = jina_api_key
-    if firecrawl_api_key is not None:
-        data.setdefault("firecrawl", {})["api_key"] = firecrawl_api_key
-    if web_fetch_proxy_url is not None:
-        data.setdefault("web_fetch", {})["proxy_url"] = web_fetch_proxy_url
-    if sandbox is not None:
-        data.setdefault("sandbox", {}).update(sandbox)
-    if worktree_strategy is not None:
-        data.setdefault("workspace", {})["strategy"] = worktree_strategy
-    if compaction is not None:
-        data.setdefault("compaction", {}).update(compaction)
-    if tuning is not None:
-        data.setdefault("tuning", {}).update(tuning)
-    if user_context_enabled is not None:
-        data.setdefault("user_context", {})["enabled"] = user_context_enabled
-    if computer_control_enabled is not None:
-        data.setdefault("computer_control", {})["enabled"] = computer_control_enabled
-    if toolbox_enabled is not None:
-        data.setdefault("toolbox", {})["enabled"] = toolbox_enabled
-    if provider_keys is not None or provider_base_urls is not None:
-        providers_section = data.setdefault("providers", {})
-        all_provider_ids = {*(provider_keys or {}), *(provider_base_urls or {})}
-        for provider_id in all_provider_ids:
-            entry = dict(providers_section.get(provider_id) or {})
-            if provider_keys is not None and provider_id in provider_keys:
-                entry["api_key"] = provider_keys[provider_id]
-            if provider_base_urls is not None and provider_id in provider_base_urls:
-                entry["base_url"] = provider_base_urls[provider_id]
-            providers_section[provider_id] = entry
-    if permission_mode is not None:
-        data.setdefault("agent", {})["permission_mode"] = permission_mode
-    path.write_text(yaml.safe_dump(data, sort_keys=False))
 
 
 class Section(BaseModel):
@@ -549,29 +451,6 @@ class Configuration(Section):
     telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)
     agent: AgentDefaults = Field(default_factory=AgentDefaults)
 
-    @classmethod
-    def load(cls, *, seed: bool = True) -> Configuration:
-        """Load the configuration, seeding the file from the packaged template on first run."""
-        path = configuration_file_path()
-        if not path.exists():
-            if not seed:
-                return cls()
-            path.write_text(packaged_configuration_yaml())
-        return cls.from_yaml(path)
-
-    @classmethod
-    def from_yaml(cls, path: str | Path) -> Configuration:
-        with open(path) as file_handle:
-            data = yaml.safe_load(file_handle)
-        configuration = cls(**(data or {}))
-        configuration.mcp = MCPConfiguration.from_dotagents_roots(
-            configuration.agents_root_directories()
-        )
-        configuration.remote_agents = RemoteAgentsConfiguration.from_dotagents_roots(
-            configuration.agents_root_directories()
-        )
-        return configuration
-
     def configured_provider_keys(self) -> dict[str, str]:
         """The non-empty API keys per provider, for credential resolution and for filtering the model picker."""
         return {
@@ -881,56 +760,6 @@ class AgentConfiguration(BaseModel):
         """The card's default permission mode."""
         return PermissionMode.resolve(self.permission_mode)
 
-    @classmethod
-    def from_markdown(cls, path: str | Path) -> AgentConfiguration:
-        path = Path(path)
-        with open(path) as file_handle:
-            content = file_handle.read()
-
-        frontmatter_match = re.match(r"^---\s*\n(.*?)\n---\s*\n(.*)", content, re.DOTALL)
-        if not frontmatter_match:
-            raise ValueError(f"No YAML frontmatter found in {path}")
-
-        frontmatter = yaml.safe_load(frontmatter_match.group(1)) or {}
-        markdown_body = frontmatter_match.group(2).strip()
-        default_identifier = path.parent.name if path.name.upper() == "AGENT.MD" else path.stem
-        frontmatter.setdefault("name", default_identifier)
-        frontmatter.setdefault("title", frontmatter["name"])
-
-        # Everything the agent is, in one file: front matter for the settings, body for the prompt.
-        tools_data = frontmatter.pop("tools", {})
-        tools_configuration = (
-            ToolsConfiguration(**{name: value for name, value in tools_data.items()})
-            if tools_data
-            else ToolsConfiguration()
-        )
-
-        return cls(
-            **frontmatter,
-            tools=tools_configuration,
-            system_prompt=markdown_body,
-        )
-
-
-def write_agent_markdown(path: str | Path, configuration: AgentConfiguration) -> None:
-    """Write a profile back to its `AGENT.md`, the body verbatim so a round trip cannot reword the prompt."""
-    path = Path(path)
-    body = configuration.system_prompt.strip()
-    front = configuration.model_dump(
-        mode="json",
-        exclude_defaults=True,
-        exclude_none=True,
-        exclude={"system_prompt"},
-    )
-    # `name` is the identity the harness addresses this agent by, stated even when it matches the directory.
-    front.setdefault("name", configuration.identifier)
-    front["permission_mode"] = configuration.permission_mode
-    rendered = yaml.safe_dump(
-        front, sort_keys=False, allow_unicode=True, default_flow_style=False
-    ).strip()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\n{rendered}\n---\n\n{body}\n" if body else f"---\n{rendered}\n---\n")
-
 
 class PermissionEvaluator:
     def __init__(self, agent_configuration: AgentConfiguration):
@@ -1030,83 +859,3 @@ class PromptLoader:
 
         # Accept both the spaced ({{ name }}) and unspaced ({{name}}) forms.
         return placeholder.sub(replacer, template)
-
-
-def _as_directories(directories: str | Path | Iterable[str | Path]) -> list[Path]:
-    if isinstance(directories, (str, Path)):
-        return [Path(directories).expanduser()]
-    return [Path(directory).expanduser() for directory in directories]
-
-
-def _agent_paths(
-    agents_directories: str | Path | Iterable[str | Path], include_aliases: bool = False
-) -> dict[str, Path]:
-    paths: dict[str, Path] = {}
-    for directory in _as_directories(agents_directories):
-        if not directory.is_dir():
-            continue
-        # `AGENT.md`, in that spelling, exactly as a skill is `SKILL.md`.
-        candidates = [
-            *sorted(directory.glob("*.md")),
-            *sorted(directory.glob("*/AGENT.md")),
-        ]
-        for path in candidates:
-            try:
-                configuration = AgentConfiguration.from_markdown(path)
-                if not configuration.enabled:
-                    continue
-                paths[configuration.identifier] = path
-                if include_aliases:
-                    for alias in configuration.aliases:
-                        paths[alias] = path
-            except Exception:
-                fallback = path.parent.name if path.name.upper() == "AGENT.MD" else path.stem
-                paths[fallback] = path
-    return paths
-
-
-def load_agent_configuration(
-    name: str, agents_directory: str | Path | Iterable[str | Path]
-) -> AgentConfiguration:
-    paths = _agent_paths(agents_directory, include_aliases=True)
-    path = paths.get(name)
-    if path is None:
-        searched = ", ".join(str(directory) for directory in _as_directories(agents_directory))
-        raise FileNotFoundError(f"Agent configuration not found: {name} (searched: {searched})")
-    return AgentConfiguration.from_markdown(path)
-
-
-def agent_configuration_path(
-    name: str, agents_directory: str | Path | Iterable[str | Path]
-) -> Path:
-    paths = _agent_paths(agents_directory, include_aliases=True)
-    path = paths.get(name)
-    if path is None:
-        searched = ", ".join(str(directory) for directory in _as_directories(agents_directory))
-        raise FileNotFoundError(f"Agent configuration not found: {name} (searched: {searched})")
-    return path
-
-
-def list_agent_route_names(agents_directory: str | Path | Iterable[str | Path]) -> list[str]:
-    return sorted(_agent_paths(agents_directory, include_aliases=True))
-
-
-def list_agents(agents_directory: str | Path | Iterable[str | Path]) -> list[dict[str, str]]:
-    agents = []
-    for name, path in sorted(_agent_paths(agents_directory).items()):
-        try:
-            configuration = AgentConfiguration.from_markdown(path)
-            agents.append(
-                {
-                    "id": configuration.identifier,
-                    "name": configuration.identifier,
-                    "title": configuration.display_name,
-                    # What the agent is for — surfaced as the subtitle in the UI's agent picker.
-                    "description": configuration.description,
-                    # The resolved `provider/model`; empty means no runnable model is configured.
-                    "model": configuration.model_identifier or "",
-                }
-            )
-        except Exception:
-            agents.append({"id": name, "name": name, "title": name, "description": "", "model": ""})
-    return agents

@@ -5,7 +5,7 @@ from __future__ import annotations
 import yaml as _yaml
 
 from langmeshd.commons.brokers.composio import composio_mcp_servers
-from langmesh.base.configuration import Configuration, save_api_keys
+from langmeshd.commons.configuration_io import load_configuration, save_api_keys
 from langmesh.base.confinement.paths import configuration_file_path
 from langmesh.base.contracts.mcp_client import MCPServerManager
 from langmesh.base.primitives.serialization import compact
@@ -76,7 +76,7 @@ async def _persist_configuration(**changes) -> None:
 async def _reload_configuration_from_disk() -> None:
     """Re-read the configuration file after a manual edit and apply it live."""
     assert state.global_configuration is not None
-    fresh = await asyncio.to_thread(Configuration.load)
+    fresh = await asyncio.to_thread(load_configuration)
     configuration = state.global_configuration
     # Every section, from the model rather than from a hand-kept list that fell behind the schema.
     for name in type(fresh).model_fields:

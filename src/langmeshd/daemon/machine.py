@@ -6,11 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from langmesh.base.configuration import Configuration
-
-
-def load_configuration(*, seed: bool = True) -> Configuration:
-    """Read the XDG configuration file, seeding it from the packaged template on first run."""
-    return Configuration.load(seed=seed)
+from langmeshd.commons.configuration_io import load_configuration  # noqa: F401 — re-exported for callers of machine.load_configuration
+from langmeshd.daemon.agent_files import AgentFileLoader
 
 
 def load_catalogue(configuration: Configuration, directory: str | Path) -> Any:
@@ -28,7 +25,8 @@ def load_catalogue(configuration: Configuration, directory: str | Path) -> Any:
             prompts=packaged_prompts_directory(),
             project_directory=local,
             include_home_instructions=True,
-        )
+        ),
+        agent_loader=AgentFileLoader(),
     )
 
 

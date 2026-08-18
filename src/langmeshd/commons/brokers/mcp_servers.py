@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from langmesh.base.configuration import Configuration
 from langmesh.base.contracts.mcp_client import MCPServerManager
 from langmeshd.commons import state
+from langmeshd.commons.configuration_io import load_configuration
 
 
 async def _reload_mcp() -> None:
@@ -12,7 +12,7 @@ async def _reload_mcp() -> None:
     assert state.global_configuration is not None
     # Serialized with the settings endpoints and the watcher, which all rebuild the shared manager.
     async with state.configuration_lock:
-        state.global_configuration.mcp = Configuration.load().mcp
+        state.global_configuration.mcp = load_configuration(seed=False).mcp
         # Re-fold the provisioned Composio server in, so a live edit does not drop its tools.
         state.global_configuration.mcp.servers.update(state.composio_servers)
         enabled = state.global_configuration.mcp.enabled_servers()
