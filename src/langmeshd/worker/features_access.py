@@ -21,6 +21,14 @@ def goal(runtime):
     return feature.goal if feature is not None else None
 
 
+def goal_review_mode(runtime) -> str:
+    """How this session's open goal is driven: ``review`` or ``self_managed``."""
+    from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
+
+    feature = _by(runtime, GoalReviewFeature)
+    return feature.review_mode if feature is not None else "review"
+
+
 def set_goal_listener(runtime, listener) -> None:
     from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
 

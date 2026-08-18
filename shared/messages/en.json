@@ -741,7 +741,8 @@
     },
     "goal_review": {
       "_": "Goal review",
-      "maximum_attempts": "Maximum review attempts"
+      "maximum_attempts": "Maximum review attempts",
+      "mode": "Goal driving mode"
     }
   },
   "SettingsAbout": {
@@ -983,6 +984,12 @@
           "http/protobuf": "HTTP (protobuf)",
           "grpc": "gRPC"
         }
+      }
+    },
+    "goal_review": {
+      "mode": {
+        "review": "Independent reviewer",
+        "self_managed": "Agent self-managed"
       }
     }
   },

@@ -469,35 +469,20 @@ class SessionExecutor(AgentExecutor):
         try:
             goal = _features.goal(runtime)
             if plan.goal and goal is not None and goal.is_open:
-                self._notify_goal_state(session_id, goal, review_phase=GoalReviewPhase.CHECKING)
-                review_phase_active = True
-                review = asyncio.create_task(_features.review_goal(runtime))
-                state.continuation.attach_review(review)
-                try:
-                    verdict = await review
-                    _features.apply_goal_review(runtime, verdict)
-                    if verdict is None:
-                        # No verdict landed: the review failed or was cancelled, so an open goal
-                        # must not re-arm another review the moment this one ends. Park it and
-                        # wait for a person, exactly as a spent allowance would.
-                        _features.park_goal(runtime)
-                except asyncio.CancelledError:
-                    # Clearing the goal cancels only its review; stopping cancels the owning workflow too.
-                    if _features.goal(runtime) is not None and _features.goal(runtime).status == Goal.CLEARED:
-                        pass
-                    else:
-                        raise
-                except Exception:
-                    # A review that raised leaves the goal undecided: park it so the failure
-                    # cannot re-arm another review, and let the workflow end cleanly.
-                    logger.exception("goal review failed for %s", session_id)
-                    _features.park_goal(runtime)
-                finally:
-                    state.continuation.detach_review(review)
-                    self._notify_goal_state(session_id, _features.goal(runtime))
-                    review_phase_active = False
-                # Written before the turn opens: a verdict held only in memory is one a restart would lose.
-                await self._persist_session_state(session_id, runtime)
+                if _features.goal_review_mode(runtime) == "self_managed":
+                    # The simple goal mode: no reviewer. The session re-opens on the goal
+                    # itself, and the agent owns it through the update_goal tool.
+                    await self._drive_self_sent_turn(
+                        session_id,
+                        GOAL_CONTINUATION_KIND,
+                        metadata_flags={
+                            Metadata.GOAL_CONTINUATION: True,
+                            **({Metadata.TASK_CONTINUATION: True} if plan.tasks else {}),
+                        },
+                        text=goal.text,
+                    )
+                else:
+                    await self._continue_with_review(session_id, state, runtime, plan, goal)
             goal = _features.goal(runtime)
             if goal is not None and goal.is_open and goal.review_message:
                 await self._drive_self_sent_turn(
@@ -521,6 +506,38 @@ class SessionExecutor(AgentExecutor):
                 self._notify_goal_state(session_id, _features.goal(runtime))
             # Exactly one release for the plan hold, whichever obligation opened the next turn.
             self._notify_turn_state(session_id, False)
+
+    async def _continue_with_review(self, session_id, state, runtime, plan, goal) -> None:
+        """Review an open goal first; a verdict that lands decides the next turn."""
+        self._notify_goal_state(session_id, goal, review_phase=GoalReviewPhase.CHECKING)
+        review_phase_active = True
+        review = asyncio.create_task(_features.review_goal(runtime))
+        state.continuation.attach_review(review)
+        try:
+            verdict = await review
+            _features.apply_goal_review(runtime, verdict)
+            if verdict is None:
+                # No verdict landed: the review failed or was cancelled, so an open goal
+                # must not re-arm another review the moment this one ends. Park it and
+                # wait for a person, exactly as a spent allowance would.
+                _features.park_goal(runtime)
+        except asyncio.CancelledError:
+            # Clearing the goal cancels only its review; stopping cancels the owning workflow too.
+            if _features.goal(runtime) is not None and _features.goal(runtime).status == Goal.CLEARED:
+                pass
+            else:
+                raise
+        except Exception:
+            # A review that raised leaves the goal undecided: park it so the failure
+            # cannot re-arm another review, and let the workflow end cleanly.
+            logger.exception("goal review failed for %s", session_id)
+            _features.park_goal(runtime)
+        finally:
+            state.continuation.detach_review(review)
+            self._notify_goal_state(session_id, _features.goal(runtime))
+            review_phase_active = False
+        # Written before the turn opens: a verdict held only in memory is one a restart would lose.
+        await self._persist_session_state(session_id, runtime)
 
     async def clear_goal(self, session_id: str) -> bool:
         """The person calling the goal off: a live one is stopped and kept, a resolved one is dropped from view."""

@@ -90,6 +90,13 @@ class GoalReviewFeature(Feature):
         """The verdict a reviewer session has handed over, read once the review turn ends."""
         return self._submitted
 
+    @property
+    def review_mode(self) -> str:
+        """How a goal that is still open is driven: ``review`` or ``self_managed``."""
+        if self._context is None:
+            return "review"
+        return self._context.global_configuration.goal_review.mode
+
     def set_listener(self, listener: Optional[Callable[[Optional[Goal]], None]]) -> None:
         """Install the callback that hears every goal change, which is how the interface learns of one."""
         self._listener = listener

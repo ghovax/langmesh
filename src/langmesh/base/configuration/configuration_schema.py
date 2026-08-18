@@ -199,6 +199,8 @@ SECTION_ORDER = (
     # What it carries between turns, and what it knows about you.
     "compaction",
     "user_context",
+    # How an open goal keeps being worked.
+    "goal_review",
     # The surfaces it can reach for.
     "computer_control",
     # Who it talks to, and with what credentials.
