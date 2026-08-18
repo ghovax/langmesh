@@ -35,6 +35,7 @@ from langmesh.runtime.turn_events import (
     TurnEvent,
 )
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
+from langmesh.runtime.features.plugins.continuation import Continuation
 from langmesh.runtime.features.plugins.goal_review.models import GoalReview
 from langmesh.runtime.features.plugins.goal_review.tools import (
     submit_goal_review,
@@ -247,7 +248,10 @@ class GoalReviewFeature(Feature):
                     if tool.name not in _REVIEWER_DISABLED_TOOLS
                 ),
                 related_turns=self._host.tools.turn_reader,
-                features=[feature_class() for feature_class in self._host.turn.feature_classes()],
+                features=[
+                    feature_class()
+                    for feature_class in self._host.turn.feature_classes(Continuation)
+                ],
             ),
             conversation=list(self._host.conversation.messages),
         )

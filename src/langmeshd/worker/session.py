@@ -474,13 +474,24 @@ class SessionExecutor(AgentExecutor):
                 review = asyncio.create_task(_features.review_goal(runtime))
                 state.continuation.attach_review(review)
                 try:
-                    _features.apply_goal_review(runtime, await review)
+                    verdict = await review
+                    _features.apply_goal_review(runtime, verdict)
+                    if verdict is None:
+                        # No verdict landed: the review failed or was cancelled, so an open goal
+                        # must not re-arm another review the moment this one ends. Park it and
+                        # wait for a person, exactly as a spent allowance would.
+                        _features.park_goal(runtime)
                 except asyncio.CancelledError:
                     # Clearing the goal cancels only its review; stopping cancels the owning workflow too.
                     if _features.goal(runtime) is not None and _features.goal(runtime).status == Goal.CLEARED:
                         pass
                     else:
                         raise
+                except Exception:
+                    # A review that raised leaves the goal undecided: park it so the failure
+                    # cannot re-arm another review, and let the workflow end cleanly.
+                    logger.exception("goal review failed for %s", session_id)
+                    _features.park_goal(runtime)
                 finally:
                     state.continuation.detach_review(review)
                     self._notify_goal_state(session_id, _features.goal(runtime))

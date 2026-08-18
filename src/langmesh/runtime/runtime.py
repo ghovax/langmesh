@@ -467,7 +467,11 @@ class AgentRuntime(
                 refuse_if_over_window=self._refuse_if_over_window,
                 reminder_message=self._reminder_message,
                 maintenance_active=lambda: bool(self._features.active_maintenance()),
-                feature_classes=lambda: [type(feature) for feature in self._features.instances],
+                feature_classes=lambda *exclusions: [
+                    type(feature)
+                    for feature in self._features.instances
+                    if type(feature) not in exclusions
+                ],
             ),
             bookkeeping=BookkeepingView(
                 note_state_changed=self._note_session_changed,
