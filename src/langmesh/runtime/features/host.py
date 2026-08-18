@@ -8,7 +8,7 @@ turn's machinery, and the session's bookkeeping — grouped so each capability i
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
@@ -73,7 +73,7 @@ class TurnView:
     refuse_if_over_window: Callable[[list], None]  #: Raises before an oversized request leaves.
     reminder_message: Callable[[str, dict], Any]  #: A harness note to the model.
     maintenance_active: Callable[[], bool]  #: Whether any feature is currently holding the loop.
-    feature_classes: Callable[[], list[type]]  #: The installed features' classes, for sub-sessions.
+    feature_classes: Callable[[Iterable[type]], list[type]]  #: The installed features' classes, minus exclusions, for sub-sessions.
 
 
 @dataclass(frozen=True)

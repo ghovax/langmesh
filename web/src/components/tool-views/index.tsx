@@ -1179,6 +1179,15 @@ export function ToolResultView({
   // The task tools confirm with raw ids the call card already shows as numbers, so the confirmation is dropped.
   if (name === "set_tasks" || name === "update_tasks") return null;
 
+  // The verdict tools confirm with internal codes; the call card already shows the full verdict,
+  // and the goal-review panel carries the live review, so the confirmation is dropped.
+  if (
+    name === "submit_goal_review" ||
+    name === "permission_decision" ||
+    name === "submit_compaction_summary"
+  )
+    return null;
+
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
     const data = parsed as Record<string, unknown>;
     const code = asString(data.code);
