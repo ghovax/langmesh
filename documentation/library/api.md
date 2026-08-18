@@ -24,9 +24,15 @@
     options:
       members: true
 
+## Tool grants
+
+::: langmesh.base.contracts.tools
+
+`Session(..., tools=[...])` accepts bare LangChain tools or `ToolGrant` values; `Session.grant_tool(...)` adds one at any later moment. Both are append-only. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
+
 ## Extension ports
 
-::: langmesh.base.ports
+::: langmesh.base.contracts.ports
     options:
       members: true
       show_root_heading: false
@@ -35,25 +41,21 @@
 
 ## Resources and locations
 
-::: langmesh.base.attachments.AttachmentInput
+::: langmesh.base.content.attachments.AttachmentInput
 
-::: langmesh.base.attachments.PathAttachments
+::: langmesh.base.content.attachments.PathAttachments
 
-::: langmesh.base.resources.WorkspaceResources
+::: langmesh.base.persistence.resources.WorkspaceResources
     options:
       members: true
 
-::: langmesh.base.resources.OverlayResources
+::: langmesh.base.persistence.resources.OverlayResources
     options:
       members: true
 
-::: langmesh.base.observations.ObservationRegistry
+::: langmesh.base.persistence.observations.ObservationRegistry
     options:
       members: true
-
-::: langmesh.runtime.locations.Location
-
-## Standard policies
 
 ::: langmesh.runtime.compaction.KeepRecentTurns
 
@@ -61,6 +63,6 @@
 
 ::: langmesh.runtime.compaction.DirectCompactionPreparation
 
-::: langmesh.runtime.continuation.TuningContinuationPolicy
+::: langmesh.runtime.features.plugins.continuation.policy.TuningContinuationPolicy
 
 ::: langmesh.runtime.hooks.MaximumToolCalls

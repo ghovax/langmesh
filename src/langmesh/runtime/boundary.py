@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-from langmesh.base.confinement import AccessRequest, Profile, _contained_in, expand
+from langmesh.base.confinement import AccessRequest, Profile, expand
+from langmesh.base.confinement.confinement import _contained_in
 from langmesh.runtime.values import PermissionReason
 
 

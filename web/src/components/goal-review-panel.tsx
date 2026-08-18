@@ -31,13 +31,17 @@ function GoalReviewTranscript({ review }: { review: GoalReviewSession }) {
   const transcriptRef = useRef<TranscriptState>(createTranscriptState());
   const historyBufferRef = useRef(new TranscriptHistoryBuffer());
   const newestHistorySeenRef = useRef(false);
+  // A microtask, not a frame callback: it coalesces the task's frames into one snapshot and can
+  // never fire while React is mid-render, which is the interleave that drives "Maximum update depth".
+  const paintScheduledRef = useRef(false);
 
   useEffect(() => {
-    let paint: number | null = null;
     const renderTranscript = () => {
-      if (paint !== null) return;
-      paint = window.requestAnimationFrame(() => {
-        paint = null;
+      if (paintScheduledRef.current) return;
+      paintScheduledRef.current = true;
+      queueMicrotask(() => {
+        if (!paintScheduledRef.current) return;
+        paintScheduledRef.current = false;
         historyBufferRef.current.drainInto(transcriptRef.current);
         setMessages([...transcriptRef.current.messages]);
       });
@@ -46,8 +50,7 @@ function GoalReviewTranscript({ review }: { review: GoalReviewSession }) {
       review.review_id,
       (frame) => {
         if (frame.kind === "snapshot") {
-          if (paint !== null) window.cancelAnimationFrame(paint);
-          paint = null;
+          paintScheduledRef.current = false;
           transcriptRef.current = createTranscriptState();
           historyBufferRef.current.reset();
           newestHistorySeenRef.current = false;
@@ -86,7 +89,7 @@ function GoalReviewTranscript({ review }: { review: GoalReviewSession }) {
       () => undefined,
     );
     return () => {
-      if (paint !== null) window.cancelAnimationFrame(paint);
+      paintScheduledRef.current = false;
       attachment.abort();
     };
   }, [review.review_id]);

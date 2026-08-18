@@ -10,7 +10,7 @@ import os
 import platform
 import shlex
 
-from langmesh.base.identifiers import new_id
+from langmesh.base.primitives.identifiers import new_id
 import time
 import uuid
 from dataclasses import dataclass
@@ -35,14 +35,14 @@ from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
-from langmesh.base.cursor_credentials import (
+from langmesh.base.identity.cursor_credentials import (
     CursorAuthError,
     CursorTokens,
     valid_tokens,
 )
 from langmesh.base.configuration import PromptLoader
 from langmesh.runtime.cache_trace import active_cache_lane
-from langmesh.base.cursor_subscription import (
+from langmesh.base.identity.cursor_subscription import (
     APPEND_PATH,
     RUN_HOSTS,
     RUN_PATH,
@@ -55,10 +55,12 @@ from langmesh.base.cursor_subscription import (
     record_context_window,
     request_headers,
 )
-from langmesh.base.message_content import content_blocks_to_message_content, message_text
-from langmesh.base.serialization import compact, upstream_detail
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.content.message_content import content_blocks_to_message_content, message_text
+from langmesh.base.primitives.serialization import compact, upstream_detail
+
 from langmesh.runtime.models import cursor_wire as wire
+
+from langmesh.base.primitives.limits import current_limits
 
 
 # Everything this client says to a model is a prompt on disk, like every other prompt the harness sends.
@@ -222,9 +224,7 @@ class ChatCursorModel(BaseChatModel):
 
     @staticmethod
     def _system_prompt(messages: Sequence[BaseMessage]) -> str:
-        # Only the first system message is the session prompt; later ones stay in place as
-        # transcript blocks, as codex treats them, so an appended instruction (the permission
-        # review) never rewrites the cached system prefix.
+        # Only the first system message is the session prompt; later ones stay in place as transcript blocks, as codex treats them, so an appended instruction (the permission review) never rewrites the cached system prefix.
         first = next((message for message in messages if isinstance(message, SystemMessage)), None)
         content = message_text(first) if first is not None else ""
         return _PROMPTS.load("cursor_system_prompt", {"content": content}).strip()
@@ -790,7 +790,7 @@ def _digest_messages(messages: Sequence[BaseMessage]) -> str:
 
 
 def _prune_resumptions() -> None:
-    horizon = time.monotonic() - active_tuning().duration(Tunable.subscription_resume_ttl)
+    horizon = time.monotonic() - current_limits().subscription_resume_ttl
     for key in [key for key, entry in _resumptions.items() if entry.touched_at < horizon]:
         del _resumptions[key]
 

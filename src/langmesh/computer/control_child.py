@@ -10,7 +10,7 @@ import sys
 import traceback
 from contextlib import redirect_stdout
 from typing import Any
-from langmesh.base.errors import summary
+from langmesh.base.primitives.errors import summary
 
 # The primitives a script may call, sent by the parent because only it knows which surface is answering.
 _FALLBACK_PRIMITIVES = (

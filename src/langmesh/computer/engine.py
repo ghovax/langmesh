@@ -19,7 +19,7 @@ from langmesh.computer.surface import (
     resolve_caret,
     resolve_range,
 )
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.limits import current_limits
 
 message = message_loader("computer")
 
@@ -288,11 +288,11 @@ class NativeSurface(Surface):
         snapshot = accessibility.snapshot_app(pid, **kwargs)
         if not _is_incomplete(snapshot):
             return snapshot
-        deadline = time.monotonic() + active_tuning().settle_give_up()
-        delay = active_tuning().settle_poll()
+        deadline = time.monotonic() + current_limits().settle_give_up_seconds
+        delay = current_limits().settle_poll_seconds
         while time.monotonic() < deadline:
             time.sleep(delay)
-            delay = min(delay * 2, active_tuning().duration(Tunable.accessibility_ready_backoff))
+            delay = min(delay * 2, current_limits().accessibility_ready_backoff)
             if self._tree_ready(pid, window):
                 return accessibility.snapshot_app(pid, **kwargs)
         return accessibility.snapshot_app(pid, **kwargs)
@@ -302,7 +302,7 @@ class NativeSurface(Surface):
         probe = accessibility.snapshot_app(
             pid,
             window=window,
-            budget_seconds=active_tuning().duration(Tunable.accessibility_ready_probe),
+            budget_seconds=current_limits().accessibility_ready_probe,
         )
         return not _is_incomplete(probe)
 
@@ -503,7 +503,7 @@ class NativeSurface(Surface):
             if result.get("ok") and submit:
                 # Return goes to the process rather than the element, since a form is committed by the focused control.
                 AS.AXUIElementSetAttributeValue(handle, accessibility.FOCUSED, True)
-                time.sleep(active_tuning().duration(Tunable.focus_settle))
+                time.sleep(current_limits().focus_settle)
                 if input_synthesis.press_key(entry.pid, "return", []):
                     result["did"] = f"{result.get('did', 'Typed')}, then submitted"
                     result["submitted"] = True
@@ -522,7 +522,7 @@ class NativeSurface(Surface):
             if accessibility.set_selected_text(handle, text):
                 return {"ok": True, "did": f"Inserted {len(text)} chars", "via": "accessible"}
             AS.AXUIElementSetAttributeValue(handle, accessibility.FOCUSED, True)
-            time.sleep(active_tuning().duration(Tunable.focus_settle))
+            time.sleep(current_limits().focus_settle)
             input_synthesis.type_text(entry.pid, text)
             return {"ok": True, "did": f"Typed {len(text)} chars", "via": "synthesized"}
         if (
@@ -537,7 +537,7 @@ class NativeSurface(Surface):
                     result["note"] = message("type_clamped")
             return result
         AS.AXUIElementSetAttributeValue(handle, accessibility.FOCUSED, True)
-        time.sleep(active_tuning().duration(Tunable.focus_settle))
+        time.sleep(current_limits().focus_settle)
         input_synthesis.type_text(entry.pid, text)
         return {"ok": True, "did": f"Typed into {entry.name!r}", "via": "synthesized"}
 
@@ -579,7 +579,7 @@ class NativeSurface(Surface):
                 pid = entry.pid
             else:
                 pid = state.pid
-            step = active_tuning().amount(Tunable.scroll_amount_pixels)
+            step = current_limits().scroll_amount_pixels
             vectors = {"up": (0, step), "down": (0, -step), "left": (step, 0), "right": (-step, 0)}
             if direction not in vectors:
                 return {

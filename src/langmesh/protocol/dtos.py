@@ -7,16 +7,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 
-class SessionTitle(BaseModel):
-    """Structured schema returned by the title-generation LLM call."""
-
-    title: str = Field(
-        description=(
-            "A concise imperative phrase starting with a verb, then the action it describes; normal sentence case (not Title Case), no surrounding quotes, no trailing punctuation."
-        ),
-    )
-
-
 class AgentInfo(BaseModel):
     id: str
     name: str
@@ -28,7 +18,6 @@ class AgentInfo(BaseModel):
 
 
 class AgentBashConfigurationResponse(BaseModel):
-    enabled: bool
     background_allowed: bool
     permissions: dict[str, str]
 
@@ -40,15 +29,13 @@ class AgentConfigurationResponse(BaseModel):
     model: str = ""
     provider: str = ""
     reasoning_effort: str = "high"
-    permission_mode: Literal["ask", "automatic"]
+    permission_mode: Literal["ask", "automatic", "allow"]
     tools_enabled: list[str]
-    tools_disabled: list[str]
     bash: AgentBashConfigurationResponse
     path: str
 
 
 class AgentBashConfigurationRequest(BaseModel):
-    enabled: bool | None = None
     background_allowed: bool | None = None
     permissions: dict[str, str] | None = None
 
@@ -57,9 +44,8 @@ class AgentConfigurationUpdateRequest(BaseModel):
     model: str | None = None
     provider: str | None = None
     reasoning_effort: str | None = None
-    permission_mode: Literal["ask", "automatic"] | None = None
+    permission_mode: Literal["ask", "automatic", "allow"] | None = None
     tools_enabled: list[str] | None = None
-    tools_disabled: list[str] | None = None
     bash: AgentBashConfigurationRequest | None = None
 
     @model_validator(mode="after")
@@ -89,11 +75,10 @@ class SessionDraftRequest(BaseModel):
 
 class SettingsUpdateRequest(BaseModel):
     exa_api_key: str | None = None
-    composio_api_key: str | None = None
     jina_api_key: str | None = None
     firecrawl_api_key: str | None = None
     web_fetch_proxy_url: str | None = None
-    permission_mode: Literal["ask", "automatic"] | None = None
+    permission_mode: Literal["ask", "automatic", "allow"] | None = None
     sandbox: dict | None = None
     # Per-provider API keys. Both OpenCode gateways use the key under "opencode".
     provider_keys: dict[str, str] | None = None
@@ -129,12 +114,6 @@ class SettingValueRequest(BaseModel):
 
 class ToolboxUpdateRequest(BaseModel):
     """Turn a session's own tool profile on or off."""
-
-    enabled: bool
-
-
-class DictationUpdateRequest(BaseModel):
-    """Opt-in/out of transcribing the composer's dictation on this machine."""
 
     enabled: bool
 
@@ -185,7 +164,7 @@ class InterfacePreferencesUpdateRequest(BaseModel):
 
 
 class MachineRequest(BaseModel):
-    """A machine to remember, as the `langmesh://pair#…` link `langmesh reach` prints."""
+    """A machine to remember, as the `langmesh://pair#…` link a paired door prints."""
 
     link: str
 

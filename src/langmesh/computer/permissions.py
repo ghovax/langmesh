@@ -7,7 +7,7 @@ from contextlib import suppress
 
 import ApplicationServices as AS
 
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.limits import current_limits
 
 
 def accessibility_granted() -> bool:
@@ -28,5 +28,5 @@ def open_accessibility_settings() -> None:
 def _open(url: str) -> None:
     with suppress(OSError, subprocess.SubprocessError):
         subprocess.run(
-            ["open", url], check=False, timeout=active_tuning().duration(Tunable.open_url)
+            ["open", url], check=False, timeout=current_limits().open_url
         )

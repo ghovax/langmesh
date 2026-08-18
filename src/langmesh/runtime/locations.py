@@ -1,72 +1,24 @@
-"""Value types for resolving a call's location and carrying its execution policy."""
+"""The core's call-execution policy value, and the permissions contract's verdict model.
+
+Execution locations themselves are the locations plugin's concern; the core keeps only the
+per-call policy (working directory + permission mode) and the typed verdict the permissions
+plugin's reviewer submits.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping
+from typing import Literal
 
 from pydantic import BaseModel
 
-from langmesh.base.permission_mode import PermissionMode
-from langmesh.locations.executor import LocationExecutor
-
-
-@dataclass(frozen=True)
-class Location:
-    """One addressable execution environment, optionally with a caller-supplied executor."""
-
-    name: str
-    kind: Literal["local", "remote"]
-    base_directory: str
-    host_alias: str = ""
-    uri: str = ""
-    executor: LocationExecutor | None = None
-
-    @classmethod
-    def from_mapping(cls, value: Mapping[str, Any]) -> "Location":
-        return cls(
-            name=str(value.get("name") or "location"),
-            kind=str(value.get("kind") or "local"),
-            base_directory=str(value.get("base_directory") or ""),
-            host_alias=str(value.get("host_alias") or ""),
-            uri=str(value.get("uri") or ""),
-            executor=value.get("executor"),
-        )
-
-    def __post_init__(self) -> None:
-        if not self.name.strip():
-            raise ValueError("location name must not be empty")
-        if self.kind not in {"local", "remote"}:
-            raise ValueError("location kind must be 'local' or 'remote'")
-        if not self.base_directory:
-            raise ValueError("location base_directory must not be empty")
-        if self.kind == "remote" and not self.host_alias and not (self.executor and self.uri):
-            raise ValueError("a remote location needs host_alias, or both uri and a custom executor")
-
-
-@dataclass
-class ResolvedLocation:
-    """A location resolved for execution: its identity, its executor, its base directory, its mode."""
-
-    uri: str
-    name: str
-    kind: str  # "local" | "remote"
-    base_directory: str
-    executor: LocationExecutor
-    @property
-    def is_remote(self) -> bool:
-        return self.kind == "remote"
-
-
-class ToolLocationError(ValueError):
-    """A tool call named a `location` that is missing, ambiguous, or unknown."""
+from langmesh.base.configuration.permission_mode import PermissionMode
 
 
 @dataclass(frozen=True)
 class CallExecutionPolicy:
-    """One call's execution policy, threaded as a value so concurrent calls cannot cross locations."""
+    """One call's execution policy, threaded as a value so concurrent calls cannot cross."""
 
-    location: ResolvedLocation | None
     working_directory: str
     mode: PermissionMode
 
@@ -76,12 +28,9 @@ class CallExecutionPolicy:
         return self.mode.asks
 
     @property
-    def is_remote(self) -> bool:
-        return self.location is not None and self.location.is_remote
-
-
-# The tools that act on a location's filesystem or shell, and so resolve against one.
-_LOCATION_TOOLS = frozenset({"bash", "download_file"})
+    def gates(self) -> bool:
+        """Whether this call is gated at all. ``allow`` mode skips every gate."""
+        return self.mode.gates
 
 
 class PermissionDecision(BaseModel):

@@ -12,8 +12,8 @@ from typing import Any, Awaitable, Callable, Optional
 
 from langmesh.base import confinement
 from langmesh.computer.surface import message_loader
-from langmesh.base.serialization import compact
-from langmesh.base.tuning import Tunable, active_tuning
+from langmesh.base.primitives.serialization import compact
+from langmesh.base.primitives.limits import current_limits
 
 logger = logging.getLogger("langmesh.computer.control")
 
@@ -40,7 +40,7 @@ class _NotPermitted(Exception):
 
 def _script_ceiling() -> float:
     """The child's wall-clock limit, and the base of a stack the surface's guard and worker thread sit above."""
-    return active_tuning().duration(Tunable.control_script)
+    return current_limits().control_script
 
 
 Dispatch = Callable[[str, list, dict], Awaitable[Any]]

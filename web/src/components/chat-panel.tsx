@@ -239,6 +239,7 @@ export function ChatPanel({
   const permissionSyncRef = useRef<Promise<void>>(Promise.resolve());
   const {
     messages,
+    tasks,
     tokenUsage,
     queuedMessages,
     sessionId,
@@ -1367,6 +1368,7 @@ export function ChatPanel({
                   sandboxBackend={sandboxBackend.backend}
                   onSandboxEnforceChange={onSandboxEnforceChange}
                   tokenUsage={tokenUsage}
+                  tasks={tasks}
                   onCompact={compact}
                   isCompacting={isCompacting}
                 />

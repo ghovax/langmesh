@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from litellm import exceptions as litellm_exceptions
 
-from langmesh.base.model_errors import CONTEXT_OVERFLOW_CODES, ContextWindowExceeded
+from langmesh.base.content.model_errors import CONTEXT_OVERFLOW_CODES, ContextWindowExceeded
 
 
 def _provider_error_body(error: object) -> dict:

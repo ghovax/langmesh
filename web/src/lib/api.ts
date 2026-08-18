@@ -1,11 +1,10 @@
 // Where the daemon lives, and the capability token that proves we may talk to it.
 import { setFaultSender, swallowed } from "./swallowed";
 
-export const LOCAL_DAEMON_PORT = 8824;
-export const LOCAL_DAEMON_URL = `http://127.0.0.1:${LOCAL_DAEMON_PORT}`;
-
+// The development server is pointed straight at the daemon by web-development.sh; a built page
+// is served by the daemon itself (or by Tauri, which reports the endpoint below).
 const DEFAULT_API_BASE =
-  (typeof process !== "undefined" ? process.env.NEXT_PUBLIC_API_BASE : "") || LOCAL_DAEMON_URL;
+  typeof process !== "undefined" ? process.env.NEXT_PUBLIC_API_BASE || "" : "";
 
 // The token a development page presents, and only ever a development page.
 const DEVELOPMENT_TOKEN =
@@ -25,18 +24,7 @@ let daemonEndpointPromise: Promise<void> | null = null;
 
 async function resolveDaemonEndpoint(): Promise<void> {
   if (!runningInTauri()) {
-    // A served build uses its origin while Next development publishes the stable local bridge.
-    try {
-      const response = await fetch("/__langmesh/runtime.json", { cache: "no-store" });
-      if (response.ok) {
-        const runtime = (await response.json()) as { apiBase?: unknown; proxied?: unknown };
-        if (runtime.proxied) API_BASE = "";
-        else if (typeof runtime.apiBase === "string")
-          API_BASE = runtime.apiBase.replace(/\/+$/, "");
-      }
-    } catch {
-      // Not served by it; nothing to learn.
-    }
+    // The daemon's address comes from the environment in development; nothing to discover on the page.
     return;
   }
   try {
@@ -618,7 +606,7 @@ export async function refreshRemoteAgent(name: string): Promise<{ health: string
 export const METADATA_KEY = "urn:langmesh:ext:turn:v1";
 export const CONTENT_BLOCK_METADATA_KEY = "urn:langmesh:ext:content-block:v1";
 
-export type PermissionMode = "ask" | "automatic";
+export type PermissionMode = "ask" | "automatic" | "allow";
 export type WorktreeStrategy = "none" | "branch" | "worktree";
 
 export interface AgentSummary {
@@ -632,7 +620,6 @@ export interface AgentSummary {
 }
 
 export interface AgentBashConfiguration {
-  enabled: boolean;
   background_allowed: boolean;
   permissions: Record<string, string>;
 }
@@ -647,7 +634,6 @@ export interface AgentConfiguration {
   /** The mode a new session using this agent starts with. */
   permission_mode: PermissionMode;
   tools_enabled: string[];
-  tools_disabled: string[];
   bash: AgentBashConfiguration;
   path: string;
 }
@@ -658,7 +644,6 @@ export interface SaveAgentConfigurationPayload {
   reasoning_effort?: string;
   permission_mode?: PermissionMode;
   tools_enabled?: string[];
-  tools_disabled?: string[];
   bash?: Partial<AgentBashConfiguration>;
 }
 
@@ -966,41 +951,33 @@ export async function transcribeDictation(samples: Float32Array): Promise<string
   return String(data.text ?? "");
 }
 
-// Whether the server can read Full-Disk-Access data. False on any error, including non-macOS.
-export async function fetchFullDiskAccess(): Promise<boolean> {
+// Which macOS system permissions the daemon holds, keyed by permission name. A missing
+// permission reads false on any error, including non-macOS.
+export type SystemPermission = "full_disk_access" | "accessibility";
+
+export async function fetchSystemPermissions(): Promise<Record<SystemPermission, boolean>> {
   try {
-    const response = await apiFetch(`/system/full-disk-access`);
-    if (!response.ok) return false;
-    return (await response.json()).granted === true;
+    const response = await apiFetch(`/system/permissions`);
+    if (!response.ok) return { full_disk_access: false, accessibility: false };
+    const body = await response.json();
+    return {
+      full_disk_access: body.permissions?.full_disk_access === true,
+      accessibility: body.permissions?.accessibility === true,
+    };
   } catch (caught) {
-    swallowed({ component: "api", operation: "read the Full Disk Access state" }, caught);
-    return false;
+    swallowed({ component: "api", operation: "read the system permission state" }, caught);
+    return { full_disk_access: false, accessibility: false };
   }
 }
 
-// Open System Settings to the Full Disk Access pane so the user can add LangMesh in one hop.
-export async function openFullDiskAccessSettings(): Promise<void> {
-  await apiFetch(`/system/full-disk-access/open`, { method: "POST" }).catch((caught) =>
-    swallowed({ component: "api", operation: "open the Full Disk Access pane" }, caught),
-  );
-}
-
-// Whether the app can control other apps, which the computer-use tool needs. False on any error.
-export async function fetchAccessibility(): Promise<boolean> {
-  try {
-    const response = await apiFetch(`/system/accessibility`);
-    if (!response.ok) return false;
-    return (await response.json()).granted === true;
-  } catch (caught) {
-    swallowed({ component: "api", operation: "read the Accessibility state" }, caught);
-    return false;
-  }
-}
-
-// Trigger the system Accessibility prompt and open its pane so the user can grant LangMesh.
-export async function openAccessibilitySettings(): Promise<void> {
-  await apiFetch(`/system/accessibility/open`, { method: "POST" }).catch((caught) =>
-    swallowed({ component: "api", operation: "open the Accessibility pane" }, caught),
+// Open (and prompt for, where required) the settings pane that grants one permission.
+export async function openSystemPermission(permission: SystemPermission): Promise<void> {
+  await apiFetch(`/system/permissions/open`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ permission }),
+  }).catch((caught) =>
+    swallowed({ component: "api", operation: `open the ${permission} pane` }, caught),
   );
 }
 

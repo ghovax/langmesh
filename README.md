@@ -14,19 +14,19 @@ One conversation with an agent is a **session**. You create one, send it work, a
 
 LangMesh is four layers. Each one uses the layer under it and adds a single thing:
 
-1. **The library** — `import langmesh`. `langmesh.Session` runs an agent in your own process. You give it the agent, the model, the working directory and the credentials; it reads no file you did not name. This is the harness itself, and the three layers above are all built on it. See [As a library](documentation/library.md).
+1. **The library** — `import langmesh`. `langmesh.Session` runs an agent in your own process. You give it the agent, the model, the working directory and the credentials; it reads no file you did not name. This is the harness itself, and the three layers above are all built on it. See [As a library](documentation/library/index.md).
 2. **The machine loaders** — `langmesh.daemon.machine`. These read your configuration file and the agents in your `.agents` directory, and turn them into what the library takes. This is the first layer that knows your home directory exists.
 3. **The daemon** — `langmeshd`. It hosts every session, keeps the register of what exists, owns the databases, and answers every call. That buys three things the library alone cannot. A session outlives the program that made it, another machine can reach it, and it is addressable by name from anywhere.
-4. **The clients** — the `langmesh` command, the macOS app, and a phone. All three talk to the daemon and contain no harness of their own. Anything one can do, the others can. The phone reaches it over `langmesh reach`, which is the one surface here that is meant to leave the machine — a loopback listener that Tailscale fronts with a stable name and a real certificate, opt-in and authenticated. See [`langmesh reach`](documentation/cli.md#reaching-it-from-a-phone).
+4. **The clients** — `langmesh serve`, the macOS app, and a phone. All talk to the daemon and contain no harness of their own; anything one can do, the others can. A remote client reaches the daemon through its published endpoint, authenticated by the capability token and — on the unix socket — by the kernel-attributed caller.
 
-An agent can use these too. When a session needs help it creates a second session and messages it, over the same API your terminal uses. The helper appears in `langmesh ps`, you can watch it, and it ends when its parent does. Its answer arrives as a message, in its own words.
+An agent can use these too. When a session needs help it creates a second session and messages it, over the same API your terminal uses. The helper appears in your session list, you can watch it, and it ends when its parent does. Its answer arrives as a message, in its own words.
 
 ## Why own the harness
 
 The harness writes the system prompt, defines the tools, manages context, and sets what the agent may do. The same model does different work under different harnesses — OpenCode versus Claude Code or Codex, say. LangMesh lets you change that layer:
 
-- **Tune the guardrails.** Permission modes and per-command rules are configuration. The engine that enforces them is open code. When the settings are not enough, you can change how permissioning works ([Permissions](documentation/configuration.md#permission-modes)).
-- **The agent can work on LangMesh itself.** Its prompt says that it runs LangMesh. Open the LangMesh repository as the project. The agent then reads and edits the harness, and you rebuild ([Architecture](documentation/architecture.md)).
+- **Tune the guardrails.** Permission modes and per-command rules are configuration. The engine that enforces them is open code. When the settings are not enough, you can change how permissioning works ([Permissions](documentation/user/configuration.md#permission-modes)).
+- **The agent can work on LangMesh itself.** Its prompt says that it runs LangMesh. Open the LangMesh repository as the project. The agent then reads and edits the harness, and you rebuild ([Architecture](documentation/internal/architecture.md)).
 - **The agent can start with context about you** — an opt-in snapshot of your machine and habits, off by default ([What it sends](SECURITY.md#what-the-agent-sends-to-your-model-provider)).
 
 ## Install
@@ -36,9 +36,9 @@ LangMesh runs on **macOS on Apple Silicon**. It ships as two downloads:
 - **The daemon bundle**, which carries the harness, the daemon and the `langmesh` command in one signed image.
 - **The app**, which is the window that talks to it.
 
-Download the latest release, install both, and run `langmesh app`. The build is self-signed, so Gatekeeper warns you at the first launch. You can also build from source with the Nix-pinned toolchain.
+Download the latest release, install both, and open the app (or run `langmesh serve` for the browser). The build is self-signed, so Gatekeeper warns you at the first launch. You can also build from source with the Nix-pinned toolchain.
 
-See the [Installation guide](documentation/installation.md) for both paths in full.
+See the [Installation guide](documentation/user/installation.md) for both paths in full.
 
 ## Quickstart
 
@@ -161,26 +161,30 @@ A program running on a managed machine can deliberately load its agent catalogue
 
 ### From the terminal
 
-| Command                                                                | What it does                           |
-| ---------------------------------------------------------------------- | -------------------------------------- |
-| `langmesh create --agent general-assistant --directory ~/code/project` | Creates a session and prints its id    |
-| `langmesh send <id> "What does this project do?" --wait`               | Sends it work and waits for the answer |
-| `langmesh ps`                                                          | Shows what runs, and what waits on you |
-| `langmesh attach <id>`                                                 | Follows it live                        |
+The command line has one job: serve the interface, with the daemon behind it.
 
-A session composes over the API, not over this command. `create_session` makes a peer and gives it a brief, `message_session` reaches a session in either direction, and `end_session` stops one.
+```console
+$ langmesh serve
+```
 
-These use the same daemon, the same sockets, and the same tree. The tool carries the caller's identity, which an argv string cannot do. A peer is therefore always a child of whoever made it, and its answer arrives as a message.
+Everything else — creating and messaging sessions, answering permission requests, watching work,
+recurring schedules, configuration, sign-in — happens in the interface (the app, or the browser
+`serve` exposes) or over the daemon's API. A session composes over that API: `create_session`
+makes a peer and gives it a brief, `message_session` reaches a session in either direction, and
+`end_session` stops one.
 
-The daemon starts itself on the first command.
+These use the same daemon, the same sockets, and the same tree. The tool carries the caller's
+identity, which an argv string cannot do. A peer is therefore always a child of whoever made it,
+and its answer arrives as a message. `serve` starts the daemon it needs and stops a daemon it
+started; a daemon someone else was already running is left alone.
 
 ### From the app
 
 1. **Launch LangMesh.** The daemon starts automatically; the app connects to it.
-2. **Add a model key.** Open **Settings**, then **Providers**, and paste a key for any provider. You can also sign in with a ChatGPT or Cursor subscription. Then pick a model. Keys live in your LangMesh configuration file — see the [Configuration guide](documentation/configuration.md), or run `langmesh configure --all` to see every setting there is.
-3. **Start a conversation.** Type a task. Approve tool calls as they come up, or relax the [permission mode](documentation/configuration.md#permission-modes) once you trust a flow.
+2. **Add a model key.** Open **Settings**, then **Providers**, and paste a key for any provider. You can also sign in with a ChatGPT or Cursor subscription. Then pick a model. Keys live in your LangMesh configuration file — see the [Configuration guide](documentation/user/configuration.md).
+3. **Start a conversation.** Type a task. Approve tool calls as they come up, or relax the [permission mode](documentation/user/configuration.md#permission-modes) once you trust a flow.
 
-The screen-control tools need a one-time Accessibility grant and Chrome's remote-debugging toggle — see the [Installation guide](documentation/installation.md#permissions-the-app-may-ask-for).
+The screen-control tools need a one-time Accessibility grant and Chrome's remote-debugging toggle — see the [Installation guide](documentation/user/installation.md#permissions-the-app-may-ask-for).
 
 > [!NOTE]
 > You can opt in to send a snapshot of how you work. The system prompt then carries it to your model provider. This is off by default. See [what the agent sends to your model provider](SECURITY.md#what-the-agent-sends-to-your-model-provider).
@@ -203,7 +207,7 @@ Three design choices distinguish LangMesh:
 - **A session is addressable, not a function call.** A session has a name, a durable record and an inbox, and it outlives whatever made it. To make a peer, a session creates another session and messages it. It uses the API that a person uses, and gets an answer as a message rather than a return value.
 - **A composed script, not a click-by-click loop.** `control_screen` runs a Python program. Its primitives (`click`, `type`, `scroll`, `evaluate`) are the same on native apps and in the browser. One call can loop over rows, branch on what it finds, and call the page's own API. The other tools need one round trip for each click. LangMesh needs far fewer model turns.
 
-The trade-off: it needs an accessibility tree or DOM to read, where a screenshot approach works on anything drawn on screen. See [Tools](documentation/tools.md).
+The trade-off: it needs an accessibility tree or DOM to read, where a screenshot approach works on anything drawn on screen. See [Tools](documentation/user/agent-system.md).
 
 Elsewhere they lead. They have more polish, more places to run, and deeper ecosystems. Claude Code has subagents, hooks, plugins, and an Agent SDK. Codex has cloud tasks, more than 90 plugins, and automatic PR review. All three tools gate actions behind approvals and a sandbox.
 
@@ -221,7 +225,7 @@ LangMesh follows the XDG convention. It does not use a single dot-directory:
 
 The OS clears the runtime directory when you log out. A crashed daemon therefore leaves nothing behind.
 
-Only the holder of a session's handle can reach it. `create` mints a capability token. Every call to a session's socket must present that token. The daemon guards its own API the same way, with a token that it writes 0600 into the runtime directory.
+Only the holder of a session's handle can reach it. Creating a session mints a capability token. Every call to a session's socket must present that token. The daemon guards its own API the same way, with a token that it writes 0600 into the runtime directory.
 
 That token does not say _which_ session is calling. A session runs as the same user and could read the file. So on the unix socket the daemon asks the kernel for the peer's pid. It resolves the pid to a session through the process session that every worker leads. A call is therefore attributed to whoever made it.
 
@@ -230,7 +234,7 @@ That token does not say _which_ session is calling. A session runs as the same u
 
 ## Documentation
 
-The full guides live in the **[Documentation](documentation/README.md)**. It indexes them and sketches the project layout. They cover the architecture and its vocabulary, installation, [the library](documentation/library.md), the [`langmesh` command](documentation/cli.md), [the desktop app](documentation/app.md), agents and skills, configuration, the tool surface, and development.
+The full guides live in the **[Documentation](documentation/index.md)**. They cover the [library](documentation/library/index.md), the [command line](documentation/user/installation.md), the [desktop app](documentation/user/app.md), [installation](documentation/user/installation.md), agents and skills, configuration, the tool surface, the [architecture](documentation/internal/architecture.md), and development.
 
 ## Built with
 
