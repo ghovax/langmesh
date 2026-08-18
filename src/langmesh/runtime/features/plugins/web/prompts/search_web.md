@@ -5,5 +5,4 @@ Search the web with Exa. It returns a ranked list of results, each with a title,
 
 Arguments:
 - `query` — The search query.
-- `explanation` — A short reason for the search, in the words the user reads.
 - `result_count` — How many results to return, from 1 to 10. Defaults to 5.

@@ -11,4 +11,3 @@ Arguments:
 - `timeout` — How many seconds to wait inline before the download moves to the background. It does not abort the download.
 - `hard_deadline` — How many seconds before the transfer itself aborts.
 - `background` — Skip the inline wait, and background the download at once.
-- `explanation` — A short reason for the download, in the words the user reads.

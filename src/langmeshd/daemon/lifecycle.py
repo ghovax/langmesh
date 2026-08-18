@@ -21,17 +21,6 @@ def _daemon_token() -> str:
     return state.daemon_token
 
 
-def _resolve_locations(session_id: str):
-    """The workspace's locations in the shape the runtime builds executors from, best effort."""
-    from langmeshd.commons.services.locations import _resolve_session_locations
-
-    try:
-        return _resolve_session_locations(session_id)
-    except Exception:  # noqa: BLE001 — a session without locations still runs
-        logger.warning("could not resolve locations for %s", session_id, exc_info=True)
-        return None
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -66,7 +55,7 @@ class SessionLifecycle:
     async def start(self, record: SessionRecord) -> bool:
         """Give a record a live executor, which costs about what building the object costs."""
         started = await self._host.start(
-            record, locations=_resolve_locations(record.id), daemon_token=_daemon_token()
+            record, daemon_token=_daemon_token()
         )
         if not started:
             self._registry.end(

@@ -57,16 +57,12 @@
     options:
       members: true
 
-::: langmesh.runtime.locations.Location
-
-## Standard policies
-
 ::: langmesh.runtime.compaction.KeepRecentTurns
 
 ::: langmesh.runtime.compaction.ObservationCompactionPreparation
 
 ::: langmesh.runtime.compaction.DirectCompactionPreparation
 
-::: langmesh.runtime.continuation.TuningContinuationPolicy
+::: langmesh.runtime.features.plugins.continuation.policy.TuningContinuationPolicy
 
 ::: langmesh.runtime.hooks.MaximumToolCalls

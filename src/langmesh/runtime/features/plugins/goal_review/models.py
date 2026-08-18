@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from langmesh.base.configuration import PromptLoader
-from langmesh.runtime.goal import NonBlankText
+from langmesh.runtime.features.plugins.goal_review.goal import NonBlankText
 
 #: The goal-review plugin's schema descriptions, configurable beside this plugin.
 _DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")

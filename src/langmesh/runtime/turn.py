@@ -116,17 +116,8 @@ class _RunsTurns:
         return dict(supplied) if supplied else {}
 
     def _locations_summary(self) -> list[dict]:
-        """The locations as the model sees them: the URI to pass, and enough to choose the right one."""
-        return [
-            {
-                "location": resolved.uri,
-                "name": resolved.name,
-                "kind": resolved.kind,
-                "base_directory": resolved.base_directory,
-                "writable": resolved.is_remote or self.writes_anywhere,
-            }
-            for resolved in self._locations.values()
-        ]
+        """The locations as the model sees them, owned by the locations plugin when it is composed."""
+        return []
 
     def _build_static_system_prompt(self) -> str:
         """Build the session prompt once, then rebuild it only at an explicit refresh boundary."""

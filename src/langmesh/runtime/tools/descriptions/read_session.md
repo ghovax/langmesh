@@ -4,4 +4,3 @@ Read one session's current state: which agent profile it runs, whether its proce
 
 Arguments:
 - `session` — The id of the session to read. Required.
-- `explanation` — A short reason for the read, in the words the user reads.

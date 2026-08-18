@@ -28,17 +28,16 @@ from langmesh.runtime.models.cursor import ChatCursorModel
 from langmesh.base.content.models import find_model, resolve_litellm
 from langmesh.base.contracts.tools import as_tool_grants
 from langmesh.base.contracts.catalogue import project_catalogue
-from langmesh.runtime.tools.arguments import with_explanation
+from langmesh.runtime.tools.arguments import with_shared_fields
 from langmesh.runtime.tools.execution import Tool, ToolServices, invoke_supplied
 from langmesh.runtime.tools import registry as tools_registry
 from langmesh.runtime.tools.handlers import HANDLERS
-from langmesh.locations.resolver import LocationAddress, executor_for, location_uri_for
 from langmesh.base.contracts.ports import Observation
 from langmesh.runtime.tools.context import ToolContext
 
 from langmesh.base.configuration.permission_mode import PermissionMode
 
-from langmesh.runtime.locations import CallExecutionPolicy, Location, ResolvedLocation, ToolLocationError
+from langmesh.runtime.locations import CallExecutionPolicy
 from langmesh.runtime.turn_events import (
     TurnEvent,
     Usage,
@@ -278,10 +277,6 @@ class AgentRuntime(
         self._permission_mode = PermissionMode.resolve(
             profile.permission_mode, agent_configuration.permission_default
         )
-        # The locations the agent may address, with a local one synthesized when none were supplied.
-        self._locations: dict[str, ResolvedLocation] = {}
-        self._locations_by_name: dict[str, ResolvedLocation] = {}
-        self._build_locations(profile.locations)
 
         model_identifier = agent_configuration.model_identifier
         # Only a runtime that must build a client needs to be told which one.
@@ -311,7 +306,7 @@ class AgentRuntime(
         # The session's tools are composed by the caller, never forced: the complete roster comes from `toolset`, additions from `tools`/`grant_tool`, and nothing is injected by default.
         configured_tools = list(toolset) if toolset is not None else []
         # Every tool a session runs carries the shared `explanation` field, added here once.
-        configured_tools = [with_explanation(tool) for tool in configured_tools]
+        configured_tools = [with_shared_fields(tool) for tool in configured_tools]
         # The dispatchable units: every tool the session runs, assembled from the caller's set and the caller's own tools. A caller's tool of the same name replaces a built-in's execution. The model binds the configured schemas; grants ride as appended messages and only change who executes, keeping the cache prefix untouched.
         units: dict[str, Tool] = {}
         for tool in configured_tools:
@@ -436,9 +431,9 @@ class AgentRuntime(
             ),
             boundary=BoundaryView(
                 sandbox=self._sandbox,
-                locations=self._locations,
-                locations_by_name=self._locations_by_name,
-                resolve_location=self._resolve_location,
+                resolve_execution=lambda tool_name, arguments: self._features.invoke(
+                    "resolve_execution", tool_name, arguments
+                ),
                 call_policy=self._call_policy,
                 granted_profile=self._granted_profile,
                 access_grants=lambda: self._access_grants,
@@ -479,13 +474,14 @@ class AgentRuntime(
                 session_snapshot=self.session_snapshot,
                 restore_session=self.restore_session,
             ),
+            services=components.services,
         )
         self._features = build_features(components.features, self._plugin_context, plugin_host)
         # Features may contribute tools of their own (bash, computer use, ...); bind them to the
         # model and make them executable alongside the configured roster. A feature that answers
         # the `tool_handler` capability supplies the tool's event-rich handler; the generic path
         # runs the rest. The core never names a tool's owning feature.
-        contributed = [with_explanation(tool) for tool in self._features.contributed_tools()]
+        contributed = [with_shared_fields(tool) for tool in self._features.contributed_tools()]
         if contributed:
             contributed_names = {tool.name for tool in contributed}
             self._tools = [
@@ -508,6 +504,7 @@ class AgentRuntime(
                     handler=handler,
                 )
             self._bound_model = self._model.bind_tools(self._model_tools)
+        self._apply_contributed_schema_fields()
         # The services bundle every tool handler runs against: the tool's only view of the runtime.
         # Plugin capabilities are reached through the opaque features handle, never by class.
         self._services = ToolServices(
@@ -538,85 +535,43 @@ class AgentRuntime(
         """Rebuild catalogue-derived prompt material at the next model-call boundary."""
         self._cached_system_prompt = None
 
-    def set_locations(self, locations: Sequence[Location] | None) -> None:
-        """Adopt the workspace's environments as they are now, so one added later reaches an existing session."""
-        carried = {uri: resolved.executor for uri, resolved in self._locations.items()}
-        self._locations = {}
-        self._locations_by_name = {}
-        self._build_locations(locations, executors=carried)
-        # A running prompt remains stable until its explicit refresh boundary (normally a maintenance fold).
+    def _apply_contributed_schema_fields(self) -> None:
+        """Add each plugin's extra argument fields to the tools they extend, and rebind.
 
-    def _build_locations(
-        self,
-        locations: Sequence[Location] | None,
-        *,
-        executors: dict[str, Any] | None = None,
-    ) -> None:
-        """The resolved-location map, each entry carrying an executor and its effective policy."""
-        entries = locations or []
-        if not entries:
-            # None supplied: synthesize one local location, so the single-location default still applies.
-            entries = [Location("local", "local", self._working_directory)]
-        for entry in entries:
-            kind = entry.kind
-            base_directory = entry.base_directory
-            host_alias = entry.host_alias
-            address = LocationAddress(
-                kind=kind, base_directory=base_directory, host_alias=host_alias
-            )
-            uri = entry.uri or location_uri_for(address)
-            resolved = ResolvedLocation(
-                uri=uri,
-                name=entry.name,
-                kind=kind,
-                base_directory=base_directory,
-                executor=entry.executor or (executors or {}).get(uri) or executor_for(address),
-            )
-            self._locations[uri] = resolved
-            self._locations_by_name[resolved.name] = resolved
+        The extension happens after the features are built, so a plugin's contributed field
+        (the locations plugin's ``location`` selector on bash) appears only when that plugin
+        is composed. The field's explanation lives with the plugin that contributes it.
+        """
+        from pydantic import create_model
 
-    def _resolve_location(self, location_value: str | None) -> ResolvedLocation:
-        """Resolve a call's ``location`` to its executor and policy, defaulting to the local filesystem."""
-        if not location_value:
-            if len(self._locations) == 1:
-                return next(iter(self._locations.values()))
-            # Default to local, so an omission is never executed on a remote host.
-            local = next(
-                (location for location in self._locations.values() if location.kind == "local"),
-                None,
-            )
-            if local is not None:
-                return local
-            # Every location is remote, so require an explicit choice rather than picking one.
-            raise ToolLocationError(
-                self._prompt_loader.load(
-                    "location_required",
-                    {"available_locations": compact(sorted(self._locations_by_name))},
-                )
-            )
-        if location_value in self._locations:
-            return self._locations[location_value]
-        if location_value in self._locations_by_name:
-            return self._locations_by_name[location_value]
-        raise ToolLocationError(
-            self._prompt_loader.load(
-                "location_unknown",
-                {
-                    "location": location_value,
-                    "available_locations": compact(sorted(self._locations_by_name)),
-                },
-            )
-        )
+        extended_any = False
+        for tool in self._tools:
+            extra = self._features.contributed_schema_fields(tool.name)
+            if not extra:
+                continue
+            schema = tool.args_schema
+            if schema is None:
+                continue
+            fields = {
+                name: (field.annotation, field)
+                for name, field in schema.model_fields.items()
+                if name not in ("kwargs", "args")
+            }
+            fields.update(extra)
+            extended = create_model(f"{schema.__name__}Arguments", **fields)
+            tool.args_schema = extended
+            self._tool_schemas[tool.name] = extended
+            unit = self._tool_units.get(tool.name)
+            if unit is not None:
+                unit.schema = extended
+            extended_any = True
+        if extended_any:
+            self._bound_model = self._model.bind_tools(self._model_tools)
 
-    def _call_policy(self, location: ResolvedLocation | None) -> CallExecutionPolicy:
-        """One call's execution policy, as a value, so concurrent calls to different locations cannot cross."""
-        working_directory = (
-            self._working_directory
-            if location is None or location.is_remote
-            else location.base_directory
-        )
+    def _call_policy(self, _location: Any = None) -> CallExecutionPolicy:
+        """One call's execution policy, as a value, so concurrent calls cannot cross."""
         return CallExecutionPolicy(
-            location=location, working_directory=working_directory, mode=self._permission_mode
+            working_directory=self._working_directory, mode=self._permission_mode
         )
 
     def _canonical_working_directory(self, working_directory: str | None = None) -> str:
@@ -685,7 +640,7 @@ class AgentRuntime(
         A grant of a name the session already runs replaces that tool's implementation."""
         if tool.name in self._supplied_tool_names:
             return
-        tool = with_explanation(tool)
+        tool = with_shared_fields(tool)
         self._supplied_tool_names.add(tool.name)
         self._tool_units[tool.name] = Tool(
             name=tool.name,

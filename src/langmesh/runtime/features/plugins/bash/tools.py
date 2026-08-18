@@ -15,7 +15,6 @@ from langmesh.base import confinement as _confinement
 from langmesh.base.confinement import parse_access_request
 from langmesh.base.confinement.file_leases import FileLeaseConflict
 from langmesh.base.configuration import PermissionDenied
-from langmesh.locations.executor import SshExecutor
 from langmesh.runtime.background import (
     bind_background_jobs,
     bind_tool_call_id,
@@ -43,8 +42,8 @@ async def run_bash(
     return _maybe_json(result)
 
 def sandbox_denial(services: Any, result_data: Any, policy: Any) -> Any:
-    """Whether a finished command looks like the operating system stopped it. Never remote, never backgrounded."""
-    if policy.is_remote or not isinstance(result_data, dict):
+    """Whether a finished command looks like the operating system stopped it."""
+    if not isinstance(result_data, dict):
         return None
     if result_data.get("code") == "bash_started":
         return None
@@ -64,44 +63,42 @@ def sandbox_denial(services: Any, result_data: Any, policy: Any) -> Any:
     )
 
 async def handle_bash(
-    services, tool_name, tool_arguments, tool_call_identifier, decision, policy, resolved_location
+    services, tool_name, tool_arguments, tool_call_identifier, decision, policy, call_site
 ) -> AsyncIterator[Any]:
     raw_command = tool_arguments.get("command", "")
-    if policy.is_remote:
-        assert resolved_location is not None
-        executor = resolved_location.executor
-        assert isinstance(executor, SshExecutor)
+    # A feature that owns execution targets answers with an opaque call site: forward the command through it, letting the remote draw its own boundary.
+    if call_site is not None:
+        executor, base_directory = call_site
+        remote_argv = executor.ssh_argv(raw_command, base_directory)
         tool_arguments = dict(tool_arguments)
-        tool_arguments["command"] = shlex.join(
-            executor.ssh_argv(raw_command, resolved_location.base_directory)
-        )
-        # The remote host draws its own boundary; local confinement has no meaning here.
+        tool_arguments["command"] = shlex.join(remote_argv)
         tool_context.bind(services.tool_context.for_remote())
-    else:
-        directory = policy.working_directory
-        if directory:
-            directory_path = Path(directory).expanduser()
-            if not directory_path.is_absolute():
-                yield Error(
-                    id=tool_call_identifier,
-                    code="invalid_working_directory",
-                    message=f"Working directory must be an absolute path: {directory}",
-                    tool=tool_name,
-                )
-                return
-            if not directory_path.is_dir():
-                yield Error(
-                    id=tool_call_identifier,
-                    code="invalid_working_directory",
-                    message=f"Working directory does not exist: {directory}",
-                    tool=tool_name,
-                )
-                return
-            tool_context.bind(
-                services.tool_context.for_directory(str(directory_path))
-                .with_grants(services.access_grants)
-                .with_attachments(services.attached_files)
+    # `location` is the execution-target selector, resolved above; the plain tool never sees it.
+    tool_arguments.pop("location", None)
+    directory = policy.working_directory
+    if directory and call_site is None:
+        directory_path = Path(directory).expanduser()
+        if not directory_path.is_absolute():
+            yield Error(
+                id=tool_call_identifier,
+                code="invalid_working_directory",
+                message=f"Working directory must be an absolute path: {directory}",
+                tool=tool_name,
             )
+            return
+        if not directory_path.is_dir():
+            yield Error(
+                id=tool_call_identifier,
+                code="invalid_working_directory",
+                message=f"Working directory does not exist: {directory}",
+                tool=tool_name,
+            )
+            return
+        tool_context.bind(
+            services.tool_context.for_directory(str(directory_path))
+            .with_grants(services.access_grants)
+            .with_attachments(services.attached_files)
+        )
     requested, _ = parse_access_request(tool_arguments.get("access_request"))
     declared_read_only = requested is not None and requested.mutates is False
 
@@ -121,7 +118,7 @@ async def handle_bash(
             return
 
     lease_token = ""
-    if not declared_read_only and not policy.is_remote:
+    if not declared_read_only and call_site is None:
         try:
             lease_token = await services.leases.acquire(
                 scope="worktree",

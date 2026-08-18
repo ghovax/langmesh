@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from langchain.tools import tool
 from langchain_core.tools import StructuredTool
 
+from langmesh.base.configuration import PromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.features.plugins.goal_review.models import GoalReview
-from langmesh.runtime.goal import Goal
+from langmesh.runtime.features.plugins.goal_review.goal import Goal
 from langmesh.runtime.tools.execution import current_tool_services
 from langmesh.runtime.values import ToolStatus
+
+#: The tools' model-facing descriptions, read from this plugin's own prompts directory.
+_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
 
 async def _submit_goal_review(**arguments: Any) -> str:
     services = current_tool_services()
@@ -22,7 +27,7 @@ async def _submit_goal_review(**arguments: Any) -> str:
 submit_goal_review = StructuredTool.from_function(
     coroutine=_submit_goal_review,
     name="submit_goal_review",
-    description="Submit the goal review's verdict.",
+    description=_DESCRIPTIONS.load("submit_goal_review", {}).strip(),
     args_schema=GoalReview,
 )
 
@@ -58,4 +63,7 @@ async def update_goal(
         result = {"code": "goal_active", "goal": goal_text, "purpose": purpose_text, "requirements": requirement_lines}
         services.record_event("goal_updated", result)
     return compact(result)
+
+
+update_goal.description = _DESCRIPTIONS.load("update_goal", {}).strip() or update_goal.description
 

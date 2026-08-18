@@ -825,8 +825,6 @@ class Compaction(Feature):
             ),
             conversation=list(self._host.conversation.messages),
         )
-        summarizer._locations = dict(self._host.boundary.locations)
-        summarizer._locations_by_name = dict(self._host.boundary.locations_by_name)
         summarizer._tool_context = replace(summarizer._tool_context, toolbox=None)
         summarizer.restore_session(self._host.bookkeeping.session_snapshot())
         # A fresh handshake keeps the hidden session from folding its own summary turn.

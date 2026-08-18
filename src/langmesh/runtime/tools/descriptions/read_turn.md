@@ -5,4 +5,3 @@ Read a sibling turn in this session by its id. It returns the turn's current sta
 
 Arguments:
 - `turn_id` — The id of a sibling turn that reached you from outside.
-- `explanation` — A short reason for the read, in the words the user reads. The interface shows it as this call's label.

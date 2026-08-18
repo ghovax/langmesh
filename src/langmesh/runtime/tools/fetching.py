@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from pathlib import Path
 from urllib.parse import urlparse
 
 import minify_html
@@ -11,7 +12,6 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify as _markdownify
 
 from langmesh.base.primitives.tuning import Tunable, active_tuning, clip_to_tokens
-from langmesh.locations.executor import LocationExecutor
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools import context as tool_context
 
@@ -168,16 +168,15 @@ async def _fetch_direct(url: str, output_format: str, timeout_seconds: int) -> s
 
 
 async def download_file(
-    executor: LocationExecutor,
     url: str,
     resolved_path: str,
     timeout_seconds: int = 120,
 ) -> str:
-    """Download a URL's bytes and write them through the executor, so the file lands on the target location."""
+    """Download a URL's bytes and write them to ``resolved_path``."""
     response = await _impersonated_get(_http_url(url), timeout_seconds)
     data = response.content
     content_type = response.headers.get("content-type", "")
-    await asyncio.to_thread(executor.write_bytes, resolved_path, data)
+    await asyncio.to_thread(_write_local, resolved_path, data)
     return _payload(
         "download_completed",
         url=url,
@@ -185,6 +184,11 @@ async def download_file(
         bytes=len(data),
         content_type=content_type,
     )
+
+
+def _write_local(path: str, data: bytes) -> None:
+    Path(path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+    Path(path).expanduser().write_bytes(data)
 
 
 def _minified(html: str) -> str:

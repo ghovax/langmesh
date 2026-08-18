@@ -7,4 +7,3 @@ Send a message to another session: one you created, or the one that created you.
 Arguments:
 - `session` — The id of the session to send to — one you created, or the one that created you. Required.
 - `message` — What to send. Downward this is the focused brief; upward it is the entire report.
-- `explanation` — A short reason for the message, in the words the user reads. The interface shows it as this call's label.

@@ -5,4 +5,3 @@ Load a skill's instructions into the conversation.
 
 Arguments:
 - `name` — The skill name, as "Available skills" lists it.
-- `explanation` — A short reason for loading it, in the words the user reads.

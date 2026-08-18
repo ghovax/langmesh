@@ -10,4 +10,3 @@ Arguments:
 - `timeout` — How many seconds to wait inline before the fetch moves to the background. It does not abort the fetch.
 - `hard_deadline` — How many seconds before the network request itself aborts.
 - `background` — Skip the inline wait, and background the fetch at once.
-- `explanation` — A short reason for the fetch, in the words the user reads.

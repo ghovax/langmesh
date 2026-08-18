@@ -7,4 +7,3 @@ Ask the user one or more questions, and wait for the answers.
 
 Arguments:
 - `questions` — list of question objects: "question" (full text), "header" (short label, ~30 chars), "options" (a list of {"label", "description"}), and two optional flags: "multiple" and "custom" (default true).
-- `explanation` — short reason for asking, in the words the user reads.

@@ -10,25 +10,27 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+from pathlib import Path
 from typing import Any
 
 from langchain.tools import tool
-from pydantic import Field
 
 from langmesh.base import confinement as _confinement
+from langmesh.base.configuration import PromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.primitives.tuning import Tunable, active_tuning, clip_to_tokens
 from langmesh.runtime.background import current_background_jobs, current_tool_call_id, record_child_group
 from langmesh.runtime.features import Feature
 from langmesh.runtime.tools import context as tool_context
-from langmesh.runtime.tools.registry import ACCESS_REQUEST
+
+#: The tool's model-facing description, read from this plugin's own prompts directory.
+_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
+
 
 @tool
 async def bash(
     *,
     command: str,
-    access_request: dict[str, Any] = Field(..., description=ACCESS_REQUEST),
-    location: str = "",
     background: bool = False,
     timeout: float = Tunable.bash_sync_window.default,
     **kwargs: Any,
@@ -178,8 +180,7 @@ async def bash(
         cancel_callback=cancel_process,
         arguments={
             "command": command,
-            "location": location,
-            "access_request": access_request,
+            "access_request": kwargs.get("access_request", {}),
             "explanation": kwargs.get("explanation", ""),
             "background": background,
         },
@@ -224,5 +225,9 @@ class Bash(Feature):
 
             return handle_bash
         return None
+
+
+# The tool's model-facing description is this plugin's own file, applied once at import.
+bash.description = _DESCRIPTIONS.load("bash", {}).strip() or bash.description
 
 __all__ = ["Bash", "bash"]

@@ -378,8 +378,9 @@ The hooks are the points in the turn where a feature can act:
 
 ### Composing a session's features
 
-The application layer composes which features a session runs. `Session` composes the shipped
-battery by default; pass your own list to change it. A feature you leave out simply is not there.
+The application layer composes which features a session runs. The library ships no default
+battery: a session runs exactly the features you hand it, and a feature you leave out simply
+is not there.
 
 ```python
 from langmesh import Session, SessionComponents
@@ -400,7 +401,7 @@ session = Session(
 
 The shipped classes are ordinary classes: construct them with the ports they declare (a journal,
 a strategy, a store) and hand the instances over. `features=()` runs a plain session with no
-features at all. `Session`'s default battery is `langmesh.runtime.features.battery.default_features`.
+features at all.
 
 ### Writing a feature
 
