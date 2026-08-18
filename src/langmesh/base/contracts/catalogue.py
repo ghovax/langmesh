@@ -6,8 +6,8 @@ import logging
 from dataclasses import dataclass
 from langmesh.base.content.instructions import Instruction, as_instructions
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional, Sequence
-from langmesh.base.configuration import load_agent_configuration, list_agent_route_names, PromptLoader
+from typing import Any, Iterable, Mapping, Optional, Protocol, Sequence
+from langmesh.base.configuration import PromptLoader
 from langmesh.base.content.skills import load_skills
 from langmesh.base.content.memories import load_memories
 from langmesh.base.persistence.file_cache import parsed_file
@@ -51,26 +51,41 @@ def _as_paths(directories: Iterable[str | Path] | str | Path | None) -> tuple[Pa
     return tuple(Path(directory).expanduser() for directory in directories)
 
 
+class AgentLoader(Protocol):
+    """Reads an agent profile and lists the profiles a directory offers, on behalf of the host.
+
+    The library never opens agent files itself; the environment supplies this so a bare library
+    embedding stays usable without any on-disk profiles.
+    """
+
+    def load(self, name: str, directories: Sequence[Path]) -> Any: ...
+
+    def route_names(self, directories: Sequence[Path]) -> Sequence[str]: ...
+
+
 class FileCatalogue:
     """The `.agents` trees on disk: what LangMesh has always read, now behind the interface."""
 
-    def __init__(self, roots: CatalogueRoots) -> None:
+    def __init__(
+        self, roots: CatalogueRoots, agent_loader: AgentLoader | None = None
+    ) -> None:
         self._roots = roots
+        self._agent_loader = agent_loader
 
     # Agents
 
     def agent(self, name: str) -> Any:
-        if not self._roots.agents:
+        if not self._roots.agents or self._agent_loader is None:
             return None
         try:
-            return load_agent_configuration(name, list(self._roots.agents))
+            return self._agent_loader.load(name, list(self._roots.agents))
         except FileNotFoundError:
             return None
 
     def agents(self) -> Sequence[str]:
-        if not self._roots.agents:
+        if not self._roots.agents or self._agent_loader is None:
             return []
-        return list_agent_route_names(list(self._roots.agents))
+        return self._agent_loader.route_names(list(self._roots.agents))
 
     # Skills and memories, re-read each call so an edit takes effect without a restart.
 
@@ -209,7 +224,11 @@ def packaged_prompts_directory() -> Path:
     return Path(__file__).resolve().parent.parent.parent / "runtime" / "prompts"
 
 
-def machine_catalogue(configuration: Any, working_directory: str = "") -> FileCatalogue:
+def machine_catalogue(
+    configuration: Any,
+    working_directory: str = "",
+    agent_loader: AgentLoader | None = None,
+) -> FileCatalogue:
     """The catalogue a person's machine has, including the home roots."""
     return FileCatalogue(
         CatalogueRoots(
@@ -219,7 +238,8 @@ def machine_catalogue(configuration: Any, working_directory: str = "") -> FileCa
             prompts=packaged_prompts_directory(),
             project_directory=Path(working_directory).expanduser() if working_directory else None,
             include_home_instructions=True,
-        )
+        ),
+        agent_loader=agent_loader,
     )
 
 
@@ -244,6 +264,7 @@ def project_catalogue(configuration: Any, working_directory: str) -> FileCatalog
 
 
 __all__ = [
+    "AgentLoader",
     "Catalogue",
     "CatalogueRoots",
     "FileCatalogue",

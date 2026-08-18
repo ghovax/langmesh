@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from langmesh.base.confinement import environment_variables
 from langmesh.protocol.dtos import SettingsUpdateRequest
+from langmeshd.commons import timing
 
 
 class AppSettingsUpdateRequest(SettingsUpdateRequest):
@@ -44,12 +45,12 @@ class DaemonConfiguration(BaseModel):
     """
 
     # How long to wait for the daemon to come up after starting it.
-    startup_seconds: float = Field(45.0)
+    startup_seconds: float = Field(timing.DAEMON_STARTUP_SECONDS)
     # How often a probe retries a not-yet-listening daemon, and how long each connect may wait.
-    probe_interval_seconds: float = Field(0.05)
-    probe_connect_seconds: float = Field(0.5)
+    probe_interval_seconds: float = Field(timing.DAEMON_PROBE_INTERVAL_SECONDS)
+    probe_connect_seconds: float = Field(timing.DAEMON_PROBE_CONNECT_SECONDS)
     # How long an idle hosted session sleeps before it is let go (five hours).
-    session_idle_sleep_seconds: float = Field(18_000.0)
+    session_idle_sleep_seconds: float = Field(timing.SESSION_IDLE_SLEEP_SECONDS)
 
 
 class DictationConfiguration(BaseModel):

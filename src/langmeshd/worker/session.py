@@ -18,6 +18,7 @@ from a2a.types import DataPart, Message, MessageSendParams, Part, Role, Task, Ta
 from langchain_core.messages import messages_from_dict
 
 from langmeshd.worker import features_access as _features
+from langmeshd.daemon.agent_files import AgentFileLoader, list_agents
 from langmesh.base.contracts.catalogue import machine_catalogue
 from langmesh.base.primitives.limits import current_limits
 from langmesh.base.confinement.file_leases import FileLeaseManager
@@ -67,8 +68,6 @@ def _installed_agent_names(
     global_configuration: Configuration, working_directory: str
 ) -> list[str]:
     """The profiles a peer could be created with, read at build time so a bad name is unrepresentable."""
-    from langmesh.base.configuration import list_agents
-
     directories = (
         global_configuration.agent_directories_for(working_directory)
         if working_directory
@@ -888,7 +887,9 @@ class SessionExecutor(AgentExecutor):
         conversation: Optional[list] = None,
     ) -> AgentRuntime:
         # A worker serves a person's machine, so it gets the machine's catalogue; a library session gets less.
-        catalogue = machine_catalogue(self._global_configuration, project_directory)
+        catalogue = machine_catalogue(
+            self._global_configuration, project_directory, agent_loader=AgentFileLoader()
+        )
         configuration = catalogue.agent(self._agent_name)
         if configuration is None:
             raise FileNotFoundError(
@@ -1383,7 +1384,9 @@ class SessionExecutor(AgentExecutor):
         from langmesh.base.content.skills import skills_for_agent
         from langmesh.protocol.card import build_agent_card
 
-        catalogue = machine_catalogue(self._global_configuration, self._working_directory)
+        catalogue = machine_catalogue(
+            self._global_configuration, self._working_directory, agent_loader=AgentFileLoader()
+        )
         configuration = catalogue.agent(self._agent_name)
         if configuration is None:
             raise FileNotFoundError(f"Agent configuration not found: {self._agent_name}")

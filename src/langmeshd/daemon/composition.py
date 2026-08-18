@@ -9,9 +9,9 @@ from pathlib import Path
 
 from langmesh.base.configuration import (
     configuration_file_path,
-    list_agent_route_names,
-    seed_home_agents,
 )
+from langmeshd.commons.configuration_io import seed_home_agents
+from langmeshd.daemon.agent_files import list_agent_route_names
 from langmesh.base.content import toolbox
 from langmesh.base.confinement.file_leases import FileLeaseManager
 from langmesh.base.confinement.paths import data_directory

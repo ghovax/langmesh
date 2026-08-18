@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from langmesh.base.configuration import Configuration
 from langmesh.protocol.client import RemoteAgentAuth, RemoteAgentConfiguration, RemoteAgentManager
 from langmeshd.commons import state
+from langmeshd.commons.configuration_io import load_configuration
 
 
 def _remote_agent_dataclasses() -> dict[str, RemoteAgentConfiguration]:
@@ -38,7 +38,7 @@ async def _reload_remote_agents() -> None:
     """Re-read remote-agents.json and apply it live, with no server restart."""
     assert state.global_configuration is not None
     async with state.configuration_lock:
-        state.global_configuration.remote_agents = Configuration.load().remote_agents
+        state.global_configuration.remote_agents = load_configuration(seed=False).remote_agents
         configurations = _remote_agent_dataclasses()
         if state.remote_agent_manager is None:
             state.remote_agent_manager = RemoteAgentManager(configurations)

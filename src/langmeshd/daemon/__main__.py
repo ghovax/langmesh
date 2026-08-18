@@ -264,7 +264,7 @@ async def _serve() -> int:
 
     from langmesh.base import confinement
     from langmesh.base.persistence.background_store import reap_orphaned_process_groups
-    from langmesh.base.configuration import Configuration
+    from langmeshd.commons.configuration_io import load_configuration
     from langmeshd.daemon import state
     from langmeshd.commons import state as commons_state
     from langmeshd.daemon.composition import close_shared_resources, open_shared_resources
@@ -278,19 +278,17 @@ async def _serve() -> int:
         return await _defer_to_running_daemon()
     _reclaim_socket()
 
-    commons_state.global_configuration = Configuration.load()
+    commons_state.global_configuration = load_configuration()
     # The app's own configuration sections, read from the same file the library's Configuration reads.
     from langmeshd.commons.configuration import (
         ComposioConfiguration,
         DaemonConfiguration,
         DictationConfiguration,
     )
-    from langmesh.base.confinement.paths import configuration_file_path
-
-    import yaml as _yaml
+    from langmeshd.commons.configuration_file import load as load_config_document
 
     try:
-        _document = _yaml.safe_load(configuration_file_path().read_text()) or {}
+        _document = load_config_document() or {}
     except OSError:
         _document = {}
     commons_state.daemon_configuration = DaemonConfiguration.model_validate(

@@ -1,4 +1,8 @@
-"""Reading and writing the configuration file, addressed by dotted path."""
+"""Reading and writing the configuration file, addressed by dotted path.
+
+The daemon owns the file: the library's Configuration is a pure model and never touches
+YAML. The schema it validates against stays in the library.
+"""
 
 from __future__ import annotations
 
@@ -98,13 +102,18 @@ def parse(raw: str) -> Any:
 
 def rejects(data: dict) -> str:
     """Why this document would not load, asked before the file is written because it is read at startup."""
+    from pydantic import ValidationError
+
     try:
         Configuration.model_validate(data)
-    except Exception as error:  # noqa: BLE001 — the validator's message is the useful part
-        # Pydantic reports the field, the reason and a documentation link, of which the link is noise here.
-        lines = [line.strip() for line in str(error).splitlines()[1:3] if line.strip()]
-        reason = " ".join(line for line in lines if not line.startswith("For further"))
-        return reason.split(" [type=")[0] or str(error)
+    except ValidationError as error:
+        messages = [
+            f"{'.'.join(str(part) for part in entry.get('loc', ()))}: {entry.get('msg', '')}"
+            for entry in error.errors()
+        ]
+        return "; ".join(messages) or str(error).splitlines()[0]
+    except Exception as error:  # noqa: BLE001 — anything else is a single line worth reporting.
+        return str(error).splitlines()[0] or str(error)
     return ""
 
 

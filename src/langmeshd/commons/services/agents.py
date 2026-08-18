@@ -9,9 +9,10 @@ from langmesh.protocol.dtos import (
 
 from datetime import datetime, timezone
 from langmesh.protocol.card import build_agent_card
-from langmesh.base.configuration import (
+from langmeshd.daemon.agent_files import (
     agent_configuration_path,
     list_agent_route_names,
+    list_agents,
     load_agent_configuration,
 )
 from langmesh.base.content.models import find_model, provider_and_suffix
@@ -144,7 +145,7 @@ def available_agent_names(directories) -> list[str]:
     key = tuple(str(directory) for directory in directories)
     names = _available_agents.get(key)
     if names is None:
-        names = [entry["id"] for entry in _configuration.list_agents(directories)]
+        names = [entry["id"] for entry in list_agents(directories)]
         _available_agents[key] = names
     return names
 
