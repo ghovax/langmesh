@@ -746,25 +746,31 @@ class _TurnRunner:
         await self._save_runtime_conversation()
         # Log the real exception, but show the user a safe category rather than raw exception text. The one it was handed, not the one in flight, since this is reached by a call rather than by a raise.
         logger.error("agent turn failed", exc_info=exception)
-        if self._runtime is not None:
-            self._runtime.mark_turn_failed()
-        if self._mode is _TurnMode.RETRY:
-            await self._emit(_event_part(RetryEvent(status="done", ok=False)))
         error_part = _event_part(
             # `_safe_turn_error` returns fields typed object; the pydantic constructor validates them.
             ErrorEvent.model_validate(
                 _safe_turn_error(exception, had_images=self._turn_has_images)
             )
         )
-        # The same part becomes the failed turn's terminal message; stamp its id on the part so the
-        # live delivery and the durable replay share one identity in the client's transcript.
+        # The failed turn's terminal message is the chain's identity. A retry continues the chain its
+        # failure opened, so a retried failure carries the root id rather than another per-attempt one:
+        # the client keeps one row per chain, live and replayed alike.
         message = self._updater.new_agent_message([error_part])
-        if message.message_id:
-            root = error_part.root
-            if isinstance(root, DataPart):
-                root.metadata = {
-                    **(root.metadata or {}),
-                    **error_message_metadata(message.message_id),
+        root = message.message_id or ""
+        if self._runtime is not None:
+            if self._mode is _TurnMode.RETRY and self._runtime.turn_failure_root:
+                root = self._runtime.turn_failure_root
+            self._runtime.mark_turn_failed(chain_root=root)
+        if self._mode is _TurnMode.RETRY:
+            await self._emit(_event_part(RetryEvent(status="done", ok=False)))
+        # The same part becomes the failed turn's terminal message; stamp the chain's id on it so the
+        # live delivery and the durable replay share one identity in the client's transcript.
+        if root:
+            stamped = error_part.root
+            if isinstance(stamped, DataPart):
+                stamped.metadata = {
+                    **(stamped.metadata or {}),
+                    **error_message_metadata(root),
                 }
         # Publish the error on the live lane as well as persisting it in the failed status. Without the publish, the chat's error panel only appears after a reload re-reads the history, because the turn-end activity alone carries no error part.
         if self._executor._on_stream_event is not None:
