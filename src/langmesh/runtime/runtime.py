@@ -38,14 +38,9 @@ from langmesh.runtime.tools.context import ToolContext
 
 from langmesh.base.configuration.permission_mode import PermissionMode
 
-from langmesh.runtime.locations import CallExecutionPolicy
 from langmesh.runtime.turn_events import (
     TurnEvent,
     Usage,
-)
-
-from langmesh.runtime.tools.dispatch import (
-    _DispatchesTools,
 )
 
 from langmesh.runtime.turn import (
@@ -245,7 +240,7 @@ class _LeaseAccess:
         return self._runtime._canonical_working_directory(directory)
 
 
-class AgentRuntime(_RunsTurns, _DispatchesTools):
+class AgentRuntime(_RunsTurns):
     # A turn runs until the model is done or the user interrupts: no ceiling and no stuck-detector.
 
     def __init__(
@@ -411,6 +406,9 @@ class AgentRuntime(_RunsTurns, _DispatchesTools):
         self._context_window_estimated = reported_context_window == 0
         self._context_window = reported_context_window
         self._turn_recovery = "none"
+        # The failed turn a current retry continues: retries change per attempt, so chain identity
+        # must come from the terminal error the chain began with, not from the attempt being failed.
+        self._turn_failure_root: str | None = None
         # What the module-level tools read at call time, built from this runtime's own configuration and conversation.
         self._tool_context = _build_tool_context(
             global_configuration,
@@ -579,12 +577,6 @@ class AgentRuntime(_RunsTurns, _DispatchesTools):
             extended_any = True
         if extended_any:
             self._bound_model = self._model.bind_tools(self._model_tools)
-
-    def _call_policy(self, _location: Any = None) -> CallExecutionPolicy:
-        """One call's execution policy, as a value, so concurrent calls cannot cross."""
-        return CallExecutionPolicy(
-            working_directory=self._working_directory, mode=self._permission_mode
-        )
 
     def _canonical_working_directory(self, working_directory: str | None = None) -> str:
         return str(
@@ -844,7 +836,11 @@ class AgentRuntime(_RunsTurns, _DispatchesTools):
 
     def session_snapshot(self) -> dict:
         """The durable non-conversation state the features own, plus the core's own recovery flag."""
-        return {**self._features.snapshot(), "turn_recovery": self._turn_recovery}
+        return {
+            **self._features.snapshot(),
+            "turn_recovery": self._turn_recovery,
+            "turn_failure_root": self._turn_failure_root,
+        }
 
     def restore_session(self, snapshot: dict) -> None:
         """Rehydrate the features' durable state and the core's recovery flag."""
@@ -854,16 +850,28 @@ class AgentRuntime(_RunsTurns, _DispatchesTools):
         self._turn_recovery = "retryable" if recovery == "retrying" else recovery
         if self._turn_recovery not in {"none", "retryable"}:
             self._turn_recovery = "none"
+        self._turn_failure_root = snapshot.get("turn_failure_root") or None
+        if self._turn_recovery != "retryable":
+            self._turn_failure_root = None
 
     @property
     def retryable_turn(self) -> bool:
         """Whether the last failed turn can continue from its durable conversation tail."""
         return self._turn_recovery == "retryable"
 
-    def mark_turn_failed(self) -> None:
+    def mark_turn_failed(self, chain_root: str | None = None) -> None:
         if self._turn_recovery != "retryable":
             self._turn_recovery = "retryable"
+            # The transition names the chain's root: the terminal error the chain began with. A
+            # retry attempt that also fails keeps the root the base failure established.
+            if chain_root is not None:
+                self._turn_failure_root = chain_root
             self._note_session_changed()
+
+    @property
+    def turn_failure_root(self) -> str | None:
+        """The terminal error id the current retry chain began with, if one is owed."""
+        return self._turn_failure_root
 
     def begin_turn_retry(self) -> bool:
         if self._turn_recovery != "retryable" or bool(self._features.blocked_reason()):
@@ -876,11 +884,13 @@ class AgentRuntime(_RunsTurns, _DispatchesTools):
         """Let newly accepted user work supersede a previously failed turn."""
         if self._turn_recovery != "none":
             self._turn_recovery = "none"
+            self._turn_failure_root = None
             self._note_session_changed()
 
     def mark_turn_succeeded(self) -> None:
         if self._turn_recovery != "none":
             self._turn_recovery = "none"
+            self._turn_failure_root = None
             self._note_session_changed()
 
     # The boundary and the grants: the boundary is the core's, the permission plugin fills it.

@@ -302,10 +302,6 @@ class Surface:
             }
         return handler(bound, *arguments, **keywords)
 
-    def perform(self, target: str, operation: str, arguments: list, keywords: dict) -> dict:
-        """Run one primitive against one target, with the target passed as a parameter rather than remembered."""
-        raise NotImplementedError
-
     def preflight(self, operation: str) -> Optional[dict]:
         """An optional gate run before a read or an action, returning a failure payload to refuse."""
         return None

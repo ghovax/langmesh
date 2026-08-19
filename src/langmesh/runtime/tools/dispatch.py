@@ -37,6 +37,7 @@ from langmesh.runtime.turn_events import (
 )
 from langchain_core.messages import HumanMessage, ToolMessage
 from langmesh.runtime.locations import CallExecutionPolicy
+from langmesh.base.configuration.permission_mode import PermissionMode
 from pydantic import ValidationError
 from typing import Any, AsyncIterator, cast
 import asyncio
@@ -83,6 +84,8 @@ class _DispatchesTools:
     _access_grants: list[Any]
     _attached_files: dict[str, None]
     _services: Any
+    _working_directory: str
+    _permission_mode: PermissionMode
 
     def _reminder_message(
         self,
@@ -90,16 +93,30 @@ class _DispatchesTools:
         image_blocks: list[dict] | None = None,
         marks: dict[str, Any] | None = None,
     ) -> HumanMessage:
-        """Assemble one harness note to the model; defined on the turn mixin, overridden on the concrete runtime."""
-        raise NotImplementedError
+        """Append harness guidance once; provider adapters preserve its instruction role without moving it."""
+        text = self._prompt_loader.load("reminder", {"content": content.strip()}).strip()
+        tags = {"reminder": True, **(marks or {})}
+        if image_blocks:
+            return HumanMessage(
+                content=[{"type": "text", "text": text}, *image_blocks], additional_kwargs=tags
+            )
+        return HumanMessage(content=text, additional_kwargs=tags)
 
     def _invalid_tool_call_content(self, invalid: dict) -> str:
-        """The message for a malformed tool call; defined on the turn mixin, overridden on the concrete runtime."""
-        raise NotImplementedError
+        """The message for a malformed tool call, from a template, so the wording stays out of the code."""
+        return self._prompt_loader.load(
+            "invalid_tool_call",
+            {
+                "name": invalid.get("name") or "unknown",
+                "error": invalid.get("error") or "arguments could not be parsed",
+            },
+        )
 
     def _call_policy(self, _location: Any = None) -> CallExecutionPolicy:
-        """One call's execution policy; the concrete runtime answers it."""
-        raise NotImplementedError
+        """One call's execution policy, as a value, so concurrent calls cannot cross."""
+        return CallExecutionPolicy(
+            working_directory=self._working_directory, mode=self._permission_mode
+        )
 
     async def _run_one_tool(
         self,

@@ -12,7 +12,6 @@ from langmesh.runtime.internals import (
     _CONTINUE,
     _detect_workspace,
     _ModelCallOutcome,
-    _ResolvedToolDecision,
     _StepOutcome,
     _PreflightGate,
     _STOP,
@@ -24,6 +23,7 @@ from langmesh.runtime.internals import (
     settled_arguments,
 )
 from langmesh.runtime.cache_trace import cache_lane
+from langmesh.runtime.tools.dispatch import _DispatchesTools
 from langmesh.runtime.values import PermissionAnswer, TurnContext
 from langmesh.base.content.instructions import instructions_payload
 from langmesh.base.content.memories import memories_payload
@@ -66,6 +66,7 @@ from langchain_core.messages.ai import add_ai_message_chunks
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, cast, Optional
 import asyncio
+from abc import ABC, abstractmethod
 import platform
 import time
 import uuid
@@ -99,31 +100,24 @@ def _chunk_advances_model_response(chunk: Any) -> bool:
     return any(block.get("text") or block.get("reasoning") for block in message.content_blocks)
 
 
-class _RunsTurns:
+class _RunsTurns(_DispatchesTools, ABC):
     """The turn itself: what the model is told, what comes back, and when it is over."""
 
-    # The session state this mixin reads. Each attribute is declared here so the mixin
-    # type-checks on its own; `AgentRuntime` owns the real values.
-    _features: Any
-    _conversation: list
+    # The session state this mixin reads. Attributes the dispatch mixin already declares
+    # (`_features`, `_conversation`, `_prompt_loader`, `_tool_context`, `_access_grants`,
+    # `_abort_event`, `_stop_requested`, `_working_directory`) resolve through it.
     _catalogue: Any
     _agent_configuration: Any
     _global_configuration: Any
-    _prompt_loader: Any
     _prompt_composer: Any
     _hooks: Any
     _sandbox: Any
-    _tool_context: Any
-    _working_directory: str
     _project_directory: str
     _session_id: str
     _parent_session: str
     _system_prompt: str
     _execution_history: list[dict]
     _token_usage: dict[str, int]
-    _access_grants: list[Any]
-    _abort_event: asyncio.Event
-    _stop_requested: bool
     _approvals: Any
     _transcript: Any
     _bound_model: Any
@@ -134,40 +128,30 @@ class _RunsTurns:
     # The concrete runtime exposes the permission feature's gate factory under this name.
     retry_gate: Callable[..., _PreflightGate]
 
+    @abstractmethod
     def _record_message(self, role: str, content: str, tool_call_id: str = "") -> None:
-        """The concrete runtime records one audit message; this mixin only calls it."""
-        raise NotImplementedError
+        """Audit one message to durable state; the concrete runtime implements it."""
+        ...
 
+    @abstractmethod
     def _record_event(self, event_type: str, data: dict) -> None:
-        """The concrete runtime records one audit event; this mixin only calls it."""
-        raise NotImplementedError
+        """Audit one event to durable state; the concrete runtime implements it."""
+        ...
 
+    @abstractmethod
     def _note_session_changed(self) -> None:
-        """The concrete runtime advances its durable-state revision; this mixin only calls it."""
-        raise NotImplementedError
+        """Advance the durable-state revision; the concrete runtime implements it."""
+        ...
 
+    @abstractmethod
     def _accumulate_usage(self, response: AIMessage) -> TurnEvent | None:
-        """The concrete runtime tallies one call's usage; this mixin only calls it."""
-        raise NotImplementedError
+        """Tally one call's usage into the turn's running total; the concrete runtime implements it."""
+        ...
 
-    def _drain_tool_batch(
-        self,
-        tool_calls: list[dict],
-        turn_tool_calls_log: list[dict],
-        turn_tool_results_log: list[dict],
-        outcomes: dict[str, dict],
-        decisions: dict[str, _ResolvedToolDecision],
-    ) -> AsyncIterator[TurnEvent]:
-        """Run one batch of calls; defined on the dispatch mixin, overridden on the concrete runtime."""
-        raise NotImplementedError
-
-    def _append_tool_results(self, response, outcomes: dict[str, dict]) -> None:
-        """Append a ToolMessage per call; defined on the dispatch mixin, overridden on the concrete runtime."""
-        raise NotImplementedError
-
+    @abstractmethod
     def discard_pending_steering(self) -> None:
-        """The concrete runtime releases accepted steering futures; this mixin only calls it."""
-        raise NotImplementedError
+        """Release accepted steering futures the model never picked up; the concrete runtime implements it."""
+        ...
 
     def _machine_snapshot(self) -> dict:
         """The machine snapshot the host probed, or a minimal platform-only fallback.
@@ -421,31 +405,6 @@ class _RunsTurns:
                     actor="approver",
                 ).model_dump()
         return answers
-
-    def _reminder_message(
-        self,
-        content: str,
-        image_blocks: list[dict] | None = None,
-        marks: dict[str, Any] | None = None,
-    ) -> HumanMessage:
-        """Append harness guidance once; provider adapters preserve its instruction role without moving it."""
-        text = self._prompt_loader.load("reminder", {"content": content.strip()}).strip()
-        tags = {"reminder": True, **(marks or {})}
-        if image_blocks:
-            return HumanMessage(
-                content=[{"type": "text", "text": text}, *image_blocks], additional_kwargs=tags
-            )
-        return HumanMessage(content=text, additional_kwargs=tags)
-
-    def _invalid_tool_call_content(self, invalid: dict) -> str:
-        """The message for a malformed tool call, from a template, so the wording stays out of the code."""
-        return self._prompt_loader.load(
-            "invalid_tool_call",
-            {
-                "name": invalid.get("name") or "unknown",
-                "error": invalid.get("error") or "arguments could not be parsed",
-            },
-        )
 
     def _repair_dangling_tool_calls(self, *, protect_tail_batch: bool = False) -> None:
         """Make every assistant tool-call batch adjacent to the tool messages answering it, so history is valid for the provider."""
