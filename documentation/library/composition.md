@@ -242,11 +242,11 @@ The prompt lives in its own file, `prompts/system_prompt.md`, and each `{{ name 
 | `{{ agent_context }}` | The agent's own context (its role, tools, and the working directory). |
 | `{{ instructions }}` | The person's recorded instructions. |
 | `{{ user_environment }}` | The machine snapshot and how you work. |
-| `{{ skills }}` The vault of skills the agent may load. |
-| `{{ memories }}` The recorded memories. |
-| `{{ agent_prompt }}` The agent profile's own system prompt. |
-| `{{ peer_sessions }}` How to compose with other sessions. |
-| `{{ mcp_servers }}` The configured MCP servers. |
+| `{{ skills }}` | The vault of skills the agent may load. |
+| `{{ memories }}` | The recorded memories. |
+| `{{ agent_prompt }}` | The agent profile's own system prompt. |
+| `{{ peer_sessions }}` | How to compose with other sessions. |
+| `{{ mcp_servers }}` | The configured MCP servers. |
 
 The `{{ toolbox }}` layer is the last one: the session's own package-profile instructions (install a missing command with `nix profile add nixpkgs#<name>` from `prompts/toolbox.md`), rendered only when `toolbox.enabled` is set and the machine has Nix, and dropped like any other empty layer otherwise. Headings and other markdown belong in that file, never generated in code.
 
