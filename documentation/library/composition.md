@@ -234,56 +234,21 @@ Middleware may rewrite `call.arguments`, short-circuit, retry, or translate an e
 
 `PromptComposer` receives every cache-stable system-prompt layer as a named `PromptLayer`. Use it to select, order, wrap, or relocate application guidance without forking the runtime.
 
-The prompt lives in its own file, `prompts/system_prompt.md`, and each `{{ name }}` placeholder inside it names one layer:
+The prompt lives in its own file, `prompts/system_prompt.md`, and each `{{ name }}` placeholder inside it names one layer sitting among the file's own prose. The renderer drops any layer that resolves empty, so a layer is present exactly when its value is non-empty:
 
-````markdown
-## Session context
+| Layer placeholder (in order) | What it provides |
+| --- | --- |
+| `{{ context }}` | The session context, inside a fenced JSON block in the file. |
+| `{{ agent_context }}` | The agent's own context (its role, tools, and the working directory). |
+| `{{ instructions }}` | The person's recorded instructions. |
+| `{{ user_environment }}` | The machine snapshot and how you work. |
+| `{{ skills }}` The vault of skills the agent may load. |
+| `{{ memories }}` The recorded memories. |
+| `{{ agent_prompt }}` The agent profile's own system prompt. |
+| `{{ peer_sessions }}` How to compose with other sessions. |
+| `{{ mcp_servers }}` The configured MCP servers. |
 
-```json
-{{ context }}
-```
-
-{{ agent_context }}
-
-{{ instructions }}
-
-## How you operate
-
-... # The operating rules that never change.
-
-{{ user_environment }}
-
-## The box you run in
-
-... # The confinement this session runs inside.
-
-## Skills
-
-{{ skills }}
-
-## Memories
-
-{{ memories }}
-
-## Persona
-
-{{ agent_prompt }}
-
-{{ peer_sessions }}
-
-{{ mcp_servers }}
-
-{{ toolbox }}
-
-## Visuals
-
-... # The visual-output rules.
-```  # (end of the file's own prose)
-````
-
-The renderer drops any layer that resolves empty, so a layer is present exactly when its value is non-empty, and the `...` lines are the file's own prose between placeholders. The `toolbox` layer is the session's own package-profile instructions (install a missing command with `nix profile add nixpkgs#<name>` from `prompts/toolbox.md`): it renders only when `toolbox.enabled` is set and the machine has Nix, and it drops out like any other empty layer otherwise. Headings and other markdown belong in that file, never generated in code.
-
-The renderer drops any layer that resolves empty, so a layer is present exactly when its value is non-empty. The `toolbox` layer is the session's own package-profile instructions (install a missing command with `nix profile add nixpkgs#<name>`, from `prompts/toolbox.md`): it renders only when `toolbox.enabled` is set and the machine has Nix, and it drops out like any other empty layer otherwise. Headings and other markdown belong in that file, never generated in code.
+The `{{ toolbox }}` layer is the last one: the session's own package-profile instructions (install a missing command with `nix profile add nixpkgs#<name>` from `prompts/toolbox.md`), rendered only when `toolbox.enabled` is set and the machine has Nix, and dropped like any other empty layer otherwise. Headings and other markdown belong in that file, never generated in code.
 
 ```python
 from langmesh.base.configuration import PromptLoader
