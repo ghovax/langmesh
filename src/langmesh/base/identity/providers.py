@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,11 @@ class ProviderDefinition:
     selectable: bool = True
     # A native provider is not routed through LiteLLM: it has its own client and its own non-key auth.
     native: bool = False
+    # Headers sent on every request to the provider, for the gateway's own client gate.
+    default_headers: dict[str, str] = field(default_factory=dict)
+    # The credential to present when none is configured or in env. Anonymous gateways use a
+    # sentinel key (OpenCode Zen reads `public`) to let free-tier calls through without billing.
+    anonymous_api_key: str = ""
 
 
 # The order here is the order models are grouped in the picker.
@@ -33,6 +38,10 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             env_vars=("OPENCODE_API_KEY",),
             default_base_url="https://opencode.ai/zen/v1",
             uses_custom_base_url=True,
+            # Zen serves its free tier anonymously: the client sends the sentinel `public` key and
+            # an opencode User-Agent, and paid calls require a real OPENCODE_API_KEY instead.
+            default_headers={"User-Agent": "opencode/0.0.0"},
+            anonymous_api_key="public",
         ),
         ProviderDefinition(
             # Command Code's Provider API: OpenAI-compatible, same key that signs into the CLI.
@@ -345,7 +354,7 @@ def resolve_api_key(
     provider_identifier: str,
     configured_keys: dict[str, str],
 ) -> str:
-    """Resolve a provider key from its shared credential, then its environment."""
+    """Resolve a provider key from its shared credential, then its environment, else the anonymous sentinel."""
     definition = PROVIDERS.get(provider_identifier)
     if definition is None:
         return ""
@@ -357,7 +366,7 @@ def resolve_api_key(
         value = os.environ.get(environment_variable, "")
         if value:
             return value
-    return ""
+    return definition.anonymous_api_key
 
 
 def resolve_base_url(
