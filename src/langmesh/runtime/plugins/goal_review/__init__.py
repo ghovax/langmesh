@@ -15,7 +15,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Literal, Optional
 
 from pydantic import ValidationError
 
@@ -382,7 +382,7 @@ class GoalReviewFeature(Feature):
                 )
             )
 
-        async def finish_transcript(status: str, review: GoalReview | None = None) -> None:
+        async def finish_transcript(status: Literal["completed", "canceled", "failed"], review: GoalReview | None = None) -> None:
             nonlocal transcript_finished
             if transcript_finished:
                 return

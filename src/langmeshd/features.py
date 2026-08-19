@@ -73,7 +73,7 @@ def compose_plugins(
         WorkHabits(),
         TitleAssignment(),
         # The locations plugin is opt-in: it is composed only when the workspace has locations.
-        *(Locations() if locations else ()),
+        *([Locations()] if locations else []),
         Bash(),
         Web(),
         Interaction(),

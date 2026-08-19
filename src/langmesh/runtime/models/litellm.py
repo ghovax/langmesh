@@ -388,7 +388,7 @@ class ChatLiteLLMModel(BaseChatModel):
             generation_chunk = self._litellm_chunk_to_generation_chunk(chunk, block)
             if generation_chunk is not None:
                 # Attached to the chunk carrying usage, so the diagnosis travels with the figure it explains.
-                if generation_chunk.message.usage_metadata and not reported:
+                if getattr(generation_chunk.message, "usage_metadata", None) and not reported:
                     reported = True
                     generation_chunk.message.additional_kwargs["cache_trace"] = (
                         self._cache_diagnosis(current_trace)

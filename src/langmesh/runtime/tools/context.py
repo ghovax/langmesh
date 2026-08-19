@@ -6,7 +6,7 @@ import contextvars
 import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Iterable, Optional, Sequence
 
 from langmesh.base import confinement as _confinement
 from langmesh.base.confinement import ENFORCE_OFF
@@ -60,7 +60,7 @@ class ToolContext:
             environment.update(self.toolbox.environment(inherited))
         return environment
 
-    def with_attachments(self, paths: "Sequence[str]") -> "ToolContext":
+    def with_attachments(self, paths: "Iterable[str]") -> "ToolContext":
         """This context with read access to the files attached this turn, derived rather than assigned."""
         if not paths:
             return self

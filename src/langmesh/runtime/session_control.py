@@ -11,7 +11,7 @@ from langmesh.base.contracts.ports import Approval, SuspensionGate
 
 def _plain(value: Any) -> Any:
     """Reduce a public control value to the JSON-shaped checkpoint contract."""
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         return _plain(asdict(value))
     model_dump = getattr(value, "model_dump", None)
     if callable(model_dump):

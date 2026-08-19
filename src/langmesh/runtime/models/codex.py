@@ -477,7 +477,7 @@ class ChatCodexModel(BaseChatModel):
                     chunk = self._line_to_chunk(line, state)
                     if chunk is not None:
                         # Attached to the chunk carrying usage, so the diagnosis travels with the figure it explains.
-                        if chunk.message.usage_metadata and not reported:
+                        if getattr(chunk.message, "usage_metadata", None) and not reported:
                             reported = True
                             chunk.message.additional_kwargs["cache_trace"] = self._cache_diagnosis(
                                 current_trace

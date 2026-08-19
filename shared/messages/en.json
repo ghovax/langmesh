@@ -894,6 +894,8 @@
         "session_idle_sleep": "How long a session keeps its process after its last turn before it sleeps.",
         "session_title_attempts": "How many times a session asks the model to name itself before giving up.",
         "settle_stable_reads": "Identical consecutive reads that count a surface as having stopped changing.",
+        "settle_poll_seconds": "How often to re-check whether a screen surface has settled after an action.",
+        "settle_give_up_seconds": "The longest to wait for a screen surface to settle before reading it anyway.",
         "sigterm_grace": "How long a cancelled command or a reaped session has after SIGTERM before SIGKILL.",
         "slow_tool_sync_window": "The same inline window for fetching a URL or downloading a file.",
         "snapshot_timeout": "How long an accessibility snapshot of a page waits.",
@@ -936,7 +938,8 @@
     },
     "goal_review": {
       "_": "How the independent goal review is driven.",
-      "maximum_attempts": "How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset before the goal carries unchanged."
+      "maximum_attempts": "How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset before the goal carries unchanged.",
+      "mode": "How the goal is driven after a turn leaves it open: by an independent reviewer, or by the session's own agent."
     }
   },
   "SettingsChoices": {

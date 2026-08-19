@@ -12,13 +12,13 @@ from langmesh.base.primitives.limits import current_limits
 
 def accessibility_granted() -> bool:
     """Whether this process may read the AX tree and post synthesized input."""
-    return bool(AS.AXIsProcessTrusted())
+    return bool(AS.AXIsProcessTrusted())  # type: ignore[attr-defined]
 
 
 def request_accessibility() -> bool:
     """Check trust and, if untrusted, surface the prompt that deep-links to the Accessibility pane."""
-    options = {AS.kAXTrustedCheckOptionPrompt: True}
-    return bool(AS.AXIsProcessTrustedWithOptions(options))
+    options = {AS.kAXTrustedCheckOptionPrompt: True}  # type: ignore[attr-defined]
+    return bool(AS.AXIsProcessTrustedWithOptions(options))  # type: ignore[attr-defined]
 
 
 def open_accessibility_settings() -> None:

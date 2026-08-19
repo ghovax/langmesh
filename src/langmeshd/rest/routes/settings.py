@@ -251,12 +251,14 @@ async def update_settings(request: AppSettingsUpdateRequest):
         }
         for provider_identifier, api_key in (request.provider_keys or {}).items():
             existing = (
-                merged_providers.get(provider_identifier) or _configuration.ProviderCredential()
+                merged_providers.get(provider_identifier)
+                or _configuration.ProviderCredential.model_validate({})
             )
             merged_providers[provider_identifier] = existing.model_copy(update={"api_key": api_key})
         for provider_identifier, base_url in (request.provider_base_urls or {}).items():
             existing = (
-                merged_providers.get(provider_identifier) or _configuration.ProviderCredential()
+                merged_providers.get(provider_identifier)
+                or _configuration.ProviderCredential.model_validate({})
             )
             merged_providers[provider_identifier] = existing.model_copy(
                 update={"base_url": base_url}

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import ApplicationServices as AS
 
@@ -20,6 +20,9 @@ from langmesh.computer.surface import (
     resolve_range,
 )
 from langmesh.base.primitives.limits import current_limits
+
+# The pyobjc stubs do not declare most ApplicationServices symbols even though they exist at runtime.
+AS = cast(Any, AS)
 
 message = message_loader("computer")
 
@@ -162,6 +165,8 @@ def _element_name(element: accessibility.Element) -> str:
 def _displayed_window(pid: int) -> Optional[tuple[int, int]]:
     """The size of a real window this process is showing, asked of the window server rather than of accessibility."""
     import Quartz
+
+    Quartz = cast(Any, Quartz)  # pyobjc stubs omit the window-server functions
 
     try:
         windows = (
@@ -349,8 +354,8 @@ class NativeSurface(Surface):
                     return self.incomplete(
                         "withholds_accessibility",
                         app=name,
-                        width=width,
-                        height=height,
+                        width=str(width),
+                        height=str(height),
                     )
                 return self.incomplete("not_ready", app=name)
             state.elements = {}
@@ -453,7 +458,7 @@ class NativeSurface(Surface):
             if handle is not None:
                 available_actions = set(accessibility.action_names(handle))
                 if button == "right" and "AXShowMenu" in available_actions:
-                    if AS.AXUIElementPerformAction(handle, "AXShowMenu") == 0:
+                    if AS.AXUIElementPerformAction(handle, "AXShowMenu") == 0:  # type: ignore[attr-defined]
                         return {
                             "ok": True,
                             "did": f"Opened context menu on {entry.name!r}",
@@ -464,7 +469,7 @@ class NativeSurface(Surface):
                     action = next(
                         (name for name in preferred_actions if name in available_actions), ""
                     )
-                    if action and AS.AXUIElementPerformAction(handle, action) == 0:
+                    if action and AS.AXUIElementPerformAction(handle, action) == 0:  # type: ignore[attr-defined]
                         did = f"Opened {entry.name!r}" if count >= 2 else f"Clicked {entry.name!r}"
                         return {"ok": True, "did": did, "via": "accessible"}
             if entry.center is None:
@@ -502,7 +507,7 @@ class NativeSurface(Surface):
             result = self._enter_text(entry, handle, text, mode=mode)
             if result.get("ok") and submit:
                 # Return goes to the process rather than the element, since a form is committed by the focused control.
-                AS.AXUIElementSetAttributeValue(handle, accessibility.FOCUSED, True)
+                AS.AXUIElementSetAttributeValue(handle, accessibility.FOCUSED, True)  # type: ignore[attr-defined]
                 time.sleep(current_limits().focus_settle)
                 if input_synthesis.press_key(entry.pid, "return", []):
                     result["did"] = f"{result.get('did', 'Typed')}, then submitted"
@@ -521,13 +526,13 @@ class NativeSurface(Surface):
         if mode == "insert":
             if accessibility.set_selected_text(handle, text):
                 return {"ok": True, "did": f"Inserted {len(text)} chars", "via": "accessible"}
-            AS.AXUIElementSetAttributeValue(handle, accessibility.FOCUSED, True)
+            AS.AXUIElementSetAttributeValue(handle, accessibility.FOCUSED, True)  # type: ignore[attr-defined]
             time.sleep(current_limits().focus_settle)
             input_synthesis.type_text(entry.pid, text)
             return {"ok": True, "did": f"Typed {len(text)} chars", "via": "synthesized"}
         if (
             accessibility.attribute_settable(handle, accessibility.VALUE)
-            and AS.AXUIElementSetAttributeValue(handle, accessibility.VALUE, text) == 0
+            and AS.AXUIElementSetAttributeValue(handle, accessibility.VALUE, text) == 0  # type: ignore[attr-defined]
         ):
             landed = accessibility.text_value(handle)
             result: dict[str, Any] = {"ok": True, "did": f"Set {entry.name!r}", "via": "accessible"}
@@ -536,7 +541,7 @@ class NativeSurface(Surface):
                 if landed != text:
                     result["note"] = message("type_clamped")
             return result
-        AS.AXUIElementSetAttributeValue(handle, accessibility.FOCUSED, True)
+        AS.AXUIElementSetAttributeValue(handle, accessibility.FOCUSED, True)  # type: ignore[attr-defined]
         time.sleep(current_limits().focus_settle)
         input_synthesis.type_text(entry.pid, text)
         return {"ok": True, "did": f"Typed into {entry.name!r}", "via": "synthesized"}
@@ -569,7 +574,7 @@ class NativeSurface(Surface):
                 handle = self._live_handle(entry)
                 if (
                     handle is not None
-                    and AS.AXUIElementPerformAction(handle, "AXScrollToVisible") == 0
+                    and AS.AXUIElementPerformAction(handle, "AXScrollToVisible") == 0  # type: ignore[attr-defined]
                 ):
                     return {
                         "ok": True,
@@ -742,14 +747,14 @@ class NativeSurface(Surface):
                         "ok": False,
                         "error": f"Element {entry.name!r} is no longer available; search again.",
                     }
-                if AS.AXUIElementSetAttributeValue(handle, accessibility.FOCUSED, True) != 0:
+                if AS.AXUIElementSetAttributeValue(handle, accessibility.FOCUSED, True) != 0:  # type: ignore[attr-defined]
                     return {"ok": False, "error": f"{entry.name!r} does not accept keyboard focus."}
                 return {"ok": True, "focused": entry.name}
             window = accessibility.window_handle(state.pid, state.window_id)
             if window is None:
                 return {"ok": False, "error": "That window is no longer available."}
-            AS.AXUIElementSetAttributeValue(window, "AXMain", True)
-            AS.AXUIElementSetAttributeValue(window, accessibility.FOCUSED, True)
+            AS.AXUIElementSetAttributeValue(window, "AXMain", True)  # type: ignore[attr-defined]
+            AS.AXUIElementSetAttributeValue(window, accessibility.FOCUSED, True)  # type: ignore[attr-defined]
             return {"ok": True, "focused": True}
 
         return self.guard(run)

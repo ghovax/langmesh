@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, assert_never
+from typing import Any, Awaitable, Callable, assert_never, cast
 
 
 from langmesh.base.primitives import telemetry as _telemetry
 from langmesh.protocol.events import (
+    CompactionErrorCode,
     CompactionEvent,
     CumulativeUsage,
     ErrorEvent,
@@ -29,6 +30,9 @@ from langmesh.runtime.turn_events import (
     DeniedInjection,
     Done,
     Error,
+    GoalReviewFinished,
+    GoalReviewProgress,
+    GoalReviewStarted,
     Mcp,
     Status,
     Steering,
@@ -161,7 +165,7 @@ class _TurnEventSink:
                         messages_after=event.messages_after,
                         tokens_before=event.tokens_before,
                         tokens_after=event.tokens_after,
-                        error_code=event.error_code,
+                        error_code=cast(CompactionErrorCode | None, event.error_code),
                     )
                 )
             )
@@ -343,6 +347,9 @@ class _TurnEventSink:
                 self.stop_reason = event.stop_reason or self.stop_reason
             case DeniedInjection():
                 # A denied-command marker the runtime tracks for itself, which the executor does not surface.
+                pass
+            case GoalReviewStarted() | GoalReviewProgress() | GoalReviewFinished():
+                # The linked reviewer's events ride the goal-state lane, never the parent's stream; nothing to surface.
                 pass
             case _:
                 assert_never(event)

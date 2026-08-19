@@ -688,7 +688,7 @@ class ChatCursorModel(BaseChatModel):
             asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(
-                self._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+                self._agenerate(messages, stop=stop, run_manager=None, **kwargs)
             )
         raise RuntimeError(
             "ChatCursorModel has no synchronous path inside a running event loop — await ainvoke/astream instead."

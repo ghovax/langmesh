@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -64,7 +65,7 @@ def _write_file(data: dict) -> None:
 
 def _entry_from_input(payload: RemoteAgentInput) -> dict:
     """One agent's `remote-agents.json` entry, dropping empty auth fields and keeping `${VAR}` references."""
-    auth = {"type": payload.auth.type}
+    auth: dict[str, Any] = {"type": payload.auth.type}
     if payload.auth.type in {"bearer", "api_key"}:
         auth["token"] = payload.auth.token
         auth["header"] = payload.auth.header

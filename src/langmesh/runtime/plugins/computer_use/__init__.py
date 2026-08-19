@@ -62,8 +62,8 @@ async def control_screen(
             "error": "control_screen needs a target — the window or tab to act in.",
             "targets": {"current": target_registry.describe_all()},
         })
-    target = target_registry.find_target(target_id)
-    if target is None:
+    target_obj = target_registry.find_target(target_id)
+    if target_obj is None:
         listing = target_registry.list_targets()
         same_app = [place for place in listing if place.app.lower() == target_id.strip().lower()]
         if same_app:
@@ -79,7 +79,7 @@ async def control_screen(
             }
         return compact(payload)
         return
-    surface_name = target.surface
+    surface_name = target_obj.surface
     surface = _surface_for(surface_name)
     gate = surface.preflight("documents")
     if gate is not None:
@@ -218,7 +218,7 @@ async def control_screen(
             record.update(_hydrate(appeared))
         if not moved and not appeared:
             record["changed"] = []
-        if not target.visible:
+        if not target_obj.visible:
             record["visible"] = False
         return record
 
@@ -431,7 +431,7 @@ class ComputerUse(Feature):
         guidance = self._prompts.load("computer_control_guidance", {}).strip()
         if not guidance:
             return messages
-        return [*messages, self._host.turn.reminder_message(guidance)]
+        return [*messages, self._host.turn.reminder_message(guidance)] if self._host is not None else messages
 
     def compose_context(self, context: dict) -> None:
         """The screen targets and primitives, when the feature is enabled."""

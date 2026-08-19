@@ -174,7 +174,7 @@ def build_application(
     )
     root = directory.resolve() if directory is not None else None
 
-    async def runtime(request) -> JSONResponse:
+    async def runtime(request) -> Response:
         if not _reach_authorized(request):
             return JSONResponse(
                 {"error": {"code": "unauthorized", "message": "This door is paired; present its token."}},

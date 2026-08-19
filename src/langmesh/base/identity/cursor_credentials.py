@@ -156,7 +156,7 @@ def _tokens_from_payload(payload: dict, previous: Optional[CursorTokens] = None)
         raise CursorAuthError("Cursor returned no access token.")
     returned_refresh = payload.get("refreshToken")
     refresh_token = (
-        returned_refresh
+        str(returned_refresh)
         if _looks_like_jwt(returned_refresh)
         else (previous.refresh_token if previous else str(returned_refresh or ""))
     )

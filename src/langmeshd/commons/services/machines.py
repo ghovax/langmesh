@@ -45,7 +45,9 @@ def read_pairing_link(link: str) -> dict[str, str]:
     name = payload.get("name")
     endpoint = payload.get("endpoint")
     token = payload.get("token")
-    if not all(isinstance(value, str) and value.strip() for value in (name, endpoint, token)):
+    if not (isinstance(name, str) and isinstance(endpoint, str) and isinstance(token, str)):
+        raise PairingLinkError("That link is missing its address or its token.")
+    if not (name.strip() and endpoint.strip() and token.strip()):
         raise PairingLinkError("That link is missing its address or its token.")
     return {"name": name.strip(), "endpoint": endpoint.rstrip("/"), "token": token}
 

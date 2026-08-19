@@ -11,7 +11,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Callable, Iterable, Literal, Optional
+from typing import Callable, Iterable, Literal, Optional, cast
 
 # How a missing backend is handled: `required` refuses the session, `preferred` runs POSIX-only, `off` does not confine.
 ENFORCE_REQUIRED = "required"
@@ -169,7 +169,7 @@ class Grant:
             whole_disk=bool(data.get("whole_disk", False)),
             purpose=str(data.get("purpose") or ""),
             granted_at=str(data.get("granted_at") or ""),
-            approved_by=str(data.get("approved_by") or ""),
+            approved_by=cast(ApprovedBy, str(data.get("approved_by") or "person")),
         )
 
 

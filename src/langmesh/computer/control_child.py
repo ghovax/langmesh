@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import traceback
+from collections.abc import Sequence
 from contextlib import redirect_stdout
 from typing import Any
 from langmesh.base.primitives.errors import summary
@@ -88,7 +89,11 @@ def _load_screen_module(package_root: str):
 
 
 def _script_namespace(
-    allowed: tuple, target: str, workspace: list, dependencies: list = (), libraries: list = ()
+    allowed: tuple,
+    target: str,
+    workspace: list,
+    dependencies: Sequence = (),
+    libraries: Sequence = (),
 ) -> dict[str, Any]:
     """What a script starts with: an empty namespace, and everything importable it may need."""
     # The path is settled before anything is imported, because the import below depends on it.
@@ -157,7 +162,7 @@ def _run(script: str, namespace: dict[str, Any]) -> Any:
     tree = ast.parse(script, filename="<control_screen>", mode="exec")
     final_value = None
     if tree.body and isinstance(tree.body[-1], ast.Expr):
-        final_expression = tree.body.pop().value
+        final_expression = tree.body.pop().value  # type: ignore[attr-defined]
         if tree.body:
             exec(compile(tree, "<control_screen>", "exec"), namespace)  # noqa: S102 (that is the point)
         final_value = eval(

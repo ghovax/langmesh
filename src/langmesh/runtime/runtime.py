@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence, cast
 
 from langchain_core.messages import (
     AIMessage,
@@ -136,18 +137,23 @@ def build_chat_model(
         }
     )
 
-def _as_profile(sandbox: Any):
+def _as_profile(sandbox: Any) -> Profile:
     """Whatever a caller called a sandbox, as the :class:`Profile` the runtime works with."""
     if sandbox is None:
         # The configured default, not `Profile()`: an empty writable set means "may write nowhere".
-        return SandboxConfiguration().to_profile()
+        return SandboxConfiguration.model_validate({}).to_profile()
     if isinstance(sandbox, Profile):
         return sandbox
     if isinstance(sandbox, dict):
         return Profile.from_dict(sandbox)
     to_profile = getattr(sandbox, "to_profile", None)
     if callable(to_profile):
-        return to_profile()
+        converted = to_profile()
+        if isinstance(converted, Profile):
+            return converted
+        raise TypeError(
+            f"sandbox's to_profile must return a confinement Profile — got {type(converted).__name__}."
+        )
     raise TypeError(
         f"sandbox must be a confinement Profile, a SandboxConfiguration, or the dict form of either — got {type(sandbox).__name__}."
     )
@@ -230,7 +236,7 @@ class _LeaseAccess:
         return self._runtime._canonical_working_directory(directory)
 
 class AgentRuntime(
-    _DispatchesTools, _RunsTurns
+    _RunsTurns, _DispatchesTools
 ):
     # A turn runs until the model is done or the user interrupts: no ceiling and no stuck-detector.
 
@@ -290,7 +296,7 @@ class AgentRuntime(
             model
             if model is not None
             else build_chat_model(
-                model_identifier,
+                model_identifier or "",
                 global_configuration,
                 agent_configuration,
                 self._working_directory,
@@ -391,8 +397,8 @@ class AgentRuntime(
         self._active_tool_tasks: dict[str, asyncio.Task] = {}
         # The latest call replaces this estimate once usage arrives; restored sessions need it immediately.
         self._latest_context_tokens = conversation_tokens(self._conversation)
-        context_window = getattr(self._model, "context_window", None)
-        reported_context_window = max(0, int(context_window())) if callable(context_window) else 0
+        context_window: Any = getattr(self._model, "context_window", None)
+        reported_context_window = max(0, int(cast(Any, context_window)())) if callable(context_window) else 0
         # Every model must advertise its own context capacity; an unknown window means the harness cannot schedule compacting or refuse an oversized request with numbers.
         self._context_window_estimated = reported_context_window == 0
         self._context_window = reported_context_window
@@ -549,7 +555,7 @@ class AgentRuntime(
             extra = self._features.contributed_schema_fields(tool.name)
             if not extra:
                 continue
-            schema = tool.args_schema
+            schema: Any = tool.args_schema
             if schema is None:
                 continue
             fields = {
@@ -558,12 +564,12 @@ class AgentRuntime(
                 if name not in ("kwargs", "args")
             }
             fields.update(extra)
-            extended = create_model(f"{schema.__name__}Arguments", **fields)
+            extended = create_model(f"{schema.__name__}Arguments", **cast(Any, fields))
             tool.args_schema = extended
             self._tool_schemas[tool.name] = extended
             unit = self._tool_units.get(tool.name)
             if unit is not None:
-                unit.schema = extended
+                self._tool_units[tool.name] = dataclasses.replace(unit, schema=extended)
             extended_any = True
         if extended_any:
             self._bound_model = self._model.bind_tools(self._model_tools)
@@ -738,7 +744,7 @@ class AgentRuntime(
 
     @property
     def model_identifier(self) -> str:
-        return self._agent_configuration.model_identifier
+        return self._agent_configuration.model_identifier or ""
 
     @property
     def working_directory(self) -> str:
@@ -875,7 +881,7 @@ class AgentRuntime(
 
     # The boundary and the grants: the boundary is the core's, the permission plugin fills it.
 
-    def _granted_profile(self):
+    def _granted_profile(self) -> Profile:
         """The session's confinement with every standing grant compacted in. What an escape is measured against."""
         profile = self._sandbox
         for grant in self._access_grants:
