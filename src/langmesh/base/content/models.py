@@ -4,6 +4,7 @@ import logging
 import re
 import threading
 from dataclasses import dataclass
+from typing import TypedDict
 
 import httpx
 
@@ -37,6 +38,15 @@ class ModelDefinition:
     litellm_prefix: str = ""
 
 
+class ResolvedLiteLLM(TypedDict):
+    """The LiteLLM call parameters for one model: routed id, credential, endpoint, and headers."""
+
+    model: str
+    api_key: str
+    api_base: str
+    headers: dict[str, str]
+
+
 # Wire-protocol names from models.dev, mapped to the LiteLLM prefix that speaks them.
 _GATEWAY_LITELLM_PREFIXES = {
     "@ai-sdk/openai-compatible": "openai",
@@ -64,6 +74,7 @@ _AUTO_PROVIDER_PREFIXES = {
     # The Responses protocol is openai's own; third-party endpoints almost always serve the chat-completions wire instead, so auto providers use the plain openai prefix.
     "@ai-sdk/openai": "openai",
 }
+
 
 def _catalog() -> list[ModelDefinition]:
     """The model catalog from models.dev, best effort so the harness still starts without one."""
@@ -279,7 +290,7 @@ def resolve_litellm(
     model_identifier: str,
     configured_keys: dict[str, str],
     configured_bases: dict[str, str],
-) -> dict[str, str]:
+) -> ResolvedLiteLLM:
     """Translate a provider-qualified model into LiteLLM call parameters."""
     split = provider_and_suffix(model_identifier)
     if split is None:
@@ -307,4 +318,5 @@ def resolve_litellm(
             if definition.uses_custom_base_url
             else provider_base_url
         ),
+        "headers": definition.default_headers,
     }

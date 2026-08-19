@@ -77,12 +77,14 @@ from langmesh.runtime.internals import (
 
 logger = logging.getLogger(__name__)
 
+
 async def _drain_observer(pending) -> None:
     """Await a caller-supplied audit observer without making it part of turn control flow."""
     try:
         await pending
     except Exception:  # noqa: BLE001 — an audit sink must never fail a turn
         logger.debug("an asynchronous audit observer raised", exc_info=True)
+
 
 class _CataloguePrompts:
     """A `PromptLoader`-shaped view of a catalogue, so the template seam cost one adapter rather than a rewrite."""
@@ -92,6 +94,7 @@ class _CataloguePrompts:
 
     def load(self, template_name: str, variables: dict[str, str]) -> str:
         return self._catalogue.prompt(template_name, variables)
+
 
 def build_chat_model(
     model_identifier: str,
@@ -130,12 +133,14 @@ def build_chat_model(
             "model": resolved["model"],
             "api_key": SecretStr(resolved["api_key"]) if resolved["api_key"] else None,
             "api_base": resolved["api_base"] or None,
+            "default_headers": resolved["headers"],
             "session_id": session_id,
             "context_length": catalogued.context_length if catalogued else 0,
             "temperature": 0,
             "reasoning_effort": agent_configuration.reasoning_effort,
         }
     )
+
 
 def _as_profile(sandbox: Any) -> Profile:
     """Whatever a caller called a sandbox, as the :class:`Profile` the runtime works with."""
@@ -157,6 +162,7 @@ def _as_profile(sandbox: Any) -> Profile:
     raise TypeError(
         f"sandbox must be a confinement Profile, a SandboxConfiguration, or the dict form of either — got {type(sandbox).__name__}."
     )
+
 
 def _build_tool_context(
     global_configuration: Configuration,
@@ -218,13 +224,16 @@ def _build_tool_context(
         toolbox=toolbox,
     )
 
+
 class _LeaseAccess:
     """The filesystem-lease surface a tool handler may hold across an operation."""
 
     def __init__(self, runtime: Any) -> None:
         self._runtime = runtime
 
-    async def acquire(self, *, scope: str, path: str, description: str, working_directory: str) -> str:
+    async def acquire(
+        self, *, scope: str, path: str, description: str, working_directory: str
+    ) -> str:
         return await self._runtime._acquire_filesystem_lease(
             scope=scope, path=path, description=description, working_directory=working_directory
         )
@@ -235,9 +244,8 @@ class _LeaseAccess:
     def canonical_working_directory(self, directory: str) -> str:
         return self._runtime._canonical_working_directory(directory)
 
-class AgentRuntime(
-    _RunsTurns, _DispatchesTools
-):
+
+class AgentRuntime(_RunsTurns, _DispatchesTools):
     # A turn runs until the model is done or the user interrupts: no ceiling and no stuck-detector.
 
     def __init__(
@@ -347,9 +355,7 @@ class AgentRuntime(
         self._bound_model = self._model.bind_tools(self._model_tools)
         # The evaluator's own `tools_enabled` gate refuses what the profile did not declare.
         self._permissions = (
-            permissions
-            if permissions is not None
-            else PermissionEvaluator(agent_configuration)
+            permissions if permissions is not None else PermissionEvaluator(agent_configuration)
         )
         # Where the audit trail goes, and who answers a gate. Both absent by default.
         self._observer = observer
@@ -398,7 +404,9 @@ class AgentRuntime(
         # The latest call replaces this estimate once usage arrives; restored sessions need it immediately.
         self._latest_context_tokens = conversation_tokens(self._conversation)
         context_window: Any = getattr(self._model, "context_window", None)
-        reported_context_window = max(0, int(cast(Any, context_window)())) if callable(context_window) else 0
+        reported_context_window = (
+            max(0, int(cast(Any, context_window)())) if callable(context_window) else 0
+        )
         # Every model must advertise its own context capacity; an unknown window means the harness cannot schedule compacting or refuse an oversized request with numbers.
         self._context_window_estimated = reported_context_window == 0
         self._context_window = reported_context_window
@@ -457,7 +465,9 @@ class AgentRuntime(
             window=WindowView(
                 context_window=self._context_window,
                 latest_context_tokens=self._latest_context_tokens,
-                set_latest_context_tokens=lambda value: setattr(self, "_latest_context_tokens", value),
+                set_latest_context_tokens=lambda value: setattr(
+                    self, "_latest_context_tokens", value
+                ),
                 refresh_cached_prompt=lambda: setattr(self, "_cached_system_prompt", None),
             ),
             turn=TurnView(
@@ -491,14 +501,10 @@ class AgentRuntime(
         if contributed:
             contributed_names = {tool.name for tool in contributed}
             self._tools = [
-                tool
-                for tool in self._tools
-                if tool.name not in contributed_names
+                tool for tool in self._tools if tool.name not in contributed_names
             ] + list(contributed)
             self._model_tools = [
-                tool
-                for tool in self._model_tools
-                if tool.name not in contributed_names
+                tool for tool in self._model_tools if tool.name not in contributed_names
             ] + list(contributed)
             self._tool_schemas.update({tool.name: tool.args_schema for tool in contributed})
             for tool in contributed:
@@ -654,9 +660,7 @@ class AgentRuntime(
             description=tool.description or "",
             handler=invoke_supplied,
         )
-        self._tools = [
-            existing for existing in self._tools if existing.name != tool.name
-        ] + [tool]
+        self._tools = [existing for existing in self._tools if existing.name != tool.name] + [tool]
         self._tool_schemas[tool.name] = tool.args_schema
         self._conversation.append(self._tool_grant_message(tool))
         self._note_session_changed()
