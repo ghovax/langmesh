@@ -246,7 +246,7 @@ class GoalReviewFeature(Feature):
                 mcp_servers=self._host.tools.tool_context.mcp_server_manager,
                 # The verdict tool is injected here and only here: the main session never carries it.
                 tools=[ToolGrant(submit_goal_review)],
-                supplied_tool_gate=self._host.tools.supplied_tool_gate,
+                tool_gate=self._host.tools.tool_gate,
                 permissions=reviewer_permissions,
                 # What the parent's model sees, minus the tools a reviewer must never use.
                 toolset=tuple(

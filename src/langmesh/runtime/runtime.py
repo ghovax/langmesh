@@ -302,7 +302,7 @@ class AgentRuntime(
         # The caller's tools, granted to this session. A grant is dispatchable and its description is appended to the conversation as a message, so the bound schema — and the provider cache prefix — never changes. A grant may therefore be added at creation or at any later moment; both are append-only.
         self._tool_grants = tuple(as_tool_grants(tools))
         # What a caller's tool is gated at: asking by default, so adding one cannot silently widen a session.
-        self._supplied_tool_gate = components.supplied_tool_gate
+        self._tool_gate = components.tool_gate
         # The session's tools are composed by the caller, never forced: the complete roster comes from `toolset`, additions from `tools`/`grant_tool`, and nothing is injected by default.
         configured_tools = list(toolset) if toolset is not None else []
         # Every tool a session runs carries the shared `explanation` field, added here once.
@@ -445,7 +445,7 @@ class AgentRuntime(
                 model_tools=self._model_tools,
                 tool_schemas=self._tool_schemas,
                 supplied_tool_names=self._supplied_tool_names,
-                supplied_tool_gate=self._supplied_tool_gate,
+                tool_gate=self._tool_gate,
                 turn_reader=self._turn_reader,
             ),
             window=WindowView(

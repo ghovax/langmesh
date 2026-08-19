@@ -46,7 +46,7 @@ class ToolsView:
     model_tools: list  #: The tools the model is bound to.
     tool_schemas: dict  #: The argument schemas by tool name, used to validate and coerce calls.
     supplied_tool_names: set  #: The tools the caller supplied, whose rules are the caller's.
-    supplied_tool_gate: str  #: Whether a supplied tool is asked about or runs freely.
+    tool_gate: str  #: Whether a supplied tool is asked about or runs freely.
     turn_reader: Callable | None  #: ``(task_id) -> Task``, reading a related task from the shared store.
 
 

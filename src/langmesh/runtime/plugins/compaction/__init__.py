@@ -819,7 +819,7 @@ class Compaction(Feature):
                 mcp_servers=self._host.tools.tool_context.mcp_server_manager,
                 # The hidden summarizer is one summary call: only its verdict tool is bound.
                 toolset=(submit_compaction_summary_tool,),
-                supplied_tool_gate=self._host.tools.supplied_tool_gate,
+                tool_gate=self._host.tools.tool_gate,
                 permissions=summarizer_permissions,
                 features=[
                     feature_class()
