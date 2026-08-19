@@ -29,13 +29,16 @@ async def collect_structured_call(
     select: Callable[[Any], Any] | None = None,
     accept: Callable[[Any], bool] | None = None,
     on_success: Callable[[Any, Any, int], None] | None = None,
+    retry_reminder: Callable[[Any], Any | None] | None = None,
 ) -> Any | None:
     """The structured answer one model call must return, retried up to ``attempts`` times.
 
     Each attempt asks the bound model once. A response that lacks ``tool_name``, that
     ``select`` (default: the first such call) rejects, that does not validate against
-    ``schema``, or that ``accept`` rejects is one failed attempt. Returns the validated
-    value of the first accepted call, or ``None`` when the attempts run out.
+    ``schema``, or that ``accept`` rejects is one failed attempt. ``retry_reminder``
+    may return a message appended before the next attempt, so the model learns why its
+    last answer was rejected. Returns the validated value of the first accepted call,
+    or ``None`` when the attempts run out.
     """
     select = select or (lambda response: _first_arguments(response, tool_name))
     with cache_lane(cache_lane_name):
@@ -56,6 +59,10 @@ async def collect_structured_call(
                 logger.warning(
                     "%s returned no usable answer (attempt %d of %d)", reason, attempt, attempts
                 )
+                if retry_reminder is not None:
+                    reminder = retry_reminder(response)
+                    if reminder is not None:
+                        request = [*request, reminder]
                 continue
             if on_success is not None:
                 on_success(validated, response, attempt)
