@@ -236,18 +236,52 @@ Middleware may rewrite `call.arguments`, short-circuit, retry, or translate an e
 
 The prompt lives in its own file, `prompts/system_prompt.md`, and each `{{ name }}` placeholder inside it names one layer:
 
-```
+````markdown
+## Session context
+
+```json
 {{ context }}
-{{ agent_context }}
-{{ instructions }}
-{{ user_environment }}
-{{ skills }}
-{{ memories }}
-{{ agent_prompt }}
-{{ peer_sessions }}
-{{ mcp_servers }}
-{{ toolbox }}
 ```
+
+{{ agent_context }}
+
+{{ instructions }}
+
+## How you operate
+
+... # The operating rules that never change.
+
+{{ user_environment }}
+
+## The box you run in
+
+... # The confinement this session runs inside.
+
+## Skills
+
+{{ skills }}
+
+## Memories
+
+{{ memories }}
+
+## Persona
+
+{{ agent_prompt }}
+
+{{ peer_sessions }}
+
+{{ mcp_servers }}
+
+{{ toolbox }}
+
+## Visuals
+
+... # The visual-output rules.
+```  # (end of the file's own prose)
+````
+
+The renderer drops any layer that resolves empty, so a layer is present exactly when its value is non-empty, and the `...` lines are the file's own prose between placeholders. The `toolbox` layer is the session's own package-profile instructions (install a missing command with `nix profile add nixpkgs#<name>` from `prompts/toolbox.md`): it renders only when `toolbox.enabled` is set and the machine has Nix, and it drops out like any other empty layer otherwise. Headings and other markdown belong in that file, never generated in code.
 
 The renderer drops any layer that resolves empty, so a layer is present exactly when its value is non-empty. The `toolbox` layer is the session's own package-profile instructions (install a missing command with `nix profile add nixpkgs#<name>`, from `prompts/toolbox.md`): it renders only when `toolbox.enabled` is set and the machine has Nix, and it drops out like any other empty layer otherwise. Headings and other markdown belong in that file, never generated in code.
 
