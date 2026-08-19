@@ -6,7 +6,7 @@ from collections import deque
 from contextlib import suppress
 from datetime import datetime, timezone
 from fastapi import HTTPException
-from langmesh.runtime.features.plugins.locations.executor import SshExecutor
+from langmesh.runtime.plugins.locations.executor import SshExecutor
 from pathlib import Path
 from typing import Any
 import asyncio

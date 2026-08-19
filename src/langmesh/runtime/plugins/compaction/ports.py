@@ -1,8 +1,8 @@
-"""The durable summary model and the composeable compaction ports a caller supplies.
+"""The compaction plugin's own ports a caller may supply.
 
-The fold itself lives in the plugin that owns compaction; these are the small values a
-product hands that plugin through `RuntimeComponents`: the preparation handoff ports and
-a keep-recent strategy, plus the summary model the hidden summarizer's verdict tool returns.
+The fold itself lives in this plugin; these are the small values a product hands it: the
+preparation handoff ports, a keep-recent strategy, and the summary model the hidden
+summarizer's verdict tool returns.
 """
 
 from __future__ import annotations

@@ -21,7 +21,7 @@ from langmesh.runtime.background import (
     unbind_background_jobs,
     unbind_tool_call_id,
 )
-from langmesh.runtime.features.plugins.bash import bash as bash_tool
+from langmesh.runtime.plugins.bash import bash as bash_tool
 from langmesh.runtime.internals import _maybe_json
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.turn_events import Error, RetryRequested, ToolResult

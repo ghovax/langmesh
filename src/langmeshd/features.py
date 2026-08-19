@@ -10,21 +10,21 @@ from __future__ import annotations
 from typing import Any
 
 from langmesh.base.persistence.observation_store import SQLiteObservationStore
-from langmesh.runtime.compaction import ObservationCompactionPreparation
-from langmesh.runtime.features.plugins.background import BackgroundJobsFeature
-from langmesh.runtime.features.plugins.bash import Bash
-from langmesh.runtime.features.plugins.compaction import Compaction
-from langmesh.runtime.features.plugins.computer_use import ComputerUse
-from langmesh.runtime.features.plugins.continuation import Continuation
-from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
-from langmesh.runtime.features.plugins.interaction import Interaction
-from langmesh.runtime.features.plugins.locations import Locations
-from langmesh.runtime.features.plugins.observations import ObservationMemory
-from langmesh.runtime.features.plugins.permission_reviewer import PermissionReviewer
-from langmesh.runtime.features.plugins.permissions import PermissionReview
-from langmesh.runtime.features.plugins.titling import TitleAssignment
-from langmesh.runtime.features.plugins.web import Web
-from langmesh.runtime.features.plugins.work_habits import WorkHabits
+from langmesh.runtime.plugins.compaction import ObservationCompactionPreparation
+from langmesh.runtime.plugins.background import BackgroundJobsFeature
+from langmesh.runtime.plugins.bash import Bash
+from langmesh.runtime.plugins.compaction import Compaction
+from langmesh.runtime.plugins.computer_use import ComputerUse
+from langmesh.runtime.plugins.continuation import Continuation
+from langmesh.runtime.plugins.goal_review import GoalReviewFeature
+from langmesh.runtime.plugins.interaction import Interaction
+from langmesh.runtime.plugins.locations import Locations
+from langmesh.runtime.plugins.observations import ObservationMemory
+from langmesh.runtime.plugins.permission_reviewer import PermissionReviewer
+from langmesh.runtime.plugins.permissions import PermissionReview
+from langmesh.runtime.plugins.titling import TitleAssignment
+from langmesh.runtime.plugins.web import Web
+from langmesh.runtime.plugins.work_habits import WorkHabits
 from langmesh.runtime.tools.arguments import with_shared_fields
 
 

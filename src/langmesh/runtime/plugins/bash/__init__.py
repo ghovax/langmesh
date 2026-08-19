@@ -221,7 +221,7 @@ class Bash(Feature):
     def invoke(self, name: str, *args, **kwargs):
         """The capability the runtime asks for: a tool's event-rich handler, by tool name."""
         if name == "tool_handler" and args and args[0] == "bash":
-            from langmesh.runtime.features.plugins.bash.tools import handle_bash
+            from langmesh.runtime.plugins.bash.tools import handle_bash
 
             return handle_bash
         return None

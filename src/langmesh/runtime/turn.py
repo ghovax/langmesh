@@ -210,11 +210,8 @@ class _RunsTurns:
                 if instruction_files
                 else ""
             )
-            # One statement of how to think, rendered into this prompt and the reviewer's, so they cannot drift.
-            thinking_language = self._prompt_loader.load("thinking_language", {}).strip()
             variables = {
                 "agent_prompt": self._system_prompt,
-                "thinking_language": thinking_language,
                 "context": context_json,
                 "user_environment": user_environment,
                 "instructions": instructions,

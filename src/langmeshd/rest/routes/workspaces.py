@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException
-from langmesh.runtime.features.plugins.locations.executor import SshExecutor
-from langmesh.runtime.features.plugins.locations.resolver import host_is_defined
+from langmesh.runtime.plugins.locations.executor import SshExecutor
+from langmesh.runtime.plugins.locations.resolver import host_is_defined
 from pathlib import Path
 import asyncio
 from langmesh.protocol.dtos import (

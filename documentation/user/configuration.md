@@ -1,20 +1,18 @@
 # Configuration
 
-Runtime configuration lives in **`$XDG_CONFIG_HOME/langmesh/configuration.yaml`** (`~/.config/langmesh/configuration.yaml` unless you set `XDG_CONFIG_HOME`). It is created on first run from a built-in template and is the source of truth for credentials, permissions, and feature toggles. The repository never contains a filled-in copy.
+Runtime configuration lives in **`$XDG_CONFIG_HOME/langmesh/configuration.yaml`** (`~/.config/langmesh/configuration.yaml` unless you set `XDG_CONFIG_HOME`). The daemon creates it on first run from a built-in template (`langmeshd/commons/configuration.yaml`) and owns the file thereafter; the library never writes it. It is the source of truth for credentials, permissions, and feature toggles. The repository never contains a filled-in copy.
 
 Three ways to change it, all writing the same file:
 
 - **Settings** in the desktop app.
-- Editing the file directly, which the next thing to start reads.
+- **Editing the file directly**, which the daemon watches and the next session build reads.
 
 > [!IMPORTANT]
 > Every credential can also be set through an environment variable, which takes precedence over the file. That lets you run a daemon without writing secrets to disk. Never commit a filled-in configuration or `.env`; see the [security policy](https://github.com/ghovax/langmesh/blob/main/SECURITY.md).
 
-A change applies to whatever starts **next**. A running session keeps the configuration it was built with, with a few exceptions the daemon pushes out: the sandbox, computer control, and the user-context snapshot each ask live sessions to rebuild.
+A change applies to whatever starts **next**. A running session keeps the configuration it was built with, with a few exceptions the daemon pushes out: configuration, sandbox, computer control, and the user-context snapshot each ask live sessions to rebuild.
 
-Three places say something about a setting, and each says a different thing. **This document** is the narrative, for the settings worth explaining at length. The **[configuration reference](configuration.md)** is the list, one row per setting. The **settings panel** reads the running schema, so it can tell you what _this machine_ is set to.
-
-Names the schema does not define are **refused**, not ignored.
+Three places say something about a setting, and each says a different thing. **This document** is the narrative, for the settings worth explaining at length. The **settings panel** reads the running schema, so it can tell you what _this machine_ is set to. A name the schema does not define inside a section is **refused**, not ignored; unknown top-level sections are tolerated so the app can own `dictation` and `composio` in the same file without the library modelling them.
 
 ## Where everything lives
 
@@ -23,12 +21,12 @@ LangMesh follows the XDG Base Directory convention rather than one dot-directory
 | Path                         | What is there                                                               |
 | ---------------------------- | --------------------------------------------------------------------------- |
 | `$XDG_CONFIG_HOME/langmesh/` | `configuration.yaml`                                                        |
-| `$XDG_DATA_HOME/langmesh/`   | `history.sqlite`, `background.sqlite`, uploads, the file-URL signing secret |
-| `$XDG_STATE_HOME/langmesh/`  | logs                                                                        |
+| `$XDG_DATA_HOME/langmesh/`   | `history.sqlite`, `background.sqlite`, uploads, `oauths/`, the file-URL signing secret, the reach pairing token |
+| `$XDG_STATE_HOME/langmesh/`  | logs (`langmeshd.log`)                                                      |
 | `$XDG_CACHE_HOME/langmesh/`  | caches                                                                      |
-| `$XDG_RUNTIME_DIR/langmesh/` | the daemon's socket, port, and token, and one socket per session            |
+| `$XDG_RUNTIME_DIR/langmesh/` | the daemon's socket, port, pid, lock, and token                             |
 
-The runtime directory is `0700`, and the token files inside it are `0600`. When `XDG_RUNTIME_DIR` is unset, as on macOS, the fallback is a per-user directory under the system temporary directory.
+The runtime directory is `0700`, and the token files inside it are `0600`. When `XDG_RUNTIME_DIR` is unset, as on macOS, the fallback is a per-user directory under the system temporary directory. The OS clears the runtime directory when you log out, so a crashed daemon leaves nothing behind.
 
 ## Model providers
 
@@ -44,24 +42,27 @@ providers:
   deepseek: { api_key: "" }
   groq: { api_key: "" }
   mistral: { api_key: "" }
-  opencode: { api_key: "", base_url: "https://opencode.ai/zen/go/v1" }
+  opencode: { api_key: "", base_url: "https://opencode.ai/zen/v1" }
+  commandcode: { api_key: "", base_url: "https://api.commandcode.ai/provider/v1" }
   custom: { api_key: "", base_url: "" }
 ```
 
-Each provider also reads an environment variable, which takes precedence over the file:
+Each provider also reads its conventional environment variable, which takes precedence over the file:
 
-| Provider     | Environment variable                                |
-| ------------ | --------------------------------------------------- |
-| `anthropic`  | `ANTHROPIC_API_KEY`                                 |
-| `openai`     | `OPENAI_API_KEY`                                    |
-| `google`     | `GOOGLE_GENERATIVE_AI_API_KEY`, or `GEMINI_API_KEY` |
-| `openrouter` | `OPENROUTER_API_KEY`                                |
-| `xai`        | `XAI_API_KEY`                                       |
-| `deepseek`   | `DEEPSEEK_API_KEY`                                  |
-| `groq`       | `GROQ_API_KEY`                                      |
-| `mistral`    | `MISTRAL_API_KEY`                                   |
+| Provider       | Environment variable                                              |
+| -------------- | ----------------------------------------------------------------- |
+| `opencode`     | `OPENCODE_API_KEY`                                                |
+| `commandcode`  | `COMMAND_CODE_API_KEY`                                            |
+| `anthropic`    | `ANTHROPIC_API_KEY`                                               |
+| `openai`       | `OPENAI_API_KEY`                                                  |
+| `google`       | `GOOGLE_GENERATIVE_AI_API_KEY`, or `GEMINI_API_KEY`               |
+| `openrouter`   | `OPENROUTER_API_KEY`                                              |
+| `xai`          | `XAI_API_KEY`                                                     |
+| `deepseek`     | `DEEPSEEK_API_KEY`                                                |
+| `groq`         | `GROQ_API_KEY`                                                    |
+| `mistral`      | `MISTRAL_API_KEY`                                                 |
 
-`custom` takes any OpenAI-compatible endpoint, which is why it needs a `base_url` as well. Around forty providers are registered; the registry in `src/langmesh/base/providers.py` is the full list.
+`custom` takes any OpenAI-compatible endpoint, which is why it needs a `base_url` as well. Around fifty providers are registered (Azura, Alibaba, Vercel, Cerebras, Cohere, DeepInfra, Hyperbolic, Hetzner, and more); the registry in `langmesh.base.identity.providers` is the full list.
 
 You can also **sign in with a ChatGPT or a Cursor subscription** instead of pasting a key, in Settings, under Providers. Neither has a key to store: both live as OAuth tokens in the data directory's `oauths/` folder, one file per provider, written `0600` inside a `0700` directory. They stay out of `configuration.yaml` deliberately, because that file is digest-synced and would thrash on every silent token refresh. Which models each plan serves is discovered live from the account.
 
@@ -73,21 +74,28 @@ You can also **sign in with a ChatGPT or a Cursor subscription** instead of past
 exa: { api_key: "" }
 jina: { api_key: "" }
 firecrawl: { api_key: "", api_url: "" }
-web_fetch: { proxy_url: "" }
+web_fetch:
+  proxy_url: ""
+  timeout_seconds: 30
+  download_timeout_seconds: 120
+  minimum_useful_characters: 64
 ```
 
-| Setting     | What it serves                | Environment variable                     |
-| ----------- | ----------------------------- | ---------------------------------------- |
-| `exa`       | `search_web`                  | `EXA_API_KEY`                            |
-| `jina`      | `fetch_url`, on the free tier | `JINA_API_KEY`                           |
-| `firecrawl` | `fetch_url`                   | `FIRECRAWL_API_KEY`, `FIRECRAWL_API_URL` |
-| `web_fetch` | An outbound proxy             | `FETCH_PROXY`                            |
+| Setting                       | What it serves                | Environment variable                     |
+| ----------------------------- | ----------------------------- | ---------------------------------------- |
+| `exa`                         | `search_web`                  | `EXA_API_KEY`                            |
+| `jina`                        | `fetch_url`, on the free tier | `JINA_API_KEY`                           |
+| `firecrawl`                   | `fetch_url`                   | `FIRECRAWL_API_KEY`, `FIRECRAWL_API_URL` |
+| `web_fetch.proxy_url`         | An outbound proxy             | `FETCH_PROXY`                            |
+| `web_fetch.timeout_seconds`   | How long one engine is given  | —                                        |
+| `web_fetch.download_timeout_seconds` | How long a download is given | —                                        |
+| `web_fetch.minimum_useful_characters` | Below this a page is a wall or stub, so the next engine is tried | — |
 
 `fetch_url` uses a tiered engine: Jina Reader first, then Firecrawl, then a direct fetch. Each tier is optional; an unset key skips it. `proxy_url` overrides the standard `HTTPS_PROXY` and `ALL_PROXY` for the fetch and download tools only.
 
 ## Hosted integrations
 
-Composio's hosted gateway joins the ordinary set of MCP servers when enabled; it is not a second path, and tool gating sees it as another server. `composio.api_key` also reads `COMPOSIO_API_KEY`.
+Composio's hosted gateway joins the ordinary set of MCP servers when enabled; it is not a second path, and tool gating sees it as another server. `composio` is an app-owned section in the same file. `composio.api_key` also reads `COMPOSIO_API_KEY`.
 
 ## Execution and permissions
 
@@ -102,7 +110,7 @@ toolbox: { enabled: true }
 
 `workspace.strategy` is one of `none`, `branch`, or `worktree`. It is resolved once, when the session is created. A `worktree` session runs its tools in its own git worktree, so parallel sessions on one repository do not tread on each other.
 
-`agent.permission_mode` is the mode a session gets when none is asked for. It is a default, not a ceiling: a session's creation can override it, and a child is clamped against its parent either way.
+`agent.permission_mode` is the mode a session gets when none is asked for. It is a default, not a ceiling: a session's creation can override it, and a child is clamped against its parent either way. The modes are `ask`, `automatic`, and `allow`.
 
 `computer_control` turns on the macOS screen tools (`control_screen`); it is opt-in. `user_context` puts a snapshot of how you work into the prompt; it is opt-in too.
 
@@ -115,7 +123,7 @@ toolbox:
   enabled: true
 ```
 
-With it on, each session gets a package profile of its own at the front of its `PATH`, and `nix profile add nixpkgs#jq` installs into that profile with no flag and no path. The packages come from the shared read-only store; what the session owns is a directory of symlinks under `~/.local/state/langmesh/sessions/<id>`, deleted when the session is reaped. Your own profile is never written to, and the confinement is unchanged.
+With it on, each session gets a package profile of its own at the front of its `PATH`, and `nix profile add nixpkgs#jq` installs into that profile with no flag and no path. The packages come from the shared read-only store; what the session owns is a directory of symlinks under `~/.local/share/langmesh/sessions/<id>` (the toolbox root), deleted when the session is reaped. Your own profile is never written to, and the confinement is unchanged.
 
 It needs [Nix](https://nixos.org). On a machine without it there is no toolbox, and the agent is told nothing about installing anything.
 
@@ -131,7 +139,7 @@ sandbox:
     writable: ["$WORKSPACE", "$TMPDIR", "/tmp", "$XDG_CACHE_HOME"]
     deny: []
     grantable: []
-  network: true
+  network: false
   limits:
     RLIMIT_CORE: 0
     RLIMIT_FSIZE: 8589934592
@@ -140,7 +148,7 @@ sandbox:
   nice: 0
 ```
 
-`enforce` is one of `required`, `preferred`, or `off`. `limits` are POSIX rlimits under their own names and units; `umask` is `umask(2)` and `nice` is `nice(2)`. Only the filesystem and the network have no POSIX spelling, and they are the two that need a platform behind them.
+`enforce` is one of `required`, `preferred`, or `off`. `limits` are POSIX rlimits under their own names and units; `umask` is `umask(2)` and `nice` is `nice(2)`. Only the filesystem and the network have no POSIX spelling, and they are the two that need a platform behind them. `network` is **off by default**; turn it on if a tool child may reach the network at all.
 
 **The filesystem.** The system stays readable; the lists govern your home, which is closed by default. `readable` is the allowlist that keeps toolchains working. `writable` is narrower still. `deny` is an opt-in absolute ban that wins over both; nothing decided at runtime reaches past it. The shipped defaults keep credential and configuration directories readable, including `~/Library/Keychains` so Git's macOS credential helper works inside the sandbox. `$WORKSPACE` is the session's own directory.
 
@@ -165,14 +173,15 @@ A session's mode says **who answers** when a call asks to reach past its confine
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ask`       | The person running the session answers. The turn parks until they do.                                                                                                      |
 | `automatic` | A reviewer answers: it allows or refuses the request, and never asks. For work nobody is watching. A refusal reaches the agent as a refused tool call, with a reason. |
+| `allow`     | No gate at all: every call runs as if it had whatever it asked for. The confinement still applies to what a call may touch; only the asking is skipped.               |
 
-There is **no bypass mode** and no standing "always allow": the only runtime decisions are allow-once and deny. A session's mode is chosen when the harness creates it and can be changed afterwards by the person running it; a session can never change its own. A session created by another is never looser than its parent, and tightening a session tightens the subtree it created.
+A session's mode is chosen when the harness creates it and can be changed afterwards by the person running it; a session can never change its own. A session created by another is never looser than its parent, and tightening a session tightens the subtree it created, so an unattended session (`automatic` or `allow`) can only create sessions that also run unattended.
 
 **A read-only session** is not a mode. It is a confinement with nowhere writable: created with a `sandbox:` block that lists no `writable` paths. Nothing about a command's text decides it, so no spelling of a write gets past.
 
-Three tools take per-call rules on each agent, the three whose calls can be named: `bash` by its command (`sudo *: deny`, `rm -rf *: ask`), `mcp` by `server.tool` (`*.delete_*: deny`), and `screen` by the primitive a script reaches for (`evaluate: deny`). The longest matching pattern wins. A `deny` refuses the call outright in both modes; a reviewer may not overrule a rule you wrote.
+Three tools take per-call rules on each agent, the three whose calls can be named: `bash` by its command (`sudo *: deny`, `rm -rf *: ask`), `mcp` by `server.tool` (`*.delete_*: deny`), and `screen` by the primitive a script reaches for (`evaluate: deny`). The longest matching pattern wins. A `deny` refuses the call outright in all modes; a reviewer may not overrule a rule you wrote.
 
-`bash` ships with a short list of prefixes already set to `ask` or `deny`, because the confinement answers "where can this reach" and not "how much of the workspace survives this": `rm -rf .` is entirely inside the boundary, and so is `git reset --hard`. Your own entry at the same pattern replaces the shipped one.
+`bash` ships with a short list of prefixes already set to `ask` or `deny`, because the confinement answers "where can this reach" and not "how much of the workspace survives this": `rm -rf *`, `rm -fr *`, `rm -r *`, `git reset --hard*`, `git clean -*`, `git push --force*`, `sudo *`, `chmod -R *`, `chown -R *`, `dd *` are set to `ask`, and `mkfs*`, `shutdown*`, `reboot*` to `deny`. Your own entry at the same pattern replaces the shipped one.
 
 ## Conversation compaction
 
@@ -202,9 +211,18 @@ When a conversation reaches its recommended preparation threshold, LangMesh appe
 
 Observations are workspace-owned current state and explicit. Agents retrieve and maintain them through Bash using the `observational-memory` skill. The daemon watches each active location's registry through native filesystem notifications and shares one watcher across its sessions. A committed revision broadcasts a complete validated snapshot to the memory panel. The system prompt receives only progressive-disclosure metadata, never observation rows.
 
+## Attachments
+
+```yaml
+attachments:
+  inline_image_megabytes: 20.0
+```
+
+`inline_image_megabytes` is the ceiling on an image inlined into a conversation, since a huge image would blow up the persisted conversation it is inlined into. Above it, or for a model without vision, the model gets the file path instead.
+
 ## Tool limits
 
-How much of a model's context tool output may occupy, and how patient the tools are. Every limit ships as a plain value; nothing scales with the live window, so what you set is what runs.
+How much of a model's context tool output may occupy, and how patient the tools are. Every limit ships as a plain value under `tuning.defaults`; nothing scales with the live window, so what you set is what runs. The `tuning` section is three things:
 
 ```yaml
 tuning:
@@ -217,25 +235,22 @@ tuning:
     web_search_maximum: 16
 ```
 
-| Setting                 | What it does                                                   |
-| ----------------------- | -------------------------------------------------------------- |
-| `context_share.text`    | The share the headline text budgets assume: output, fetched pages. |
-| `context_share.results` | The share the headline result budgets assume: matches, lines, records. |
-| `timeout_multiplier`    | `2.0` doubles every wait, for a slow machine. `1.0` is neutral. |
-| `defaults`              | Overrides one limit by its own name; every duration is in seconds. |
+| Setting              | What it does                                                                 |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `context_share.text` | The share the headline text budgets assume: output, fetched pages, at the default scale. |
+| `context_share.results` | The share the headline result budgets assume: matches, lines, records, at the default scale. |
+| `timeout_multiplier` | `2.0` doubles every wait, for a slow machine. `1.0` is neutral.              |
+| `defaults`           | Override one limit by its own name; every duration is in seconds.            |
 
-`defaults` is the escape hatch for a single value. Its keys are the fields of `langmesh.base.primitives.limits.Limits`. An unknown name is an error at load. An explicit `defaults` value wins over the percentage shares.
+`defaults` is the escape hatch for a single value. Its keys are the fields of `langmesh.base.primitives.limits.Limits`. An unknown name is an error at load, and the settings panel lists each with its shipped value. An explicit `defaults` value wins over the percentage shares. See [the reference below](#the-tuneables).
 
-The settings panel lists every setting with what it ships at and what this machine runs on; what each one is _for_ is in the [configuration reference](configuration.md). [`configuration.example.yaml`](configuration.example.yaml) is the same surface as a file at its shipped values. Read it; do not copy it over your own configuration, because everything in it is already the default.
+The settings panel lists every setting with what it ships at and what this machine runs on; what each one is _for_ is in the reference below. The shipped template (`langmeshd/commons/configuration.yaml`) is the same surface at its default values; read it, do not copy it over your own configuration, because everything in it is already the default.
 
 ## Screen control
 
 ```yaml
 computer_control:
   enabled: false
-  settle:
-    poll_seconds: 0.05
-    give_up_seconds: 1.5
   retrieval:
     multilingual_rank_model: "minishlab/M2V_multilingual_output"
     english_rank_model: "minishlab/potion-base-32M"
@@ -243,7 +258,7 @@ computer_control:
     lexical_gate_long_words: 7
 ```
 
-`enabled` drives native macOS apps and your own Chrome, and it is opt-in. After an action, the harness **polls** a surface until it stops changing; it does not sleep for a fixed guess. `poll_seconds` is how often it re-checks, and `give_up_seconds` is the longest it waits before reading anyway.
+`enabled` drives native macOS apps and your own Chrome, and it is opt-in. After an action, the harness **polls** a surface until it stops changing; it does not sleep for a fixed guess. The polling cadence and the retrieval tuning live with the other numbers under `tuning.defaults` (`settle_poll_seconds`, `settle_give_up_seconds`, `settle_stable_reads`, and the `find_*` family).
 
 ### How a screen is ranked
 
@@ -288,9 +303,6 @@ telemetry:
 
 **There is no default agent setting**, here or anywhere. Every session is created with an explicit agent, and no profile is the one to fall back to. Add your own under `~/.agents/agents/<id>/` or `.agents/agents/<id>/` in a working directory. See [Agent system](agent-system.md).
 
-
-
-
 ## Configuration reference
 
 Every setting LangMesh has, in the order the settings panel presents them: what you decide first at the top, the numbers underneath everything at the bottom.
@@ -305,9 +317,9 @@ The settings panel shows the same set, with the name and explanation in the inte
 
 What a session runs under when its creator does not say.
 
-| Setting                 | Type                | Default | What it is for |
-| ----------------------- | ------------------- | ------- | -------------- |
-| `agent.permission_mode` | `ask` / `automatic` | `ask`   | Who answers when a session asks to reach past its confinement when neither the person nor its agent profile chooses a mode. |
+| Setting                 | Type                                  | Default | What it is for |
+| ----------------------- | ------------------------------------- | ------- | -------------- |
+| `agent.permission_mode` | `ask` / `automatic` / `allow`         | `ask`   | Who answers when a session asks to reach past its confinement when neither the person nor its agent profile chooses a mode. |
 
 ### Workspaces
 
@@ -328,7 +340,7 @@ What a session's tool children may do, enforced by the operating system.
 | `sandbox.filesystem.writable`  | list                             | `$WORKSPACE` `$TMPDIR` `/tmp` `$XDG_CACHE_HOME` `~/.cache` | Paths a tool child may write. Deliberately narrower than readable. |
 | `sandbox.filesystem.grantable` | list                             | — | Paths an agent may be granted at runtime without asking. Empty means every request is put to you. |
 | `sandbox.filesystem.deny`      | list                             | — | Opt-in absolute bans. Wins over readable and writable; no request opens them. |
-| `sandbox.network`              | boolean                          | `true` | Whether a tool child may reach the network at all. |
+| `sandbox.network`              | boolean                          | `false` | Whether a tool child may reach the network at all. |
 | `sandbox.limits`               | map                              | `{'RLIMIT_CORE': 0, 'RLIMIT_FSIZE': 8589934592, 'RLIMIT_NPROC': 2048}` | Per-child resource limits, by their setrlimit names. |
 | `sandbox.umask`                | string                           | — | The file-creation mask a tool child runs under. Empty leaves the machine's own. |
 | `sandbox.nice`                 | integer                          | `0` | How far to lower a tool child's scheduling priority, so a runaway command does not take the machine with it. |
@@ -355,6 +367,14 @@ How conversation history is compacted as it grows.
 | `goal_review.mode`                        | choice  | `review` | Which strategy drives an open goal: `review` runs an independent reviewer session, `self_managed` re-prompts the agent on the goal itself. |
 | `goal_review.maximum_attempts`           | integer | `3` | How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset before the goal parks and waits for a person. |
 
+### Attachments
+
+How the files a person attaches may cost the conversation.
+
+| Setting                             | Type   | Default | What it is for |
+| ----------------------------------- | ------ | ------- | -------------- |
+| `attachments.inline_image_megabytes` | number | `20.0`  | The ceiling on an image inlined into the persisted conversation. Above it, the model gets the path. |
+
 ### User snapshot
 
 Whether the system prompt describes how you work on this machine.
@@ -368,19 +388,17 @@ Whether the system prompt describes how you work on this machine.
 
 Driving the screen.
 
-| Setting                                               | Type    | Default | What it is for |
-| ----------------------------------------------------- | ------- | ------- | -------------- |
-| `computer_control.enabled`                            | boolean | `false` | Let the agent drive native applications and your browser. It also needs Accessibility granted in System Settings. |
-| `computer_control.settle.poll_seconds`                | number  | `0.05` | How often to re-check whether the surface has settled. |
-| `computer_control.settle.give_up_seconds`             | number  | `1.5` | The longest to wait before reading it anyway. |
-| `computer_control.retrieval.multilingual_rank_model`  | string  | `minishlab/M2V_multilingual_output` | The static embedding that ranks by meaning across languages. Also the model whose plain cosine backs the relevance floor. Empty turns it off. |
-| `computer_control.retrieval.english_rank_model`       | string  | `minishlab/potion-base-32M` | A second static embedding, ranked alongside the first. Stronger on queries that describe what an element is for. Empty turns it off. |
+| Setting                                              | Type    | Default | What it is for |
+| ---------------------------------------------------- | ------- | ------- | -------------- |
+| `computer_control.enabled`                           | boolean | `false` | Let the agent drive native applications and your browser. It also needs Accessibility granted in System Settings. |
+| `computer_control.retrieval.multilingual_rank_model` | string  | `minishlab/M2V_multilingual_output` | The static embedding that ranks by meaning across languages. Empty turns it off. |
+| `computer_control.retrieval.english_rank_model`      | string  | `minishlab/potion-base-32M` | A second static embedding, ranked alongside the first. Empty turns it off. |
 | `computer_control.retrieval.lexical_gate_short_words` | integer | `3` | Queries of this many words or fewer are treated as a label quoted off the screen, and the character similarity counts in full. |
-| `computer_control.retrieval.lexical_gate_long_words`  | integer | `7` | Queries of this many words or more are treated as a description of a purpose, and the character similarity is ignored. |
+| `computer_control.retrieval.lexical_gate_long_words` | integer | `7` | Queries of this many words or more are treated as a description of a purpose, and the character similarity is ignored. |
 
 ### Dictation
 
-Speaking to the composer instead of typing.
+Speaking to the composer instead of typing. An app-owned section in the same file.
 
 | Setting                                                      | Type    | Default | What it is for |
 | ------------------------------------------------------------ | ------- | ------- | -------------- |
@@ -397,30 +415,18 @@ Speaking to the composer instead of typing.
 | ----------- | ---- | ------- | -------------- |
 | `providers` | map  | — | Credentials for each model provider. The provider's own environment variable wins over anything stored here. |
 
-### Web search
+### Web search and fetching
 
 | Setting       | Type   | Default | What it is for |
 | ------------- | ------ | ------- | -------------- |
 | `exa.api_key` | string | — | Exa API key. The EXA_API_KEY environment variable wins over this. |
-
-### Page fetching (Jina)
-
-| Setting        | Type   | Default | What it is for |
-| -------------- | ------ | ------- | -------------- |
 | `jina.api_key` | string | — | Jina API key, which raises the rate limit. JINA_API_KEY wins over this. |
-
-### Page fetching (Firecrawl)
-
-| Setting             | Type   | Default | What it is for |
-| ------------------- | ------ | ------- | -------------- |
 | `firecrawl.api_key` | string | — | Firecrawl API key. FIRECRAWL_API_KEY wins over this. |
 | `firecrawl.api_url` | string | — | A self-hosted Firecrawl instance to use instead of the hosted API. |
-
-### Web fetch
-
-| Setting               | Type   | Default | What it is for |
-| --------------------- | ------ | ------- | -------------- |
-| `web_fetch.proxy_url` | string | — | Route direct fetches and file downloads through an HTTP or SOCKS proxy. Credentials may be embedded as `http://user:pass@host:port`. |
+| `web_fetch.proxy_url` | string | — | Route direct fetches and file downloads through an HTTP or SOCKS proxy. |
+| `web_fetch.timeout_seconds` | number | `30` | How long one engine is given before the cascade moves on. |
+| `web_fetch.download_timeout_seconds` | number | `120` | How long a download is given. |
+| `web_fetch.minimum_useful_characters` | integer | `64` | Below this, a page is a wall or a stub rather than the content, so the next engine is tried. |
 
 ### Composio
 
@@ -454,73 +460,69 @@ Speaking to the composer instead of typing.
 | `telemetry.exporter.headers`  | map                      | —               | Headers sent with every export, for a collector that authenticates. |
 | `telemetry.sample_ratio`      | number                   | `1.0`           | Share of traces exported. `1.0` exports every one. |
 
-### Tuning
+### The tuneables
 
-How large, how many, and how patient the tools are.
+How large, how many, and how patient the tools are: the fields of `langmesh.base.primitives.limits.Limits`, each addressable under `tuning.defaults`. Every duration is in seconds. The shipped defaults:
 
-| Setting                                | Type    | Default | What it is for |
-| -------------------------------------- | ------- | ------- | -------------- |
-| `tuning.context_share.text`            | number  | `0.25` | Share one result's text may fill: output, fetched pages. |
-| `tuning.context_share.results`         | number  | `0.15` | Share a set of results may fill: matches, lines, records. |
-| `tuning.timeout_multiplier`            | number  | `1.0` | Multiplier on every wait. `2.0` doubles them for a slow machine. |
-| `tuning.defaults` | section | — | Override one limit by its own name. Every duration is in seconds. |
-| `tuning.defaults.output_tokens` | integer | `16384` | Tokens of inline output one tool may return before the rest overflows to a file. |
-| `tuning.defaults.fetch_tokens` | integer | `32768` | Tokens of a fetched web page's text kept inline. |
-| `tuning.defaults.upstream_error_detail_tokens` | integer | `256` | Tokens of an upstream error body kept in the failure this harness raises. |
-| `tuning.defaults.web_search_maximum` | integer | `16` | Ceiling on the result count a web search may ask for. |
-| `tuning.defaults.web_exchanges` | integer | `256` | Recent request/response pairs a browser session keeps. |
-| `tuning.defaults.web_websockets` | integer | `32` | Live websockets a browser session tracks at once. |
-| `tuning.defaults.web_websocket_frames` | integer | `256` | Frames retained per tracked websocket. |
-| `tuning.defaults.action_timeout` | number | `5.0` | How long one browser action waits for its element. |
-| `tuning.defaults.navigation_timeout` | number | `20.0` | How long a page load or navigation waits. |
-| `tuning.defaults.snapshot_timeout` | number | `10.0` | How long an accessibility snapshot of a page waits. |
-| `tuning.defaults.browser_authorization` | number | `90.0` | How long attaching waits for the user to approve Chrome's prompt. |
-| `tuning.defaults.drag_timeout` | number | `8.0` | How long a drag between two elements waits. |
-| `tuning.defaults.read_text_timeout` | number | `10.0` | How long reading a page's text waits. |
-| `tuning.defaults.frame_resolve_timeout` | number | `2.0` | How long resolving a frame reference waits. See the note below. |
-| `tuning.defaults.sigterm_grace` | number | `3.0` | How long a cancelled command or a reaped session has after SIGTERM before SIGKILL. |
-| `tuning.defaults.bash_sync_window` | number | `60.0` | How long a shell command runs inline before it moves to the background. |
-| `tuning.defaults.slow_tool_sync_window` | number | `10.0` | The same inline window for fetching a URL or downloading a file. |
-| `tuning.defaults.web_search_sync_window` | number | `10.0` | The same inline window for a web search. |
-| `tuning.defaults.accessibility_messaging` | number | `2.0` | How long one accessibility message to an application waits. |
-| `tuning.defaults.control_script` | number | `120.0` | How long one screen-control script may run. |
-| `tuning.defaults.surface_guard_margin` | number | `30.0` | How far above the script's own limit the machinery waiting on it sits. |
-| `tuning.defaults.open_url` | number | `5.0` | How long handing a URL to the system browser waits. |
-| `tuning.defaults.model_silence_give_up` | number | `180.0` | How long a model stream may make no meaningful progress before the turn fails. |
-| `tuning.defaults.goal_continuation_turns` | integer | `16` | How many turns in a row a session may open for its own goal before it stops and waits for the person. |
-| `tuning.defaults.task_continuation_turns` | integer | `16` | How many turns in a row unfinished tracked tasks may reopen automatically before the session waits for the person. |
-| `tuning.defaults.settle_poll_seconds` | number | `0.05` |  |
-| `tuning.defaults.settle_give_up_seconds` | number | `1.5` |  |
-| `tuning.defaults.settle_stable_reads` | integer | `2` | Identical consecutive reads that count a surface as having stopped changing. |
-| `tuning.defaults.type_chunk_size` | integer | `32` | Characters sent per synthesized keyboard event. |
-| `tuning.defaults.type_chunk_interval` | number | `0.005` | Pause between typed chunks. |
-| `tuning.defaults.drag_steps` | integer | `16` | Segments a drag is split into, so it looks like a hand moved it. |
-| `tuning.defaults.drag_step_interval` | number | `0.01` | Pause between the interpolated steps of a drag. |
-| `tuning.defaults.click_interval` | number | `0.01` | Pause between successive synthesized clicks. |
-| `tuning.defaults.focus_settle` | number | `0.03` | Pause after focusing a field, before typing into it. |
-| `tuning.defaults.scroll_amount_pixels` | integer | `512` | Pixels one scroll step moves a native window. |
-| `tuning.defaults.accessibility_walk_budget` | number | `3.0` | How long one read of an app's accessibility tree may take. See the note below. |
-| `tuning.defaults.accessibility_ready_probe` | number | `0.4` | How long the readiness poll may spend deciding whether an app's tree has built yet. |
-| `tuning.defaults.accessibility_prewarm_interval` | number | `0.4` | Pause between pre-warming the frontmost application's accessibility tree. |
-| `tuning.defaults.accessibility_ready_backoff` | number | `0.2` | Ceiling on the widening pause between accessibility readiness probes. |
-| `tuning.defaults.find_rephrasing_similarity` | number | `0.45` | How alike two screen queries must be before a second one on the same element counts as the first asked again. |
-| `tuning.defaults.find_near_weight` | number | `0.5` | How much sitting beside the anchor is worth against matching the query. |
-| `tuning.defaults.find_anchor_margin` | number | `0.02` | How far ahead of its own runner-up a near anchor must score before a find will join on it. |
-| `tuning.defaults.find_candidates` | integer | `8` | Elements find_one weighs against its best match. |
-| `tuning.defaults.find_one_margin` | number | `0.2` | How far ahead of the runner-up find_one's best match must score before it answers with one element. |
-| `tuning.defaults.find_many_ceiling` | integer | `64` | Elements find_many will return however many are asked for. |
-| `tuning.defaults.find_relevance_floor` | number | `0.25` | How well an element must match before find_many returns it at all. |
-| `tuning.defaults.session_title_attempts` | integer | `4` | How many times a session asks the model to name itself before giving up. |
-| `tuning.defaults.permission_reviewer_attempts` | integer | `4` | How many times the permission reviewer is asked before its silence counts as a refusal. |
-| `tuning.defaults.model_catalogue_ttl` | number | `60.0` | How long the list of available models is cached. |
-| `tuning.defaults.credential_refresh_leeway` | number | `300.0` | How far ahead of its expiry an access token is refreshed. |
-| `tuning.defaults.oauth_poll_interval` | number | `1.0` | First pause between asks of whether a browser sign-in has completed; it widens from here. |
-| `tuning.defaults.oauth_poll_ceiling` | number | `10.0` | Ceiling on the widening pause between sign-in polls. |
-| `tuning.defaults.oauth_poll_give_up` | number | `300.0` | How long a browser sign-in is waited for before it is abandoned. |
-| `tuning.defaults.subscription_resume_ttl` | number | `1800.0` | How long a subscription provider's server-side conversation state stays worth resuming from. |
-| `tuning.defaults.file_url_ttl` | number | `600.0` | How long a signed file URL stays valid. |
-| `tuning.defaults.mcp_connect` | number | `20.0` | How long connecting to one MCP server waits. |
-| `tuning.defaults.card_resolve` | number | `20.0` | How long fetching a remote agent's card waits. |
+| `tuning.defaults.<name>`                    | Default   | What it is for |
+| ------------------------------------------- | --------- | -------------- |
+| `output_tokens`                             | `16384`   | Tokens of inline output one tool may return before the rest overflows to a file. |
+| `fetch_tokens`                              | `32768`   | Tokens of a fetched web page's text kept inline. |
+| `upstream_error_detail_tokens`              | `256`     | Tokens of an upstream error body kept in the failure this harness raises. |
+| `web_search_maximum`                        | `16`      | Ceiling on the result count a web search may ask for. |
+| `web_exchanges`                             | `256`     | Recent request/response pairs a browser session keeps. |
+| `web_websockets`                            | `32`      | Live websockets a browser session tracks at once. |
+| `web_websocket_frames`                      | `256`     | Frames retained per tracked websocket. |
+| `action_timeout`                            | `5.0`     | How long one browser action waits for its element. |
+| `navigation_timeout`                        | `20.0`    | How long a page load or navigation waits. |
+| `snapshot_timeout`                          | `10.0`    | How long an accessibility snapshot of a page waits. |
+| `browser_authorization`                     | `90.0`    | How long attaching waits for the user to approve Chrome's prompt. |
+| `drag_timeout`                              | `8.0`     | How long a drag between two elements waits. |
+| `read_text_timeout`                         | `10.0`    | How long reading a page's text waits. |
+| `frame_resolve_timeout`                     | `2.0`     | How long resolving a frame reference waits. |
+| `sigterm_grace`                             | `3.0`     | How long a cancelled command or a reaped session has after SIGTERM before SIGKILL. |
+| `bash_sync_window`                          | `60.0`    | How long a shell command runs inline before it moves to the background. |
+| `slow_tool_sync_window`                     | `10.0`    | The same inline window for fetching a URL or downloading a file. |
+| `web_search_sync_window`                    | `10.0`    | The same inline window for a web search. |
+| `accessibility_messaging`                   | `2.0`     | How long one accessibility message to an application waits. |
+| `control_script`                            | `120.0`   | How long one screen-control script may run. |
+| `surface_guard_margin`                      | `30.0`    | How far above the script's own limit the machinery waiting on it sits. |
+| `open_url`                                  | `5.0`     | How long handing a URL to the system browser waits. |
+| `model_silence_give_up`                     | `180.0`   | How long a model stream may make no meaningful progress before the turn fails. |
+| `goal_continuation_turns`                   | `16`      | How many turns in a row a session may open for its own goal before it stops and waits for the person. |
+| `task_continuation_turns`                   | `16`      | How many turns in a row unfinished tracked tasks may reopen automatically before the session waits for the person. |
+| `settle_poll_seconds`                       | `0.05`    | How often a surface is re-checked until it stops changing. |
+| `settle_give_up_seconds`                    | `1.5`     | The longest to wait before reading it anyway. |
+| `settle_stable_reads`                       | `2`       | Identical consecutive reads that count a surface as having stopped changing. |
+| `type_chunk_size`                           | `32`      | Characters sent per synthesized keyboard event. |
+| `type_chunk_interval`                       | `0.005`   | Pause between typed chunks. |
+| `drag_steps`                                | `16`      | Segments a drag is split into, so it looks like a hand moved it. |
+| `drag_step_interval`                        | `0.01`    | Pause between the interpolated steps of a drag. |
+| `click_interval`                            | `0.01`    | Pause between successive synthesized clicks. |
+| `focus_settle`                              | `0.03`    | Pause after focusing a field, before typing into it. |
+| `scroll_amount_pixels`                      | `512`     | Pixels one scroll step moves a native window. |
+| `accessibility_walk_budget`                 | `3.0`     | How long one read of an app's accessibility tree may take. |
+| `accessibility_ready_probe`                 | `0.4`     | How long the readiness poll may spend deciding whether an app's tree has built yet. |
+| `accessibility_prewarm_interval`            | `0.4`     | Pause between pre-warming the frontmost application's accessibility tree. |
+| `accessibility_ready_backoff`               | `0.2`     | Ceiling on the widening pause between accessibility readiness probes. |
+| `find_rephrasing_similarity`                | `0.45`    | How alike two screen queries must be before a second one on the same element counts as the first asked again. |
+| `find_near_weight`                          | `0.5`     | How much sitting beside the anchor is worth against matching the query. |
+| `find_anchor_margin`                        | `0.02`    | How far ahead of its own runner-up a near anchor must score before a find will join on it. |
+| `find_candidates`                           | `8`       | Elements find_one weighs against its best match. |
+| `find_one_margin`                           | `0.2`     | How far ahead of the runner-up find_one's best match must score before it answers with one element. |
+| `find_many_ceiling`                         | `64`      | Elements find_many will return however many are asked for. |
+| `find_relevance_floor`                      | `0.25`    | How well an element must match before find_many returns it at all. |
+| `session_title_attempts`                    | `4`       | How many times a session asks the model to name itself before giving up. |
+| `permission_reviewer_attempts`              | `4`       | How many times the permission reviewer is asked before its silence counts as a refusal. |
+| `model_catalogue_ttl`                       | `60.0`    | How long the list of available models is cached. |
+| `credential_refresh_leeway`                 | `300.0`   | How far ahead of its expiry an access token is refreshed. |
+| `oauth_poll_interval`                       | `1.0`     | First pause between asks of whether a browser sign-in has completed; it widens from here. |
+| `oauth_poll_ceiling`                        | `10.0`    | Ceiling on the widening pause between sign-in polls. |
+| `oauth_poll_give_up`                        | `300.0`   | How long a browser sign-in is waited for before it is abandoned. |
+| `subscription_resume_ttl`                   | `1800.0`  | How long a subscription provider's server-side conversation state stays worth resuming from. |
+| `file_url_ttl`                              | `600.0`   | How long a signed file URL stays valid. |
+| `mcp_connect`                               | `20.0`    | How long connecting to one MCP server waits. |
+| `card_resolve`                              | `20.0`    | How long fetching a remote agent's card waits. |
 
 ### Notes on individual tunables
 
@@ -529,9 +531,8 @@ A few carry more reasoning than a table row holds.
 - **`accessibility_walk_budget`** replaces a depth limit, which guarded the wrong quantity: a window six levels deep can take twice as long as one thirty-five levels deep, because the cost is how quickly the app answers, not how far down. Anything unread when it expires is reported as a region.
 - **`find_anchor_margin`** below its default makes the anchor a guess, and organising a ranking around a guess is worse than not anchoring.
 - **`find_many_ceiling`** exists because an `all=True` escape returned 590 elements and 1.5MB on one ordinary page, ending the turn by exceeding the context window. A find is a ranked search; the tail of a ranking is not more answer.
-- **`find_near_weight`** is fitted over 284 anchored cases: relevance alone answers about a fifth and proximity alone about a fifth, while the two together answer 85%.
+- **`find_near_weight`** is fitted over anchored cases: relevance alone answers about a fifth and proximity alone about a fifth, while the two together answer most.
 - **`find_one_margin`** is a budget rather than a discovery, and it is fitted against the fused ranking, not the top score. Re-fit it whenever the ranking changes.
-- **`find_relevance_floor`** cuts the noise band and nothing more. Treat an empty result as "nothing scored above the noise", never as proof of absence, and do not raise this hoping to buy absence detection; it would cost real matches first. It stays a cosine against the query because a fused score is scaled by the query's own length.
-- **`find_rephrasing_similarity`** requires both halves: likeness alone cries wolf on honest work, and same-element alone misses rephrasings.
+- **`find_relevance_floor`** cuts the noise band and nothing more. Treat an empty result as "nothing scored above the noise", never as proof of absence, and do not raise this hoping to buy absence detection; it would cost real matches first.
 - **`frame_resolve_timeout`** is deliberately well below the action timeout, so a frame that has gone waits out its budget rather than erroring.
-- **`session_idle_sleep`** is five hours by default: long enough that a working day of on-and-off use never pays a wake, short enough that a machine left overnight is not holding interpreters for conversations nobody returned to.
+- **`session_idle_sleep_seconds`** is not a tuning default; it is a daemon setting (five hours by default): long enough that a working day of on-and-off use never pays a wake, short enough that a machine left overnight is not holding interpreters for conversations nobody returned to.

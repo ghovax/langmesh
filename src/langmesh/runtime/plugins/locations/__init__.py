@@ -15,7 +15,7 @@ from typing import Any
 from pydantic import Field
 
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
-from langmesh.runtime.features.plugins.locations.resolver import (
+from langmesh.runtime.plugins.locations.resolver import (
     LocationAddress,
     executor_for,
     location_uri_for,
