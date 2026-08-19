@@ -63,6 +63,10 @@ class TitleAssignment(Feature):
             cache_lane_name="session-title",
             reason=f"naming session {self._context.session_id}",
             accept=lambda value: bool(value.title.strip()),
+            retry_reminder=lambda response: HumanMessage(
+                content=self._prompts.load("session_title_rejected", {}),
+                additional_kwargs={"reminder": True},
+            ),
         )
         if validated is None:
             return None
