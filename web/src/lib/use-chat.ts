@@ -14,6 +14,7 @@ import {
   sessionCreate,
   sessionSend,
   CONTENT_BLOCK_METADATA_KEY,
+  ERROR_MESSAGE_KEY,
   METADATA_KEY,
   partPayload,
   turnState,
@@ -291,7 +292,9 @@ function dropCompactionMarker(state: ReduceState, fallbackId: string): void {
 }
 
 function pushErrorMessage(state: ReduceState, error: FriendlyError, sourceId?: string): void {
-  state.appendMessage({
+  // An id-carrying error is the failed turn's terminal message: a reconnect replays the same part,
+  // so upsert converges the copies into one card rather than stacking a duplicate.
+  upsertMessage(state, {
     id: stableMessageId(state, "error", sourceId),
     role: "error",
     content: "",
@@ -742,7 +745,11 @@ function reduceAgentPart(state: ReduceState, part: A2APart, sourceId?: string): 
     return;
   }
   if (part.kind !== "data" || !part.data) return;
-  reduceDataPart(state, partPayload(part.data), sourceId);
+  // A live error is also the failed turn's terminal message, whose id the daemon stamps on the part;
+  // adopt it so the later history replay collapses onto the same row instead of drawing a second card.
+  const extension = sourceId ? undefined : asRecord(part.metadata?.[ERROR_MESSAGE_KEY]);
+  const messageId = String(extension?.messageId ?? "");
+  reduceDataPart(state, partPayload(part.data), sourceId || messageId || undefined);
 }
 
 function reduceLiveDelta(
@@ -1141,10 +1148,13 @@ function reduceDataPart(
         (message) => message.role === "error" && message.meta?.retryFailed === true,
       );
       if (retryIndex >= 0) {
+        // The retried failure is a new turn with a new message id; rekey the row so its replay
+        // deduplicates against this live delivery rather than drawing a second card.
         state.messages = state.messages.map((message, index) =>
           index === retryIndex
             ? {
                 ...message,
+                ...(sourceId ? { id: stableMessageId(state, "error", sourceId) } : {}),
                 meta: { ...message.meta, error: structuredErrorFromData(data), retryFailed: false },
               }
             : message,
