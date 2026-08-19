@@ -21,7 +21,7 @@ from langmesh.base.content.instructions import instructions_payload
 from langmesh.base.primitives.serialization import compact
 
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
-from langmesh.runtime.features.plugins.permission_reviewer.tools import (
+from langmesh.runtime.plugins.permission_reviewer.tools import (
     permission_decision as permission_decision_tool,
 )
 from langmesh.runtime.internals import _PreflightGate
@@ -75,7 +75,6 @@ class PermissionReviewer(Feature):
         prompt = self._prompts.load(
             "permission_reviewer",
             {
-                "thinking_language": self._prompts.load("thinking_language", {}).strip(),
                 "toolbox": (
                     self._prompts.load("reviewer_toolbox", {})
                     if getattr(self._host.tools.tool_context, "toolbox", None) is not None

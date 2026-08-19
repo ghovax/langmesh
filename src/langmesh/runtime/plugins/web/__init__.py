@@ -8,7 +8,7 @@ composes it. A bare library embedding has no web surface at all.
 from __future__ import annotations
 
 from langmesh.runtime.features import Feature, PluginContext
-from langmesh.runtime.features.plugins.web.tools import download_file, fetch_url, search_web
+from langmesh.runtime.plugins.web.tools import download_file, fetch_url, search_web
 
 
 class Web(Feature):
@@ -39,11 +39,11 @@ class Web(Feature):
             return None
         tool_name = args[0]
         if tool_name == "search_web":
-            from langmesh.runtime.features.plugins.web.handlers import handle_search_web
+            from langmesh.runtime.plugins.web.handlers import handle_search_web
 
             return handle_search_web
         if tool_name == "download_file":
-            from langmesh.runtime.features.plugins.web.handlers import handle_download_file
+            from langmesh.runtime.plugins.web.handlers import handle_download_file
 
             return handle_download_file
         return None

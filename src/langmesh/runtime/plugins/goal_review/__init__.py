@@ -26,7 +26,7 @@ from langmesh.base.primitives.serialization import compact
 from langmesh.base.contracts.tools import ToolGrant
 from langmesh.runtime.internals import race_interrupt
 from langmesh.runtime.cache_trace import cache_lane
-from langmesh.runtime.features.plugins.goal_review.goal import Goal
+from langmesh.runtime.plugins.goal_review.goal import Goal
 from langmesh.runtime.turn_events import (
     Done,
     GoalReviewFinished,
@@ -35,9 +35,9 @@ from langmesh.runtime.turn_events import (
     TurnEvent,
 )
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
-from langmesh.runtime.features.plugins.continuation import Continuation
-from langmesh.runtime.features.plugins.goal_review.models import GoalReview
-from langmesh.runtime.features.plugins.goal_review.tools import (
+from langmesh.runtime.plugins.continuation import Continuation
+from langmesh.runtime.plugins.goal_review.models import GoalReview
+from langmesh.runtime.plugins.goal_review.tools import (
     submit_goal_review,
     update_goal,
 )

@@ -45,7 +45,7 @@ from langmesh.protocol.metadata import (
 from langmesh.protocol.events import StatusEvent
 from langmesh.protocol.parts import _event_part
 from langmesh.protocol.turn_record import PendingInteraction, ToolGate, TurnRecord
-from langmesh.runtime.features.plugins.goal_review.goal import Goal, GoalReviewPhase
+from langmesh.runtime.plugins.goal_review.goal import Goal, GoalReviewPhase
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import SuspensionGate

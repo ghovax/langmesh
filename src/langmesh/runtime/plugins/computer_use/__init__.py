@@ -24,7 +24,7 @@ from langmesh.computer import control, engine as native_surface, retrieval, surf
 from langmesh.computer.retrieval import retrieval_policy_from, set_retrieval_policy
 from langmesh.computer.surface import message_loader
 from langmesh.runtime.features import Feature
-from langmesh.runtime.features.plugins.permissions import MUTATING_SCREEN_PRIMITIVES
+from langmesh.runtime.plugins.permissions import MUTATING_SCREEN_PRIMITIVES
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.execution import current_tool_decision, current_tool_services
 

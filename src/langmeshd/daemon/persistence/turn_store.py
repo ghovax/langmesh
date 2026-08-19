@@ -39,7 +39,7 @@ from langmesh.protocol.turn_record import ReconcileAction, TurnRecord, reconcile
 from langmesh.protocol.events import ErrorEvent
 from langmesh.protocol.parts import _event_part
 from langmesh.protocol.metadata import part_payload, wrap_part_payload
-from langmesh.runtime.features.plugins.goal_review.goal import Goal
+from langmesh.runtime.plugins.goal_review.goal import Goal
 
 
 def _dump(model) -> str:

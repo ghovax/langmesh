@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from langmesh.runtime.features.plugins.locations import ssh_hosts as _ssh_hosts
+from langmesh.runtime.plugins.locations import ssh_hosts as _ssh_hosts
 from langmesh.protocol.dtos import LocationInput, WorkspaceCreateRequest
 from pathlib import Path
 from typing import Any

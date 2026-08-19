@@ -1,6 +1,6 @@
 # Library quickstart
 
-`Session` owns one embedded runtime, its workspace lease, checkpoint store, and control state. It starts no daemon and reads no machine-level configuration unless your code explicitly uses `langmesh.daemon.machine`.
+`Session` owns one embedded runtime, its checkpoint store, and its control state. It starts no daemon and reads no machine-level configuration; a bare library catalogue has no agents, skills, or memories from disk. Plugin behavior (the tools, goal review, compaction, permissions, and the rest) is composed explicitly through `SessionComponents`.
 
 ## Install and run
 
@@ -25,6 +25,7 @@ async def main() -> None:
         providers={"anthropic": "sk-ant-…"},
     ) as session:
         answer = await session.ask("What does the retry path guarantee?")
+        ...  # Use `answer`.
 
 
 asyncio.run(main())
@@ -33,47 +34,77 @@ asyncio.run(main())
 Use `stream()` when the caller needs live text, tool activity, usage, suspension, compaction, or goal-review events.
 
 ```python
-from langmesh import TextChunk, ToolCall
+from langmesh import Done, TextChunk, ToolCall
 
 async for event in session.stream("Run the focused tests and explain any failure."):
     match event:
         case TextChunk(text=text):
-            render_text(text)
+            ...  # Paint the latest text delta.
         case ToolCall(id=call_id, name=name, arguments=arguments):
-            render_tool(call_id, name, arguments)
+            ...  # Create or update a tool card by id.
+        case Done(text=answer):
+            ...  # The turn finished.
 ```
+
+`stream()` yields a closed `TurnEventUnion`; dispatch on the variant class. See [Lifecycle and driving](lifecycle.md) for the whole contract.
 
 ## Add capabilities
 
 Replaceable behavior belongs in one `SessionComponents` value. The value is frozen and snapshots sequence inputs as tuples, so caller mutation cannot change a live runtime accidentally.
 
+The library ships no default battery. A `SessionComponents()` with nothing else is a plain model turn with no tools; every tool and every sub-behavior is a `Feature` you compose:
+
 ```python
-from langchain_core.tools import tool
-from langmesh import KeepRecentTurns, MaximumToolCalls, Session, SessionComponents
+from langmesh import Session, SessionComponents
+from langmesh.runtime.plugins.bash import Bash
+from langmesh.runtime.plugins.web import Web
+
+session = Session(
+    agent,
+    directory="/srv/checkout",
+    providers={"anthropic": "sk-ant-…"},
+    components=SessionComponents(features=[Bash(), Web()]),
+)
+```
+
+Now the agent can run shell commands and search/fetch the web. Everything else the product runs — goal review, compaction, permission gating, autonomous continuation, observational memory, background jobs, screen control, session naming, asking you questions — is the same `Feature` seam. See [Composition](composition.md#composing-a-sessions-features).
+
+Hooks, middleware, and a compaction strategy ride the same value:
+
+```python
+from langmesh import MaximumToolCalls, Session, SessionComponents
+from langmesh.runtime.plugins.compaction import Compaction, KeepRecentTurns
 
 
-@tool
-def incident_lookup(service: str) -> list[dict]:
-    """Return open incidents for a service."""
-    return incidents.open_for(service)
+class BlockDetachedShell:
+    """A hook. One turn is allowed a bounded number of tool calls."""
+
+    async def before_tools(self, calls):
+        return calls  # Narrow to the calls the permission barrier approved.
 
 
 components = SessionComponents(
-    tools=(incident_lookup,),
-    hooks=(MaximumToolCalls(30),),
-    compaction=KeepRecentTurns(24),
+    hooks=(MaximumToolCalls(30), BlockDetachedShell()),
+    features=[Compaction(strategy=KeepRecentTurns(24))],
 )
 
 session = Session(agent, directory="/srv/checkout", components=components)
 ```
 
-Supplied tools are gated by default. Set `supplied_tool_gate="none"` only when the surrounding application already enforces their authority.
+## Supplied tools
 
-### Tools at creation, or granted later
-
-Pass tools to `Session(..., tools=[...])`, or add one at any later moment with `session.grant_tool(...)`. Both are append-only: the tool's description and schema ride as a conversation message, so the provider-cache prefix never changes.
+Pass tools to `Session(..., tools=[...])`, or add one at any later moment with `session.grant_tool(...)`. Both are append-only: the tool's description and schema ride as an appended conversation message, so the provider-cache prefix never changes. A caller-supplied tool is gated by default.
 
 ```python
+from langchain_core.tools import tool
+
+
+@tool
+async def incident_lookup(service: str) -> list[dict]:
+    """Return open incidents for a service."""
+    return await incidents.open_for(service)
+
+
 session = Session(agent, directory="/srv/checkout", tools=[incident_lookup])
 
 # Later, mid-session:
@@ -84,10 +115,7 @@ See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 
 ## Next
 
-- [Composition](composition.md) explains every configured value and product boundary.
-- [Models and cache behavior](lifecycle.md) covers provider construction, credentials, and stable inference prefixes.
-- [Lifecycle and control](lifecycle.md) covers suspension, resume, interrupts, steering, and retries.
-- [Events and driving patterns](lifecycle.md) covers the complete stream contract.
-- [Customization](composition.md) covers tools, policy, hooks, middleware, locations, peer sessions, and MCP servers.
+- [Composition](composition.md) explains every configured value, the plugin seam, and the product boundary.
+- [Lifecycle and driving](lifecycle.md) covers suspension, resume, interrupts, steering, retries, and the complete stream contract.
 - [Compaction and continuation](persistence.md) covers history compaction and autonomous work.
-- [Resources and persistence](persistence.md) covers virtual workspaces, checkpoints, transcripts, and background jobs.
+- [Resources and persistence](persistence.md) covers virtual workspaces, checkpoints, transcripts, observational memory, and background jobs.

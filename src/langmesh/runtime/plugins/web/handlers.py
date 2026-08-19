@@ -139,7 +139,7 @@ async def handle_download_file(
 async def handle_search_web(
     services, tool_name, tool_arguments, tool_call_identifier, decision, policy, call_site
 ) -> AsyncIterator[Any]:
-    from langmesh.runtime.features.plugins.web.tools import search_web as search_web_tool
+    from langmesh.runtime.plugins.web.tools import search_web as search_web_tool
 
     background_token = bind_background_jobs(services.features.invoke("background"))
     try:

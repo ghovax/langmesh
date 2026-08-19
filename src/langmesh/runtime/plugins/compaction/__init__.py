@@ -23,13 +23,18 @@ from langmesh.base.primitives.errors import log_fields
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.features.events import MemoryHandoffFailed, MemoryHandoffVerified
-from langmesh.runtime.features.plugins.bash import bash as bash_tool
-from langmesh.runtime.features.plugins.compaction.tools import (
+from langmesh.runtime.plugins.bash import bash as bash_tool
+from langmesh.runtime.plugins.compaction.tools import (
     submit_compaction_summary as submit_compaction_summary_tool,
 )
-from langmesh.runtime.features.plugins.continuation import Continuation
-from langmesh.runtime.features.plugins.goal_review import GoalReviewFeature
-from langmesh.runtime.compaction import DirectCompactionPreparation
+from langmesh.runtime.plugins.continuation import Continuation
+from langmesh.runtime.plugins.goal_review import GoalReviewFeature
+from langmesh.runtime.plugins.compaction.ports import (
+    CompactionSummary,
+    DirectCompactionPreparation,
+    KeepRecentTurns,
+    ObservationCompactionPreparation,
+)
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.internals import (
     conversation_tokens,
@@ -839,4 +844,12 @@ class Compaction(Feature):
         """The refusal the model is given for calling outside the private handshake."""
         return self._prompts.load("compaction_preparation_violation", {})
 
-__all__ = ["Compaction", "CompactionControl", "CompactionSummaryExhausted"]
+__all__ = [
+    "Compaction",
+    "CompactionControl",
+    "CompactionSummaryExhausted",
+    "CompactionSummary",
+    "DirectCompactionPreparation",
+    "KeepRecentTurns",
+    "ObservationCompactionPreparation",
+]

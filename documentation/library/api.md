@@ -39,6 +39,16 @@
 
 `PromptComposer` receives `PromptLayer` values, while `BeforeModelHook` receives the final provider message list.
 
+## The plugin seam
+
+::: langmesh.runtime.features.seam.Feature
+
+::: langmesh.runtime.features.seam.Features
+
+::: langmesh.runtime.features.context.PluginContext
+
+::: langmesh.runtime.features.bus.PluginBus
+
 ## Resources and locations
 
 ::: langmesh.base.content.attachments.AttachmentInput
@@ -57,12 +67,18 @@
     options:
       members: true
 
-::: langmesh.runtime.compaction.KeepRecentTurns
+## Compaction, continuation, and hooks
 
-::: langmesh.runtime.compaction.ObservationCompactionPreparation
+::: langmesh.runtime.plugins.compaction.KeepRecentTurns
 
-::: langmesh.runtime.compaction.DirectCompactionPreparation
+::: langmesh.runtime.plugins.compaction.ObservationCompactionPreparation
 
-::: langmesh.runtime.features.plugins.continuation.policy.TuningContinuationPolicy
+::: langmesh.runtime.plugins.compaction.DirectCompactionPreparation
+
+::: langmesh.runtime.plugins.continuation.policy.DefaultContinuationPolicy
+
+::: langmesh.runtime.plugins.compaction.Compaction
+
+::: langmesh.runtime.plugins.goal_review.GoalReviewFeature
 
 ::: langmesh.runtime.hooks.MaximumToolCalls

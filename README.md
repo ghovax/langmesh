@@ -12,12 +12,11 @@ A coding agent needs more than a model. Something has to write the system prompt
 
 One conversation with an agent is a **session**. You create one, send it work, and it answers over its life. That is the only object in LangMesh, and everything below is a way of running one.
 
-LangMesh is four layers. Each one uses the layer under it and adds a single thing:
+LangMesh is four layers, and the first three are two packages that ship as one image. Each layer uses the one under it and adds a single thing:
 
-1. **The library** — `import langmesh`. `langmesh.Session` runs an agent in your own process. You give it the agent, the model, the working directory and the credentials; it reads no file you did not name. This is the harness itself, and the three layers above are all built on it. See [As a library](documentation/library/index.md).
-2. **The machine loaders** — `langmesh.daemon.machine`. These read your configuration file and the agents in your `.agents` directory, and turn them into what the library takes. This is the first layer that knows your home directory exists.
-3. **The daemon** — `langmeshd`. It hosts every session, keeps the register of what exists, owns the databases, and answers every call. That buys three things the library alone cannot. A session outlives the program that made it, another machine can reach it, and it is addressable by name from anywhere.
-4. **The clients** — `langmesh serve`, the macOS app, and a phone. All talk to the daemon and contain no harness of their own; anything one can do, the others can. A remote client reaches the daemon through its published endpoint, authenticated by the capability token and — on the unix socket — by the kernel-attributed caller.
+1. **The library** — `import langmesh`. `langmesh.Session` runs an agent in your own process. You give it the agent, the model, the working directory (or a virtual workspace) and the credentials; it reads no file you did not name, starts no daemon, and forces no plugin. This is the harness itself, and the three layers above are all built on it. See [As a library](documentation/library/index.md).
+2. **The machine loaders and the daemon** — the `langmeshd` package. The machine loaders (`langmeshd.daemon.machine`) read your configuration file and the agents in your `.agents` directories and turn them into what the library takes. `langmeshd` then hosts every session. This layer knows your home directory exists; the library does not.
+3. **The clients** — the `langmesh` command (whose one verb is `serve`), the macOS app, and a phone. All talk to the daemon and contain no harness of their own; anything one can do, the others can.
 
 An agent can use these too. When a session needs help it creates a second session and messages it, over the same API your terminal uses. The helper appears in your session list, you can watch it, and it ends when its parent does. Its answer arrives as a message, in its own words.
 
@@ -25,16 +24,16 @@ An agent can use these too. When a session needs help it creates a second sessio
 
 The harness writes the system prompt, defines the tools, manages context, and sets what the agent may do. The same model does different work under different harnesses — OpenCode versus Claude Code or Codex, say. LangMesh lets you change that layer:
 
-- **Tune the guardrails.** Permission modes and per-command rules are configuration. The engine that enforces them is open code. When the settings are not enough, you can change how permissioning works ([Permissions](documentation/user/configuration.md#permission-modes)).
+- **Any behavior beyond a plain model turn is a plugin.** Goal review, compaction, permission gating, autonomous continuation, observational memory, background jobs, and every tool from `bash` to `control_screen` are features composed onto a core that names none of them. A bare library session has no features at all. The product composes its own set; you compose yours. See [Composition](documentation/library/composition.md).
+- **Tune the guardrails.** Permission modes and per-command rules are configuration, and the engine that enforces them is open code. When the settings are not enough, you can change how permissioning works ([Permissions](documentation/user/configuration.md#permission-modes)).
 - **The agent can work on LangMesh itself.** Its prompt says that it runs LangMesh. Open the LangMesh repository as the project. The agent then reads and edits the harness, and you rebuild ([Architecture](documentation/internal/architecture.md)).
-- **The agent can start with context about you** — an opt-in snapshot of your machine and habits, off by default ([What it sends](SECURITY.md#what-the-agent-sends-to-your-model-provider)).
 
 ## Install
 
 LangMesh runs on **macOS on Apple Silicon**. It ships as two downloads:
 
-- **The daemon bundle**, which carries the harness, the daemon and the `langmesh` command in one signed image.
-- **The app**, which is the window that talks to it.
+- **The daemon bundle**, which carries the harness, the daemon and the `langmesh` command in one signed image (`LangMesh Computer Use.app`).
+- **The app**, which is the window that talks to it (`LangMesh.app`).
 
 Download the latest release, install both, and open the app (or run `langmesh serve` for the browser). The build is self-signed, so Gatekeeper warns you at the first launch. You can also build from source with the Nix-pinned toolchain.
 
@@ -42,21 +41,20 @@ See the [Installation guide](documentation/user/installation.md) for both paths 
 
 ## Quickstart
 
-The same harness, reached three ways. Start at the layer you want: an object in your own program, a session you can address from a terminal, or a window.
+The same harness, reached two ways. Start at the layer you want: an object in your own program, or a window.
 
 ### As a library
 
-No daemon, no socket, and nothing read from or written to your home directory. The agent, its prompt and its credentials are values in your program:
+No daemon and nothing read from or written to your home directory. The agent, its prompt, its features, and its credentials are values in your program:
 
 ```python
 import asyncio
-from langmesh import AgentConfiguration, FilesystemConfiguration, SandboxConfiguration, Session
+from langmesh import AgentConfiguration, Session
 
 reviewer = AgentConfiguration(
     name="reviewer",
     description="Reads a change and reports what it would break.",
     system_prompt="You review changes. Name the risk, or say there is none.",
-    sandbox=SandboxConfiguration(filesystem=FilesystemConfiguration(writable=[])),
     provider="anthropic",
     model="claude-opus-4-5",
 )
@@ -72,19 +70,26 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`stream()` instead of `ask()` gives typed live events. Replaceable behavior lives in one immutable `SessionComponents` value:
+`stream()` instead of `ask()` gives typed live events, and every feature you want — including the tools themselves — is composed explicitly through `SessionComponents`:
 
 ```python
-from langchain_anthropic import ChatAnthropic
-from langmesh import SessionComponents
+from langmesh import Session, SessionComponents
+from langmesh.runtime.plugins.bash import Bash
+from langmesh.runtime.plugins.web import Web
 
-components = SessionComponents(model=ChatAnthropic(model="claude-opus-4-5"))
-async with Session(reviewer, directory="/srv/checkout", components=components) as session:
-    async for event in session.stream("Summarise what the test suite covers."):
-        ...  # Consume each typed event as it arrives.
+session = Session(
+    reviewer,
+    directory="/srv/checkout",
+    providers={"anthropic": "sk-ant-…"},
+    components=SessionComponents(features=[Bash(), Web()]),
+)
+async for event in session.stream("Summarise what the test suite covers."):
+    ...  # Dispatch on each typed TurnEvent as it arrives.
 ```
 
-`SessionComponents` exposes models, prompt and attachment composition, checkpoints, jobs, transcripts, approvals, audit, tools, permission policy, hooks, middleware, compaction, continuation, peer sessions, MCP servers, workspaces, file leases, credentials, and tracing. Execution locations are immutable run facts passed to `Session`. Workspace data uses `WorkspaceResourcesLike`, normally the fsspec-backed `WorkspaceResources`.
+Because the library forces nothing, the agent above has no shell until `Bash()` is composed; a `SessionComponents()` with no features is a plain model turn and nothing else. `SessionComponents` carries the models, prompt and attachment composition, checkpoints, jobs, transcripts, approvals, audit, tools, permission policy, hooks, middleware, peer sessions, MCP servers, workspaces, file leases, credentials, and tracing — plus the `features` list and the `services` bundle the host hands its plugins. Run facts (directory, identity, permission mode, confinement) are passed to `Session`, never to the components, so a persistence adapter cannot silently change the boundary.
+
+A virtual workspace replaces a directory, and observational memory belongs to those resources rather than the session:
 
 ```python
 from langmesh import Session, WorkspaceResources
@@ -92,12 +97,10 @@ from langmesh import Session, WorkspaceResources
 resources = WorkspaceResources.memory({"README.md": "# Virtual workspace"})
 async with Session(reviewer, resources=resources, providers={"anthropic": "sk-ant-…"}) as session:
     answer = await session.ask("Add a short usage section to the README.")
-assert b"usage" in (await resources.read("README.md") or b"").lower()
+updated = await resources.read("README.md")  # The write is visible in the workspace.
 ```
 
-Observational memory belongs to those workspace resources, not the session: the agent maintains `.agents/observations.sqlite` through Bash, Git can track it, and LangMesh reads it for presentation, compaction verification, and a constant-sized progressive-disclosure descriptor in the system prompt. The descriptor contains only path, revision, counts, and timestamp extent; the agent retrieves relevant entries on demand rather than receiving an ever-growing prompt block.
-
-Library callers can read or subscribe to the same validated current-state registry without starting a daemon or polling:
+Library callers can read or subscribe to the same validated observation registry without starting a daemon or polling:
 
 ```python
 from langmesh import ObservationRegistry, WorkspaceResources
@@ -105,27 +108,21 @@ from langmesh import ObservationRegistry, WorkspaceResources
 resources = WorkspaceResources.local("/srv/checkout")
 registry = ObservationRegistry(resources)
 snapshot = await registry.load()
-for observation in snapshot["entries"]["observations"]:
-    observation_id = observation["id"]
-    claim = observation["claim"]
+for entry in snapshot["entries"]["observations"]:
+    ...  # Each entry carries id, updated_at, and the validated observation fields.
 
 descriptor = await registry.describe()  # path, revision, counts, and timestamp extent only
 
 async for changed in registry.watch():
-    revision = changed["revision"]
-    entries = changed["entries"]
+    ...  # A complete validated snapshot, same revision/entries shape as load().
 ```
 
-The same configured `ObservationRegistry(resources)` object works with a virtual backend. Watching requires a push-based `ResourceChangeSource`: local resources use watchdog, in-memory resources publish after each committed write, and remote adapters provide their provider's native notifications. LangMesh never substitutes a busy loop. A configured `Session` exposes this same object as `session.observations`, so code already driving an agent does not configure the resource boundary twice.
+The snapshot is a plain mapping: `revision` is an integer, and `entries` maps each ledger name (`observations`, `directives`) to a list of validated entry dicts. An observation entry carries `id` and `updated_at` plus the validated fields (`category`, `claim`, `detail`, `evidence`, `standing`, `files`); a directive entry carries `id`, `updated_at`, `kind`, `summary`, `detail`, `occasion`, and `files`. `load()` and `watch()` validate every payload and timestamp; a malformed registry raises `ObservationRegistryError`. All three methods are read-only and create nothing. A configured `Session` exposes this same object as `session.observations`, so code already driving an agent does not configure the resource boundary twice.
 
-All three methods are read-only and create nothing. `describe()` supports progressive disclosure without loading any entry payload: it validates storage integrity and returns the resolved path, existence, revision, per-ledger counts, and earliest/latest update timestamps. `load()` and `watch()` additionally validate every payload and timestamp. A malformed registry raises `ObservationRegistryError`; the app also shows that failure and privately gives it to the agent at the next model-call boundary so it can repair the file through the documented Bash protocol.
-
-Pass `configuration=custom_configuration` when constructing the registry if the configured project `.agents` root is somewhere other than its default relative location.
-
-Three more sit around the turn: bound it, wrap its tools, decide how its history compactions. Each one is an object with a method or two, so your own is as short as the ones that ship:
+Three more things sit around the turn: bound it, wrap its tools, decide how its history compacts. Each one is an object with a method or two, so your own is as short as the ones that ship:
 
 ```python
-from langmesh import KeepRecentTurns, MaximumToolCalls, Session, SessionComponents
+from langmesh import MaximumToolCalls, Session, SessionComponents
 
 class RefuseNetworkTools:
     """A hook. Sees the batch the permission rules approved, and narrows it."""
@@ -143,44 +140,32 @@ class Timed:
         finally:
             metrics.timing("langmesh.tool", time.monotonic() - started, tags={"tool": call.name})
 
-async with Session(
-    reviewer,
-    directory="/srv/checkout",
-    components=SessionComponents(
-        hooks=(MaximumToolCalls(20), RefuseNetworkTools()),
-        middleware=(Timed(),),
-        compaction=KeepRecentTurns(20),
-    ),
-) as session:
-    ...
+from langmesh.runtime.plugins.compaction import Compaction, KeepRecentTurns
+
+
+components = SessionComponents(
+    hooks=(MaximumToolCalls(20), RefuseNetworkTools()),
+    middleware=(Timed(),),
+    features=[Compaction(strategy=KeepRecentTurns(20))],
+)
+session = Session(reviewer, directory="/srv/checkout", components=components)
 ```
 
 A hook narrows and can never widen: `before_tools` runs after the permission barrier. The [library documentation](documentation/library/index.md) covers composition, lifecycle, customization, compaction, persistence, and the complete API.
 
-A program running on a managed machine can deliberately load its agent catalogue through `langmesh.daemon.machine`. The [library guide](documentation/library/index.md) documents the public seams, durable control state, persistence examples, and product boundary.
-
 ### From the terminal
 
-The command line has one job: serve the interface, with the daemon behind it.
+The command line has one job: **serve** — make LangMesh available over HTTP, with the daemon behind it.
 
 ```console
 $ langmesh serve
 ```
 
-Everything else — creating and messaging sessions, answering permission requests, watching work,
-recurring schedules, configuration, sign-in — happens in the interface (the app, or the browser
-`serve` exposes) or over the daemon's API. A session composes over that API: `create_session`
-makes a peer and gives it a brief, `message_session` reaches a session in either direction, and
-`end_session` stops one.
-
-These use the same daemon, the same sockets, and the same tree. The tool carries the caller's
-identity, which an argv string cannot do. A peer is therefore always a child of whoever made it,
-and its answer arrives as a message. `serve` starts the daemon it needs and stops a daemon it
-started; a daemon someone else was already running is left alone.
+Everything else — creating and messaging sessions, answering permission requests, watching work, recurring schedules, configuration, sign-in — happens in the interface (the app, or the browser `serve` exposes) or over the daemon's API. A session composes over that API, not by shelling out to this command.
 
 ### From the app
 
-1. **Launch LangMesh.** The daemon starts automatically; the app connects to it.
+1. **Launch LangMesh.** The app starts the separately installed daemon when it cannot find one, then opens the window.
 2. **Add a model key.** Open **Settings**, then **Providers**, and paste a key for any provider. You can also sign in with a ChatGPT or Cursor subscription. Then pick a model. Keys live in your LangMesh configuration file — see the [Configuration guide](documentation/user/configuration.md).
 3. **Start a conversation.** Type a task. Approve tool calls as they come up, or relax the [permission mode](documentation/user/configuration.md#permission-modes) once you trust a flow.
 
@@ -199,7 +184,7 @@ The closest tools are [Claude Code](https://code.claude.com) and [OpenAI Codex](
 | **Models**         | Any provider, or a ChatGPT or Cursor login, per session — the screen tools included                                                           | Claude first; third-party providers for coding on the CLI and VS Code, but its browser and computer use need an Anthropic plan | GPT-5 Codex by default; the CLI can also point at OpenRouter, Ollama, LM Studio, or any compatible endpoint |
 | **Where it runs**  | A harness you self-host — local, a VM, a container, or over SSH — with a native app pointed at it                                             | Proprietary client; long tasks run on Anthropic's cloud                                                                        | Local CLI, IDEs, and a desktop app; async tasks run on OpenAI's cloud                                       |
 | **Screen control** | Native macOS apps and your own Chrome, read as ranked accessibility/DOM elements from a plain-language search — screenshots only when you ask | Your real Chrome session, plus macOS computer use driven by downscaled screenshots (research preview, Pro/Max)                 | In-app and Chrome-extension browser, plus background macOS computer use driven by screenshots               |
-| **Reach**          | Terminal-first (`langmesh`), plus a desktop app over the same API; every session is scriptable and attachable                                 | Terminal, VS Code, JetBrains, desktop, web, mobile, Slack, CI, GitHub review; macOS and Windows                                | CLI, IDEs, desktop, cloud/web, Chrome, GitHub review; macOS and Windows                                     |
+| **Reach**          | Terminal-first (`langmesh`), plus a desktop app and phone over the same API; every session is scriptable and attachable                       | Terminal, VS Code, JetBrains, desktop, web, mobile, Slack, CI, GitHub review; macOS and Windows                                | CLI, IDEs, desktop, cloud/web, Chrome, GitHub review; macOS and Windows                                     |
 
 Three design choices distinguish LangMesh:
 
@@ -209,7 +194,7 @@ Three design choices distinguish LangMesh:
 
 The trade-off: it needs an accessibility tree or DOM to read, where a screenshot approach works on anything drawn on screen. See [Tools](documentation/user/agent-system.md).
 
-Elsewhere they lead. They have more polish, more places to run, and deeper ecosystems. Claude Code has subagents, hooks, plugins, and an Agent SDK. Codex has cloud tasks, more than 90 plugins, and automatic PR review. All three tools gate actions behind approvals and a sandbox.
+Elsewhere they lead. They have more polish, more places to run, and deeper ecosystems. Claude Code has subagents, hooks, plugins, and an Agent SDK. Codex has cloud tasks, more plugins, and automatic PR review. All three tools gate actions behind approvals and a sandbox.
 
 LangMesh is the small, open, model-agnostic option that you host yourself. For a mature agent on a vendor's cloud, use theirs.
 
@@ -225,12 +210,12 @@ LangMesh follows the XDG convention. It does not use a single dot-directory:
 
 The OS clears the runtime directory when you log out. A crashed daemon therefore leaves nothing behind.
 
-Only the holder of a session's handle can reach it. Creating a session mints a capability token. Every call to a session's socket must present that token. The daemon guards its own API the same way, with a token that it writes 0600 into the runtime directory.
+Only the holder of a session's handle can reach it. Creating a session mints a capability token (derived, never stored). Every call to a session must present that token. The daemon guards its own API the same way, with a token that it writes `0600` into the runtime directory.
 
-That token does not say _which_ session is calling. A session runs as the same user and could read the file. So on the unix socket the daemon asks the kernel for the peer's pid. It resolves the pid to a session through the process session that every worker leads. A call is therefore attributed to whoever made it.
+That token does not say _which_ session is calling. A session runs as the same user and could read the file. So on the unix socket the daemon asks the kernel for the peer's pid. It resolves the pid to a session through the process group that every worker leads. A call is therefore attributed to whoever made it.
 
 > [!NOTE]
-> A session's permission mode can be changed while it runs, and the change reaches the turn already in flight — a conversation that starts under manual approvals and earns trust does not have to be restarted to run under a looser mode. A child gets a mode no looser than its parent's, and tightening a session tightens everything it created. There is no bypass mode and no standing "always allow"; the only decisions at runtime are allow-once and deny. See the [Security notes](SECURITY.md).
+> A session's permission mode can be changed while it runs, and the change reaches the turn already in flight — a conversation that starts under manual approvals and earns trust does not have to be restarted to run under a looser mode. A child gets a mode no looser than its parent's, and tightening a session tightens everything it created. See the [Security notes](SECURITY.md).
 
 ## Documentation
 

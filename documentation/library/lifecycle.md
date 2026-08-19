@@ -1,6 +1,6 @@
 # Lifecycle and control
 
-`Session.state` is the control authority. Its `phase` is one of `idle`, `running`, `suspended`, `compacting`, or `retrying`; invalid combinations such as running and suspended are unrepresentable.
+`Session.state` is the control authority. Its `phase` is one of `idle`, `running`, `suspended`, `compacting`, or `retrying`; invalid combinations such as running and suspended are unrepresentable. Only the core's own controls live in `SessionState` — plugin-owned state (goals, tasks, compaction, background jobs) is reached through the feature seam.
 
 ## Suspension and resume
 
@@ -25,7 +25,7 @@ async for event in session.stream("Run the release checks."):
 
 if session.state.pending and session.state.pending.ready:
     async for event in session.resume():
-        consume(event)
+        ...  # Continue the resumed turn.
 ```
 
 `PendingTurn` stores the serialized execution plans and completed decisions. A restored `Session` with the same id and checkpoint store resumes without rerunning calls that finished before suspension.
@@ -47,22 +47,25 @@ class ReadOnlyApprover:
 components = SessionComponents(approvals=ReadOnlyApprover())
 ```
 
-An approver exception escalates the gate; it never grants authority.
+An approver exception escalates the gate; it never grants authority. A `SuspensionGate` carries `request_id`, `kind` (`permission` or `question`), `tool_name`, `command`, `explanation`, and `escape`, so a client writes the decision surface in its own language.
 
 ## Interrupts and steering
 
 ```python
 session.interrupt()                 # Cancel the active model read and foreground work.
 session.interrupt_tool(call_id)     # Cancel one active tool call.
-session.background_tool(call_id)    # Detach one eligible foreground call.
 await session.steer("Check the migration too.")
 ```
 
-`steer()` appends the message at the next safe provider boundary and returns whether the runtime accepted it. It does not rewrite the active request or prior conversation. `background_jobs()` returns immutable snapshots for status rendering.
+`steer()` appends the message at the next safe provider boundary and returns whether the runtime accepted it. It does not rewrite the active request or prior conversation. A `Steering` event reports the accepted message, with a `message_id` the sender supplied. Background and detached work has its own lifecycle and is not cancelled by `interrupt()`; it belongs to the background-jobs feature.
 
-## Live policy and locations
+## Live policy
 
-`await session.set_permission_mode("automatic")` changes the next tool decision and reconsiders unanswered suspended gates. `session.set_locations(...)` changes resolution for the next tool call. Both preserve the existing conversation prefix.
+```python
+await session.set_permission_mode("automatic")
+```
+
+`set_permission_mode()` changes the next tool decision and reconsiders unanswered suspended gates, returning the updated state. The modes are `ask`, `automatic`, and `allow`; see [Permission modes](../user/configuration.md#permission-modes). Changing mode preserves the existing conversation prefix.
 
 ## Failure and retry
 
@@ -73,35 +76,37 @@ try:
     await session.ask("Complete the migration.")
 except Exception:
     async for event in session.retry():
-        consume(event)
+        ...  # Continue the saved conversation tail.
 ```
 
-Compaction failures use `compaction()` instead. A blocked compaction must succeed before new user work is accepted.
+`Session.retryable_turn` says whether the last failed turn can continue. Compaction is driven by the compaction feature, not by `Session`; a blocked compaction must succeed before new user work is accepted.
 
 ## Session close
 
-`aclose()` cancels only this session's background jobs, releases its resource lease, closes MCP server connections it opened, and unbinds its credentials and tracer. It does not shut down process-global browser or job runners owned by another session.
-
-
-
+`aclose()` cancels only this session's background jobs, releases its resource lease, closes MCP server connections it opened, and unbinds its credentials and tracer. It does not shut down process-global runners owned by another session.
 
 ## Events and driving patterns
 
-`Session.stream()`, `resume()`, `compaction()`, and `retry()` yield a closed `TurnEventUnion`. Dispatch on the variant class; the `EventType` enum is available for generic transports.
+`Session.stream()`, `resume()`, and `retry()` yield a closed `TurnEventUnion`. Dispatch on the variant class; the `EventType` enum is available for generic transports.
 
 | Event | Meaning | Typical action |
 | --- | --- | --- |
+| `Status` | A session status name | Update a status chip |
 | `TextChunk` | Assistant text delta | Paint immediately |
 | `Thinking` / `ThinkingDone` | Reasoning delta and boundary | Update a collapsible reasoning region |
 | `ToolCall` | Partial or complete tool request | Create or update one tool card by id |
 | `ToolResult` | Tool completion | Close the matching card |
+| `Mcp` | An MCP server event (connect, progress, log) | Update the MCP surface |
 | `Suspended` | Durable permission or question batch | Collect decisions, call `respond()`, then `resume()` |
+| `PermissionReviewing` | Automatic-mode gates the reviewer is weighing | Show the call before the verdict |
 | `Steering` | Mid-turn user message accepted | Reconcile optimistic UI by message id |
 | `Usage` | Latest request and cumulative token and cache data | Update usage telemetry |
+| `Checkpoint` | Tool batch became durable | Commit a product high-water mark if needed |
 | `CompactionStarted` / `CompactionDone` | Context compaction lifecycle | Show compaction state and reclaimed size |
 | `GoalReviewStarted` / `GoalReviewProgress` / `GoalReviewFinished` | Independent goal review | Render review status separately from assistant prose |
-| `Checkpoint` | Tool batch became durable | Commit a product high-water mark if needed |
 | `Error` | Structured turn or tool failure | Render its code and parameters |
+| `DeniedInjection` | A steered-in message was refused | Match the failed injection |
+| `RetryRequested` | A refused command offered a broader retry | Present the option if your client does |
 | `Done` | One model turn completed | Read final text and stop this stream |
 
 `Done` ends a turn, not the session. Autonomous goal or task continuation can produce several `Done` events inside one `Session.stream()` call. The session returns to `idle` only after continuation policy stops.
@@ -111,23 +116,21 @@ async def drive(session, message):
     async for event in session.stream(message):
         match event:
             case TextChunk(text=text):
-                await client.text(text)
+                ...  # Paint the latest text delta.
             case ToolCall(id=call_id, name=name, arguments=arguments):
-                await client.tool(call_id, name, arguments)
+                ...  # Create or update a tool card by id.
             case Suspended(interactions=interactions):
                 for gate in interactions:
-                    decision = await client.decide(gate)
-                    await session.respond(gate.request_id, decision)
+                    await session.respond(gate.request_id, ...)
             case Error(code=code, message=message):
-                await client.error(code, message)
+                ...  # Render the failure.
 
     if session.state.pending and session.state.pending.ready:
         async for event in session.resume():
-            await client.event(event)
+            ...  # Continue the resumed turn.
 ```
 
-An application may stop consuming events without interrupting the runtime only if it continues draining in another task. To stop work, call `Session.interrupt()`; cancellation closes the provider stream, records a cancelled transcript turn, checkpoints the closed exchange, and returns the session to `idle`.
-
+An application may stop consuming events without interrupting the runtime only if it continues draining in another task. To stop work, call `session.interrupt()`; cancellation closes the provider stream, records a cancelled transcript turn, checkpoints the closed exchange, and returns the session to `idle`.
 
 ## Models, credentials, and cache behavior
 
@@ -151,7 +154,7 @@ session = Session(
 )
 ```
 
-The `providers` mapping is copied into the session's `Configuration`; the caller's value is never mutated. Environment variables still take precedence. Account-backed providers use the replaceable `Credentials` port in `SessionComponents`.
+The `providers` mapping is copied into the session's `Configuration`; the caller's value is never mutated. Environment variables still take precedence. Account-backed providers (`chatgpt`, `cursor`) use the replaceable `Credentials` port in `SessionComponents`.
 
 ### Supply a model object
 
@@ -168,13 +171,13 @@ The model must implement `bind_tools()` and streaming. LangMesh binds one stable
 
 The static system prompt and tool schema form the reusable prefix. LangMesh preserves that prefix by construction:
 
-- `RuntimeComponents` is frozen and snapshots sequence fields.
+- `SessionComponents` is frozen and snapshots sequence fields.
 - Prior conversation messages are append-only until an explicit compaction.
-- Permission and goal reviewers inherit the main conversation and stable tool schema, then append their private instructions.
+- The goal and permission reviewers inherit the main conversation and stable tool schema, then append their private instructions.
 - A tool granted to a session is described by an appended conversation message, not a schema change, so the prefix holds at any moment. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 - Steering appends at a provider boundary; it never edits an earlier message.
-- Permission-mode and location changes apply during execution without rewriting model history.
+- Permission-mode changes apply during execution without rewriting model history.
 
 `PromptComposer` runs only when the cached system prompt is built. Call `Session.refresh_prompt()` after changing an external source that the composer reads; that explicit refresh invalidates the static prompt cache. A `BeforeModelHook` runs on every request and can intentionally change the prefix, so cache-sensitive hooks should leave the first system message untouched.
 
-Usage events expose provider-reported cache reads, the reachable prefix, and the first divergence from the preceding request. Use these values to verify a custom model adapter instead of inferring cache behavior from latency alone.
+Usage events expose provider-reported cache reads, the reachable prefix, and the first divergence from the preceding request (`prefix_intact`, `reachable_tokens`, `segments`, `shared_segments`, `divergence`). Use these values to verify a custom model adapter instead of inferring cache behavior from latency alone.

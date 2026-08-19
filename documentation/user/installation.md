@@ -30,7 +30,7 @@ Neither is needed for plain chat or the file, shell, and web tools.
 
 ## Option 2: build from source
 
-LangMesh is **two artifacts**, built independently, because the app is a *client* of the daemon rather than its container. The daemon bundle carries the harness, the `langmesh` command, and `langmeshd`, which hosts every session, in one signed image. The app is a window that finds a daemon and talks to it. Build them in either order; neither build triggers the other.
+LangMesh is **two artifacts**, built independently, because the app is a *client* of the daemon rather than its container. The daemon bundle carries the harness, the `langmesh` command, and `langmeshd` — the one binary entered two ways — in one signed image. The app is a window that finds a daemon and talks to it. Build them in either order; neither build triggers the other.
 
 You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv` included) and optionally [direnv](https://direnv.net).
 
@@ -67,9 +67,6 @@ Signing (steps 6, 7, 11) is optional for a build that only runs. It is necessary
 
 Both artifacts carry the same `CFBundleName` and identifier, so one certificate over both keeps them a single **LangMesh** row. See the [Development guide](../internal/development.md#building-and-signing).
 
-
-
-
 ## The `langmesh` command
 
 `langmesh` has one task: **serve** — make LangMesh available over HTTP, with the daemon behind it. Everything else a person does with the harness happens in the interface (the desktop app, or the browser the serve command exposes) or over the daemon's API.
@@ -90,13 +87,13 @@ This serves the same interface the desktop app embeds, so a browser is a client 
 > [!WARNING]
 > Whatever can reach this address can drive the daemon, because this server holds the token. It binds `127.0.0.1` for that reason. `--host` exists for tunnelling deliberately; if you use it, put authentication in front.
 
-**The paired door (`--reach`) is for your devices only.** It prints a `langmesh://pair#…` link carrying the address and a durable token; a phone scans or pastes it and is then the only thing the door answers to. What carries the door off the machine is your tailnet — `tailscale serve` terminates TLS at your `*.ts.net` name and proxies to the loopback port — so the tailnet identity is the outer gate and the pairing token the inner one. Nothing binds past loopback, and rotating the token unpairs every device.
+**The paired door (`--reach`) is for your devices only.** It prints a `langmesh://pair#…` link carrying the address and a durable token; a phone scans or pastes it and is then the only thing the door answers to. What carries the door off the machine is your tailnet — `tailscale serve` terminates TLS at your `*.ts.net` name and proxies to the loopback port — so the tailnet identity is the outer gate and the pairing token the inner one. Nothing binds past loopback, and deleting the pairing token unpairs every device.
 
 Needs the interface to have been built (`cd web && bun run build` in a checkout). The packaged build carries it.
 
 ### The daemon
 
-The daemon itself is `langmeshd` (`python -m langmesh langmeshd`), a separate process the interface talks to. `serve` and the desktop app start it when needed; it keeps running when the interface window or serve process goes away. Its status and endpoint are reported by the interface, or read from the state directory it publishes (`port` and `token` under the runtime directory).
+The daemon itself is `langmeshd` — the same binary as `langmesh`, entered by its first argument. It is a separate process the interface talks to. `serve` and the desktop app start it when needed; it keeps running when the interface window or serve process goes away. Its status and endpoint are reported by the interface, or read from the files it publishes into the runtime directory (`port`, `token`, `pid`, and the unix `socket`).
 
 ### What is not here
 
@@ -113,7 +110,6 @@ Diagnostics go to stderr; the exit code carries the outcome.
 | `130` | Interrupted with Ctrl-C. |
 | `141` | A pipe closed under it. |
 
-
 ## Run LangMesh on a server
 
 The harness is a Python library plus a daemon; nothing about the daemon requires the machine it
@@ -127,15 +123,17 @@ servers, peer sessions, goals, and its durable history is fully supported.
 
 ### Install
 
-Python 3.13 and `uv` are the only requirements.
+Python 3.13 and `uv` are the only requirements. Build from source on the server, since the
+packaged bundles are macOS images:
 
 ```sh
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv tool install langmesh
+git clone https://github.com/ghovax/langmesh.git && cd langmesh
+uv sync
 ```
 
-That puts `langmesh` (the CLI, which only serves) and `langmeshd` (the daemon) on your `PATH`.
-Alternatively install in a virtualenv: `uv venv && uv pip install langmesh`.
+That installs `langmesh` (the CLI, which only serves) and `langmeshd` (the daemon) into the
+project's `.venv`.
 
 ### Run it as a service
 
@@ -146,8 +144,9 @@ Description=LangMesh agent daemon
 After=network.target
 
 [Service]
-ExecStart=/root/.local/bin/langmeshd
+ExecStart=/srv/langmesh/.venv/bin/langmeshd
 Restart=on-failure
+WorkingDirectory=/srv/langmesh
 
 [Install]
 WantedBy=multi-user.target
@@ -167,8 +166,8 @@ On first boot the daemon seeds `~/.config/langmesh/configuration.yaml`. Add a pr
 The daemon binds loopback and guards itself with a capability token. Carry it off the machine
 with a transport you choose:
 
-- **SSH tunnel.** Forward the daemon's port to your laptop: `ssh -L 8823:127.0.0.1:8823 vps`. The
-  port the daemon publishes is written under its runtime directory; the token sits beside it.
+- **SSH tunnel.** Forward the daemon's port to your laptop. The port the daemon publishes is
+  written under its runtime directory; the token sits beside it.
 - **Tailscale.** Install Tailscale on the VPS and on your laptop, then point the desktop app's
   connect flow at the machine's tailnet address.
 
