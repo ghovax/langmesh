@@ -49,7 +49,7 @@ class ToolServices:
     catalogue: Any
     tool_context: Any
     access_grants: Sequence[Any] = field(default_factory=tuple)
-    attached_files: Sequence[Any] = field(default_factory=tuple)
+    attached_files: dict[str, None] = field(default_factory=dict)
     turn_reader: Any = None
     record_event: Any = None
     note_state_changed: Any = None

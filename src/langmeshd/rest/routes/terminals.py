@@ -102,6 +102,7 @@ async def terminal_websocket(
             terminal_key=terminal_key,
             remote_host_alias=remote_alias,
         )
+        assert session is not None
         subscriber = session.subscribe()
         await websocket.send_json(
             {

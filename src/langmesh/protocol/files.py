@@ -80,7 +80,9 @@ async def ingest_file_part(
     client: Optional[httpx.AsyncClient] = None,
 ) -> Optional[dict[str, Any]]:
     """Materialize an inbound file part into the upload store, or `None` when it is too large or unfetchable."""
-    file = part.root.file if hasattr(part, "root") else part.file
+    file = getattr(part, "root", part).file if hasattr(part, "root") else getattr(part, "file", None)
+    if file is None:
+        return None
     name = file.name or "file"
     suffix = Path(name).suffix
     mime_type = file.mime_type or mimetypes.guess_type(name)[0] or "application/octet-stream"
@@ -169,7 +171,7 @@ class FileUrlSigner:
         return self._within_root(file_path)
 
     def sign(self, file_path: str, *, ttl_seconds: Optional[int] = None) -> str:
-        ttl_seconds = (
+        ttl_seconds = int(
             ttl_seconds if ttl_seconds is not None else current_limits().file_url_ttl
         )
         if not self._within_root(file_path):

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, cast
 from urllib.parse import urlparse
 
 import httpx
@@ -219,7 +219,7 @@ class _RemoteAgent:
         if self._client is None:
             client_configuration = ClientConfig(
                 httpx_client=self._httpx_client(),
-                supported_transports=_available_transports(),
+                supported_transports=cast(list[TransportProtocol | str], _available_transports()),
                 streaming=bool(card.capabilities and card.capabilities.streaming),
             )
             self._client = ClientFactory(client_configuration).create(card)
@@ -333,7 +333,7 @@ class RemoteAgentManager:
             raise RuntimeError(
                 f"Remote agent {name!r} is not reachable ({agent.health}: {agent.error})."
             )
-        async for event in client.message_session(message):
+        async for event in client.send_message(message):
             yield event
 
     async def aclose(self) -> None:

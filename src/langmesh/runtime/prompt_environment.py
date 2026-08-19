@@ -946,7 +946,7 @@ def _wifi_from_profiler(profiler: dict) -> dict:
 def _displays_from_profiler(profiler: dict) -> list[str]:
     """The attached displays by name, from the shared `system_profiler` pass."""
     return [
-        screen.get("_name")
+        str(screen.get("_name"))
         for gpu in profiler.get("SPDisplaysDataType", [])
         if isinstance(gpu, dict)
         for screen in gpu.get("spdisplays_ndrvs", [])
@@ -1406,7 +1406,7 @@ def _build_user_context() -> dict:
                 continue
             if not value:
                 continue
-            if key is None:
+            if key is None and isinstance(value, dict):
                 payload.update(value)
             else:
                 payload[key] = value

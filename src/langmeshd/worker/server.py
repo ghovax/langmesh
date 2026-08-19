@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, cast
 
 from a2a.types import DataPart, Part, TextPart
 
@@ -26,7 +26,7 @@ def _message_parts(params: dict) -> list[Part]:
             else:
                 # The part's `data` rather than the part, so the payload does not arrive one level too deep.
                 payload = entry.get("data") if isinstance(entry.get("data"), dict) else entry
-                parts.append(Part(root=DataPart(data=dict(payload))))
+                parts.append(Part(root=DataPart(data=cast(dict[str, Any], payload))))
         if parts:
             return parts
     return [Part(root=TextPart(text=str(params.get("text", ""))))]

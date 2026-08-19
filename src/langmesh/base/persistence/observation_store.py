@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import sqlite3
 from enum import IntEnum
@@ -56,13 +57,13 @@ class NativeFileSubscription:
                 }.get(event.event_type)
                 if kind is None:
                     return
-                changes = {(kind, str(Path(event.src_path).resolve(strict=False)))}
+                changes = {(kind, str(Path(os.fsdecode(event.src_path)).resolve(strict=False)))}
                 if isinstance(event, FileSystemMovedEvent):
                     changes = {
-                        (NativeFileChange.DELETED, str(Path(event.src_path).resolve(strict=False))),
+                        (NativeFileChange.DELETED, str(Path(os.fsdecode(event.src_path)).resolve(strict=False))),
                         (
                             NativeFileChange.CREATED,
-                            str(Path(event.dest_path).resolve(strict=False)),
+                            str(Path(os.fsdecode(event.dest_path)).resolve(strict=False)),
                         ),
                     }
                 subscription._loop.call_soon_threadsafe(subscription._events.put_nowait, changes)
@@ -287,7 +288,7 @@ class SQLiteObservationStore:
         with self._connect_read_only() as connection:
             connection.execute("BEGIN")
             revision = self._validate_schema(connection)
-            rows_by_ledger: dict[str, list[tuple[str, object, str]]] = {}
+            rows_by_ledger: dict[str, list[tuple[str, bytes | str, str]]] = {}
             for ledger in _LEDGERS:
                 rows_by_ledger[ledger] = [
                     (str(entry_id), payload, str(updated_at))

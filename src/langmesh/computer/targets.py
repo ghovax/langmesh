@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from langmesh.computer import accessibility, permissions
 
@@ -81,6 +81,8 @@ def _window_server_windows() -> tuple[dict[int, dict[str, Any]], set[int]]:
     """Every window the system has numbered, and the subset on screen, as two listings because they mean different things."""
     try:
         import Quartz
+
+        Quartz = cast(Any, Quartz)  # pyobjc stubs omit the window-server functions
     except Exception:  # noqa: BLE001 — a machine without Quartz simply has no native targets
         return {}, set()
     try:
@@ -120,7 +122,7 @@ def _window_server_windows() -> tuple[dict[int, dict[str, Any]], set[int]]:
 def _frontmost_process_id() -> int:
     """The process the user is currently in, or 0. Only used to mark a target as focused."""
     try:
-        from AppKit import NSWorkspace
+        from AppKit import NSWorkspace  # type: ignore[attr-defined]
 
         application = NSWorkspace.sharedWorkspace().frontmostApplication()
         return int(application.processIdentifier()) if application is not None else 0
@@ -196,7 +198,7 @@ def _native_targets() -> list[Target]:
 def _is_ordinary_application(pid: int) -> bool:
     """Whether this process is a Dock-visible application rather than a background service."""
     try:
-        from AppKit import NSApplicationActivationPolicyRegular, NSRunningApplication
+        from AppKit import NSApplicationActivationPolicyRegular, NSRunningApplication  # type: ignore[attr-defined]
 
         application = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
         return (

@@ -31,10 +31,10 @@ class DictationUpdateRequest(BaseModel):
 class DictationTimingConfiguration(BaseModel):
     """How long dictation waits before giving up, separated because these are what a slow machine must move."""
 
-    minimum_transcription_timeout_seconds: float = Field(30.0)
-    transcription_timeout_realtime_multiplier: float = Field(0.5)
-    maximum_attempts: int = Field(2, ge=1)
-    worker_shutdown_seconds: float = Field(2.0)
+    minimum_transcription_timeout_seconds: float = Field(default=30.0)
+    transcription_timeout_realtime_multiplier: float = Field(default=0.5)
+    maximum_attempts: int = Field(default=2, ge=1)
+    worker_shutdown_seconds: float = Field(default=2.0)
 
 
 class DaemonConfiguration(BaseModel):
@@ -45,30 +45,30 @@ class DaemonConfiguration(BaseModel):
     """
 
     # How long to wait for the daemon to come up after starting it.
-    startup_seconds: float = Field(timing.DAEMON_STARTUP_SECONDS)
+    startup_seconds: float = Field(default=timing.DAEMON_STARTUP_SECONDS)
     # How often a probe retries a not-yet-listening daemon, and how long each connect may wait.
-    probe_interval_seconds: float = Field(timing.DAEMON_PROBE_INTERVAL_SECONDS)
-    probe_connect_seconds: float = Field(timing.DAEMON_PROBE_CONNECT_SECONDS)
+    probe_interval_seconds: float = Field(default=timing.DAEMON_PROBE_INTERVAL_SECONDS)
+    probe_connect_seconds: float = Field(default=timing.DAEMON_PROBE_CONNECT_SECONDS)
     # How long an idle hosted session sleeps before it is let go (five hours).
-    session_idle_sleep_seconds: float = Field(timing.SESSION_IDLE_SLEEP_SECONDS)
+    session_idle_sleep_seconds: float = Field(default=timing.SESSION_IDLE_SLEEP_SECONDS)
 
 
 class DictationConfiguration(BaseModel):
     """Opt-in speech-to-text, transcribed locally. Off by default: the first use downloads about a gigabyte."""
 
-    enabled: bool = Field(False)
-    model: str = Field("mlx-community/parakeet-tdt-0.6b-v3")
+    enabled: bool = Field(default=False)
+    model: str = Field(default="mlx-community/parakeet-tdt-0.6b-v3")
     timing: DictationTimingConfiguration = Field(default_factory=DictationTimingConfiguration)
 
 
 class ComposioConfiguration(BaseModel):
     """Composio's hosted MCP endpoint, exposed as an ordinary streamable_http server."""
 
-    enabled: bool = Field(False)
-    url: str = Field("https://connect.composio.dev/mcp")
-    api_key: str = Field("", json_schema_extra={"secret": True})
-    server_name: str = Field("composio")
-    timeout_seconds: float = Field(60)
+    enabled: bool = Field(default=False)
+    url: str = Field(default="https://connect.composio.dev/mcp")
+    api_key: str = Field(default="", json_schema_extra={"secret": True})
+    server_name: str = Field(default="composio")
+    timeout_seconds: float = Field(default=60)
 
     @property
     def effective_api_key(self) -> str:

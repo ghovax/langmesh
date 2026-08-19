@@ -12,7 +12,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import Any, Callable, TypeVar, cast
 
 
 @dataclass(frozen=True)
@@ -131,7 +131,7 @@ def limits_from_configuration(policy: object) -> Limits:
         for name in base.__dataclass_fields__:
             if name.endswith("_timeout") or name.endswith("_window") or name == "sigterm_grace":
                 values.setdefault(name, float(getattr(base, name)) * float(timeout_multiplier))
-    return Limits(**values)
+    return Limits(**cast(dict[str, Any], values))
 
 
 # Tokenizer-backed text budgeting, because a fixed characters-per-token ratio is wrong in both directions.

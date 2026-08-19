@@ -102,7 +102,7 @@ class Feature:
         """The reason this feature is holding the loop, for the fold it runs."""
         return "manual"
 
-    def maintenance_describe(self) -> dict:
+    async def maintenance_describe(self) -> dict:
         """The durable handoff's verification to adopt before the fold runs."""
         return {}
 

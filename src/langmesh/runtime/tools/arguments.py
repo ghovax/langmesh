@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from langchain_core.tools import BaseTool
 from pydantic import Field, create_model
@@ -38,26 +38,23 @@ def _forwarding(func: Callable[..., Any], accepted: set[str]):
     """One wrapped function: receives the shared fields and passes the tool's own fields through."""
     is_async = inspect.iscoroutinefunction(func)
 
-    if is_async:
+    async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+        for name in _SHARED_FIELDS:
+            if name in kwargs:
+                value = kwargs.pop(name)
+                if name in accepted:
+                    kwargs[name] = value
+        return await func(*args, **kwargs)
 
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            for name in _SHARED_FIELDS:
-                if name in kwargs:
-                    value = kwargs.pop(name)
-                    if name in accepted:
-                        kwargs[name] = value
-            return await func(*args, **kwargs)
+    def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+        for name in _SHARED_FIELDS:
+            if name in kwargs:
+                value = kwargs.pop(name)
+                if name in accepted:
+                    kwargs[name] = value
+        return func(*args, **kwargs)
 
-    else:
-
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            for name in _SHARED_FIELDS:
-                if name in kwargs:
-                    value = kwargs.pop(name)
-                    if name in accepted:
-                        kwargs[name] = value
-            return func(*args, **kwargs)
-
+    wrapper = async_wrapper if is_async else sync_wrapper
     wrapper.__name__ = func.__name__
     wrapper.__doc__ = func.__doc__
     wrapper.__qualname__ = func.__qualname__
@@ -73,7 +70,7 @@ def with_shared_fields(tool: BaseTool) -> BaseTool:
     take the shared values) is never a schema field. A structured verdict tool that already
     names its fields is returned unchanged.
     """
-    schema = tool.args_schema
+    schema: Any = tool.args_schema
     if schema is None:
         return tool
     fields = {
@@ -85,7 +82,7 @@ def with_shared_fields(tool: BaseTool) -> BaseTool:
         # Already carries the shared fields: only the receiver leakage needs stripping.
         if len(fields) == len(schema.model_fields):
             return tool
-        tool.args_schema = create_model(f"{schema.__name__}Arguments", **fields)
+        tool.args_schema = create_model(f"{schema.__name__}Arguments", **cast(Any, fields))
         return tool
     for name, field in (
         ("explanation", EXPLANATION_FIELD),
@@ -93,7 +90,7 @@ def with_shared_fields(tool: BaseTool) -> BaseTool:
     ):
         # A tool that names the field keeps it, but the shared description replaces any placeholder.
         fields[name] = field
-    tool.args_schema = create_model(f"{schema.__name__}Arguments", **fields)
+    tool.args_schema = create_model(f"{schema.__name__}Arguments", **cast(Any, fields))
 
     func = getattr(tool, "func", None) or getattr(tool, "coroutine", None)
     if func is None:

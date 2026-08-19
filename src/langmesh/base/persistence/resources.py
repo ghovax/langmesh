@@ -84,6 +84,8 @@ class WorkspaceResourcesLike(Protocol):
 
     def subscribe(self, prefix: str = "") -> ResourceSubscription: ...
 
+    def watch(self, prefix: str = "") -> AsyncIterator[ResourceChange]: ...
+
     def materialize(self) -> AbstractAsyncContextManager["MaterializedResources"]: ...
 
 
@@ -303,7 +305,7 @@ class WorkspaceResources:
             with resources.filesystem.transaction:
                 for path, value in files.items():
                     with resources.filesystem.open(resources.remote_path(path), "wb") as handle:
-                        handle.write(value.encode() if isinstance(value, str) else bytes(value))
+                        handle.write(value.encode() if isinstance(value, str) else bytes(value))  # type: ignore[arg-type]
         return resources
 
     def remote_path(self, relative: str = "") -> str:
@@ -319,7 +321,8 @@ class WorkspaceResources:
         def read() -> bytes | None:
             if not self.filesystem.isfile(target):
                 return None
-            return self.filesystem.cat_file(target)
+            raw = self.filesystem.cat_file(target)
+            return raw if isinstance(raw, bytes) else raw.encode() if isinstance(raw, str) else None
 
         return await asyncio.to_thread(read)
 
@@ -360,7 +363,7 @@ class WorkspaceResources:
                 self.filesystem.makedirs(parent, exist_ok=True)
             with self.filesystem.transaction:
                 with self.filesystem.open(target, "wb") as handle:
-                    handle.write(data)
+                    handle.write(data)  # type: ignore[arg-type]
 
         await asyncio.to_thread(write)
         self._publish([ResourceChange(normalized, "modified" if existed else "created")])

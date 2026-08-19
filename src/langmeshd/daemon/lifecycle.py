@@ -116,7 +116,7 @@ class SessionLifecycle:
             record for record in self._registry.descendants_of(session_id) if record.is_live
         ]
         # The goal is durable beside the checkpoint, so it stays on the record once the session is gone.
-        from langmesh.base import toolbox
+        from langmesh.base.content import toolbox
 
         for ending in ([] if skip_self else [record]) + descendants:
             toolbox.discard(ending.id)

@@ -9,7 +9,7 @@ import re
 from fnmatch import fnmatch
 import sys
 from pathlib import Path
-from typing import Callable, ClassVar, Literal, Optional
+from typing import Any, Callable, ClassVar, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -53,7 +53,7 @@ class Section(BaseModel):
 class ExaConfiguration(Section):
     """Exa — the web-search tool's backend."""
 
-    api_key: str = Field("", json_schema_extra={"secret": True})
+    api_key: str = Field(default="", json_schema_extra={"secret": True})
 
     @property
     def effective_api_key(self) -> str:
@@ -63,7 +63,7 @@ class ExaConfiguration(Section):
 class JinaConfiguration(Section):
     """Jina Reader, the web-fetch tool's default engine. The key is optional: it works keyless, slower."""
 
-    api_key: str = Field("", json_schema_extra={"secret": True})
+    api_key: str = Field(default="", json_schema_extra={"secret": True})
 
     @property
     def effective_api_key(self) -> str:
@@ -73,8 +73,8 @@ class JinaConfiguration(Section):
 class FirecrawlConfiguration(Section):
     """Firecrawl, the fallback for pages Jina returns thin. Without a key the fallback is skipped."""
 
-    api_key: str = Field("", json_schema_extra={"secret": True})
-    api_url: str = Field("")
+    api_key: str = Field(default="", json_schema_extra={"secret": True})
+    api_url: str = Field(default="")
 
     @property
     def effective_api_key(self) -> str:
@@ -88,12 +88,12 @@ class FirecrawlConfiguration(Section):
 class WebFetchConfiguration(Section):
     """Fetching a page, through the reader engines and then directly for sites that refuse them."""
 
-    proxy_url: str = Field("")
+    proxy_url: str = Field(default="")
     # How long one engine is given before the cascade moves on, and how long a download is given.
-    timeout_seconds: int = Field(30)
-    download_timeout_seconds: int = Field(120)
+    timeout_seconds: int = Field(default=30)
+    download_timeout_seconds: int = Field(default=120)
     # Below this a page is a wall or a stub rather than the content, so the next engine is tried.
-    minimum_useful_characters: int = Field(64)
+    minimum_useful_characters: int = Field(default=64)
 
     @property
     def effective_proxy_url(self) -> str:
@@ -134,9 +134,9 @@ class FilesystemConfiguration(Section):
 class SandboxConfiguration(Section):
     """A session's confinement, enforced by the operating system. Every other field is POSIX under its own name."""
 
-    enforce: Literal["required", "preferred", "off"] = Field("required")
+    enforce: Literal["required", "preferred", "off"] = Field(default="required")
     filesystem: FilesystemConfiguration = Field(default_factory=FilesystemConfiguration)
-    network: bool = Field(False)
+    network: bool = Field(default=False)
     limits: dict[str, int] = Field(
         default={
             "RLIMIT_CORE": 0,
@@ -144,8 +144,8 @@ class SandboxConfiguration(Section):
             "RLIMIT_NPROC": 2048,
         }
     )
-    umask: Optional[str] = Field(None)
-    nice: int = Field(0)
+    umask: Optional[str] = Field(default=None)
+    nice: int = Field(default=0)
 
     def to_profile(self):
         """This configuration as the :class:`~langmesh.base.confinement.Profile` the spawn path applies."""
@@ -167,18 +167,18 @@ class SandboxConfiguration(Section):
 class WorkspaceConfiguration(Section):
     """Where a session's tools actually run."""
 
-    strategy: Literal["none", "branch", "worktree"] = Field("none")
+    strategy: Literal["none", "branch", "worktree"] = Field(default="none")
 
 
 class CompactionConfiguration(Section):
     """Context compacting thresholds. Observational memory is a separate, user-managed concern."""
 
-    automatic: bool = Field(True)
-    reclaim_at_fraction: float = Field(0.85)
-    output_reserve_fraction: float = Field(0.1)
-    recent_working_set_fraction: float = Field(0.15)
+    automatic: bool = Field(default=True)
+    reclaim_at_fraction: float = Field(default=0.85)
+    output_reserve_fraction: float = Field(default=0.1)
+    recent_working_set_fraction: float = Field(default=0.15)
     # How many times the hidden summarizer may be asked again after reviewing but not submitting.
-    summary_attempts: int = Field(3)
+    summary_attempts: int = Field(default=3)
 
     @field_validator("summary_attempts")
     @classmethod
@@ -209,10 +209,10 @@ class GoalReviewConfiguration(Section):
     """
 
     # How the goal is driven after a turn that leaves it open: "review" or "self_managed".
-    mode: Literal["review", "self_managed"] = Field("review")
+    mode: Literal["review", "self_managed"] = Field(default="review")
 
     # How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset.
-    maximum_attempts: int = Field(3)
+    maximum_attempts: int = Field(default=3)
 
     @field_validator("maximum_attempts")
     @classmethod
@@ -226,7 +226,7 @@ class AttachmentsConfiguration(Section):
     """What a file the person attaches may cost the conversation it rides in."""
 
     # A generous ceiling, since a huge image would blow up the persisted conversation it is inlined into.
-    inline_image_megabytes: float = Field(20.0)
+    inline_image_megabytes: float = Field(default=20.0)
 
     @property
     def inline_image_bytes(self) -> int:
@@ -236,15 +236,15 @@ class AttachmentsConfiguration(Section):
 class ContextShareConfiguration(Section):
     """What proportion of a budget the configured defaults assume, read as plain percentages."""
 
-    text: float = Field(0.25)
-    results: float = Field(0.15)
+    text: float = Field(default=0.25)
+    results: float = Field(default=0.15)
 
 
 class TuningConfiguration(Section):
     """How large, how many and how patient the tools are, as plain values with no scaling."""
 
     context_share: ContextShareConfiguration = Field(default_factory=ContextShareConfiguration)
-    timeout_multiplier: float = Field(1.0)
+    timeout_multiplier: float = Field(default=1.0)
     defaults: dict[str, float] = Field(default_factory=dict)
 
     @field_validator("defaults")
@@ -263,30 +263,30 @@ class TuningConfiguration(Section):
 class UserContextConfiguration(Section):
     """Opt-in snapshot of how the user works on this machine, compacted into the system prompt."""
 
-    enabled: bool = Field(False)
-    refresh_hours: float = Field(6.0, gt=0)
+    enabled: bool = Field(default=False)
+    refresh_hours: float = Field(default=6.0, gt=0)
 
 
 class RetrievalConfiguration(Section):
     """How a screen is ranked when a script asks for an element by name. The defaults are fitted, not chosen."""
 
-    multilingual_rank_model: str = Field("minishlab/M2V_multilingual_output")
-    english_rank_model: str = Field("minishlab/potion-base-32M")
-    lexical_gate_short_words: int = Field(3, ge=0)
-    lexical_gate_long_words: int = Field(7, ge=1)
+    multilingual_rank_model: str = Field(default="minishlab/M2V_multilingual_output")
+    english_rank_model: str = Field(default="minishlab/potion-base-32M")
+    lexical_gate_short_words: int = Field(default=3, ge=0)
+    lexical_gate_long_words: int = Field(default=7, ge=1)
 
 
 class ComputerControlConfiguration(Section):
     """Opt-in control of macOS apps through the screen tools. Off by default, and needs an Accessibility grant."""
 
-    enabled: bool = Field(False)
+    enabled: bool = Field(default=False)
     retrieval: RetrievalConfiguration = Field(default_factory=RetrievalConfiguration)
 
 
 class ToolboxConfiguration(Section):
     """Whether a session may install tools for itself, into a directory deleted when it ends."""
 
-    enabled: bool = Field(True)
+    enabled: bool = Field(default=True)
 
 
 class MCPServerConfiguration(BaseModel):
@@ -391,17 +391,17 @@ class RemoteAgentsConfiguration(Section):
 class TelemetryExporterConfiguration(Section):
     """Where traces are sent."""
 
-    endpoint: str = Field("")
-    protocol: Literal["http/protobuf", "grpc"] = Field("http/protobuf")
+    endpoint: str = Field(default="")
+    protocol: Literal["http/protobuf", "grpc"] = Field(default="http/protobuf")
     headers: dict[str, str] = Field(default={})
 
 
 class TelemetryConfiguration(Section):
     """OTLP export of traces, off until an endpoint is set, and carrying no prompt or completion bodies."""
 
-    enabled: bool = Field(False)
+    enabled: bool = Field(default=False)
     exporter: TelemetryExporterConfiguration = Field(default_factory=TelemetryExporterConfiguration)
-    sample_ratio: float = Field(1.0)
+    sample_ratio: float = Field(default=1.0)
 
     def resolved_headers(self) -> dict[str, str]:
         return {key: os.path.expandvars(value) for key, value in self.exporter.headers.items()}
@@ -410,14 +410,14 @@ class TelemetryConfiguration(Section):
 class ProviderCredential(Section):
     """Credentials for one model provider."""
 
-    api_key: str = Field("", json_schema_extra={"secret": True})
-    base_url: str = Field("")
+    api_key: str = Field(default="", json_schema_extra={"secret": True})
+    base_url: str = Field(default="")
 
 
 class AgentDefaults(Section):
     """What a session gets when its creator did not say."""
 
-    permission_mode: Literal["ask", "automatic", "allow"] = Field("ask")
+    permission_mode: Literal["ask", "automatic", "allow"] = Field(default="ask")
 
 
 class Configuration(Section):
@@ -784,7 +784,7 @@ class PromptLoader:
         extension: str = "md",
         *,
         overrides: Optional[Callable[[str], Optional[str]]] = None,
-        fallback: Optional["PromptLoader"] = None,
+        fallback: Optional[Any] = None,
     ):
         """A template directory, an override hook consulted first, and an optional fallback loader.
 

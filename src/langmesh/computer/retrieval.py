@@ -484,6 +484,7 @@ class Index:
             return []
         ranking, cosines = self._ranking_scores(query)
         if ranking is not None:
+            assert cosines is not None  # a ranking exists only alongside its cosine scores
             fused, unreachable = ranking.tolist(), self._unreachable
             # The floor is read off the cosine rather than the ranking score, which is comparable only within one ranking.
             if floor > 0:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import minify_html
@@ -146,7 +147,7 @@ async def _impersonated_get(url: str, timeout_seconds: int):
     """A GET that mimics a real Chrome down to the TLS fingerprint, routed through the configured proxy."""
     from curl_cffi import AsyncSession
 
-    session_arguments: dict[str, object] = {"impersonate": "chrome", "timeout": timeout_seconds}
+    session_arguments: dict[str, Any] = {"impersonate": "chrome", "timeout": timeout_seconds}
     proxy_url = tool_context.current().proxy_url
     if proxy_url:
         session_arguments["proxies"] = {"http": proxy_url, "https": proxy_url}

@@ -11,8 +11,8 @@ from typing import Any, Optional
 import AppKit
 import ApplicationServices as AS
 import Quartz
-from CoreFoundation import kCFBooleanTrue
-from Foundation import NSMakeRange
+from CoreFoundation import kCFBooleanTrue  # type: ignore[attr-defined]
+from Foundation import NSMakeRange  # type: ignore[attr-defined]
 
 from langmesh.base.primitives.limits import current_limits
 
@@ -138,11 +138,11 @@ DECORATIVE_ROLES = frozenset(
 )
 
 # AXValue geometry types used by the declared macOS SDK.
-POINT_TYPE = AS.kAXValueCGPointType
-SIZE_TYPE = AS.kAXValueCGSizeType
-RECT_TYPE = AS.kAXValueCGRectType
-ERROR_VALUE_TYPE = AS.kAXValueAXErrorType
-RANGE_TYPE = AS.kAXValueCFRangeType
+POINT_TYPE = AS.kAXValueCGPointType  # type: ignore[attr-defined]
+SIZE_TYPE = AS.kAXValueCGSizeType  # type: ignore[attr-defined]
+RECT_TYPE = AS.kAXValueCGRectType  # type: ignore[attr-defined]
+ERROR_VALUE_TYPE = AS.kAXValueAXErrorType  # type: ignore[attr-defined]
+RANGE_TYPE = AS.kAXValueCFRangeType  # type: ignore[attr-defined]
 
 # A ceiling on one message to a wedged app, generous enough that a healthy element is never dropped.
 
@@ -202,24 +202,26 @@ def _primitive(value: Any) -> Any:
 def _geometry(value: Any) -> Any:
     """Unwrap an AXValue carrying a rectangle, point or size into its CoreGraphics struct, or `None`."""
     try:
-        value_type = AS.AXValueGetType(value)
+        value_type = AS.AXValueGetType(value)  # type: ignore[attr-defined]
     except Exception:
         return None
     if value_type == RECT_TYPE:
-        succeeded, rect = AS.AXValueGetValue(value, RECT_TYPE, None)
+        succeeded, rect = AS.AXValueGetValue(value, RECT_TYPE, None)  # type: ignore[attr-defined]
         return rect if succeeded else None
     if value_type == POINT_TYPE:
-        succeeded, point = AS.AXValueGetValue(value, POINT_TYPE, None)
+        succeeded, point = AS.AXValueGetValue(value, POINT_TYPE, None)  # type: ignore[attr-defined]
         return point if succeeded else None
     if value_type == SIZE_TYPE:
-        succeeded, size = AS.AXValueGetValue(value, SIZE_TYPE, None)
+        succeeded, size = AS.AXValueGetValue(value, SIZE_TYPE, None)  # type: ignore[attr-defined]
         return size if succeeded else None
     return None
 
 
 def _read(element: Any) -> Optional[dict[str, Any]]:
     """One batched read of every attribute we care about, with error placeholders normalized to `None`."""
-    error, values = AS.AXUIElementCopyMultipleAttributeValues(element, BATCH_ATTRIBUTES, 0, None)
+    error, values = AS.AXUIElementCopyMultipleAttributeValues(  # type: ignore[attr-defined]
+        element, BATCH_ATTRIBUTES, 0, None
+    )
     if error != 0 or values is None:
         return None
     attributes: dict[str, Any] = {}
@@ -228,7 +230,7 @@ def _read(element: Any) -> Optional[dict[str, Any]]:
             attributes[name] = None
             continue
         try:
-            is_error = AS.AXValueGetType(value) == ERROR_VALUE_TYPE
+            is_error = AS.AXValueGetType(value) == ERROR_VALUE_TYPE  # type: ignore[attr-defined]
         except Exception:
             is_error = False
         attributes[name] = None if is_error else value
@@ -247,19 +249,19 @@ def _frame_of(attributes: dict[str, Any]) -> Any:
     point = _geometry(position) if position is not None else None
     extent = _geometry(size) if size is not None else None
     if point is not None and extent is not None:
-        return Quartz.CGRectMake(point.x, point.y, extent.width, extent.height)
+        return Quartz.CGRectMake(point.x, point.y, extent.width, extent.height)  # type: ignore[attr-defined]
     return None
 
 
 def rectangle(frame: Any) -> Optional[dict[str, int]]:
     """A rectangle as whole integers, or `None` when there is nothing worth reporting."""
-    if frame is None or Quartz.CGRectIsEmpty(frame):
+    if frame is None or Quartz.CGRectIsEmpty(frame):  # type: ignore[attr-defined]
         return None
     return {
-        "x": round(Quartz.CGRectGetMinX(frame)),
-        "y": round(Quartz.CGRectGetMinY(frame)),
-        "width": round(Quartz.CGRectGetWidth(frame)),
-        "height": round(Quartz.CGRectGetHeight(frame)),
+        "x": round(Quartz.CGRectGetMinX(frame)),  # type: ignore[attr-defined]
+        "y": round(Quartz.CGRectGetMinY(frame)),  # type: ignore[attr-defined]
+        "width": round(Quartz.CGRectGetWidth(frame)),  # type: ignore[attr-defined]
+        "height": round(Quartz.CGRectGetHeight(frame)),  # type: ignore[attr-defined]
     }
 
 
@@ -276,7 +278,7 @@ def _child_nodes(attributes: dict[str, Any]) -> list[Any]:
 
 
 def _single(element: Any, attribute: str) -> Any:
-    error, value = AS.AXUIElementCopyAttributeValue(element, attribute, None)
+    error, value = AS.AXUIElementCopyAttributeValue(element, attribute, None)  # type: ignore[attr-defined]  # type: ignore[attr-defined]
     return value if error == 0 else None
 
 
@@ -286,9 +288,9 @@ def _pids_showing_a_window() -> set[int]:
 
     try:
         windows = (
-            Quartz.CGWindowListCopyWindowInfo(
-                Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
-                Quartz.kCGNullWindowID,
+            Quartz.CGWindowListCopyWindowInfo(  # type: ignore[attr-defined]
+                Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,  # type: ignore[attr-defined]
+                Quartz.kCGNullWindowID,  # type: ignore[attr-defined]
             )
             or []
         )
@@ -310,7 +312,7 @@ def _pids_showing_a_window() -> set[int]:
 def find_app_pid(name: str) -> Optional[int]:
     """Resolve a running app to its process id by name or bundle id, preferring the instance showing a window."""
     needle = name.strip().lower()
-    running_apps = AppKit.NSWorkspace.sharedWorkspace().runningApplications()
+    running_apps = AppKit.NSWorkspace.sharedWorkspace().runningApplications()  # type: ignore[attr-defined]  # type: ignore[attr-defined]
     matches = [
         app.processIdentifier()
         for app in running_apps
@@ -332,12 +334,12 @@ def find_app_pid(name: str) -> Optional[int]:
 
 
 def frontmost_pid() -> Optional[int]:
-    app = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+    app = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()  # type: ignore[attr-defined]  # type: ignore[attr-defined]
     return app.processIdentifier() if app else None
 
 
 def app_name_for_pid(pid: int) -> str:
-    running_apps = AppKit.NSWorkspace.sharedWorkspace().runningApplications()
+    running_apps = AppKit.NSWorkspace.sharedWorkspace().runningApplications()  # type: ignore[attr-defined]  # type: ignore[attr-defined]
     return next(
         (_string(app.localizedName()) for app in running_apps if app.processIdentifier() == pid),
         "",
@@ -346,8 +348,8 @@ def app_name_for_pid(pid: int) -> str:
 
 def running_app_names() -> list[str]:
     """The Dock-visible apps currently running, by name, so the model knows what it can switch to."""
-    regular = AppKit.NSApplicationActivationPolicyRegular
-    apps = AppKit.NSWorkspace.sharedWorkspace().runningApplications()
+    regular = AppKit.NSApplicationActivationPolicyRegular  # type: ignore[attr-defined]
+    apps = AppKit.NSWorkspace.sharedWorkspace().runningApplications()  # type: ignore[attr-defined]
     names = [_string(app.localizedName()) for app in apps if app.activationPolicy() == regular]
     return [name for name in names if name]
 
@@ -367,13 +369,13 @@ def _window_id_of(window: Any) -> Optional[int]:
                 try:
                     import objc
 
-                    bundle = objc.loadBundle(
+                    bundle = objc.loadBundle(  # type: ignore[attr-defined]
                         "ApplicationServices",
                         {},
                         bundle_path="/System/Library/Frameworks/ApplicationServices.framework",
                     )
                     loaded: dict[str, Any] = {}
-                    objc.loadBundleFunctions(
+                    objc.loadBundleFunctions(  # type: ignore[attr-defined]
                         bundle, loaded, [("_AXUIElementGetWindow", _WINDOW_ID_SIGNATURE)]
                     )
                     _window_id_function = loaded.get("_AXUIElementGetWindow", False)
@@ -402,8 +404,8 @@ class WindowRecord:
 
 def application_root(pid: int) -> Any:
     """An application's accessibility root, with its messaging timeout set and its rich tree asked for."""
-    root = AS.AXUIElementCreateApplication(pid)
-    AS.AXUIElementSetMessagingTimeout(
+    root = AS.AXUIElementCreateApplication(pid)  # type: ignore[attr-defined]
+    AS.AXUIElementSetMessagingTimeout(  # type: ignore[attr-defined]
         root, current_limits().accessibility_messaging
     )
     enable_rich_accessibility(root)
@@ -573,13 +575,13 @@ def shortcuts_of(pid: int, *, limit: int = 400) -> list[dict[str, Any]]:
 def enable_rich_accessibility(root: Any) -> None:
     """Ask an app that gates its accessibility tree to build the full one, which every Electron app needs."""
     with suppress(Exception):
-        AS.AXUIElementSetAttributeValue(root, "AXManualAccessibility", kCFBooleanTrue)
+        AS.AXUIElementSetAttributeValue(root, "AXManualAccessibility", kCFBooleanTrue)  # type: ignore[attr-defined]  # type: ignore[attr-defined]
 
 
 def prime_accessibility(pid: int) -> None:
     """Switch on an app's rich tree ahead of a read, so the read meets a built tree rather than racing its construction."""
-    root = AS.AXUIElementCreateApplication(pid)
-    AS.AXUIElementSetMessagingTimeout(
+    root = AS.AXUIElementCreateApplication(pid)  # type: ignore[attr-defined]
+    AS.AXUIElementSetMessagingTimeout(  # type: ignore[attr-defined]
         root, current_limits().accessibility_messaging
     )
     enable_rich_accessibility(root)
@@ -667,8 +669,8 @@ def _make_element(
 ) -> Element:
     """Build an element from an already-read batch, querying actions only for real controls."""
     center = None
-    if frame is not None and not Quartz.CGRectIsEmpty(frame):
-        center = (Quartz.CGRectGetMidX(frame), Quartz.CGRectGetMidY(frame))
+    if frame is not None and not Quartz.CGRectIsEmpty(frame):  # type: ignore[attr-defined]
+        center = (Quartz.CGRectGetMidX(frame), Quartz.CGRectGetMidY(frame))  # type: ignore[attr-defined]
     actions = [] if as_region or role in TEXT_ROLES else action_names(node)
     return Element(
         role=role,
@@ -742,8 +744,8 @@ def _collect(
         role = _string(attributes.get(ROLE))
         frame = _frame_of(attributes)
         # A real rectangle that does not intersect the window is off screen, while a frameless node is still descended.
-        if frame is not None and window_rect is not None and not Quartz.CGRectIsEmpty(frame):
-            if not Quartz.CGRectIntersectsRect(frame, window_rect):
+        if frame is not None and window_rect is not None and not Quartz.CGRectIsEmpty(frame):  # type: ignore[attr-defined]
+            if not Quartz.CGRectIntersectsRect(frame, window_rect):  # type: ignore[attr-defined]
                 continue
 
         children = _child_nodes(attributes)
@@ -815,7 +817,7 @@ def snapshot_app(
 
 def action_names(element: Any) -> list[str]:
     """The actions an element actually supports, read at act time so the walk stays one round trip per node."""
-    error, names = AS.AXUIElementCopyActionNames(element, None)
+    error, names = AS.AXUIElementCopyActionNames(element, None)  # type: ignore[attr-defined]  # type: ignore[attr-defined]
     if error != 0 or names is None:
         return []
     return [str(name) for name in names]
@@ -840,13 +842,13 @@ def resolve_from_path(pid: int, path: tuple[int, ...]) -> Any:
 
 def handle_is_live(handle: Any) -> bool:
     """Cheap liveness probe: a stale AXUIElementRef errors on any attribute read."""
-    error, _ = AS.AXUIElementCopyAttributeValue(handle, ROLE, None)
+    error, _ = AS.AXUIElementCopyAttributeValue(handle, ROLE, None)  # type: ignore[attr-defined]  # type: ignore[attr-defined]
     return error == 0
 
 
 def attribute_settable(element: Any, attribute: str) -> bool:
     """Whether an attribute can be written on this element (a read-only field is not settable)."""
-    error, settable = AS.AXUIElementIsAttributeSettable(element, attribute, None)
+    error, settable = AS.AXUIElementIsAttributeSettable(element, attribute, None)  # type: ignore[attr-defined]  # type: ignore[attr-defined]
     return error == 0 and bool(settable)
 
 
@@ -860,14 +862,14 @@ def set_selected_range(element: Any, location: int, length: int) -> bool:
     """Set the selection, or place the caret with a zero length, returning false when the element does not support it."""
     if not attribute_settable(element, SELECTED_TEXT_RANGE):
         return False
-    value = AS.AXValueCreate(RANGE_TYPE, NSMakeRange(location, length))
+    value = AS.AXValueCreate(RANGE_TYPE, NSMakeRange(location, length))  # type: ignore[attr-defined]  # type: ignore[attr-defined]
     if value is None:
         return False
-    return AS.AXUIElementSetAttributeValue(element, SELECTED_TEXT_RANGE, value) == 0
+    return AS.AXUIElementSetAttributeValue(element, SELECTED_TEXT_RANGE, value) == 0  # type: ignore[attr-defined]  # type: ignore[attr-defined]
 
 
 def set_selected_text(element: Any, text: str) -> bool:
     """Replace the current selection with `text`, returning false when the element does not support it."""
     if not attribute_settable(element, SELECTED_TEXT):
         return False
-    return AS.AXUIElementSetAttributeValue(element, SELECTED_TEXT, text) == 0
+    return AS.AXUIElementSetAttributeValue(element, SELECTED_TEXT, text) == 0  # type: ignore[attr-defined]  # type: ignore[attr-defined]

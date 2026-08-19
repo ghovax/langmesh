@@ -78,7 +78,8 @@ async def _message_session(session: str, message: str) -> str | ToolOutput:
         )
     # A peer parked on a decision does not take the message, and saying so is the point.
     if isinstance(outcome, dict) and outcome.get("awaiting_input"):
-        waiting = outcome.get("waiting_on") if isinstance(outcome.get("waiting_on"), dict) else {}
+        waiting_on = outcome.get("waiting_on")
+        waiting = waiting_on if isinstance(waiting_on, dict) else {}
         waiting_kind = str(waiting.get("kind") or "permission")
         command = str(waiting.get("command") or "")
         waiting_on = (

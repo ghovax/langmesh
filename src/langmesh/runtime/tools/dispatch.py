@@ -35,7 +35,8 @@ from langmesh.runtime.turn_events import (
     ToolResult,
     TurnEvent,
 )
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
+from langmesh.runtime.locations import CallExecutionPolicy
 from pydantic import ValidationError
 from typing import Any, AsyncIterator, cast
 import asyncio
@@ -67,6 +68,38 @@ def _with_schema_defaults(schema: Any, arguments: dict) -> dict:
 
 class _DispatchesTools:
     """Everything the runtime does with a tool call: resolve it, gate it, run it, report it."""
+
+    # The session state this mixin reads. Each attribute is declared here so the mixin
+    # type-checks on its own; `AgentRuntime` owns the real values.
+    _features: Any
+    _conversation: list
+    _prompt_loader: Any
+    _tool_context: Any
+    _abort_event: asyncio.Event
+    _stop_requested: bool
+    _active_tool_tasks: dict[str, asyncio.Task]
+    _tool_schemas: dict[str, Any]
+    _tool_units: dict[str, Any]
+    _access_grants: list[Any]
+    _attached_files: dict[str, None]
+    _services: Any
+
+    def _reminder_message(
+        self,
+        content: str,
+        image_blocks: list[dict] | None = None,
+        marks: dict[str, Any] | None = None,
+    ) -> HumanMessage:
+        """Assemble one harness note to the model; defined on the turn mixin, overridden on the concrete runtime."""
+        raise NotImplementedError
+
+    def _invalid_tool_call_content(self, invalid: dict) -> str:
+        """The message for a malformed tool call; defined on the turn mixin, overridden on the concrete runtime."""
+        raise NotImplementedError
+
+    def _call_policy(self, _location: Any = None) -> CallExecutionPolicy:
+        """One call's execution policy; the concrete runtime answers it."""
+        raise NotImplementedError
 
     async def _run_one_tool(
         self,

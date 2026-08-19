@@ -14,7 +14,7 @@ class UntrustedHostError(Exception):
 _LOOPBACK_NAMES = {"localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"}
 
 
-def _is_blocked(address: ipaddress._BaseAddress) -> bool:
+def _is_blocked(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return (
         address.is_loopback
         or address.is_private
@@ -25,7 +25,7 @@ def _is_blocked(address: ipaddress._BaseAddress) -> bool:
     )
 
 
-def _resolved_addresses(host: str) -> list[ipaddress._BaseAddress]:
+def _resolved_addresses(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
     """Every address `host` resolves to, raising when it cannot be resolved."""
     try:
         return [ipaddress.ip_address(host)]

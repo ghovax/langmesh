@@ -732,7 +732,7 @@ async def telemetry_faults(request: Request) -> JSONResponse:
         for name, value in (reported.items() if isinstance(reported, dict) else ())
         if isinstance(value, (str, int, float, bool))
     }
-    fields = {
+    fields: dict[str, Any] = {
         "component": component,
         "operation": operation,
         "error": error_name,

@@ -84,16 +84,16 @@ _US_CHAR_KEY_CODES = {
 }
 
 _MODIFIER_FLAGS = {
-    "command": Quartz.kCGEventFlagMaskCommand,
-    "cmd": Quartz.kCGEventFlagMaskCommand,
-    "option": Quartz.kCGEventFlagMaskAlternate,
-    "opt": Quartz.kCGEventFlagMaskAlternate,
-    "alt": Quartz.kCGEventFlagMaskAlternate,
-    "control": Quartz.kCGEventFlagMaskControl,
-    "ctrl": Quartz.kCGEventFlagMaskControl,
-    "shift": Quartz.kCGEventFlagMaskShift,
-    "function": Quartz.kCGEventFlagMaskSecondaryFn,
-    "fn": Quartz.kCGEventFlagMaskSecondaryFn,
+    "command": Quartz.kCGEventFlagMaskCommand,  # type: ignore[attr-defined]
+    "cmd": Quartz.kCGEventFlagMaskCommand,  # type: ignore[attr-defined]
+    "option": Quartz.kCGEventFlagMaskAlternate,  # type: ignore[attr-defined]
+    "opt": Quartz.kCGEventFlagMaskAlternate,  # type: ignore[attr-defined]
+    "alt": Quartz.kCGEventFlagMaskAlternate,  # type: ignore[attr-defined]
+    "control": Quartz.kCGEventFlagMaskControl,  # type: ignore[attr-defined]
+    "ctrl": Quartz.kCGEventFlagMaskControl,  # type: ignore[attr-defined]
+    "shift": Quartz.kCGEventFlagMaskShift,  # type: ignore[attr-defined]
+    "function": Quartz.kCGEventFlagMaskSecondaryFn,  # type: ignore[attr-defined]
+    "fn": Quartz.kCGEventFlagMaskSecondaryFn,  # type: ignore[attr-defined]
 }
 
 NAMED_KEYS = tuple(sorted(_NAMED_KEY_CODES))
@@ -102,10 +102,12 @@ NAMED_KEYS = tuple(sorted(_NAMED_KEY_CODES))
 def _layout_key_code(char: str) -> int | None:
     """The key code that types `char` under the active layout, or `None`."""
     for key_code in range(128):
-        event = Quartz.CGEventCreateKeyboardEvent(None, key_code, True)
+        event = Quartz.CGEventCreateKeyboardEvent(None, key_code, True)  # type: ignore[attr-defined]
         if event is None:
             continue
-        _, produced = Quartz.CGEventKeyboardGetUnicodeString(event, 4, None, None)
+        _, produced = Quartz.CGEventKeyboardGetUnicodeString(  # type: ignore[attr-defined]
+            event, 4, None, None
+        )
         if produced and produced.lower() == char:
             return key_code
     return None
@@ -116,29 +118,29 @@ def click(
 ) -> None:
     """Post a click to one app's event queue, leaving the user's real cursor where it is."""
     button_code = {
-        "left": Quartz.kCGMouseButtonLeft,
-        "right": Quartz.kCGMouseButtonRight,
-        "center": Quartz.kCGMouseButtonCenter,
-    }.get(button, Quartz.kCGMouseButtonLeft)
-    down_type = Quartz.kCGEventLeftMouseDown if button != "right" else Quartz.kCGEventRightMouseDown
-    up_type = Quartz.kCGEventLeftMouseUp if button != "right" else Quartz.kCGEventRightMouseUp
+        "left": Quartz.kCGMouseButtonLeft,  # type: ignore[attr-defined]
+        "right": Quartz.kCGMouseButtonRight,  # type: ignore[attr-defined]
+        "center": Quartz.kCGMouseButtonCenter,  # type: ignore[attr-defined]
+    }.get(button, Quartz.kCGMouseButtonLeft)  # type: ignore[attr-defined]
+    down_type = Quartz.kCGEventLeftMouseDown if button != "right" else Quartz.kCGEventRightMouseDown  # type: ignore[attr-defined]
+    up_type = Quartz.kCGEventLeftMouseUp if button != "right" else Quartz.kCGEventRightMouseUp  # type: ignore[attr-defined]
     for click_index in range(max(1, clicks)):
-        down = Quartz.CGEventCreateMouseEvent(None, down_type, (point_x, point_y), button_code)
-        up = Quartz.CGEventCreateMouseEvent(None, up_type, (point_x, point_y), button_code)
+        down = Quartz.CGEventCreateMouseEvent(None, down_type, (point_x, point_y), button_code)  # type: ignore[attr-defined]
+        up = Quartz.CGEventCreateMouseEvent(None, up_type, (point_x, point_y), button_code)  # type: ignore[attr-defined]
         # Click-state lets the target recognize a double/triple click as one gesture.
-        Quartz.CGEventSetIntegerValueField(down, Quartz.kCGMouseEventClickState, click_index + 1)
-        Quartz.CGEventSetIntegerValueField(up, Quartz.kCGMouseEventClickState, click_index + 1)
-        Quartz.CGEventPostToPid(pid, down)
-        Quartz.CGEventPostToPid(pid, up)
+        Quartz.CGEventSetIntegerValueField(down, Quartz.kCGMouseEventClickState, click_index + 1)  # type: ignore[attr-defined]
+        Quartz.CGEventSetIntegerValueField(up, Quartz.kCGMouseEventClickState, click_index + 1)  # type: ignore[attr-defined]
+        Quartz.CGEventPostToPid(pid, down)  # type: ignore[attr-defined]
+        Quartz.CGEventPostToPid(pid, up)  # type: ignore[attr-defined]
         time.sleep(current_limits().click_interval)
 
 
 def move(pid: int, point_x: float, point_y: float) -> None:
     """Move the pointer over one app's window to reveal hover states, without pressing anything."""
-    event = Quartz.CGEventCreateMouseEvent(
-        None, Quartz.kCGEventMouseMoved, (point_x, point_y), Quartz.kCGMouseButtonLeft
+    event = Quartz.CGEventCreateMouseEvent(  # type: ignore[attr-defined]
+        None, Quartz.kCGEventMouseMoved, (point_x, point_y), Quartz.kCGMouseButtonLeft  # type: ignore[attr-defined]
     )
-    Quartz.CGEventPostToPid(pid, event)
+    Quartz.CGEventPostToPid(pid, event)  # type: ignore[attr-defined]
 
 
 def drag(
@@ -146,18 +148,16 @@ def drag(
 ) -> None:
     """Press, drag and release, interpolated into several moves so the target sees a real drag."""
     button_code = {
-        "left": Quartz.kCGMouseButtonLeft,
-        "right": Quartz.kCGMouseButtonRight,
-    }.get(button, Quartz.kCGMouseButtonLeft)
-    down_type = Quartz.kCGEventLeftMouseDown if button != "right" else Quartz.kCGEventRightMouseDown
-    drag_type = (
-        Quartz.kCGEventLeftMouseDragged if button != "right" else Quartz.kCGEventRightMouseDragged
-    )
-    up_type = Quartz.kCGEventLeftMouseUp if button != "right" else Quartz.kCGEventRightMouseUp
+        "left": Quartz.kCGMouseButtonLeft,  # type: ignore[attr-defined]
+        "right": Quartz.kCGMouseButtonRight,  # type: ignore[attr-defined]
+    }.get(button, Quartz.kCGMouseButtonLeft)  # type: ignore[attr-defined]
+    down_type = Quartz.kCGEventLeftMouseDown if button != "right" else Quartz.kCGEventRightMouseDown  # type: ignore[attr-defined]
+    drag_type = Quartz.kCGEventLeftMouseDragged if button != "right" else Quartz.kCGEventRightMouseDragged  # type: ignore[attr-defined]
+    up_type = Quartz.kCGEventLeftMouseUp if button != "right" else Quartz.kCGEventRightMouseUp  # type: ignore[attr-defined]
 
     def post(event_type: int, point_x: float, point_y: float) -> None:
-        Quartz.CGEventPostToPid(
-            pid, Quartz.CGEventCreateMouseEvent(None, event_type, (point_x, point_y), button_code)
+        Quartz.CGEventPostToPid(  # type: ignore[attr-defined]
+            pid, Quartz.CGEventCreateMouseEvent(None, event_type, (point_x, point_y), button_code)  # type: ignore[attr-defined]
         )
 
     step_interval = current_limits().drag_step_interval
@@ -182,12 +182,16 @@ def type_text(pid: int, text: str) -> None:
     for chunk_start in range(0, len(text), chunk_size):
         chunk = text[chunk_start : chunk_start + chunk_size]
         utf16_length = len(chunk.encode("utf-16-le")) // 2
-        down = Quartz.CGEventCreateKeyboardEvent(None, 0, True)
-        Quartz.CGEventKeyboardSetUnicodeString(down, utf16_length, chunk)
-        Quartz.CGEventPostToPid(pid, down)
-        up = Quartz.CGEventCreateKeyboardEvent(None, 0, False)
-        Quartz.CGEventKeyboardSetUnicodeString(up, utf16_length, chunk)
-        Quartz.CGEventPostToPid(pid, up)
+        down = Quartz.CGEventCreateKeyboardEvent(None, 0, True)  # type: ignore[attr-defined]
+        Quartz.CGEventKeyboardSetUnicodeString(  # type: ignore[attr-defined]
+            down, utf16_length, chunk
+        )
+        Quartz.CGEventPostToPid(pid, down)  # type: ignore[attr-defined]
+        up = Quartz.CGEventCreateKeyboardEvent(None, 0, False)  # type: ignore[attr-defined]
+        Quartz.CGEventKeyboardSetUnicodeString(  # type: ignore[attr-defined]
+            up, utf16_length, chunk
+        )
+        Quartz.CGEventPostToPid(pid, up)  # type: ignore[attr-defined]
         time.sleep(chunk_interval)
 
 
@@ -227,19 +231,19 @@ def press_key(pid: int, key: str, modifiers: list[str]) -> bool:
         if flag is None:
             return False
         flags |= flag
-    down = Quartz.CGEventCreateKeyboardEvent(None, code, True)
-    up = Quartz.CGEventCreateKeyboardEvent(None, code, False)
+    down = Quartz.CGEventCreateKeyboardEvent(None, code, True)  # type: ignore[attr-defined]
+    up = Quartz.CGEventCreateKeyboardEvent(None, code, False)  # type: ignore[attr-defined]
     if flags:
-        Quartz.CGEventSetFlags(down, flags)
-        Quartz.CGEventSetFlags(up, flags)
-    Quartz.CGEventPostToPid(pid, down)
-    Quartz.CGEventPostToPid(pid, up)
+        Quartz.CGEventSetFlags(down, flags)  # type: ignore[attr-defined]
+        Quartz.CGEventSetFlags(up, flags)  # type: ignore[attr-defined]
+    Quartz.CGEventPostToPid(pid, down)  # type: ignore[attr-defined]
+    Quartz.CGEventPostToPid(pid, up)  # type: ignore[attr-defined]
     return True
 
 
 def scroll(pid: int, delta_x: int, delta_y: int) -> None:
     """Post a scroll-wheel event to the target app. Positive delta_y scrolls up."""
-    event = Quartz.CGEventCreateScrollWheelEvent(
-        None, Quartz.kCGScrollEventUnitPixel, 2, delta_y, delta_x
+    event = Quartz.CGEventCreateScrollWheelEvent(  # type: ignore[attr-defined]
+        None, Quartz.kCGScrollEventUnitPixel, 2, delta_y, delta_x  # type: ignore[attr-defined]
     )
-    Quartz.CGEventPostToPid(pid, event)
+    Quartz.CGEventPostToPid(pid, event)  # type: ignore[attr-defined]

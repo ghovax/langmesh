@@ -8,7 +8,7 @@ import dataclasses
 import logging
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import Any, AsyncIterator, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, AsyncIterator, Mapping, Optional, Sequence
 
 from langmesh.base.contracts.catalogue import Catalogue
 from langmesh.base.content.attachments import AttachmentInput, PathAttachments
@@ -41,7 +41,7 @@ from langmesh.base.persistence.resources import (
     resource_path,
 )
 from langmesh.base.content.skills import Skill
-from langmesh.base.persistence.worktrees import SessionWorktree, SessionWorktreeManager
+from langmesh.base.persistence.worktrees import SessionWorktree, SessionWorktreeManager, WorktreeStrategy
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile, SessionComponents
 from langmesh.runtime.hooks import MaximumToolCalls
 from langmesh.runtime.session_control import PendingTurn, SessionPhase, SessionState
@@ -84,6 +84,10 @@ from langmesh.base.persistence.schedules import (
 )
 
 # The vocabulary `stream()` speaks, exported because a caller driving a turn has to dispatch on it.
+if TYPE_CHECKING:
+    from langmesh.runtime.runtime import AgentRuntime
+    from langmesh.runtime.plugins.locations.executor import SshExecutor
+
 from langmesh.runtime.turn_events import (
     Checkpoint,
     Done,
@@ -211,6 +215,10 @@ def __getattr__(name: str) -> Any:
         from langmesh.runtime.runtime import AgentRuntime
 
         return AgentRuntime
+    if name == "SshExecutor":
+        from langmesh.runtime.plugins.locations.executor import SshExecutor
+
+        return SshExecutor
     raise AttributeError(name)
 
 
@@ -441,7 +449,7 @@ class Session:
         else:
             self._runtime.grant_tool(grant.tool)
 
-    async def prepare_worktree(self, strategy: str = "worktree") -> str:
+    async def prepare_worktree(self, strategy: WorktreeStrategy = "worktree") -> str:
         """Give this session its own git worktree and run its tools there; opt-in, because it writes to disk."""
         if self._runtime is not None:
             raise RuntimeError("prepare_worktree must run before the session builds its runtime")

@@ -11,7 +11,7 @@ from __future__ import annotations
 import ast
 import logging
 import uuid
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from langmesh.base import confinement
 from langmesh.base.confinement import Grant, parse_access_request
@@ -86,7 +86,7 @@ class PermissionReview(Feature):
     @property
     def access_grants(self) -> list[Grant]:
         """The standing grants, kept on the core boundary so other plugins never need this one."""
-        return list(self._host.boundary.access_grants)
+        return list(self._host.boundary.access_grants())
 
     def granted_profile(self):
         """The session's confinement with every standing grant compacted in. What an escape is measured against."""
@@ -324,8 +324,7 @@ class PermissionReview(Feature):
     def invoke(self, name: str, *args, **kwargs):
         """Answer the permission capabilities the core and tools ask for by name."""
         if name == "retry_gate":
-            (gate,) = args
-            return self.retry_gate(gate, **kwargs)
+            return self.retry_gate(*args, **kwargs)
         if name == "decide_retry":
             (gate,) = args
             return self.decide_retry(gate)
@@ -395,7 +394,7 @@ class PermissionReview(Feature):
             },
         }
 
-    def approve(self, gate: _PreflightGate, *, by: str, plan: Optional[_ToolPlan] = None) -> None:
+    def approve(self, gate: _PreflightGate, *, by: confinement.ApprovedBy, plan: Optional[_ToolPlan] = None) -> None:
         """Carry out what approving a gate means, in one place, since it can grant two different things."""
         if gate.escape or gate.whole_disk:
             self.record_grant(
@@ -475,13 +474,13 @@ class PermissionReview(Feature):
                 }[permission_answer.actor]
                 self.approve(
                     gate,
-                    by=gate.approved_by or approved_by,
+                    by=cast(confinement.ApprovedBy, gate.approved_by or approved_by),
                 )
                 if gate.grants_screen_mutations:
                     decision.screen_mutations = True
                 if gate.whole_disk:
                     decision.retry_grant = confinement.approved(
-                        by=gate.approved_by or approved_by,
+                        by=cast(confinement.ApprovedBy, gate.approved_by or approved_by),
                         purpose=gate.arguments.get("explanation", "") or gate.explanation,
                         whole_disk=True,
                     )

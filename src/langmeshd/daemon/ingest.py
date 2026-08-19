@@ -30,7 +30,7 @@ async def _turn_save(params: dict) -> dict:
     return {"saved": task.id}
 
 
-async def _turn_get(params: dict) -> dict:
+async def _turn_get(params: dict) -> dict | None:
     task = await state.turn_store.get(str(params.get("turn_id") or ""))
     return task.model_dump(by_alias=True, exclude_none=True, mode="json") if task else None
 
@@ -95,8 +95,9 @@ async def _goal_review_save(params: dict) -> dict:
     review_id = str(params.get("review_id") or "")
     part = params.get("part")
     if hasattr(part, "model_dump"):
-        part = part.model_dump(by_alias=True, exclude_none=True, mode="json")
-    state.event_bus.publish_part(review_id, part)
+        part = getattr(part, "model_dump")(by_alias=True, exclude_none=True, mode="json")
+    if part is not None:
+        state.event_bus.publish_part(review_id, part)
     return {"saved": task.id}
 
 
@@ -243,7 +244,7 @@ async def _session_event(params: dict) -> dict:
 
 async def _session_usage(params: dict) -> dict:
     """A subscription's rate-limit snapshot as a worker read it, captured there and served from here."""
-    from langmesh.base import subscription
+    from langmesh.base.identity import subscription
 
     usage = params.get("usage")
     subscription.set_usage_snapshot(usage if isinstance(usage, dict) else None)

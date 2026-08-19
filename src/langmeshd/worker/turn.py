@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from a2a.server.agent_execution import RequestContext
 from a2a.server.events import EventQueue
@@ -43,7 +43,7 @@ from langmesh.protocol.parts import (
 from langmesh.protocol.turn_record import TurnKind, TurnRecord
 from langmesh.runtime.plugins.goal_review.goal import GoalReviewPhase
 from langmesh.runtime.runtime import AgentRuntime
-from langmesh.runtime.turn_events import CompactionDone, SuspensionGate
+from langmesh.runtime.turn_events import CompactionDone, SuspensionGate, TurnEventUnion
 from langmeshd.worker.sink import _TurnEventSink
 
 if TYPE_CHECKING:
@@ -696,6 +696,10 @@ class _TurnRunner:
     async def _stream_and_finalize(self, composed: _ComposedTurn) -> None:
         """Drive the runtime's stream through the sink, then close the task as completed or canceled."""
         resolved = composed.prepared.resolved
+        # The sink was stood up by `_prepare_runtime` before the stream was composed; guarded for the checker.
+        sink = self._sink
+        if sink is None:
+            return
         # A resume drives from the durable checkpoint, a fresh turn from this segment's input, through one loop.
         event_source = (
             composed.prepared.runtime.resume_stream(resolved.resume_plans, resolved.resume_answers)
@@ -713,26 +717,27 @@ class _TurnRunner:
             )
         )
         async for event in event_source:
-            if await self._sink.handle(event):
+            # Every concrete event the runtime emits is a member of the closed union; the stream annotation is the base class.
+            if await sink.handle(cast(TurnEventUnion, event)):
                 return
 
-        await self._sink.flush()
+        await sink.flush()
 
-        if self._sink.final_text.strip():
+        if sink.final_text.strip():
             await self._updater.add_artifact(
-                [_text_part(self._sink.final_text, f"artifact-result:{self._task.id}")],
+                [_text_part(sink.final_text, f"artifact-result:{self._task.id}")],
                 name="result",
                 last_chunk=True,
             )
         await self._save_runtime_conversation()
-        if self._sink.stop_reason == "cancelled":
+        if sink.stop_reason == "cancelled":
             # Stop ends the task as canceled, so the transcript reads it honestly as a stopped turn.
             await self._updater.cancel()
         else:
             if resolved.ingested.mode is _TurnMode.RETRY:
                 await self._emit(_event_part(RetryEvent(status="done", ok=True)))
             await self._updater.complete()
-            if resolved.ingested.mode is _TurnMode.RETRY:
+            if resolved.ingested.mode is _TurnMode.RETRY and self._runtime is not None:
                 self._runtime.mark_turn_succeeded()
             self._completed = True
 
@@ -745,7 +750,10 @@ class _TurnRunner:
         if self._mode is _TurnMode.RETRY:
             await self._emit(_event_part(RetryEvent(status="done", ok=False)))
         error_part = _event_part(
-            ErrorEvent(**_safe_turn_error(exception, had_images=self._turn_has_images))
+            # `_safe_turn_error` returns fields typed object; the pydantic constructor validates them.
+            ErrorEvent.model_validate(
+                _safe_turn_error(exception, had_images=self._turn_has_images)
+            )
         )
         # Publish the error on the live lane as well as persisting it in the failed status. Without the publish, the chat's error panel only appears after a reload re-reads the history, because the turn-end activity alone carries no error part.
         if self._executor._on_stream_event is not None:
@@ -814,10 +822,14 @@ class _TurnRunner:
         if runtime is None or _features.has_pending_jobs(runtime):
             return _ContinuationPlan()
         goal = _features.goal(runtime)
+        # No stream means no restart of the goal loop either; a completed turn always has a sink, so this is a guard.
+        sink = self._sink
+        if sink is None:
+            return _ContinuationPlan()
         # A goal-continuation turn that produced neither prose nor tool work answered the review with nothing; immediately re-reviewing would only spin the review loop, so the goal parks instead and waits for a person.
         if (
             self._mode is _TurnMode.GOAL_CONTINUATION
-            and not (self._sink.final_text.strip() or self._sink.tool_results)
+            and not (sink.final_text.strip() or sink.tool_results)
         ):
             return _ContinuationPlan()
         return _ContinuationPlan(

@@ -48,7 +48,7 @@ class PluginBus:
             if result is None:
                 continue
             try:
-                asyncio.get_running_loop().create_task(result)
+                asyncio.ensure_future(result)
             except RuntimeError:
                 # No loop: an awaitable handler outside a turn has nothing to schedule it on.
                 with suppress(BaseException):

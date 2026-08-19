@@ -8,7 +8,7 @@ import dataclasses
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Coroutine, Literal, Optional, cast
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -103,7 +103,7 @@ def _compose_session_tools(
             continue
         if name == "ask_user" and not (
             permission_mode is None
-            or permission_mode.asks
+            or cast(Any, permission_mode).asks
             or permission_mode == "allow"
         ):
             continue
@@ -150,7 +150,9 @@ class SessionExecutor(AgentExecutor):
         self._feature_factory = feature_factory
         # A worker is a process a restart happens to, so its jobs want the durable store. Injectable all the same.
         self._job_store: JobStore = (
-            job_store if job_store is not None else get_background_job_store()
+            job_store
+            if job_store is not None
+            else cast(JobStore, get_background_job_store())
         )
         self._working_directory = working_directory
         # Where tools actually run, resolved by the host: a worktree workspace is not the project directory.
@@ -429,7 +431,8 @@ class SessionExecutor(AgentExecutor):
             return False
         workflow.cancel()
         # The superseded review belongs to the old goal state: stop it rather than letting it run out a verdict nobody is waiting for.
-        state.continuation.cancel_review()
+        if state is not None:
+            state.continuation.cancel_review()
         with contextlib.suppress(asyncio.CancelledError):
             await workflow
         if state is not None:
@@ -442,7 +445,7 @@ class SessionExecutor(AgentExecutor):
         """Retire the owned workflow and report an unexpected failure."""
         state = self._contexts.get(session_id)
         owns_workflow = state is not None and state.continuation.detach(workflow)
-        if owns_workflow and state.continuation.clear():
+        if owns_workflow and state is not None and state.continuation.clear():
             self._notify_turn_state(session_id, False)
         error = None if workflow.cancelled() else workflow.exception()
         if error is not None:
@@ -505,7 +508,9 @@ class SessionExecutor(AgentExecutor):
     async def _continue_with_review(self, session_id, state, runtime, plan, goal) -> None:
         """Review an open goal first; a verdict that lands decides the next turn."""
         self._notify_goal_state(session_id, goal, review_phase=GoalReviewPhase.CHECKING)
-        review = asyncio.create_task(_features.review_goal(runtime))
+        review = asyncio.create_task(
+            cast(Coroutine[Any, Any, Any], _features.review_goal(runtime))
+        )
         state.continuation.attach_review(review)
         try:
             verdict = await review
@@ -517,7 +522,8 @@ class SessionExecutor(AgentExecutor):
                 _features.park_goal(runtime)
         except asyncio.CancelledError:
             # Clearing the goal cancels only its review; stopping cancels the owning workflow too.
-            if _features.goal(runtime) is not None and _features.goal(runtime).status == Goal.CLEARED:
+            goal = _features.goal(runtime)
+            if goal is not None and goal.status == Goal.CLEARED:
                 pass
             else:
                 raise
@@ -542,7 +548,8 @@ class SessionExecutor(AgentExecutor):
         goal = _features.goal(runtime) if runtime is not None else None
         if runtime is None or goal is None:
             return False
-        state.continuation.cancel_review()
+        if state is not None:
+            state.continuation.cancel_review()
         _features.write_goal(runtime, 
             goal.updated(status=Goal.CLEARED, review_message=None, review_id=None)
             if goal.is_open
@@ -576,7 +583,11 @@ class SessionExecutor(AgentExecutor):
         """Persist a turn checkpoint and its matching session revision under the shared state lock."""
         async with self._session_state_lock:
             session_state = runtime.dirty_session_snapshot() if runtime is not None else None
-            revision = runtime.session_revision if session_state is not None else None
+            revision = (
+                runtime.session_revision
+                if runtime is not None and session_state is not None
+                else None
+            )
             await self._turn_store.save_turn_state(
                 session_id,
                 turn_id,
@@ -660,7 +671,8 @@ class SessionExecutor(AgentExecutor):
             handled = True
         if state.runtime is not None:
             state.runtime.abort()
-            if _features.goal(state.runtime) is not None and _features.goal(state.runtime).is_open:
+            goal = _features.goal(state.runtime)
+            if goal is not None and goal.is_open:
                 _features.park_goal(state.runtime)
                 asyncio.create_task(self._persist_session_state(session_id, state.runtime))
             handled = True
@@ -670,7 +682,7 @@ class SessionExecutor(AgentExecutor):
         state = self._contexts.get(session_id)
         if state is None or state.runtime is None:
             return False
-        return _features.abort_tool(state.runtime, tool_call_identifier)
+        return state.runtime.abort_tool(tool_call_identifier)
 
     def send_tool_to_background(self, session_id: str, tool_call_identifier: str) -> bool:
         state = self._contexts.get(session_id)
@@ -721,7 +733,9 @@ class SessionExecutor(AgentExecutor):
             for gate in list(pending.gates):
                 if gate.request_id in pending.answers:
                     continue
-                verdict = await _features.reconsider_gate(runtime, gate)
+                verdict = await cast(
+                    Awaitable[dict[str, Any]], _features.reconsider_gate(runtime, gate)
+                )
                 if not verdict:
                     continue
                 await self.resolve_pending_input({"request_id": gate.request_id, **verdict})
@@ -764,7 +778,7 @@ class SessionExecutor(AgentExecutor):
             pending.answers[request_id] = PermissionAnswer(
                 allow=decision == "allow",
                 reason=reason,
-                actor=actor,
+                actor=cast(Literal["person", "reviewer", "approver"], actor),
             ).model_dump()
         task.metadata = record.apply_to(task.metadata)
         if pending.fully_answered:
@@ -811,8 +825,9 @@ class SessionExecutor(AgentExecutor):
         if state is not None:
             if state.resume_pump is not None and not state.resume_pump.done():
                 state.resume_pump.cancel()
-            if state.continuation.running:
-                state.continuation.workflow.cancel()
+            continuation_workflow = state.continuation.workflow
+            if continuation_workflow is not None and not continuation_workflow.done():
+                continuation_workflow.cancel()
             if state.continuation.clear():
                 self._notify_turn_state(session_id, False)
             if state.runtime is not None:

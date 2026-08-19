@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass, replace
 from itertools import accumulate, takewhile
 from tempfile import TemporaryDirectory
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator, Literal, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langmesh.base.configuration import PermissionEvaluator
@@ -91,7 +91,7 @@ class CompactionControl:
         if reason not in {"auto", "manual", "overflow"}:
             raise ValueError(f"Invalid compaction reason: {reason}")
         self.phase = "waiting"
-        self.reason = reason
+        self.reason = cast(Literal["auto", "manual", "overflow"], reason)
         self.resume_after = resume_after
         self.preparation_token = None
         self.failure = None
@@ -216,7 +216,7 @@ class Compaction(Feature):
             self.submit_summary(summary)
             return True
         if name == "compaction_failure":
-            return self.failure()
+            return self.failure
         return None
 
     @property

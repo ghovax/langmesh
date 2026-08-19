@@ -12,6 +12,7 @@ from langmesh.runtime.internals import (
     _CONTINUE,
     _detect_workspace,
     _ModelCallOutcome,
+    _ResolvedToolDecision,
     _StepOutcome,
     _PreflightGate,
     _STOP,
@@ -63,7 +64,7 @@ from langchain_core.messages import (
 )
 from langchain_core.messages.ai import add_ai_message_chunks
 from pathlib import Path
-from typing import Any, AsyncIterator, cast, Optional
+from typing import Any, AsyncIterator, Callable, cast, Optional
 import asyncio
 import platform
 import time
@@ -100,6 +101,73 @@ def _chunk_advances_model_response(chunk: Any) -> bool:
 
 class _RunsTurns:
     """The turn itself: what the model is told, what comes back, and when it is over."""
+
+    # The session state this mixin reads. Each attribute is declared here so the mixin
+    # type-checks on its own; `AgentRuntime` owns the real values.
+    _features: Any
+    _conversation: list
+    _catalogue: Any
+    _agent_configuration: Any
+    _global_configuration: Any
+    _prompt_loader: Any
+    _prompt_composer: Any
+    _hooks: Any
+    _sandbox: Any
+    _tool_context: Any
+    _working_directory: str
+    _project_directory: str
+    _session_id: str
+    _parent_session: str
+    _system_prompt: str
+    _execution_history: list[dict]
+    _token_usage: dict[str, int]
+    _access_grants: list[Any]
+    _abort_event: asyncio.Event
+    _stop_requested: bool
+    _approvals: Any
+    _transcript: Any
+    _bound_model: Any
+    _context_window_estimated: bool
+    _resource_sync: Any
+    _tools: list[Any]
+    model_identifier: str
+    # The concrete runtime exposes the permission feature's gate factory under this name.
+    retry_gate: Callable[..., _PreflightGate]
+
+    def _record_message(self, role: str, content: str, tool_call_id: str = "") -> None:
+        """The concrete runtime records one audit message; this mixin only calls it."""
+        raise NotImplementedError
+
+    def _record_event(self, event_type: str, data: dict) -> None:
+        """The concrete runtime records one audit event; this mixin only calls it."""
+        raise NotImplementedError
+
+    def _note_session_changed(self) -> None:
+        """The concrete runtime advances its durable-state revision; this mixin only calls it."""
+        raise NotImplementedError
+
+    def _accumulate_usage(self, response: AIMessage) -> TurnEvent | None:
+        """The concrete runtime tallies one call's usage; this mixin only calls it."""
+        raise NotImplementedError
+
+    def _drain_tool_batch(
+        self,
+        tool_calls: list[dict],
+        turn_tool_calls_log: list[dict],
+        turn_tool_results_log: list[dict],
+        outcomes: dict[str, dict],
+        decisions: dict[str, _ResolvedToolDecision],
+    ) -> AsyncIterator[TurnEvent]:
+        """Run one batch of calls; defined on the dispatch mixin, overridden on the concrete runtime."""
+        raise NotImplementedError
+
+    def _append_tool_results(self, response, outcomes: dict[str, dict]) -> None:
+        """Append a ToolMessage per call; defined on the dispatch mixin, overridden on the concrete runtime."""
+        raise NotImplementedError
+
+    def discard_pending_steering(self) -> None:
+        """The concrete runtime releases accepted steering futures; this mixin only calls it."""
+        raise NotImplementedError
 
     def _machine_snapshot(self) -> dict:
         """The machine snapshot the host probed, or a minimal platform-only fallback.
@@ -151,11 +219,11 @@ class _RunsTurns:
                     "session_worktree_strategy": self._global_configuration.workspace.strategy,
                     "platform": platform.system(),
                     "today_date": datetime.now().strftime("%Y-%m-%d"),
-                    "machine": _maybe_json(self._machine_snapshot()),
+                    "machine": _maybe_json(cast(Any, self._machine_snapshot())),
                 }
             )
             if self._user_context_enabled():
-                user_context = _maybe_json(self._user_context_snapshot())
+                user_context = _maybe_json(cast(Any, self._user_context_snapshot()))
                 if isinstance(user_context, dict) and user_context:
                     context["user_context"] = user_context
             context_json = compact(context)
@@ -628,7 +696,8 @@ class _RunsTurns:
                     turn_started_at,
                 )
                 return
-            response = call.response
+            # A cancelled call returns above, so the response is always assembled here.
+            response = cast(AIMessageChunk, call.response)
 
             usage_event = self._accumulate_usage(response)
             if usage_event is not None:
@@ -821,7 +890,9 @@ class _RunsTurns:
                     identifier = (named or {}).get("id") or streaming_call_ids.get(
                         (named or {}).get("index")
                     )
-                    name = (named or {}).get("name") or streaming_call_names.get(identifier, "")
+                    name = (named or {}).get("name") or streaming_call_names.get(
+                        cast(str, identifier), ""
+                    )
                     if not identifier:
                         continue
                     streaming_call_ids[(named or {}).get("index")] = identifier
