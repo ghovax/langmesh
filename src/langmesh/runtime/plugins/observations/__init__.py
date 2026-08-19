@@ -65,6 +65,11 @@ class ObservationMemory(Feature):
         self._pending_feedback = None
         return message
 
+    def _has_shell(self) -> bool:
+        """Whether the model is bound to a shell tool it could repair the registry with."""
+        tools = getattr(getattr(self._host, "tools", None), "model_tools", None) or []
+        return any(getattr(tool, "name", None) == "bash" for tool in tools)
+
     def prepare_request(self, messages: list) -> list:
         """The memory panel's metadata and any pending registry failure ride as their own notes."""
         notes: list[Any] = []
@@ -76,7 +81,12 @@ class ObservationMemory(Feature):
             feedback = self.take_feedback()
             if feedback:
                 notes.append(
-                    self._prompts.load("observation_registry_error", {"error": feedback})
+                    self._prompts.load(
+                        "observation_registry_error"
+                        if self._has_shell()
+                        else "observation_registry_error_unrepairable",
+                        {"error": feedback},
+                    )
                 )
         if not notes:
             return messages
