@@ -62,7 +62,7 @@ class RuntimeComponents:
     prompt_composer: Any = None
     tools: Sequence[BaseTool | ToolGrant] = field(default_factory=tuple)
     toolset: Sequence[BaseTool] | None = None
-    supplied_tool_gate: str = "ask"
+    tool_gate: str = "ask"
     hooks: Sequence[Any] = field(default_factory=tuple)
     middleware: Sequence[Any] = field(default_factory=tuple)
     synchronize_resources: Callable[[], Awaitable[None]] | None = None
@@ -78,8 +78,8 @@ class RuntimeComponents:
     user_context: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
-        if self.supplied_tool_gate not in {"ask", "none"}:
-            raise ValueError("supplied_tool_gate must be 'ask' or 'none'")
+        if self.tool_gate not in {"ask", "none"}:
+            raise ValueError("tool_gate must be 'ask' or 'none'")
         for name in ("tools", "hooks", "middleware"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
         if self.toolset is not None:

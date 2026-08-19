@@ -354,7 +354,7 @@ class PermissionReview(Feature):
             )
         if tool_name in self._host.tools.supplied_tool_names:
             # A supplied tool is unknown to the engine, so it is asked about unless the caller said otherwise.
-            return tool_name, RULE_ALLOW if self._host.tools.supplied_tool_gate == "none" else RULE_ASK
+            return tool_name, RULE_ALLOW if self._host.tools.tool_gate == "none" else RULE_ASK
         return tool_name, RULE_ALLOW
 
     def _command_of(self, tool_name: str, tool_arguments: dict) -> str:

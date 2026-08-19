@@ -38,7 +38,7 @@ async for event in runtime.stream("Inspect the current change."):
     ...  # Handle each typed TurnEvent as it arrives.
 ```
 
-`RuntimeProfile` requires a non-empty session id and an absolute working directory. `RuntimeComponents` validates structural ports at construction, copies mutable sequences to tuples, and rejects an unknown `supplied_tool_gate` (only `"ask"` or `"none"`).
+`RuntimeProfile` requires a non-empty session id and an absolute working directory. `RuntimeComponents` validates structural ports at construction, copies mutable sequences to tuples, and rejects an unknown `tool_gate` (only `"ask"` or `"none"`).
 
 ## Session composition
 
@@ -79,7 +79,7 @@ The constructor keeps run facts (directory, identity, permission mode, confineme
 | `prompt_composer` | `PromptComposer` | Catalogue `system_prompt` template |
 | `tools` | `BaseTool` or `ToolGrant` sequence | No supplied tools |
 | `toolset` | Complete `BaseTool` sequence | No tools |
-| `supplied_tool_gate` | `"ask"` / `"none"` | `"ask"` |
+| `tool_gate` | `"ask"` / `"none"` | `"ask"` |
 | `hooks` | Any combination of the three hook protocols | None |
 | `middleware` | `ToolMiddleware` sequence | None |
 | `synchronize_resources` | Async callable | No synchronization |
@@ -152,7 +152,7 @@ session = Session(
 )
 ```
 
-A caller-supplied tool is gated by default (`supplied_tool_gate="ask"`, so every call asks); set `"none"` only when the surrounding application already enforces the tool's authority.
+A caller-supplied tool is gated by default (`tool_gate="ask"`, so every call asks); set `"none"` only when the surrounding application already enforces the tool's authority.
 
 #### Appending later, mid-session
 
@@ -393,14 +393,17 @@ What the product runs for a hosted session is the daemon's business, not the lib
 A feature is a subclass of `Feature` implementing the hooks it needs:
 
 ```python
-from langmesh.runtime.features import Feature, PluginContext
+from langmesh.runtime.features import Feature
 
-class MyFeature(Feature):
-    def __init__(self, *, some_port: int = 0) -> None:
-        self._port = some_port
+class CustomFeature(Feature):
+    def __init__(self, project: str) -> None:
+        self._project = project
 
     def compose_context(self, context: dict) -> None:
-        context["custom_thing"] = {"value": self._port}
+        context["project"] = self._project
+
+    def compose_prompt(self, variables: dict[str, str]) -> None:
+        variables["project"] = f"Work in the {self._project} repository."
 ```
 
 A feature that wants to hear what others publish subscribes in `attach`:
