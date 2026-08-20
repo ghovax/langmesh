@@ -86,6 +86,8 @@ class RuntimeComponents:
             object.__setattr__(self, name, tuple(getattr(self, name)))
         if self.toolset is not None:
             object.__setattr__(self, "toolset", tuple(self.toolset))
+        if self.features is not None:
+            object.__setattr__(self, "features", tuple(self.features))
 
         ports = {
             "approvals": Approvals,

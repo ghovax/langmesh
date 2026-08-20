@@ -244,10 +244,12 @@ class AgentRuntime(_RunsTurns):
     def __init__(
         self,
         profile: RuntimeProfile,
-        components: RuntimeComponents = RuntimeComponents(),
+        components: RuntimeComponents | None = None,
         *,
         conversation: Optional[list] = None,
     ):
+        if components is None:
+            components = RuntimeComponents()
         agent_configuration = profile.agent
         global_configuration = profile.configuration
         session_id = profile.session_id
