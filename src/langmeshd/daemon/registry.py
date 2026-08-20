@@ -12,7 +12,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Iterator, Optional
 
 from langmesh.base.primitives.identifiers import new_id
-from langmesh.base.confinement.paths import runtime_directory
+from langmesh.base.confinement.paths import session_master_key_path
+from langmesh.base.persistence.secrets import load_or_create_private_value
 
 # Does this session still exist? Durable, and the registry's own answer.
 LIVE = "live"
@@ -36,19 +37,7 @@ logger = logging.getLogger(__name__)
 
 def _master_key() -> bytes:
     """The per-install key session tokens are derived from, so a woken session's token is recomputable rather than remembered."""
-    path = runtime_directory() / "session_master_key"
-    if path.exists():
-        existing = path.read_bytes()
-        if existing:
-            return existing
-    key = os.urandom(32)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(key)
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
-    return key
+    return load_or_create_private_value(session_master_key_path(), lambda: os.urandom(32))
 
 
 def token_for(session_id: str) -> str:

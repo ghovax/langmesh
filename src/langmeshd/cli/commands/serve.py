@@ -13,7 +13,6 @@ import base64
 import contextlib
 import json
 import logging
-import os
 import secrets
 import socket
 import sys
@@ -66,22 +65,11 @@ _REPLAYABLE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "DELETE"})
 def reach_token() -> str:
     """The door's durable pairing token, minted once and kept beside the daemon's own state."""
     from langmesh.base.confinement.paths import reach_token_path
+    from langmesh.base.persistence.secrets import load_or_create_private_value
 
-    path = reach_token_path()
-    try:
-        existing = path.read_text().strip()
-    except OSError:
-        existing = ""
-    if existing:
-        return existing
-    token = secrets.token_urlsafe(48)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(token, encoding="utf-8")
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
-    return token
+    return load_or_create_private_value(
+        reach_token_path(), lambda: secrets.token_urlsafe(48).encode()
+    ).decode("ascii")
 
 
 def pairing_link(endpoint: str, token: str) -> str:

@@ -133,5 +133,10 @@ def reach_token_path() -> Path:
     return data_directory() / "reach-token"
 
 
+def session_master_key_path() -> Path:
+    """The session-token master key, kept with durable private data rather than process runtime files."""
+    return data_directory() / "session-master-key"
+
+
 def log_file_path(name: str) -> Path:
     return state_directory() / f"{name}.log"
