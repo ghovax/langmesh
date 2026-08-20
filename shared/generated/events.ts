@@ -22,7 +22,7 @@ export type WireEvent =
   | ThinkingDoneEvent
   | ToolCallEvent
   | ToolResultEvent
-  | McpEvent
+  | MCPEvent
   | StatusEvent
   | DoneEvent
   | CompactionEvent
@@ -123,9 +123,9 @@ export interface InboundMessageEvent {
 }
 /**
  * This interface was referenced by `LangMeshEvents`'s JSON-Schema
- * via the `definition` "McpEvent".
+ * via the `definition` "MCPEvent".
  */
-export interface McpEvent {
+export interface MCPEvent {
   event?: Record<string, unknown>;
   kind: "mcp_event";
   server?: string;

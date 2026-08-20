@@ -96,7 +96,7 @@ except Exception:
 | `Thinking` / `ThinkingDone` | Reasoning delta and boundary | Update a collapsible reasoning region |
 | `ToolCall` | Partial or complete tool request | Create or update one tool card by id |
 | `ToolResult` | Tool completion | Close the matching card |
-| `Mcp` | An MCP server event (connect, progress, log) | Update the MCP surface |
+| `MCPEvent` | An MCP server event (connect, progress, log) | Update the MCP surface |
 | `Suspended` | Durable permission or question batch | Collect decisions, call `respond()`, then `resume()` |
 | `PermissionReviewing` | Automatic-mode gates the reviewer is weighing | Show the call before the verdict |
 | `Steering` | Mid-turn user message accepted | Reconcile optimistic UI by message id |

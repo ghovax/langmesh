@@ -18,7 +18,7 @@ from langmesh.runtime.tools import sessions
 from langmesh.runtime.tools.execution import ToolExecution
 from langmesh.runtime.tools.output import ToolOutput
 from langmesh.runtime.tools.registry import call_mcp_server_tool_with_events
-from langmesh.runtime.turn_events import Error, Mcp, ToolResult
+from langmesh.runtime.turn_events import Error, MCPEvent, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ async def handle_call_mcp_server_tool(execution: ToolExecution) -> AsyncIterator
         while True:
             if call_task.done():
                 while not event_queue.empty():
-                    yield Mcp(
+                    yield MCPEvent(
                         id=execution.call_id,
                         name="call_mcp_server_tool",
                         server=tool_arguments.get("server", ""),
@@ -56,7 +56,7 @@ async def handle_call_mcp_server_tool(execution: ToolExecution) -> AsyncIterator
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if get_task in done:
-                yield Mcp(
+                yield MCPEvent(
                     id=execution.call_id,
                     name="call_mcp_server_tool",
                     server=tool_arguments.get("server", ""),

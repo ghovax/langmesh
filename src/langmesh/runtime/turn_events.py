@@ -101,7 +101,7 @@ class ToolResult(TurnEvent):
 
 
 @dataclass(frozen=True)
-class Mcp(TurnEvent):
+class MCPEvent(TurnEvent):
     TYPE = EventType.MCP_EVENT
     id: str = ""
     name: str = ""
@@ -268,7 +268,7 @@ TurnEventUnion = Union[
     TextChunk,
     ToolCall,
     ToolResult,
-    Mcp,
+    MCPEvent,
     Usage,
     Done,
     Suspended,
