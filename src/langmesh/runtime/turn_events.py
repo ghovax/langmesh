@@ -117,14 +117,15 @@ class Usage(TurnEvent):
     output_tokens: int = 0
     total_tokens: int = 0
     cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     reasoning_tokens: int = 0
     context_window: int = 0
     context_window_estimated: bool = False
     cumulative: dict[str, Any] = field(default_factory=dict)
-    #: Whether every shared byte was unchanged; ``None`` = unknown (no previous request in the lane).
-    prefix_intact: bool | None = None
-    #: How much of the prefix was unchanged, estimated with this harness's tokenizer rather than the provider's.
-    reachable_tokens: int = 0
+    #: Whether the preceding request is a complete prefix; ``None`` means this lane has no local baseline.
+    cache_prefix_reusable: bool | None = None
+    #: How much of the prefix is locally reusable, estimated with this harness's tokenizer rather than the provider's.
+    reusable_prefix_tokens: int = 0
     #: How many segments the request had, and how many the previous one already carried unchanged.
     segments: int = 0
     shared_segments: int = 0

@@ -134,8 +134,9 @@ class CumulativeUsage(BaseModel):
     output_tokens: int = 0
     total_tokens: int = 0
     cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     #: What a cache could have returned across the session, so the read figure has a denominator.
-    reachable_tokens: int = 0
+    reusable_prefix_tokens: int = 0
     reasoning_tokens: int = 0
     model_calls: int = 0
 
@@ -184,12 +185,13 @@ class TokenUsageEvent(_EventBase):
     context_window_estimated: bool = False
     # Per-call cache and reasoning, because a running total cannot say which call missed.
     cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     reasoning_tokens: int = 0
     # Session-lifetime running totals for this agent's own calls.
     cumulative: CumulativeUsage = Field(default_factory=CumulativeUsage)
-    # What the cache figure means: moved, dropped, or unknown when there was no prior request.
-    prefix_intact: Optional[bool] = None
-    reachable_tokens: int = 0
+    # Whether the preceding request is a complete prefix, or unknown when this lane has no local baseline.
+    cache_prefix_reusable: Optional[bool] = None
+    reusable_prefix_tokens: int = 0
     segments: int = 0
     shared_segments: int = 0
     divergence: Optional[PrefixDivergence] = None

@@ -68,11 +68,12 @@ export interface CompactionEvent {
  */
 export interface CumulativeUsage {
   cache_read_tokens?: number;
+  cache_write_tokens?: number;
   input_tokens?: number;
   model_calls?: number;
   output_tokens?: number;
-  reachable_tokens?: number;
   reasoning_tokens?: number;
+  reusable_prefix_tokens?: number;
   total_tokens?: number;
 }
 /**
@@ -260,7 +261,9 @@ export interface ThinkingEvent {
  * via the `definition` "TokenUsageEvent".
  */
 export interface TokenUsageEvent {
+  cache_prefix_reusable?: boolean | null;
   cache_read_tokens?: number;
+  cache_write_tokens?: number;
   context_window?: number;
   context_window_estimated?: boolean;
   cumulative?: CumulativeUsage;
@@ -268,9 +271,8 @@ export interface TokenUsageEvent {
   input_tokens?: number;
   kind: "token_usage";
   output_tokens?: number;
-  prefix_intact?: boolean | null;
-  reachable_tokens?: number;
   reasoning_tokens?: number;
+  reusable_prefix_tokens?: number;
   segments?: number;
   shared_segments?: number;
   timestamp?: string;

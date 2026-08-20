@@ -139,8 +139,9 @@ export interface TokenUsage {
   outputTokens: number;
   totalTokens: number;
   cacheReadTokens: number;
+  cacheWriteTokens: number;
   // What a cache could have returned this session — the denominator cacheReadTokens means something against.
-  cacheReachableTokens: number;
+  cacheReusablePrefixTokens: number;
   reasoningTokens: number;
   modelCalls: number;
   // Current occupancy: the latest call's prompt plus its reply, not the cumulative sum.
@@ -151,9 +152,10 @@ export interface TokenUsage {
   contextWindowEstimated: boolean;
   // What the latest call's cache did and why, since a running total cannot say which call missed.
   contextCacheReadTokens: number;
-  reachableTokens: number;
+  contextCacheWriteTokens: number;
+  reusablePrefixTokens: number;
   // null means the latest call had no previous request to compare, so the cache outcome is unknown.
-  prefixIntact: boolean | null;
+  cachePrefixReusable: boolean | null;
   divergence: PrefixDivergence | null;
 }
 
@@ -932,7 +934,8 @@ function reduceDataPart(
         outputTokens: cumulative?.output_tokens ?? 0,
         totalTokens: cumulative?.total_tokens ?? 0,
         cacheReadTokens: cumulative?.cache_read_tokens ?? 0,
-        cacheReachableTokens: cumulative?.reachable_tokens ?? 0,
+        cacheWriteTokens: cumulative?.cache_write_tokens ?? 0,
+        cacheReusablePrefixTokens: cumulative?.reusable_prefix_tokens ?? 0,
         reasoningTokens: cumulative?.reasoning_tokens ?? 0,
         modelCalls: cumulative?.model_calls ?? 0,
         contextInputTokens,
@@ -941,8 +944,9 @@ function reduceDataPart(
         contextWindow: event.context_window ?? 0,
         contextWindowEstimated: event.context_window_estimated ?? false,
         contextCacheReadTokens: event.cache_read_tokens ?? 0,
-        reachableTokens: event.reachable_tokens ?? 0,
-        prefixIntact: event.prefix_intact ?? null,
+        contextCacheWriteTokens: event.cache_write_tokens ?? 0,
+        reusablePrefixTokens: event.reusable_prefix_tokens ?? 0,
+        cachePrefixReusable: event.cache_prefix_reusable ?? null,
         divergence: event.divergence ?? null,
       };
       break;

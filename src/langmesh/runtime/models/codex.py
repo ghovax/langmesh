@@ -39,6 +39,7 @@ from langmesh.base.content.model_errors import CONTEXT_OVERFLOW_CODES, ContextWi
 from langmesh.runtime.cache_trace import (
     INSTRUCTIONS,
     ITEM,
+    SETTINGS,
     TOOLS,
     Piece,
     RequestTrace,
@@ -401,6 +402,15 @@ class ChatCodexModel(BaseChatModel):
         pieces = [
             Piece(kind=INSTRUCTIONS, text=payload.get("instructions") or ""),
             Piece(kind=TOOLS, text=compact(payload.get("tools") or [])),
+            Piece(
+                kind=SETTINGS,
+                text=compact(
+                    {
+                        "reasoning": payload.get("reasoning"),
+                        "tool_choice": payload.get("tool_choice"),
+                    }
+                ),
+            ),
         ]
         for position, item in enumerate(payload.get("input") or []):
             # A Responses item is identified by its type, and by its role where it has one, which is the more telling of the two.
