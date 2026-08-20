@@ -21,6 +21,8 @@ TurnErrorCode = Literal[
     "turn_failed",
     "turn_interrupted",
     "tool_error",
+    "tool_failed",
+    "tool_interrupted",
 ]
 CompactionErrorCode = Literal[
     "compaction_cancelled",

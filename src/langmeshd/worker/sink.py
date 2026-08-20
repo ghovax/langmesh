@@ -21,6 +21,7 @@ from langmesh.protocol.events import (
     ThinkingEvent,
     TokenUsageEvent,
     ToolCallEvent,
+    TurnErrorCode,
 )
 from langmesh.protocol.parts import _event_part, _text_part, _tool_result_part
 from langmesh.runtime.turn_events import (
@@ -320,12 +321,17 @@ class _TurnEventSink:
                     )
             case Error():
                 await self.flush()
+                code: TurnErrorCode = (
+                    cast(TurnErrorCode, event.code)
+                    if event.code in {"tool_failed", "tool_interrupted"}
+                    else "tool_error"
+                )
                 await self._emit(
                     _event_part(
                         ErrorEvent(
                             tool_call_id=event.id,
                             tool_name=event.tool,
-                            code="tool_error",
+                            code=code,
                         )
                     )
                 )

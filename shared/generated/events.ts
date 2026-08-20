@@ -101,7 +101,9 @@ export interface ErrorEvent {
     | "server_error"
     | "turn_failed"
     | "turn_interrupted"
-    | "tool_error";
+    | "tool_error"
+    | "tool_failed"
+    | "tool_interrupted";
   kind: "error";
   parameters?: Record<string, unknown>;
   status?: number | null;
