@@ -294,18 +294,21 @@ class Session:
 
     async def prepare_worktree(self, strategy: WorktreeStrategy = "worktree") -> str:
         """Give this session its own git worktree and run its tools there; opt-in, because it writes to disk."""
-        if self._runtime is not None:
-            raise RuntimeError("prepare_worktree must run before the session builds its runtime")
-        if not self._directory:
-            raise RuntimeError("prepare_worktree requires a local directory-backed session")
-        manager = self._workspace
-        if manager is None:
-            from langmesh.base.persistence.worktrees import SessionWorktreeManager
+        async with self._turn_lock:
+            if self._runtime is not None:
+                raise RuntimeError(
+                    "prepare_worktree must run before the session builds its runtime"
+                )
+            if not self._directory:
+                raise RuntimeError("prepare_worktree requires a local directory-backed session")
+            manager = self._workspace
+            if manager is None:
+                from langmesh.base.persistence.worktrees import SessionWorktreeManager
 
-            manager = SessionWorktreeManager()
-        prepared = await manager.prepare(self._session_id, self._directory, strategy)
-        self._runtime_directory = prepared.runtime_working_directory or self._directory
-        return self._runtime_directory
+                manager = SessionWorktreeManager()
+            prepared = await manager.prepare(self._session_id, self._directory, strategy)
+            self._runtime_directory = prepared.runtime_working_directory or self._directory
+            return self._runtime_directory
 
     def refresh_prompt(self) -> None:
         """Rebuild catalogue-derived static instructions at the next model boundary."""
@@ -314,9 +317,12 @@ class Session:
 
     async def sync_resources(self) -> None:
         """Publish path-native changes to the configured fsspec workspace now."""
-        if self._materialized_resources is None:
-            raise RuntimeError("resources are materialized only inside `async with Session(...)`")
-        await self._materialized_resources.sync()
+        async with self._turn_lock:
+            if self._materialized_resources is None:
+                raise RuntimeError(
+                    "resources are materialized only inside `async with Session(...)`"
+                )
+            await self._materialized_resources.sync()
 
     async def refresh_resources(self) -> None:
         """Refresh the materialized view from its source at a caller-chosen idle boundary."""
@@ -374,11 +380,11 @@ class Session:
             raise TypeError("decision must be an Approval value")
         async with self._turn_lock:
             if not self._restored:
-                await self.restore()
+                await self._restore()
             if self._pending is None:
                 raise RuntimeError("This session has no suspended turn.")
             self._pending = self._pending.with_decision(request_id, decision)
-            await self.save()
+            await self._save()
             return self.state
 
     async def cancel_pending(self) -> None:
@@ -389,7 +395,7 @@ class Session:
             self.runtime.abandon_suspension()
             self._pending = None
             self._phase = SessionPhase.IDLE
-            await self.save()
+            await self._save()
 
     async def set_permission_mode(self, mode: str | PermissionMode) -> SessionState:
         """Change live permission policy and re-evaluate any unanswered parked gates."""
@@ -397,30 +403,37 @@ class Session:
         self._permission_mode = str(resolved)
         runtime = self.runtime
         runtime.set_permission_mode(resolved)
-        pending = self._pending
-        if pending is not None:
-            permissions = runtime.features.require(PermissionsCapability)
-            for gate in pending.remaining:
-                verdict = await permissions.reconsider_gate(gate)
-                if not verdict:
-                    continue
-                if gate.kind == "question":
-                    decision = Approval(
-                        allow=False,
-                        reason=str(verdict.get("reason") or ""),
-                    )
-                else:
-                    decision = Approval(
-                        allow=verdict.get("decision") == "allow",
-                        reason=str(verdict.get("reason") or ""),
-                    )
-                pending = pending.with_decision(gate.request_id, decision)
-            self._pending = pending
-            await self.save()
+        if self._pending is not None:
+            async with self._turn_lock:
+                pending = self._pending
+                if pending is None:
+                    return self.state
+                permissions = runtime.features.require(PermissionsCapability)
+                for gate in pending.remaining:
+                    verdict = await permissions.reconsider_gate(gate)
+                    if not verdict:
+                        continue
+                    if gate.kind == "question":
+                        decision = Approval(
+                            allow=False,
+                            reason=str(verdict.get("reason") or ""),
+                        )
+                    else:
+                        decision = Approval(
+                            allow=verdict.get("decision") == "allow",
+                            reason=str(verdict.get("reason") or ""),
+                        )
+                    pending = pending.with_decision(gate.request_id, decision)
+                self._pending = pending
+                await self._save()
         return self.state
 
     async def restore(self) -> bool:
         """Reload this session's conversation from its checkpoint store, and say whether anything was found."""
+        async with self._turn_lock:
+            return await self._restore()
+
+    async def _restore(self) -> bool:
         state = await self._checkpoints.load(self._session_id)
         if not state:
             self._restored = True
@@ -444,6 +457,10 @@ class Session:
 
     async def save(self) -> None:
         """Write this session's conversation to its checkpoint store through LangChain's message codec."""
+        async with self._turn_lock:
+            await self._save()
+
+    async def _save(self) -> None:
         from langchain_core.messages import message_to_dict
 
         await self._checkpoints.save(
@@ -494,7 +511,7 @@ class Session:
             # A fresh user turn starts clean: no stop from before is owed.
             self.runtime.clear_stop()
             if not self._restored:
-                await self.restore()
+                await self._restore()
             if self._pending is not None:
                 raise RuntimeError(
                     "This session is suspended. Respond to every pending interaction and call Session.resume(), or call Session.cancel_pending()."
@@ -522,7 +539,7 @@ class Session:
                 self.runtime.mark_turn_failed()
                 raise
             finally:
-                await self.save()
+                await self._save()
                 if self._pending is None:
                     self._phase = SessionPhase.IDLE
 
@@ -535,7 +552,7 @@ class Session:
             # A fresh user turn starts clean: no stop from before is owed.
             self.runtime.clear_stop()
             if not self._restored:
-                await self.restore()
+                await self._restore()
             pending = self._pending
             if pending is None:
                 raise RuntimeError("This session has no suspended turn.")
@@ -589,7 +606,7 @@ class Session:
                 self.runtime.mark_turn_failed()
                 raise
             finally:
-                await self.save()
+                await self._save()
                 if self._pending is None:
                     self._phase = SessionPhase.IDLE
 
@@ -613,7 +630,7 @@ class Session:
             # A fresh user turn starts clean: no stop from before is owed.
             self.runtime.clear_stop()
             if not self._restored:
-                await self.restore()
+                await self._restore()
             if self._pending is not None:
                 raise RuntimeError("A suspended turn must be resumed or cancelled before retrying.")
             self._phase = SessionPhase.RETRYING
@@ -628,13 +645,13 @@ class Session:
                 self.runtime.mark_turn_failed()
                 raise
             finally:
-                await self.save()
+                await self._save()
                 self._phase = SessionPhase.IDLE
 
     @property
-    def conversation(self) -> list:
-        """The model-facing message list, which accumulates across turns."""
-        return self.runtime.conversation
+    def conversation(self) -> tuple[Any, ...]:
+        """A fixed sequence snapshot of the model-facing messages accumulated across turns."""
+        return tuple(self.runtime.conversation)
 
     async def aclose(self) -> None:
         """Release resources owned by this session without disturbing another session in the process."""
