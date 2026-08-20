@@ -290,7 +290,7 @@ class _TurnRunner:
             if await self._run_maintenance_turn(prepared) is self._DONE:
                 return
             composed = await self._compose_turn_input(prepared)
-            await self._stream_and_finalize(composed)
+            await self._stream_complete(composed)
         except Exception as exception:  # noqa: BLE001 — surface any failure as A2A failed
             await self._fail(exception)
         finally:
@@ -694,7 +694,7 @@ class _TurnRunner:
             {"tasks": compact(_features.unfinished_tasks(runtime, ))},
         )
 
-    async def _stream_and_finalize(self, composed: _ComposedTurn) -> None:
+    async def _stream_complete(self, composed: _ComposedTurn) -> None:
         """Drive the runtime's stream through the sink, then close the task as completed or canceled."""
         resolved = composed.prepared.resolved
         # The sink was stood up by `_prepare_runtime` before the stream was composed; guarded for the checker.
