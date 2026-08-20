@@ -205,21 +205,23 @@ class _DispatchesTools:
                 elif isinstance(event, DeniedInjection):
                     denied_commands.append(event.command)
         except asyncio.CancelledError:
-            result_content = (
-                "Tool call aborted by the user; if any, read their newest request first."
-            )
+            tool_failed = True
+            result_content = "Tool call interrupted."
             yield Error(
                 id=tool_call_identifier,
                 message=result_content,
                 tool=tool_name,
+                code="tool_interrupted",
             )
             turn_tool_results_log.append({"name": tool_name, "result": result_content})
         except Exception as exception:
+            tool_failed = True
             result_content = f"{exception}"
             yield Error(
                 id=tool_call_identifier,
                 message=result_content,
                 tool=tool_name,
+                code="tool_failed",
             )
             turn_tool_results_log.append({"name": tool_name, "result": result_content})
         finally:
@@ -368,11 +370,12 @@ class _DispatchesTools:
             tool_call_identifier = tool_call_data["id"]
             outcome = outcomes.get(tool_call_identifier, {})
             content = outcome.get("content", "")
+            interrupted = not outcome and (self._abort_event.is_set() or self._stop_requested)
             if not content:
-                content = "(interrupted)" if self._abort_event.is_set() else ""
+                content = "Tool call interrupted." if interrupted else ""
             result_status, result_code = _model_result_status(
                 content,
-                ok=outcome.get("ok", True),
+                ok=outcome.get("ok", not interrupted),
                 backgrounded=bool(outcome.get("background_job_id")),
             )
             metadata = outcome.get("metadata") or _tool_timing_metadata(
