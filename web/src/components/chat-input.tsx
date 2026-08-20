@@ -200,6 +200,13 @@ function useChatGPTUsage(
   return isChatGPT ? usage : null;
 }
 
+function cacheCoverage(readTokens: number, reusableTokens: number): string {
+  const read = readTokens.toLocaleString();
+  if (reusableTokens <= 0) return read;
+  const percent = Math.min(100, Math.round((readTokens / reusableTokens) * 100));
+  return `${read} / ${reusableTokens.toLocaleString()} (${percent}%)`;
+}
+
 // The context-usage chip: a fill ring and percent, then the current context size against the model's window.
 function ContextUsageChip({
   tokenUsage,
@@ -234,14 +241,7 @@ function ContextUsageChip({
         {/* Always shown because a zero provider cache read is still a useful measurement. */}
         <InlineField label={translation("cacheReads")}>
           <Text>
-            {tokenUsage.cacheReadTokens.toLocaleString()}
-            {tokenUsage.cacheReusablePrefixTokens > 0 &&
-              ` / ${tokenUsage.cacheReusablePrefixTokens.toLocaleString()} (${Math.min(
-                100,
-                Math.round(
-                  (tokenUsage.cacheReadTokens / tokenUsage.cacheReusablePrefixTokens) * 100,
-                ),
-              )}%)`}
+            {cacheCoverage(tokenUsage.cacheReadTokens, tokenUsage.cacheReusablePrefixTokens)}
           </Text>
         </InlineField>
         <InlineField label={translation("cacheWrites")}>
@@ -266,6 +266,25 @@ function ContextUsageChip({
         </InlineField>
         <InlineField label={translation("output")}>
           <Text>{tokenUsage.contextOutputTokens.toLocaleString()}</Text>
+        </InlineField>
+        <InlineField label={translation("cacheReads")}>
+          <Text>
+            {cacheCoverage(tokenUsage.contextCacheReadTokens, tokenUsage.reusablePrefixTokens)}
+          </Text>
+        </InlineField>
+        <InlineField label={translation("cacheWrites")}>
+          <Text>{tokenUsage.contextCacheWriteTokens.toLocaleString()}</Text>
+        </InlineField>
+        <InlineField label={translation("cachePrefix")}>
+          <Text>
+            {translation(
+              tokenUsage.cachePrefixReusable == null
+                ? "cachePrefixUnknown"
+                : tokenUsage.cachePrefixReusable
+                  ? "cachePrefixIntact"
+                  : "cachePrefixMoved",
+            )}
+          </Text>
         </InlineField>
         {hasContext && (
           <InlineField label={translation("window")}>
