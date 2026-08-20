@@ -227,6 +227,7 @@ class ChatCursorModel(BaseChatModel):
         self._prune_resumptions()
         return {
             "version": 1,
+            "model": self.model,
             "account": self._account_key(),
             "saved_at": time.time(),
             "resumptions": [
@@ -253,6 +254,7 @@ class ChatCursorModel(BaseChatModel):
         if (
             not isinstance(snapshot, dict)
             or snapshot.get("version") != 1
+            or snapshot.get("model") != self.model
             or not account_key
             or snapshot.get("account") != account_key
         ):

@@ -289,13 +289,20 @@ class ChatLiteLLMModel(BaseChatModel):
         """Serialize the bounded diagnostics and explicit breakpoint anchors owned by this session."""
         return {
             "version": 1,
+            "model": self.model,
+            "api_base": self.api_base or "",
             "traces": request_traces_snapshot(self._previous_traces),
             "anchors": {lane: list(anchors) for lane, anchors in self._cache_anchors.items()},
         }
 
     def restore_model_cache(self, snapshot: object) -> None:
         """Restore validated diagnostics and breakpoint anchors from durable session state."""
-        if not isinstance(snapshot, dict) or snapshot.get("version") != 1:
+        if (
+            not isinstance(snapshot, dict)
+            or snapshot.get("version") != 1
+            or snapshot.get("model") != self.model
+            or snapshot.get("api_base", "") != (self.api_base or "")
+        ):
             return
         self._previous_traces = restore_request_traces(snapshot.get("traces"))
         self._cache_anchors = {}
