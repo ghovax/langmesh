@@ -76,12 +76,27 @@ langmesh = "langmeshd.__main__:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build]
+skip-excluded-dirs = true
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "src",
+    ".agents/agents/reviewer/AGENT.md",
+    ".agents/skills/context7-mcp/SKILL.md",
+    ".agents/skills/observational-memory/SKILL.md",
+    ".agents/skills/observational-memory/agents/openai.yaml",
+    ".agents/mcp.json",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/langmesh", "src/langmeshd"]
 
 [tool.hatch.build.targets.wheel.force-include]
-".agents/agents" = "langmesh/_bundled/.agents/agents"
-".agents/skills" = "langmesh/_bundled/.agents/skills"
+".agents/agents/reviewer/AGENT.md" = "langmesh/_bundled/.agents/agents/reviewer/AGENT.md"
+".agents/skills/context7-mcp/SKILL.md" = "langmesh/_bundled/.agents/skills/context7-mcp/SKILL.md"
+".agents/skills/observational-memory/SKILL.md" = "langmesh/_bundled/.agents/skills/observational-memory/SKILL.md"
+".agents/skills/observational-memory/agents/openai.yaml" = "langmesh/_bundled/.agents/skills/observational-memory/agents/openai.yaml"
 ".agents/mcp.json" = "langmesh/_bundled/.agents/mcp.json"
 
 [tool.uv]
