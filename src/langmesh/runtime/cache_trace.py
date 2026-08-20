@@ -1,4 +1,35 @@
-"""Why a request did or did not hit the provider's prompt cache."""
+"""Why a request did or did not hit the provider's prompt cache.
+
+``prefix_intact`` is tri-state: ``True`` means every segment this request shares with the
+previous request in its lane is byte-identical (so a prefix cache that keeps the previous
+request would serve it), ``False`` means something moved or rewrote, and ``None`` means there
+is no previous reading to compare against, so the outcome is *unknown*, not a miss.
+
+The paired state matrix for the situations the harness actually produces:
+
+- First call in a lane (no baseline): outcome unknown; ``prefix_intact=None``.
+- User interrupt or steering while the model is not streaming: the next request simply appends
+  the new message; the shared prefix stays intact -> intact.
+- Steering arriving during a stream: queued and drained at the model boundary, so it lands on
+  the next request, appended -> intact.
+- Tool interrupt: each tool result appends a ``tool`` message; the request grows, the prefix
+  stays -> intact.
+- Network drop on a request: the outgoing request is atomic; the retry resends the identical
+  bytes, so the baseline from the first attempt still matches -> intact. A dropped response is
+  not itself a reading, so the comparison stays on the request boundary, not the response.
+- Background job returning late: delivered as steering on the next request, appended -> intact.
+- Compaction: the fold rewrites the head of the conversation, so the previous prefixes no
+  longer match and the first request after a fold diagnoses a divergence -> miss.
+- Session/daemon restart: the in-memory baseline is gone; the first request is unknown again.
+- Auxiliary lanes (permission review, compaction summary): fall back to the conversation lane's
+  baseline so their diagnosis is against the main session's request, not nothing.
+- A response that carries no usage reading: the request itself is still the baseline, so the
+  follow-up request is diagnosed against it even though no token figure was reported.
+
+The invariant this locks in: every request advances the baseline at the point it is sent, so
+the next request always compares against the bytes that were actually sent, never against a
+request that only exists because a response happened to report usage.
+"""
 
 from __future__ import annotations
 
@@ -96,11 +127,22 @@ def trace(pieces: Sequence[Piece]) -> RequestTrace:
     )
 
 
+def prefix_intact_label(value: Optional[bool]) -> str:
+    """A human reading of the tri-state: the prefix was reusable, it moved, or we cannot tell."""
+    if value is None:
+        return "unknown"
+    return "intact" if value else "moved"
+
+
 def diagnose(current: RequestTrace, previous: Optional[RequestTrace]) -> dict[str, object]:
-    """What this request kept from the last one, as fields to record beside the cache figure."""
+    """What this request kept from the last one, as fields to record beside the cache figure.
+
+    ``prefix_intact`` is ``None`` when there is no previous request to compare against: the
+    outcome is unknown, which reads very differently from a confirmed miss.
+    """
     if previous is None:
         return {
-            "prefix_intact": False,
+            "prefix_intact": None,
             "reachable_tokens": 0,
             "segments": len(current.segments),
             "shared_segments": 0,
@@ -143,6 +185,7 @@ __all__ = [
     "active_cache_lane",
     "cache_lane",
     "diagnose",
+    "prefix_intact_label",
     "trace",
     "provider_cache_key",
 ]

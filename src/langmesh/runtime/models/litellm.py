@@ -382,6 +382,8 @@ class ChatLiteLLMModel(BaseChatModel):
         sent = self._apply_cache_breakpoints(self._messages_to_dicts(messages))
         # Taken before the request and reported once the response says what the cache did.
         current_trace = self._trace_request(params, sent)
+        # The baseline advances at the request boundary, not when a response happens to report usage, so a usage-less or interrupted response still leaves the next request a true comparison.
+        diagnosis = self._cache_diagnosis(current_trace)
         reported = False
         stream = cast(AsyncIterator[Any], await litellm.acompletion(messages=sent, **params))
         async for chunk in stream:
@@ -390,9 +392,7 @@ class ChatLiteLLMModel(BaseChatModel):
                 # Attached to the chunk carrying usage, so the diagnosis travels with the figure it explains.
                 if getattr(generation_chunk.message, "usage_metadata", None) and not reported:
                     reported = True
-                    generation_chunk.message.additional_kwargs["cache_trace"] = (
-                        self._cache_diagnosis(current_trace)
-                    )
+                    generation_chunk.message.additional_kwargs["cache_trace"] = diagnosis
                 yield generation_chunk
 
     @staticmethod
@@ -525,15 +525,15 @@ class ChatLiteLLMModel(BaseChatModel):
         params = self._completion_kwargs(stop=stop, **kwargs)
         sent = self._apply_cache_breakpoints(self._messages_to_dicts(messages))
         current_trace = self._trace_request(params, sent)
+        # Same outgoing-boundary advance as the streaming path: the comparison chain moves with the request.
+        diagnosis = self._cache_diagnosis(current_trace)
         response = await litellm.acompletion(
             messages=sent,
             **params,
         )
         result = self._response_to_result(response)
         if result.generations:
-            result.generations[0].message.additional_kwargs["cache_trace"] = self._cache_diagnosis(
-                current_trace
-            )
+            result.generations[0].message.additional_kwargs["cache_trace"] = diagnosis
         return result
 
     def _generate(

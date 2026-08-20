@@ -268,7 +268,7 @@ export interface TokenUsageEvent {
   input_tokens?: number;
   kind: "token_usage";
   output_tokens?: number;
-  prefix_intact?: boolean;
+  prefix_intact?: boolean | null;
   reachable_tokens?: number;
   reasoning_tokens?: number;
   segments?: number;
@@ -318,18 +318,18 @@ export interface ToolResultEvent {
 /**
  * Session context captured in the cache-stable system prompt.
  *
+ * Only the core's own fields are declared here. The plugins contribute their own
+ * context through ``compose_context``, which merges it into the prompt dict; the
+ * core never names a plugin's context.
+ *
  * This interface was referenced by `LangMeshEvents`'s JSON-Schema
  * via the `definition` "TurnContext".
  */
 export interface TurnContext {
-  background?: Record<string, unknown>;
   confinement?: Record<string, unknown>;
-  goal?: Record<string, unknown>;
   locations?: Record<string, unknown>[];
   now?: string;
   pwd?: string;
-  screen?: Record<string, unknown>;
-  tasks?: Record<string, unknown>[];
 }
 /**
  * This interface was referenced by `LangMeshEvents`'s JSON-Schema

@@ -456,8 +456,9 @@ class ChatCodexModel(BaseChatModel):
     ) -> AsyncIterator[ChatGenerationChunk]:
         payload = self._build_payload(messages, stream=True, **kwargs)
         headers = await self._headers()
-        # Taken before the request and held until the response says what the cache did.
+        # The baseline advances at the request boundary, not when a response happens to report usage, so a usage-less or interrupted response still leaves the next request a true comparison.
         current_trace = self._trace_payload(payload)
+        diagnosis = self._cache_diagnosis(current_trace)
         reported = False
         # Carried so a failure can name the model that refused the request and the window it was measured against.
         state: dict[str, Any] = {
@@ -479,9 +480,7 @@ class ChatCodexModel(BaseChatModel):
                         # Attached to the chunk carrying usage, so the diagnosis travels with the figure it explains.
                         if getattr(chunk.message, "usage_metadata", None) and not reported:
                             reported = True
-                            chunk.message.additional_kwargs["cache_trace"] = self._cache_diagnosis(
-                                current_trace
-                            )
+                            chunk.message.additional_kwargs["cache_trace"] = diagnosis
                         yield chunk
 
     @staticmethod
