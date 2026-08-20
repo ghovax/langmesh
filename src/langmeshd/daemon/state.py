@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ class _TurnTail:
 class SessionEventBus:
     """Sequence, replay and bounded fan-out for the latency-critical live session stream."""
 
-    _OVERFLOW = {"kind": "resync"}
+    _OVERFLOW: ClassVar[dict[str, str]] = {"kind": "resync"}
 
     def __init__(self, *, subscriber_capacity: int = 1024) -> None:
         self._subscriber_capacity = subscriber_capacity
