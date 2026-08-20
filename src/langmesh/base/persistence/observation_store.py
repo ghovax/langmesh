@@ -442,7 +442,7 @@ class SQLiteObservationStore:
         for ledger, rows in rows_by_ledger.items():
             columns = ("entry_id", *_LEDGER_FIELDS[ledger], "updated_at")
             for row in rows:
-                values = dict(zip(columns, row))
+                values = dict(zip(columns, row, strict=True))
                 entry_id = str(values["entry_id"])
                 updated_at = str(values["updated_at"])
                 if not _nonempty(entry_id):

@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from a2a.types import Task
+from pydantic import BaseModel
 
 from langmeshd.commons.timing import SESSION_IDLE_SLEEP_SECONDS
 from langmeshd.daemon import state
@@ -94,8 +95,8 @@ async def _goal_review_save(params: dict) -> dict:
     await state.turn_store.save(task)
     review_id = str(params.get("review_id") or "")
     part = params.get("part")
-    if hasattr(part, "model_dump"):
-        part = getattr(part, "model_dump")(by_alias=True, exclude_none=True, mode="json")
+    if isinstance(part, BaseModel):
+        part = part.model_dump(by_alias=True, exclude_none=True, mode="json")
     if part is not None:
         state.event_bus.publish_part(review_id, part)
     return {"saved": task.id}
@@ -132,8 +133,7 @@ async def _turn_list_control_records(params: dict) -> list[dict]:
         str(params.get("session_id") or "")
     )
     return [
-        {"id": turn_id, "record": record.model_dump(mode="json")}
-        for turn_id, record in records
+        {"id": turn_id, "record": record.model_dump(mode="json")} for turn_id, record in records
     ]
 
 

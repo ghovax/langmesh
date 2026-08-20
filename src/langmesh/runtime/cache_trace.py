@@ -144,7 +144,7 @@ def diagnose(current: RequestTrace, previous: Optional[RequestTrace]) -> dict[st
             "divergence": None,
         }
     shared = 0
-    for mine, theirs in zip(previous.segments, current.segments):
+    for mine, theirs in zip(previous.segments, current.segments, strict=False):
         if mine.digest != theirs.digest:
             break
         shared += 1

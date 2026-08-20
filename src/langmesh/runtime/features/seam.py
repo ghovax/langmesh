@@ -406,7 +406,7 @@ def build_features(
             )
     for feature in installed:
         feature.attach(context, host)
-        setattr(feature, "_langmesh_session_id", context.session_id)
+        feature._langmesh_session_id = context.session_id
     return features
 
 

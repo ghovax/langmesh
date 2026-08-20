@@ -245,7 +245,7 @@ def _closeness(candidate: str, anchor: str) -> float:
     if not first or not second:
         return 0.0
     shared = 0
-    for left, right in zip(first, second):
+    for left, right in zip(first, second, strict=False):
         if left != right:
             break
         shared += 1

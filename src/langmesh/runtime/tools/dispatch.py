@@ -260,19 +260,22 @@ class _DispatchesTools:
             tool_call_identifier = tool_call_data["id"]
             pipe: asyncio.Queue[ToolExecutionEvent | None] = asyncio.Queue()
 
-            async def run_one() -> None:
+            async def run_one(
+                call: dict = tool_call_data,
+                call_id: str = tool_call_identifier,
+                event_pipe: asyncio.Queue[ToolExecutionEvent | None] = pipe,
+            ) -> None:
                 try:
                     async for event in self._run_one_tool(
-                        tool_call_data,
+                        call,
                         turn_tool_calls_log,
                         turn_tool_results_log,
                         outcomes,
-                        decisions.get(tool_call_identifier)
-                        or _ResolvedToolDecision(tool_call_id=tool_call_identifier),
+                        decisions.get(call_id) or _ResolvedToolDecision(tool_call_id=call_id),
                     ):
-                        await pipe.put(event)
+                        await event_pipe.put(event)
                 finally:
-                    await pipe.put(None)
+                    await event_pipe.put(None)
 
             task = asyncio.create_task(run_one())
             self._active_tool_tasks[tool_call_identifier] = task

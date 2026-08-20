@@ -136,14 +136,8 @@ quote-style = "double"
 docstring-code-format = true
 
 [tool.ruff.lint]
-# The set the tree is actually written against and passes clean: pycodestyle errors, pyflakes.
-# Stated explicitly because Ruff's implicit default has grown over releases, and a linter whose
-# meaning depends on which version happens to be installed cannot gate anything.
-#
-# Widening this is worth doing and is deliberately not done here: the wider default reports
-# several hundred findings, and compactioning those into an unrelated change is how a diff stops
-# being reviewable. It is its own piece of work.
-select = ["E4", "E7", "E9", "F"]
+# The explicit gate covers syntax, undefined names, imports, and bug-prone constructs without inheriting changing defaults.
+select = ["E4", "E7", "E9", "F", "B"]
 
 
 [tool.basedpyright]
@@ -156,4 +150,3 @@ include = ["src"]
 # undefined attributes (reportAttributeAccessIssue) without demanding full type coverage.
 typeCheckingMode = "basic"
 pythonVersion = "3.13"
-
