@@ -105,7 +105,7 @@ class FilesystemConfiguration(Section):
     """Which paths a tool's child may read and write. The system stays readable; the home is closed."""
 
     readable: list[str] = Field(
-        default=[
+        default_factory=lambda: [
             # Where a person's own agents, skills and workflows live, which a screen script imports from.
             "~/.agents",
             "~/.config",
@@ -125,10 +125,10 @@ class FilesystemConfiguration(Section):
         ],
     )
     writable: list[str] = Field(
-        default=["$WORKSPACE", "$TMPDIR", "/tmp", "$XDG_CACHE_HOME", "~/.cache"]
+        default_factory=lambda: ["$WORKSPACE", "$TMPDIR", "/tmp", "$XDG_CACHE_HOME", "~/.cache"]
     )
     # `/tmp` beside `$TMPDIR` because on macOS they are not the same place, and nothing personal lives there.
-    grantable: list[str] = Field(default=[])
+    grantable: list[str] = Field(default_factory=list)
     deny: list[str] = Field(default_factory=list)
 
 
@@ -139,7 +139,7 @@ class SandboxConfiguration(Section):
     filesystem: FilesystemConfiguration = Field(default_factory=FilesystemConfiguration)
     network: bool = Field(default=False)
     limits: dict[str, int] = Field(
-        default={
+        default_factory=lambda: {
             "RLIMIT_CORE": 0,
             "RLIMIT_FSIZE": 8 * 1024 * 1024 * 1024,
             "RLIMIT_NPROC": 2048,
@@ -297,18 +297,18 @@ class MCPServerConfiguration(BaseModel):
     transport: Literal["stdio", "streamable_http"] = "stdio"
     stateful: bool = True
     command: str = ""
-    args: list[str] = []
-    env: dict[str, str] = {}
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
     cwd: str = ""
     url: str = ""
-    headers: dict[str, str] = {}
+    headers: dict[str, str] = Field(default_factory=dict)
     timeout_seconds: float = 30
 
 
 class MCPConfiguration(Section):
     """The MCP servers available to a session, from ``mcp.json`` rather than the configuration file."""
 
-    servers: dict[str, MCPServerConfiguration] = Field(default={})
+    servers: dict[str, MCPServerConfiguration] = Field(default_factory=dict)
 
     def enabled_servers(self) -> dict[str, MCPServerConfiguration]:
         return {name: server for name, server in self.servers.items() if server.enabled}
@@ -340,7 +340,7 @@ class RemoteAgentAuthConfiguration(BaseModel):
     token_url: str = ""
     client_id: str = ""
     client_secret: str = ""
-    scopes: list[str] = []
+    scopes: list[str] = Field(default_factory=list)
 
 
 class RemoteAgentServerConfiguration(BaseModel):
@@ -348,20 +348,20 @@ class RemoteAgentServerConfiguration(BaseModel):
 
     enabled: bool = True
     card_url: str = ""
-    auth: RemoteAgentAuthConfiguration = RemoteAgentAuthConfiguration()
+    auth: RemoteAgentAuthConfiguration = Field(default_factory=RemoteAgentAuthConfiguration)
     card_ttl_seconds: int = 3600
     # Hostnames allowed beyond the card_url origin (the origin is always allowed).
-    allowed_hosts: list[str] = []
+    allowed_hosts: list[str] = Field(default_factory=list)
     # Permit private/loopback targets (e.g. a LangMesh-to-LangMesh loopback).
     allow_private: bool = False
     # Which local agent profiles may delegate to this remote agent. Empty = all profiles.
-    allowed_profiles: list[str] = []
+    allowed_profiles: list[str] = Field(default_factory=list)
 
 
 class RemoteAgentsConfiguration(Section):
     """The external agents the harness may delegate to, from ``remote-agents.json``."""
 
-    agents: dict[str, RemoteAgentServerConfiguration] = Field(default={})
+    agents: dict[str, RemoteAgentServerConfiguration] = Field(default_factory=dict)
 
     def enabled_agents(self) -> dict[str, RemoteAgentServerConfiguration]:
         return {
@@ -394,7 +394,7 @@ class TelemetryExporterConfiguration(Section):
 
     endpoint: str = Field(default="")
     protocol: Literal["http/protobuf", "grpc"] = Field(default="http/protobuf")
-    headers: dict[str, str] = Field(default={})
+    headers: dict[str, str] = Field(default_factory=dict)
 
 
 class TelemetryConfiguration(Section):
@@ -431,7 +431,7 @@ class Configuration(Section):
     AGENTS_DIRECTORY: ClassVar[str] = ".agents/agents"
     SKILLS_DIRECTORY: ClassVar[str] = ".agents/skills"
 
-    providers: dict[str, ProviderCredential] = Field(default={})
+    providers: dict[str, ProviderCredential] = Field(default_factory=dict)
     exa: ExaConfiguration = Field(default_factory=ExaConfiguration)
     jina: JinaConfiguration = Field(default_factory=JinaConfiguration)
     firecrawl: FirecrawlConfiguration = Field(default_factory=FirecrawlConfiguration)
@@ -595,7 +595,7 @@ def _dedupe_paths(paths: Iterable[Path]) -> list[Path]:
 class NamedToolPermissions(BaseModel):
     """Per-call permission rules for a tool whose calls have a name."""
 
-    permissions: dict[str, str] = {}
+    permissions: dict[str, str] = Field(default_factory=dict)
 
     def decide(self, subject: str, unmatched: str = "ask") -> str:
         """The configured decision for ``subject``, or ``unmatched`` when no pattern names it."""
@@ -611,7 +611,7 @@ class NamedToolPermissions(BaseModel):
 class BashToolConfiguration(BaseModel):
     # Policy only: which tools an agent uses is `tools_enabled`, not this block.
     background_allowed: bool = True
-    permissions: dict[str, str] = {}
+    permissions: dict[str, str] = Field(default_factory=dict)
 
     _SHELL_SPLIT = re.compile(r"\s*(?:&&|\|\||[;|])\s*")
     _SUBSHELL = re.compile(r"\$\((.+?)\)|`(.+?)`")
@@ -717,21 +717,21 @@ class ToolsConfiguration(BaseModel):
     `disabled` here, so a tool's presence has exactly one source.
     """
 
-    bash: BashToolConfiguration = BashToolConfiguration()
-    mcp: NamedToolPermissions = NamedToolPermissions()
-    screen: NamedToolPermissions = NamedToolPermissions()
+    bash: BashToolConfiguration = Field(default_factory=BashToolConfiguration)
+    mcp: NamedToolPermissions = Field(default_factory=NamedToolPermissions)
+    screen: NamedToolPermissions = Field(default_factory=NamedToolPermissions)
 
 
 class AgentConfiguration(BaseModel):
     name: str = ""
     title: str = ""
-    aliases: list[str] = []
+    aliases: list[str] = Field(default_factory=list)
     color: str = ""
     description: str = ""
     role: str = ""
     enabled: bool = True
     # The skills this agent may use; empty offers every available one.
-    skills: list[str] = []
+    skills: list[str] = Field(default_factory=list)
     # The model and its provider are separate fields, recombined into an identifier where one is wanted.
     model: Optional[str] = None
     provider: Optional[str] = None
@@ -741,8 +741,8 @@ class AgentConfiguration(BaseModel):
 
     # An agent's own confinement, narrowing the global one. Unset means whatever the machine says.
     sandbox: Optional[SandboxConfiguration] = None
-    tools: ToolsConfiguration = ToolsConfiguration()
-    tools_enabled: list[str] = []
+    tools: ToolsConfiguration = Field(default_factory=ToolsConfiguration)
+    tools_enabled: list[str] = Field(default_factory=list)
     system_prompt: str = ""
 
     @property

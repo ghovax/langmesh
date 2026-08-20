@@ -20,7 +20,7 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
-from pydantic import PrivateAttr, SecretStr
+from pydantic import Field, PrivateAttr, SecretStr
 
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.cache_trace import (
@@ -69,7 +69,7 @@ class ChatLiteLLMModel(BaseChatModel):
     maximum_tokens: Optional[int] = None
     # A bounded request timeout, since the streaming loop only checks for aborts between chunks.
     timeout: Optional[float] = 300.0
-    default_headers: dict[str, str] = {}
+    default_headers: dict[str, str] = Field(default_factory=dict)
 
     #: The last request's segment trace, declared rather than merely assigned so Pydantic will hold it.
     _previous_traces: dict[str, RequestTrace] = PrivateAttr(default_factory=dict)

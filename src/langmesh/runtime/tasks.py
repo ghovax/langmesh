@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from langmesh.base.primitives.serialization import compact
 
@@ -13,7 +13,7 @@ class TaskItem(BaseModel):
     title: str = ""
     description: str
     status: str = "pending"
-    dependencies: list[str] = []
+    dependencies: list[str] = Field(default_factory=list)
 
 
 class TaskManager:

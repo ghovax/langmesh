@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from langmeshd.commons import state
 from langmeshd.commons.services.broadcast import _publish_broadcast
@@ -25,18 +25,18 @@ class RemoteAgentAuthInput(BaseModel):
     tokenUrl: str = ""
     clientId: str = ""
     clientSecret: str = ""
-    scopes: list[str] = []
+    scopes: list[str] = Field(default_factory=list)
 
 
 class RemoteAgentInput(BaseModel):
     name: str
     cardUrl: str
     enabled: bool = True
-    auth: RemoteAgentAuthInput = RemoteAgentAuthInput()
+    auth: RemoteAgentAuthInput = Field(default_factory=RemoteAgentAuthInput)
     cardTtlSeconds: int = 3600
-    allowedHosts: list[str] = []
+    allowedHosts: list[str] = Field(default_factory=list)
     allowPrivate: bool = False
-    allowedProfiles: list[str] = []
+    allowedProfiles: list[str] = Field(default_factory=list)
 
 
 def _home_remote_agents_path() -> Path:

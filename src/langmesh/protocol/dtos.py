@@ -135,7 +135,7 @@ class CompactionUpdateRequest(BaseModel):
 class MCPServerToolCallRequest(BaseModel):
     server: str
     tool_name: str
-    arguments: dict = {}
+    arguments: dict = Field(default_factory=dict)
 
 
 class MCPResourceReadRequest(BaseModel):
