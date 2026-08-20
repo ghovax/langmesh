@@ -825,15 +825,22 @@ class AgentRuntime(_RunsTurns):
 
     def session_snapshot(self) -> dict:
         """The durable non-conversation state the features own, plus the core's own recovery flag."""
-        return {
+        snapshot = {
             **self._features.snapshot(),
             "turn_recovery": self._turn_recovery,
             "turn_failure_root": self._turn_failure_root,
         }
+        cache_snapshot = getattr(self._model, "model_cache_snapshot", None)
+        if callable(cache_snapshot):
+            snapshot["model_cache"] = cache_snapshot()
+        return snapshot
 
     def restore_session(self, snapshot: dict) -> None:
         """Rehydrate the features' durable state and the core's recovery flag."""
         self._features.restore(snapshot)
+        restore_model_cache = getattr(self._model, "restore_model_cache", None)
+        if callable(restore_model_cache):
+            restore_model_cache(snapshot.get("model_cache"))
         recovery = str(snapshot.get("turn_recovery") or "none")
         # A process that died after claiming the retry still owes that retry after restart.
         self._turn_recovery = "retryable" if recovery == "retrying" else recovery

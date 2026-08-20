@@ -40,7 +40,6 @@ class _ProviderAuth:
     in_flight: str
     clear_caches: Callable[[], None]
     account: Callable[[Any], str] = staticmethod(lambda _tokens: "")
-    clear_resumptions: Callable[[], None] = staticmethod(lambda: None)
 
     async def status(self) -> dict:
         tokens = await asyncio.to_thread(self.load)
@@ -89,7 +88,6 @@ class _ProviderAuth:
             setattr(state, self.in_flight, None)
         await asyncio.to_thread(self.clear)
         self.clear_caches()
-        self.clear_resumptions()
         await _reset_all_runtimes()
         _publish_broadcast({"type": "settings_changed"})
         return {"ok": True}
@@ -102,12 +100,6 @@ def _chatgpt_account(tokens: Any) -> str:
 def _chatgpt_caches() -> None:
     clear_subscription_models_cache()
     clear_usage_snapshot()
-
-
-def _cursor_resumptions() -> None:
-    from langmesh.runtime.models.cursor import clear_resumptions
-
-    clear_resumptions()
 
 
 _PROVIDERS = {
@@ -126,7 +118,6 @@ _PROVIDERS = {
         in_flight="cursor_login_flow",
         clear_caches=cursor_subscription.clear_subscription_models_cache,
         account=lambda tokens: tokens.account or "",
-        clear_resumptions=_cursor_resumptions,
     ),
 }
 

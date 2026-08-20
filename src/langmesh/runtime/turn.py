@@ -829,6 +829,7 @@ class _RunsTurns(_DispatchesTools, ABC):
             if self._features.active_maintenance():
                 cache_scope.enter_context(cache_lane("maintenance"))
             model_stream = bound_model.astream(messages)
+            self._note_session_changed()
             abort_waiter = asyncio.ensure_future(self._abort_event.wait())
             silence_limit = current_limits().model_silence_give_up
             progress_deadline = asyncio.get_running_loop().time() + silence_limit
