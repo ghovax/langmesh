@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import location_uri, ssh_hosts
 from .executor import LocalExecutor, LocationExecutor, SshExecutor
+from .location_uri import format_local, format_remote
+from .ssh_hosts import list_ssh_hosts, resolve_host
 
 
 @dataclass(frozen=True)
@@ -21,22 +22,20 @@ class LocationAddress:
 def location_uri_for(address: LocationAddress) -> str:
     """The URI the agent passes as ``location``, derived for a remote from the resolved host."""
     if address.kind == "local":
-        return location_uri.format_local(address.base_directory)
+        return format_local(address.base_directory)
     if address.kind == "remote":
         if not address.host_alias:
             raise ValueError("A remote location requires an ssh host alias.")
-        host = ssh_hosts.resolve_host(address.host_alias)
+        host = resolve_host(address.host_alias)
         if host is None:
-            return location_uri.format_remote(address.host_alias, address.base_directory)
-        return location_uri.format_remote(
-            host.hostname, address.base_directory, user=host.user, port=host.port
-        )
+            return format_remote(address.host_alias, address.base_directory)
+        return format_remote(host.hostname, address.base_directory, user=host.user, port=host.port)
     raise ValueError(f"Unknown location kind: {address.kind!r}")
 
 
 def host_is_defined(alias: str) -> bool:
     """Whether an ssh alias is declared in ~/.ssh/config, so a location naming a dead host can be flagged."""
-    return any(host.alias == alias for host in ssh_hosts.list_ssh_hosts())
+    return any(host.alias == alias for host in list_ssh_hosts())
 
 
 def executor_for(
