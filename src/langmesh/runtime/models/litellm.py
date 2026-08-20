@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any, AsyncIterator, Callable, ClassVar, Optional, Sequence, cast
 from uuid import uuid4
 
@@ -73,6 +74,9 @@ class ChatLiteLLMModel(BaseChatModel):
 
     #: The last request's segment trace, declared rather than merely assigned so Pydantic will hold it.
     _previous_traces: dict[str, RequestTrace] = PrivateAttr(default_factory=dict)
+
+    #: The latest attempted prefix and its fallback, retained independently for each lane.
+    _cache_anchors: dict[str, tuple[str, ...]] = PrivateAttr(default_factory=dict)
 
     @property
     def _llm_type(self) -> str:
@@ -201,10 +205,6 @@ class ChatLiteLLMModel(BaseChatModel):
     #: The one route that must never be marked, because a gateway rewrites the request it is caching.
     _GATEWAY_ROUTE = "vercel_ai_gateway"
 
-    #: How many breakpoints to place and where: two at the unchanging front and two at the moving end.
-    _LEADING_BREAKPOINTS = 2
-    _TRAILING_BREAKPOINTS = 2
-
     #: Copilot resells Claude but reads a differently named marker, so the key is named per route rather than assumed.
     _CACHE_CONTROL_KEYS: ClassVar[dict[str, str]] = {"github_copilot": "copilot_cache_control"}
     _DEFAULT_CACHE_CONTROL_KEY = "cache_control"
@@ -219,32 +219,62 @@ class ChatLiteLLMModel(BaseChatModel):
     def _apply_cache_breakpoints(
         self,
         dicts: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Mark the messages the provider should cache up to, since Anthropic caches nothing unless asked."""
+    ) -> tuple[list[dict[str, Any]], tuple[str, str] | None]:
+        """Keep recent prefix candidates reachable and mark the new tail for the next request."""
         route = self._route()
         if route == self._GATEWAY_ROUTE:
-            return dicts
+            return dicts, None
         model = self.model.lower()
         if not (
             any(marker in model for marker in self._CACHE_BREAKPOINT_MARKERS)
             or route in self._CACHE_BREAKPOINT_ROUTES
         ):
-            return dicts
-        # The durable tail is every non-system message; the two selections never overlap or exceed four breakpoints.
-        durable = [entry for entry in dicts if entry["role"] != "system"]
-        system = [entry for entry in dicts if entry["role"] == "system"][
-            : self._LEADING_BREAKPOINTS
-        ]
-        for entry in system:
-            self._mark_cached(entry, self._cache_control_key())
-        # Walk back until the trailing breakpoints are actually placed, since not every message can carry one.
-        placed = 0
-        for entry in reversed(durable):
-            if placed >= self._TRAILING_BREAKPOINTS:
-                break
-            if self._mark_cached(entry, self._cache_control_key()):
-                placed += 1
-        return dicts
+            return dicts, None
+        for entry in dicts:
+            self._normalize_cacheable_content(entry)
+        cacheable = [entry for entry in dicts if self._cacheable(entry)]
+        if not cacheable:
+            return dicts, None
+        lane = active_cache_lane()
+        previous = self._cache_anchors.get(lane)
+        if previous is None and lane != "conversation":
+            previous = self._cache_anchors.get("conversation")
+        identities = [(entry, self._cache_identity(entry)) for entry in cacheable]
+        for anchor in previous or ():
+            for entry, identity in reversed(identities):
+                if identity == anchor:
+                    self._mark_cached(entry, self._cache_control_key())
+                    break
+        tail, identity = identities[-1]
+        self._mark_cached(tail, self._cache_control_key())
+        return dicts, (lane, identity)
+
+    @staticmethod
+    def _normalize_cacheable_content(entry: dict[str, Any]) -> None:
+        """Give text one stable wire shape whether or not this request marks its block."""
+        content = entry.get("content")
+        if isinstance(content, str) and content:
+            entry["content"] = [{"type": "text", "text": content}]
+
+    @staticmethod
+    def _cacheable(entry: dict[str, Any]) -> bool:
+        """Whether the entry has a provider block that can carry an explicit breakpoint."""
+        if entry.get("role") == "tool":
+            return True
+        content = entry.get("content")
+        return bool(isinstance(content, list) and content and isinstance(content[-1], dict))
+
+    @staticmethod
+    def _cache_identity(entry: dict[str, Any]) -> str:
+        """Identify one stable message independently of temporary cache-control metadata."""
+        return hashlib.blake2b(compact(entry).encode(), digest_size=16).hexdigest()
+
+    def _remember_cache_candidate(self, candidate: tuple[str, str] | None) -> None:
+        """Retain the attempted tail and its fallback so a dropped request loses neither lookup."""
+        if candidate is not None:
+            lane, identity = candidate
+            prior = self._cache_anchors.get(lane, ())
+            self._cache_anchors[lane] = tuple(dict.fromkeys((identity, *prior)))[:2]
 
     @staticmethod
     def _mark_cached(entry: dict[str, Any], key: str = "cache_control") -> bool:
@@ -253,13 +283,7 @@ class ChatLiteLLMModel(BaseChatModel):
             entry[key] = {"type": "ephemeral"}
             return True
         content = entry.get("content")
-        if isinstance(content, str):
-            if not content:
-                return False  # an empty block is not a cacheable prefix, only a malformed one
-            # Annotated rather than inferred, so the promoted block types as one that can hold the marker written below.
-            promoted: list[dict[str, Any]] = [{"type": "text", "text": content}]
-            entry["content"] = promoted
-        elif not isinstance(content, list) or not content:
+        if not isinstance(content, list) or not content:
             return False
         blocks: list[Any] = entry["content"]
         last = blocks[-1]
@@ -380,9 +404,11 @@ class ChatLiteLLMModel(BaseChatModel):
         )
         # One name for the prose this call produces, minted here because nothing LiteLLM streams identifies the block.
         block = f"litellm-{uuid4().hex}-"
-        sent = self._apply_cache_breakpoints(self._messages_to_dicts(messages))
-        # Taken before the request and reported once the response says what the cache did.
-        current_trace = self._trace_request(params, sent)
+        translated = self._messages_to_dicts(messages)
+        # Taken before cache-control metadata is added, because marker placement is not model-visible prompt content.
+        current_trace = self._trace_request(params, translated)
+        sent, cache_candidate = self._apply_cache_breakpoints(translated)
+        self._remember_cache_candidate(cache_candidate)
         # The baseline advances when the request is sent, so a usage-less or interrupted response still leaves the next request a true comparison.
         diagnosis = self._cache_diagnosis(current_trace)
         reported = False
@@ -530,8 +556,10 @@ class ChatLiteLLMModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         params = self._completion_kwargs(stop=stop, **kwargs)
-        sent = self._apply_cache_breakpoints(self._messages_to_dicts(messages))
-        current_trace = self._trace_request(params, sent)
+        translated = self._messages_to_dicts(messages)
+        current_trace = self._trace_request(params, translated)
+        sent, cache_candidate = self._apply_cache_breakpoints(translated)
+        self._remember_cache_candidate(cache_candidate)
         # Same outgoing-boundary advance as the streaming path: the comparison chain moves with the request.
         diagnosis = self._cache_diagnosis(current_trace)
         response = await litellm.acompletion(
@@ -557,10 +585,9 @@ class ChatLiteLLMModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         params = self._completion_kwargs(stop=stop, **kwargs)
-        response = litellm.completion(
-            messages=self._apply_cache_breakpoints(self._messages_to_dicts(messages)),
-            **params,
-        )
+        sent, cache_candidate = self._apply_cache_breakpoints(self._messages_to_dicts(messages))
+        self._remember_cache_candidate(cache_candidate)
+        response = litellm.completion(messages=sent, **params)
         return self._response_to_result(response)
 
     def _response_to_result(self, response: Any) -> ChatResult:
