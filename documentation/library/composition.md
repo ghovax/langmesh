@@ -270,26 +270,24 @@ The default composer already renders the catalogue's `system_prompt` template ov
 
 ### Attachments
 
-`Attachments.compose()` controls how application-owned paths become a provider input. It returns an `AttachmentInput` with the model value, the paths to grant, and the number of images omitted for a text-only model.
+`Attachments.compose()` controls how application-owned paths become model content and filesystem authority. It returns `ComposedAttachments`, whose names keep those responsibilities explicit: `content` is sent to the model, `granted_paths` is the exact access allowlist, and `omitted_image_count` drives the warning for pixels that were not inlined.
 
 ```python
-from langmesh import AttachmentInput, SessionComponents
+from langmesh import ComposedAttachments, SessionComponents
 
 class MetadataOnlyAttachments:
     def compose(self, message, attachments, model_identifier, inline_image_bytes):
         paths = tuple(str(path.resolve(strict=True)) for path in attachments)
-        return AttachmentInput(
-            value=[
-                {"type": "text", "text": message},
-                {"type": "text", "text": f"Attached paths: {', '.join(paths)}"},
-            ],
-            paths=paths,
+        attached_paths = "\n".join(f"- {path}" for path in paths)
+        return ComposedAttachments(
+            content=f"{message}\n\nAttached paths:\n{attached_paths}",
+            granted_paths=paths,
         )
 
 components = SessionComponents(attachments=MetadataOnlyAttachments())
 ```
 
-The default `PathAttachments` includes structured metadata and inlines bounded image data only when the selected model advertises vision support. A custom composer must return only the paths the application intends the runtime to grant. The inline ceiling is configurable (`attachments.inline_image_megabytes`).
+The default `PathAttachments` includes structured metadata and inlines bounded image data only when the selected model advertises vision support. A custom composer must list only the paths the application intends the runtime to grant; mentioning a path in `content` grants nothing by itself. The inline ceiling is configurable (`attachments.inline_image_megabytes`).
 
 ### Execution locations
 

@@ -20,7 +20,7 @@ if TYPE_CHECKING:  # pragma: no cover - import only for typing; `base` stays fre
     from langchain_core.language_models.chat_models import BaseChatModel
     from pathlib import Path
 
-    from langmesh.base.content.attachments import AttachmentInput
+    from langmesh.base.content.attachments import ComposedAttachments
 
     # The model seam as a type: every provider and every mock in that ecosystem already implements it.
     ChatModel = BaseChatModel
@@ -152,7 +152,7 @@ class Attachments(Protocol):
         attachments: Sequence[Path],
         model_identifier: str,
         inline_image_bytes: int,
-    ) -> AttachmentInput: ...
+    ) -> ComposedAttachments: ...
 
 
 class MemoryCheckpoints:

@@ -6,12 +6,6 @@ from typing import Optional
 
 from a2a.types import DataPart, FilePart, Part, TextPart
 
-from langmesh.base.content.attachments import (
-    all_attachments as _all_attachments,
-    attachment_payload,
-    compose_turn_input,
-    image_attachments as _image_attachments,
-)
 from langmesh.base.content.message_content import content_block_metadata
 from langmesh.base.confinement.paths import uploads_directory
 from langmesh.protocol.events import (
@@ -28,13 +22,6 @@ from langmesh.protocol.metadata import (
     part_payload,
     wrap_part_payload,
 )
-
-__all__ = [
-    "_all_attachments",
-    "_image_attachments",
-    "attachment_payload",
-    "compose_turn_input",
-]
 
 
 def _input_response_payload(message) -> Optional[dict]:
@@ -71,7 +58,7 @@ def _structured_data_payloads(message) -> list[dict]:
 
 
 def _attachment_warning_event(image_count: int, model_identifier: str) -> WarningEvent:
-    """A localized notice that images reached a text-only model as file metadata."""
+    """A localized notice that some image pixels did not reach the model while their file metadata did."""
     return WarningEvent(
         code="image_metadata_only",
         parameters={"count": image_count, "model": model_identifier},

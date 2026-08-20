@@ -18,7 +18,7 @@ from langmesh.base.configuration import (
 )
 from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base.confinement.file_leases import FileLeaseManager
-from langmesh.base.content.attachments import AttachmentInput, PathAttachments
+from langmesh.base.content.attachments import ComposedAttachments, PathAttachments
 from langmesh.base.content.instructions import Instruction
 from langmesh.base.content.skills import Skill
 from langmesh.base.contracts.catalogue import Catalogue
@@ -140,7 +140,6 @@ __all__ = [
     "AgentRuntime",
     "Approval",
     "Approvals",
-    "AttachmentInput",
     "Attachments",
     "BashToolConfiguration",
     "BeforeModelHook",
@@ -152,6 +151,7 @@ __all__ = [
     "CompactionDone",
     "CompactionStarted",
     "CompactionSummaryState",
+    "ComposedAttachments",
     "Configuration",
     "Credentials",
     "DeniedInjection",

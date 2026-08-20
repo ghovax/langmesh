@@ -19,6 +19,11 @@ from a2a.utils import new_task
 from langchain_core.messages import messages_to_dict
 
 from langmeshd.worker import features_access as _features
+from langmesh.base.content.attachments import (
+    attachment_records,
+    attachments_payload,
+    compose_attachment_content,
+)
 from langmesh.base.primitives import telemetry as _telemetry
 from langmesh.base.configuration import PromptLoader
 from langmesh.base.primitives.serialization import compact, conversation_snapshot_id
@@ -27,18 +32,15 @@ from langmesh.protocol.events import ErrorEvent, InboundMessageEvent, RetryEvent
 from langmesh.protocol.metadata import (
     METADATA_KEY,
     Metadata,
-    PART_KIND,
     error_message_metadata,
     turn_metadata,
 )
 from langmesh.protocol.parts import (
-    _all_attachments,
     _attachment_warning_event,
     _event_part,
     _ingest_incoming_file_parts,
     _input_response_payload,
     _structured_data_payloads,
-    compose_turn_input,
     _text_part,
 )
 from langmesh.protocol.turn_record import TurnKind, TurnRecord
@@ -364,9 +366,7 @@ class _TurnRunner:
         self._structured_payloads = _structured_data_payloads(message)
         ingested_attachments = await _ingest_incoming_file_parts(message)
         if ingested_attachments:
-            self._structured_payloads.append(
-                {PART_KIND: "attachments", "attachments": ingested_attachments}
-            )
+            self._structured_payloads.append(attachments_payload(ingested_attachments))
         self._metadata = turn_metadata(message)
         # Dated on arrival and written back onto the message, since this is the one door every message comes through.
         if not self._metadata.get(Metadata.RECEIVED_AT):
@@ -661,21 +661,21 @@ class _TurnRunner:
                 runtime.note_attachments(
                     [
                         str(attachment.get("path") or "")
-                        for attachment in _all_attachments(self._structured_payloads)
+                        for attachment in attachment_records(self._structured_payloads)
                     ]
                 )
             # Paths always ride as a text block; images are inlined only where the model advertises vision.
             model_identifier = runtime.model_identifier if runtime is not None else ""
-            self._turn_input, images_not_inlined = compose_turn_input(
+            self._turn_input, omitted_image_count = compose_attachment_content(
                 self._user_text,
                 self._structured_payloads,
                 model_identifier,
                 runtime.inline_image_bytes if runtime is not None else 0,
             )
             self._turn_has_images = isinstance(self._turn_input, list)
-            if images_not_inlined:
+            if omitted_image_count:
                 await self._emit(
-                    _event_part(_attachment_warning_event(images_not_inlined, model_identifier))
+                    _event_part(_attachment_warning_event(omitted_image_count, model_identifier))
                 )
         else:
             self._turn_input = self._user_text
