@@ -348,7 +348,7 @@ class AgentRuntime(_RunsTurns):
         ] + [grant.tool for grant in self._tool_grants]
         self._model_tools = list(configured_tools)
         self._tool_schemas: dict[str, Any] = {tool.name: tool.args_schema for tool in self._tools}
-        self._bound_model = self._model.bind_tools(self._model_tools)
+        self._bound_model = self._bind_model_tools(self._model_tools)
         # The evaluator's own `tools_enabled` gate refuses what the profile did not declare.
         self._permissions = (
             permissions if permissions is not None else PermissionEvaluator(agent_configuration)
@@ -511,7 +511,7 @@ class AgentRuntime(_RunsTurns):
                     description=tool.description or "",
                     handler=handler,
                 )
-            self._bound_model = self._model.bind_tools(self._model_tools)
+            self._bound_model = self._bind_model_tools(self._model_tools)
         self._apply_contributed_schema_fields()
         # The services bundle every tool handler runs against: the tool's only view of the runtime.
         # Plugin capabilities are reached through the opaque features handle, never by class.
@@ -574,7 +574,11 @@ class AgentRuntime(_RunsTurns):
                 self._tool_units[tool.name] = dataclasses.replace(unit, schema=extended)
             extended_any = True
         if extended_any:
-            self._bound_model = self._model.bind_tools(self._model_tools)
+            self._bound_model = self._bind_model_tools(self._model_tools)
+
+    def _bind_model_tools(self, tools: Sequence[BaseTool]) -> Any:
+        """Bind a nonempty tool roster while leaving an ordinary chat model untouched for a plain turn."""
+        return self._model.bind_tools(list(tools)) if tools else self._model
 
     def _canonical_working_directory(self, working_directory: str | None = None) -> str:
         return str(
@@ -642,7 +646,7 @@ class AgentRuntime(_RunsTurns):
         self._tools = list(only)
         self._tool_schemas = {tool.name: tool.args_schema for tool in only}
         self._model_tools = list(only)
-        self._bound_model = self._model.bind_tools(list(only))
+        self._bound_model = self._bind_model_tools(only)
 
     def grant_tool(self, tool: BaseTool) -> None:
         """Grant a tool to this session at any moment: dispatchable now, described to the model
