@@ -51,6 +51,7 @@ from langmesh.base.persistence.worktrees import (
     WorktreeStrategy,
 )
 from langmesh.runtime.composition import RuntimeProfile, SessionComponents
+from langmesh.runtime.features import PermissionsCapability
 from langmesh.runtime.session_control import PendingTurn, SessionPhase, SessionState
 
 # The vocabulary `stream()` speaks, exported because a caller driving a turn has to dispatch on it.
@@ -398,8 +399,9 @@ class Session:
         runtime.set_permission_mode(resolved)
         pending = self._pending
         if pending is not None:
+            permissions = runtime.features.require(PermissionsCapability)
             for gate in pending.remaining:
-                verdict = await runtime.features.invoke("reconsider_gate", gate)
+                verdict = await permissions.reconsider_gate(gate)
                 if not verdict:
                     continue
                 if gate.kind == "question":

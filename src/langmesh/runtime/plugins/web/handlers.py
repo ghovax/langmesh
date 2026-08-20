@@ -8,6 +8,7 @@ from typing import Any, AsyncIterator
 from langmesh.base.confinement.file_leases import FileLeaseConflict
 from langmesh.base.primitives.limits import current_limits
 from langmesh.runtime.background import bind_background_jobs, unbind_background_jobs
+from langmesh.runtime.features import BackgroundCapability
 from langmesh.runtime.internals import _maybe_json
 from langmesh.runtime.tools import context as tool_context, fetching
 from langmesh.runtime.turn_events import Error, ToolResult
@@ -24,7 +25,7 @@ async def run_slow_tool(
     background: bool,
 ) -> AsyncIterator[Any]:
     """Run a slow tool inline briefly, then return its background handle if it is still running."""
-    runner = services.features.invoke("background")
+    runner = services.features.require(BackgroundCapability).runner
     job_identifier = runner.spawn(
         tool_name,
         operation,
@@ -126,7 +127,7 @@ async def handle_download_file(
         if (
             lease_token
             and backgrounded_job_id
-            and services.features.invoke("background").add_done_callback(
+            and services.features.require(BackgroundCapability).runner.add_done_callback(
                 backgrounded_job_id,
                 lambda _identifier, token=lease_token: services.leases.release(token),
             )
@@ -141,7 +142,7 @@ async def handle_search_web(
 ) -> AsyncIterator[Any]:
     from langmesh.runtime.plugins.web.tools import search_web as search_web_tool
 
-    background_token = bind_background_jobs(services.features.invoke("background"))
+    background_token = bind_background_jobs(services.features.require(BackgroundCapability).runner)
     try:
         result = await search_web_tool.ainvoke(tool_arguments)
     finally:

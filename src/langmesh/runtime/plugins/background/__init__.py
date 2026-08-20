@@ -10,7 +10,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from langmesh.runtime.background import BackgroundJobs, background_completion_event, background_include_result
+from langmesh.runtime.background import (
+    BackgroundJobs,
+    background_completion_event,
+    background_include_result,
+)
 from langmesh.runtime.internals import (
     _cap_model_result_payload,
     _maybe_json,
@@ -23,7 +27,6 @@ from langmesh.runtime.features import Feature, PluginContext, PluginHost
 
 class BackgroundJobsFeature(Feature):
     """One background-job runner and the delivery of its finished work to the model."""
-
 
     def __init__(self, *, store: Any = None) -> None:
         self._store = store
@@ -43,15 +46,9 @@ class BackgroundJobsFeature(Feature):
         """The runner the executor's resume pump and the tools read."""
         return self._runner
 
-    def invoke(self, name: str, *args, **kwargs):
-        """Answer the background capabilities the core and tools ask for by name."""
-        if name == "background":
-            return self._runner
-        if name == "bind_background_tool":
-            (job_id, tool_call_identifier) = args
-            self._runner.bind_tool_call(job_id, tool_call_identifier)
-            return True
-        return None
+    def bind_tool_call(self, job_id: str, tool_call_id: str) -> None:
+        """Associate a detached job with the tool call that started it."""
+        self._runner.bind_tool_call(job_id, tool_call_id)
 
     def compose_context(self, context: dict) -> None:
         """The in-flight jobs the turn context groups by kind."""

@@ -9,6 +9,7 @@ from langchain_core.tools import StructuredTool
 
 from langmesh.base.configuration import PromptLoader
 from langmesh.base.primitives.serialization import compact
+from langmesh.runtime.features import CompactionCapability
 from langmesh.runtime.plugins.compaction.ports import CompactionSummary
 from langmesh.runtime.tools.execution import current_tool_services
 from langmesh.runtime.values import ToolStatus
@@ -19,7 +20,9 @@ _DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
 
 async def _submit_compaction_summary(**arguments: Any) -> str:
     services = current_tool_services()
-    services.features.invoke("submit_compaction_summary", CompactionSummary.model_validate(arguments))
+    services.features.require(CompactionCapability).submit_summary(
+        CompactionSummary.model_validate(arguments)
+    )
     services.abort_event.set()
     return compact({"code": "compaction_summary_submitted", "status": ToolStatus.OK.value})
 

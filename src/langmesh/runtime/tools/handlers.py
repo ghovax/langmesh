@@ -12,6 +12,7 @@ import logging
 from typing import Any, AsyncIterator
 
 from langmesh.runtime.background import bind_background_jobs, unbind_background_jobs
+from langmesh.runtime.features import BackgroundCapability
 from langmesh.runtime.internals import _coerce_mcp_arguments, _maybe_json
 from langmesh.runtime.tools import sessions
 from langmesh.runtime.tools.output import ToolOutput
@@ -19,6 +20,7 @@ from langmesh.runtime.tools.registry import call_mcp_server_tool_with_events
 from langmesh.runtime.turn_events import Error, Mcp, ToolResult
 
 logger = logging.getLogger(__name__)
+
 
 async def handle_call_mcp_server_tool(
     services, tool_name, tool_arguments, tool_call_identifier, decision, policy, resolved_location
@@ -69,12 +71,15 @@ async def handle_call_mcp_server_tool(
         return
     yield ToolResult(id=tool_call_identifier, name=tool_name, result=result_data)
 
+
 async def handle_session(
     services, tool_name, tool_arguments, tool_call_identifier, decision, policy, resolved_location
 ) -> AsyncIterator[Any]:
     """Every peer-session verb, in one handler: they differ only in which call they make."""
-    create_tool = next((tool for tool in services.tools() if getattr(tool, "name", "") == "create_session"), None)
-    background_token = bind_background_jobs(services.features.invoke("background"))
+    create_tool = next(
+        (tool for tool in services.tools() if getattr(tool, "name", "") == "create_session"), None
+    )
+    background_token = bind_background_jobs(services.features.require(BackgroundCapability).runner)
     try:
         result = await sessions.invoke(tool_name, tool_arguments, create_tool)
     finally:
@@ -89,6 +94,7 @@ async def handle_session(
         result=_maybe_json(result) if isinstance(result, str) else result,
         model_guidance=model_guidance,
     )
+
 
 #: name -> handler, for the built-ins whose execution needs more than the generic invoke path.
 HANDLERS: dict[str, Any] = {

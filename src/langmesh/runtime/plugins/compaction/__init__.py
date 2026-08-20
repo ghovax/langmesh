@@ -52,14 +52,18 @@ from langmesh.runtime.cache_trace import cache_lane, prefix_intact_label
 
 logger = logging.getLogger(__name__)
 
+
 class CompactionSummaryExhausted(RuntimeError):
     """The summarizer never submitted within its configured attempts; the fold cannot proceed without it."""
+
 
 @dataclass
 class CompactionControl:
     """The compaction handshake as one state value, so invalid flag combinations cannot accumulate."""
 
-    phase: Literal["none", "waiting", "recorded", "preparation_failed", "compaction_failed"] = "none"
+    phase: Literal["none", "waiting", "recorded", "preparation_failed", "compaction_failed"] = (
+        "none"
+    )
     reason: Literal["auto", "manual", "overflow"] = "manual"
     resume_after: bool = False
     preparation_token: Any = None
@@ -151,12 +155,14 @@ class CompactionControl:
             started=bool(value.get("started", False)),
         )
 
+
 def _without_provider_reasoning(messages: list) -> list:
     """The same messages with the provider-native reasoning cut out, since the turns it explained are gone."""
     # A sweep for its effect, not a transformation: `forget_carried_reasoning` edits each message in place.
     for message in messages:
         forget_carried_reasoning(message)
     return messages
+
 
 class Compaction(Feature):
     """Keep a conversation inside its window after the agent checkpoints workspace knowledge."""
@@ -174,7 +180,9 @@ class Compaction(Feature):
     ) -> None:
         # The caller's strategy and handoff replace only their own step; the fold stays this plugin's.
         self._strategy = strategy
-        self._preparation = preparation if preparation is not None else DirectCompactionPreparation()
+        self._preparation = (
+            preparation if preparation is not None else DirectCompactionPreparation()
+        )
         self._summarizer = summarizer
         self._control = CompactionControl()
         self._submitted_summary: Any = None
@@ -209,16 +217,6 @@ class Compaction(Feature):
         """The summarizer's verdict tool lands here, read once the summary turn ends."""
         self._submitted_summary = summary
 
-    def invoke(self, name: str, *args, **kwargs):
-        """Answer the compaction capabilities the core and tools ask for by name."""
-        if name == "submit_compaction_summary":
-            (summary,) = args
-            self.submit_summary(summary)
-            return True
-        if name == "compaction_failure":
-            return self.failure
-        return None
-
     @property
     def submitted_summary(self) -> Any:
         return self._submitted_summary
@@ -229,7 +227,9 @@ class Compaction(Feature):
         if window <= 0:
             return 0
         return max(
-            0, window - int(window * self._context.global_configuration.compaction.output_reserve_fraction)
+            0,
+            window
+            - int(window * self._context.global_configuration.compaction.output_reserve_fraction),
         )
 
     def _recent_working_set(self, reason: str = "automatic", recent: list | None = None) -> int:
@@ -240,7 +240,8 @@ class Compaction(Feature):
             return budget
         # Manual and overflow compaction must remain effective even if a provider failed to report its window. The current conversation is still an honest upper bound.
         measured = int(
-            conversation_tokens(self._host.conversation.messages if recent is None else recent) * fraction
+            conversation_tokens(self._host.conversation.messages if recent is None else recent)
+            * fraction
         )
         return min(budget, measured) if budget > 0 else measured
 
@@ -270,7 +271,9 @@ class Compaction(Feature):
             messages=self.without_preparation(self._host.conversation.messages),
             context_window=self._host.window.context_window,
             context_tokens=(
-                self._host.window.latest_context_tokens if context_tokens is None else context_tokens
+                self._host.window.latest_context_tokens
+                if context_tokens is None
+                else context_tokens
             ),
             reason=reason,
         )
@@ -293,14 +296,14 @@ class Compaction(Feature):
         """The automatic trigger, measured against the usable window, unless a strategy answers it instead."""
         if self._strategy is not None:
             return bool(
-                self._strategy.should_compact(
-                    self._compaction_state(context_tokens=request_tokens)
-                )
+                self._strategy.should_compact(self._compaction_state(context_tokens=request_tokens))
             )
         compaction = self._context.global_configuration.compaction
         if not compaction.automatic or not self._at_compacting_threshold(request_tokens):
             return False
-        return len(self.bounded_tail(self._host.conversation.messages)) < len(self._host.conversation.messages)
+        return len(self.bounded_tail(self._host.conversation.messages)) < len(
+            self._host.conversation.messages
+        )
 
     def maintenance_active(self) -> bool:
         """Whether this plugin is currently holding the loop to reclaim context."""
@@ -367,9 +370,7 @@ class Compaction(Feature):
             try:
                 metadata = await self._preparation.describe()
             except Exception as error:  # noqa: BLE001 — the fold's verification below remains authoritative
-                self._context.bus.emit(
-                    MemoryHandoffFailed(str(error) or type(error).__name__)
-                )
+                self._context.bus.emit(MemoryHandoffFailed(str(error) or type(error).__name__))
             else:
                 self._context.bus.emit(MemoryHandoffVerified(metadata))
         async for event in self.compact(reason):
@@ -378,9 +379,7 @@ class Compaction(Feature):
     def begin_preparation(self, *, reason: str, resume_after: bool) -> None:
         """Begin the configured durable handoff before compacting."""
         self._control.begin(reason=reason, resume_after=resume_after)
-        instruction = self._preparation.instruction(
-            self._prompts.load("prepare_compaction", {})
-        )
+        instruction = self._preparation.instruction(self._prompts.load("prepare_compaction", {}))
         if instruction is None:
             self._control.record()
         else:
@@ -405,7 +404,9 @@ class Compaction(Feature):
         if self._control.phase != "preparation_failed":
             return None
         # A retry gets one unambiguous preparation notice. Retain any accepted user message that followed the failed private segment while removing that segment's discarded work.
-        self._host.conversation.messages[:] = self.without_preparation(self._host.conversation.messages)
+        self._host.conversation.messages[:] = self.without_preparation(
+            self._host.conversation.messages
+        )
         self.begin_preparation(
             reason=self._control.reason,
             resume_after=self._control.resume_after,
@@ -433,7 +434,9 @@ class Compaction(Feature):
             # A failure that never reached the model call still gets a running start, so the interface never jumps straight from nothing to a failure without a visible phase.
             self._control.started = True
             events.append(
-                CompactionStarted(reason="preparation", messages_before=messages, tokens_before=tokens)
+                CompactionStarted(
+                    reason="preparation", messages_before=messages, tokens_before=tokens
+                )
             )
         events.append(
             CompactionDone(
@@ -605,9 +608,7 @@ class Compaction(Feature):
                 error_code="compaction_cancelled",
             )
             return
-        retained = (
-            [self._summary_message(summary), *kept] if summary else list(kept)
-        )
+        retained = [self._summary_message(summary), *kept] if summary else list(kept)
         try:
             self._host.conversation.messages[:] = _without_provider_reasoning(retained)
             self._host.window.set_latest_context_tokens(
@@ -667,9 +668,7 @@ class Compaction(Feature):
             try:
                 from langmesh.runtime.verdict import drive_verdict_session
 
-                summary_attempts = (
-                    self._context.global_configuration.compaction.summary_attempts
-                )
+                summary_attempts = self._context.global_configuration.compaction.summary_attempts
                 last_text = ""
 
                 async def _run_turn(current_instruction: str) -> bool:
@@ -767,7 +766,9 @@ class Compaction(Feature):
         )
         summarizer_global_configuration = self._context.global_configuration.model_copy(
             update={
-                "toolbox": self._context.global_configuration.toolbox.model_copy(update={"enabled": False}),
+                "toolbox": self._context.global_configuration.toolbox.model_copy(
+                    update={"enabled": False}
+                ),
                 # The hidden session inherits the full conversation, so it must never compact itself.
                 "compaction": self._context.global_configuration.compaction.model_copy(
                     update={"automatic": False}
@@ -843,6 +844,7 @@ class Compaction(Feature):
     def preparation_violation_message(self) -> str:
         """The refusal the model is given for calling outside the private handshake."""
         return self._prompts.load("compaction_preparation_violation", {})
+
 
 __all__ = [
     "Compaction",

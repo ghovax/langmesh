@@ -48,6 +48,7 @@ from langmesh.protocol.turn_record import PendingInteraction, ToolGate, TurnReco
 from langmesh.runtime.plugins.goal_review.goal import Goal, GoalReviewPhase
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.runtime import AgentRuntime
+from langmesh.runtime.features import LocationsCapability
 from langmesh.runtime.turn_events import SuspensionGate
 from langmesh.runtime.values import PermissionAnswer
 from langmeshd.worker.host import HostServices, NullHostServices
@@ -64,6 +65,7 @@ _MCP_TOOL_NAMES = frozenset(
 )
 _REMOTE_TOOL_NAMES = frozenset({"list_remote_agents", "message_remote_agent"})
 
+
 def _installed_agent_names(
     global_configuration: Configuration, working_directory: str
 ) -> list[str]:
@@ -77,6 +79,7 @@ def _installed_agent_names(
         return [entry["id"] for entry in list_agents(directories)]
     except Exception:  # noqa: BLE001 — an unreadable profile directory must not fail the runtime
         return []
+
 
 def _compose_session_tools(
     configuration: Any,
@@ -102,9 +105,7 @@ def _compose_session_tools(
         if schema is None or not hasattr(schema, "name"):
             continue
         if name == "ask_user" and not (
-            permission_mode is None
-            or cast(Any, permission_mode).asks
-            or permission_mode == "allow"
+            permission_mode is None or cast(Any, permission_mode).asks or permission_mode == "allow"
         ):
             continue
         if name in _MCP_TOOL_NAMES and not global_configuration.mcp.enabled_servers():
@@ -113,12 +114,11 @@ def _compose_session_tools(
             continue
         tools.append(schema)
     if can_reach_peers:
-        tools.extend(
-            session_tools(_installed_agent_names(global_configuration, working_directory))
-        )
+        tools.extend(session_tools(_installed_agent_names(global_configuration, working_directory)))
         if global_configuration.remote_agents.agents:
             tools.extend(remote_agent_tools())
     return tools
+
 
 class SessionExecutor(AgentExecutor):
     """The live half of one session. The machinery still speaks in contexts, but a worker only ever has one."""
@@ -150,9 +150,7 @@ class SessionExecutor(AgentExecutor):
         self._feature_factory = feature_factory
         # A worker is a process a restart happens to, so its jobs want the durable store. Injectable all the same.
         self._job_store: JobStore = (
-            job_store
-            if job_store is not None
-            else cast(JobStore, get_background_job_store())
+            job_store if job_store is not None else cast(JobStore, get_background_job_store())
         )
         self._working_directory = working_directory
         # Where tools actually run, resolved by the host: a worktree workspace is not the project directory.
@@ -242,7 +240,9 @@ class SessionExecutor(AgentExecutor):
             runtime = getattr(context, "runtime", None)
             if runtime is None:
                 continue
-            if _features.has_pending_jobs(runtime) or _features.has_completed_undelivered_jobs(runtime):
+            if _features.has_pending_jobs(runtime) or _features.has_completed_undelivered_jobs(
+                runtime
+            ):
                 return True
         return False
 
@@ -302,7 +302,9 @@ class SessionExecutor(AgentExecutor):
                         result_event_kind="compaction",
                     )
                     return {"compacted": result is not None, **(result or {})}
-                if not _features.compaction_failure(runtime) and _features.begin_compaction_preparation(runtime):
+                if not _features.compaction_failure(
+                    runtime
+                ) and _features.begin_compaction_preparation(runtime):
                     result = await self._drive_self_sent_turn(
                         session_id,
                         COMPACTION_PREPARE_KIND,
@@ -508,9 +510,7 @@ class SessionExecutor(AgentExecutor):
     async def _continue_with_review(self, session_id, state, runtime, plan, goal) -> None:
         """Review an open goal first; a verdict that lands decides the next turn."""
         self._notify_goal_state(session_id, goal, review_phase=GoalReviewPhase.CHECKING)
-        review = asyncio.create_task(
-            cast(Coroutine[Any, Any, Any], _features.review_goal(runtime))
-        )
+        review = asyncio.create_task(cast(Coroutine[Any, Any, Any], _features.review_goal(runtime)))
         state.continuation.attach_review(review)
         try:
             verdict = await review
@@ -550,10 +550,11 @@ class SessionExecutor(AgentExecutor):
             return False
         if state is not None:
             state.continuation.cancel_review()
-        _features.write_goal(runtime, 
+        _features.write_goal(
+            runtime,
             goal.updated(status=Goal.CLEARED, review_message=None, review_id=None)
             if goal.is_open
-            else None
+            else None,
         )
         asyncio.create_task(self._persist_session_state(session_id, runtime))
         return True
@@ -701,7 +702,9 @@ class SessionExecutor(AgentExecutor):
         for state in self._contexts.values():
             if state.runtime is not None:
                 # The locations plugin owns the map; a session without the plugin ignores this.
-                state.runtime.features.invoke("set_locations", locations)
+                capability = state.runtime.features.capability(LocationsCapability)
+                if capability is not None:
+                    capability.set_locations(locations)
         return len(locations or [])
 
     async def set_permission_mode(self, mode: str) -> str:
@@ -960,7 +963,8 @@ class SessionExecutor(AgentExecutor):
             conversation=conversation,
         )
         if self._observation_registry_metadata or self._observation_registry_error:
-            _features.note_observation_registry(runtime, 
+            _features.note_observation_registry(
+                runtime,
                 self._observation_registry_metadata,
                 self._observation_registry_error,
             )
@@ -993,9 +997,7 @@ class SessionExecutor(AgentExecutor):
             parsed = {}
         return parsed if isinstance(parsed, dict) else {}
 
-    def _compose_plugins(
-        self, session_id: str, runtime_directory: str, configuration, catalogue
-    ):
+    def _compose_plugins(self, session_id: str, runtime_directory: str, configuration, catalogue):
         """The session's plugin bundle (features and their ports), from the host's injected composer."""
         if self._feature_factory is None:
             return {}
@@ -1068,7 +1070,8 @@ class SessionExecutor(AgentExecutor):
     def _replay_stored_background_results(self, session_id: str, runtime: AgentRuntime) -> None:
         store = self._job_store
         for job in store.undelivered_jobs(session_id, self._agent_name):
-            _features.inject_stored_background_result(runtime, 
+            _features.inject_stored_background_result(
+                runtime,
                 kind=job["kind"],
                 identifier=job["job_id"],
                 tool_call_identifier=job["tool_call_id"],
@@ -1281,7 +1284,8 @@ class SessionExecutor(AgentExecutor):
         self._observation_registry_error = error.strip() if error else None
         state = self._contexts.get(self._session_id)
         if state is not None and state.runtime is not None:
-            _features.note_observation_registry(state.runtime, 
+            _features.note_observation_registry(
+                state.runtime,
                 self._observation_registry_metadata,
                 self._observation_registry_error,
             )

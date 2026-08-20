@@ -22,10 +22,12 @@ from langmesh.runtime.background import (
     unbind_background_jobs,
     unbind_tool_call_id,
 )
+from langmesh.runtime.features import BackgroundCapability, PermissionsCapability
 from langmesh.runtime.plugins.bash import bash as bash_tool
 from langmesh.runtime.internals import _maybe_json
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.turn_events import Error, RetryRequested, ToolResult
+
 
 async def run_bash(
     services: Any, tool_arguments: dict, tool_call_identifier: str, *, retry_grant=None
@@ -33,7 +35,7 @@ async def run_bash(
     """One run of the bash tool, inside whatever confinement this attempt carries."""
     if retry_grant is not None:
         tool_context.bind(tool_context.current().for_retry(retry_grant))
-    background_token = bind_background_jobs(services.features.invoke("background"))
+    background_token = bind_background_jobs(services.features.require(BackgroundCapability).runner)
     tool_call_token = bind_tool_call_id(tool_call_identifier)
     try:
         result = await bash_tool.ainvoke(tool_arguments)
@@ -41,6 +43,7 @@ async def run_bash(
         unbind_tool_call_id(tool_call_token)
         unbind_background_jobs(background_token)
     return _maybe_json(result)
+
 
 def sandbox_denial(services: Any, result_data: Any, policy: Any) -> Any:
     """Whether a finished command looks like the operating system stopped it."""
@@ -63,9 +66,12 @@ def sandbox_denial(services: Any, result_data: Any, policy: Any) -> Any:
         ),
     )
 
+
 async def handle_bash(
     services, tool_name, tool_arguments, tool_call_identifier, decision, policy, call_site
 ) -> AsyncIterator[Any]:
+    background = services.features.require(BackgroundCapability)
+    permissions = services.features.require(PermissionsCapability)
     raw_command = tool_arguments.get("command", "")
     # A named local location changes cwd; a remote location is forwarded through SSH.
     if call_site is not None:
@@ -151,14 +157,13 @@ async def handle_bash(
         model_guidance = ""
         denial = sandbox_denial(services, result_data, policy)
         if denial is not None:
-            retry_gate = services.features.invoke(
-                "retry_gate",
+            retry_gate = permissions.retry_gate(
                 tool_call_id=tool_call_identifier,
                 command=raw_command,
                 denial=denial,
                 explanation=str(tool_arguments.get("explanation", "") or ""),
             )
-            verdict, grant = await services.features.invoke("decide_retry", retry_gate)
+            verdict, grant = await permissions.decide_retry(retry_gate)
             if verdict == "run" and grant is not None:
                 result_data = await run_bash(
                     services, tool_arguments, tool_call_identifier, retry_grant=grant
@@ -174,7 +179,7 @@ async def handle_bash(
                 )
                 return
             else:
-                result_data = services.features.invoke("retry_refusal_result", retry_gate)
+                result_data = permissions.retry_refusal_result(retry_gate)
                 model_guidance = retry_gate.deny_message
         yield ToolResult(
             id=tool_call_identifier,
@@ -188,12 +193,13 @@ async def handle_bash(
                 services.record_event(
                     "background_bash_started", {"job_id": job_id, "command": raw_command}
                 )
-                if lease_token and services.features.invoke("background").add_done_callback(
+                if lease_token and background.runner.add_done_callback(
                     job_id,
                     lambda _identifier, token=lease_token: services.leases.release(token),
                 ):
                     lease_token = ""
     finally:
         services.leases.release(lease_token)
+
 
 __all__ = ["handle_bash", "run_bash"]

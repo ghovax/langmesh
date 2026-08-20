@@ -25,6 +25,7 @@ from langmesh.runtime.plugins.locations.resolver import (
 class ToolLocationError(ValueError):
     """A call named a location that is missing or unknown."""
 
+
 #: The extra argument this plugin contributes to the bash tool: which location runs the command.
 LOCATION_FIELD = (
     str,
@@ -85,27 +86,20 @@ class Locations(Feature):
             return {}
         return {"location": LOCATION_FIELD}
 
-    def invoke(self, name: str, *args, **kwargs):
-        """The capabilities the runtime asks for: resolving a call's execution target, by name."""
-        if name == "resolve_execution":
-            tool_name = args[0] if args else ""
-            if tool_name != "bash":
-                return None
-            arguments = args[1] if len(args) > 1 else {}
-            location_value = str(arguments.get("location") or "")
-            if not location_value:
-                return None
-            resolved = self._resolve(location_value)
-            if resolved is None:
-                raise ToolLocationError(
-                    f"The location {location_value!r} is unknown. "
-                    f"Available: {', '.join(sorted(self._locations_by_name)) or 'the local folder'}"
-                )
-            return (resolved["executor"], resolved["base_directory"])
-        if name == "set_locations":
-            self.set_locations(args[0] if args else None)
-            return True
-        return None
+    def resolve_execution(self, tool_name: str, arguments: dict) -> Any:
+        """Resolve Bash's optional location selector to an executor and working directory."""
+        if tool_name != "bash":
+            return None
+        location_value = str(arguments.get("location") or "")
+        if not location_value:
+            return None
+        resolved = self._resolve(location_value)
+        if resolved is None:
+            raise ToolLocationError(
+                f"The location {location_value!r} is unknown. "
+                f"Available: {', '.join(sorted(self._locations_by_name)) or 'the local folder'}"
+            )
+        return (resolved["executor"], resolved["base_directory"])
 
     def compose_context(self, context: dict) -> None:
         """The locations as the model sees them: the name to pass, and enough to choose the right one."""
@@ -115,17 +109,14 @@ class Locations(Feature):
                 "name": entry["name"],
                 "kind": entry["kind"],
                 "base_directory": entry["base_directory"],
-                "writable": entry["kind"] == "remote"
-                or self._host.boundary.writes_anywhere,
+                "writable": entry["kind"] == "remote" or self._host.boundary.writes_anywhere,
             }
             for entry in self._locations.values()
         ]
 
     def _resolve(self, location_value: str) -> dict[str, Any] | None:
         """The location named by URI or name, or ``None`` when unknown."""
-        return self._locations.get(location_value) or self._locations_by_name.get(
-            location_value
-        )
+        return self._locations.get(location_value) or self._locations_by_name.get(location_value)
 
 
 __all__ = ["Locations"]
