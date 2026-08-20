@@ -138,7 +138,10 @@ def click(
 def move(pid: int, point_x: float, point_y: float) -> None:
     """Move the pointer over one app's window to reveal hover states, without pressing anything."""
     event = Quartz.CGEventCreateMouseEvent(  # type: ignore[attr-defined]
-        None, Quartz.kCGEventMouseMoved, (point_x, point_y), Quartz.kCGMouseButtonLeft  # type: ignore[attr-defined]
+        None,
+        Quartz.kCGEventMouseMoved,  # type: ignore[attr-defined]
+        (point_x, point_y),
+        Quartz.kCGMouseButtonLeft,  # type: ignore[attr-defined]
     )
     Quartz.CGEventPostToPid(pid, event)  # type: ignore[attr-defined]
 
@@ -152,12 +155,17 @@ def drag(
         "right": Quartz.kCGMouseButtonRight,  # type: ignore[attr-defined]
     }.get(button, Quartz.kCGMouseButtonLeft)  # type: ignore[attr-defined]
     down_type = Quartz.kCGEventLeftMouseDown if button != "right" else Quartz.kCGEventRightMouseDown  # type: ignore[attr-defined]
-    drag_type = Quartz.kCGEventLeftMouseDragged if button != "right" else Quartz.kCGEventRightMouseDragged  # type: ignore[attr-defined]
+    drag_type = (
+        Quartz.kCGEventLeftMouseDragged  # type: ignore[attr-defined]
+        if button != "right"
+        else Quartz.kCGEventRightMouseDragged  # type: ignore[attr-defined]
+    )  # type: ignore[attr-defined]
     up_type = Quartz.kCGEventLeftMouseUp if button != "right" else Quartz.kCGEventRightMouseUp  # type: ignore[attr-defined]
 
     def post(event_type: int, point_x: float, point_y: float) -> None:
         Quartz.CGEventPostToPid(  # type: ignore[attr-defined]
-            pid, Quartz.CGEventCreateMouseEvent(None, event_type, (point_x, point_y), button_code)  # type: ignore[attr-defined]
+            pid,
+            Quartz.CGEventCreateMouseEvent(None, event_type, (point_x, point_y), button_code),  # type: ignore[attr-defined]
         )
 
     step_interval = current_limits().drag_step_interval
@@ -244,6 +252,10 @@ def press_key(pid: int, key: str, modifiers: list[str]) -> bool:
 def scroll(pid: int, delta_x: int, delta_y: int) -> None:
     """Post a scroll-wheel event to the target app. Positive delta_y scrolls up."""
     event = Quartz.CGEventCreateScrollWheelEvent(  # type: ignore[attr-defined]
-        None, Quartz.kCGScrollEventUnitPixel, 2, delta_y, delta_x  # type: ignore[attr-defined]
+        None,
+        Quartz.kCGScrollEventUnitPixel,  # type: ignore[attr-defined]
+        2,
+        delta_y,
+        delta_x,  # type: ignore[attr-defined]
     )
     Quartz.CGEventPostToPid(pid, event)  # type: ignore[attr-defined]

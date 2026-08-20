@@ -32,8 +32,10 @@ async def ask_user(
         result = {
             "code": "user_declined",
             "status": "error",
-            "decision": {"actor": str(answers.get("__actor__") or "person"),
-                         "reason": answers.get("__reason__") or None},
+            "decision": {
+                "actor": str(answers.get("__actor__") or "person"),
+                "reason": answers.get("__reason__") or None,
+            },
         }
         services.abort_event.set()
     else:

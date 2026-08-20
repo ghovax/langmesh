@@ -59,9 +59,7 @@ class CursorTokens:
     account: str
     expires_at: float
 
-    def is_expired(
-        self, leeway_seconds: float | None = None
-    ) -> bool:
+    def is_expired(self, leeway_seconds: float | None = None) -> bool:
         if leeway_seconds is None:
             leeway_seconds = current_limits().credential_refresh_leeway
         return time.time() >= (self.expires_at - leeway_seconds)

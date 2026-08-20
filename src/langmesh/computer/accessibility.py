@@ -799,9 +799,7 @@ def snapshot_app(
         seeds = [(node, 0, (index,)) for index, node in enumerate(roots) if node is not None]
 
     budget = (
-        budget_seconds
-        if budget_seconds is not None
-        else current_limits().accessibility_walk_budget
+        budget_seconds if budget_seconds is not None else current_limits().accessibility_walk_budget
     )
     elements, visited, exhausted = _collect(seeds, window_rect, budget)
     return Snapshot(

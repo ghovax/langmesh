@@ -45,9 +45,7 @@ class PendingTurn:
 
     @property
     def remaining(self) -> tuple[SuspensionGate, ...]:
-        return tuple(
-            gate for gate in self.interactions if gate.request_id not in self.decisions
-        )
+        return tuple(gate for gate in self.interactions if gate.request_id not in self.decisions)
 
     @property
     def ready(self) -> bool:
@@ -67,17 +65,14 @@ class PendingTurn:
             "interactions": [_plain(gate) for gate in self.interactions],
             "plans": _plain(self.plans),
             "decisions": {
-                request_id: asdict(decision)
-                for request_id, decision in self.decisions.items()
+                request_id: asdict(decision) for request_id, decision in self.decisions.items()
             },
         }
 
     @classmethod
     def restore(cls, state: Mapping[str, Any]) -> "PendingTurn":
         return cls(
-            interactions=tuple(
-                SuspensionGate(**gate) for gate in state.get("interactions", ())
-            ),
+            interactions=tuple(SuspensionGate(**gate) for gate in state.get("interactions", ())),
             plans=dict(state.get("plans", {})),
             decisions={
                 str(request_id): Approval(**decision)

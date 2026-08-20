@@ -431,24 +431,21 @@ class ContinuationPolicy(Protocol):
 class BeforeModelHook(Protocol):
     """May transform the request assembled for one model call."""
 
-    async def before_model(self, messages: list) -> list:
-        ...
+    async def before_model(self, messages: list) -> list: ...
 
 
 @runtime_checkable
 class BeforeToolsHook(Protocol):
     """May narrow the already-approved tool batch before execution."""
 
-    async def before_tools(self, calls: list[dict]) -> list[dict]:
-        ...
+    async def before_tools(self, calls: list[dict]) -> list[dict]: ...
 
 
 @runtime_checkable
 class AfterTurnHook(Protocol):
     """Observes the immutable summary after one turn ends."""
 
-    async def after_turn(self, summary: TurnSummary) -> None:
-        ...
+    async def after_turn(self, summary: TurnSummary) -> None: ...
 
 
 TurnHook = BeforeModelHook | BeforeToolsHook | AfterTurnHook

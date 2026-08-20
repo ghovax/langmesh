@@ -98,11 +98,7 @@ def with_shared_fields(tool: BaseTool) -> BaseTool:
     signature = inspect.signature(func)
     parameters = signature.parameters.values()
     has_var_keyword = any(parameter.kind == parameter.VAR_KEYWORD for parameter in parameters)
-    accepted = {
-        name
-        for name in _SHARED_FIELDS
-        if name in signature.parameters or has_var_keyword
-    }
+    accepted = {name for name in _SHARED_FIELDS if name in signature.parameters or has_var_keyword}
     wrapped = _forwarding(func, accepted)
     if inspect.iscoroutinefunction(func):
         tool.coroutine = wrapped
