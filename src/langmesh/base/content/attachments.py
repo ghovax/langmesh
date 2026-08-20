@@ -18,12 +18,12 @@ INLINE_IMAGE_MIME_PREFIX = "image/"
 
 
 @dataclass(frozen=True)
-class AttachmentInput:
-    """A composed provider input plus the access and warning facts it produced."""
+class ComposedAttachments:
+    """Model content plus the explicit filesystem authority and warning facts it requires."""
 
-    value: str | list[dict[str, Any]]
-    paths: tuple[str, ...]
-    images_not_inlined: int = 0
+    content: str | list[dict[str, Any]]
+    granted_paths: tuple[str, ...]
+    omitted_image_count: int = 0
 
 
 def attachment_from_path(path: Path | str) -> dict[str, Any]:
@@ -43,7 +43,7 @@ def attachment_from_path(path: Path | str) -> dict[str, Any]:
     }
 
 
-def attachment_payload(attachments: Sequence[dict[str, Any]]) -> dict[str, Any]:
+def attachments_payload(attachments: Sequence[dict[str, Any]]) -> dict[str, Any]:
     """Return the structured payload carried beside user text."""
     return {"kind": ATTACHMENTS_KIND, "attachments": list(attachments)}
 
@@ -64,12 +64,14 @@ def _attachments_with_mime(
     return attachments
 
 
-def all_attachments(structured_payloads: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+def attachment_records(structured_payloads: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return every attachment record carried by the structured payloads."""
     return _attachments_with_mime(structured_payloads)
 
 
-def image_attachments(structured_payloads: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+def image_attachment_records(
+    structured_payloads: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Return every image attachment record carried by the structured payloads."""
     return _attachments_with_mime(structured_payloads, INLINE_IMAGE_MIME_PREFIX)
 
@@ -100,7 +102,7 @@ def _image_content_block(attachment: dict[str, Any], inline_image_bytes: int) ->
     return {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}}
 
 
-def compose_turn_input(
+def compose_attachment_content(
     user_text: str,
     structured_payloads: Sequence[dict[str, Any]],
     model_identifier: str,
@@ -108,7 +110,7 @@ def compose_turn_input(
 ) -> tuple[str | list[dict[str, Any]], int]:
     """Compose text, attachment metadata, and eligible image blocks for one provider request."""
     text_payload = compact({"text": user_text, "data_parts": list(structured_payloads)})
-    images = image_attachments(structured_payloads)
+    images = image_attachment_records(structured_payloads)
     if not images:
         return text_payload, 0
     if not _model_supports_vision(model_identifier):
@@ -119,10 +121,10 @@ def compose_turn_input(
         if (block := _image_content_block(image, inline_image_bytes)) is not None
     ]
     # Every image the model does not actually receive is one the caller must be told about: a wrong zero here silently drops the attachment with no warning.
-    images_not_inlined = len(images) - len(blocks)
+    omitted_image_count = len(images) - len(blocks)
     if not blocks:
-        return text_payload, images_not_inlined
-    return [{"type": "text", "text": text_payload}, *blocks], images_not_inlined
+        return text_payload, omitted_image_count
+    return [{"type": "text", "text": text_payload}, *blocks], omitted_image_count
 
 
 class PathAttachments:
@@ -134,27 +136,22 @@ class PathAttachments:
         attachments: Sequence[Path],
         model_identifier: str,
         inline_image_bytes: int,
-    ) -> AttachmentInput:
+    ) -> ComposedAttachments:
         records = [attachment_from_path(path) for path in attachments]
-        value, images_not_inlined = compose_turn_input(
+        content, omitted_image_count = compose_attachment_content(
             message,
-            [attachment_payload(records)],
+            [attachments_payload(records)],
             model_identifier,
             inline_image_bytes,
         )
-        return AttachmentInput(
-            value=value,
-            paths=tuple(str(record["path"]) for record in records),
-            images_not_inlined=images_not_inlined,
+        return ComposedAttachments(
+            content=content,
+            granted_paths=tuple(str(record["path"]) for record in records),
+            omitted_image_count=omitted_image_count,
         )
 
 
 __all__ = [
-    "AttachmentInput",
+    "ComposedAttachments",
     "PathAttachments",
-    "all_attachments",
-    "attachment_from_path",
-    "attachment_payload",
-    "compose_turn_input",
-    "image_attachments",
 ]

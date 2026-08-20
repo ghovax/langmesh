@@ -191,7 +191,7 @@
     "warnings": {
       "image_metadata_only": {
         "title": "Images sent as file references",
-        "body": "{count, plural, =1 {One image was not inlined} other {# images were not inlined}} because {model, select, '' {the session model} other {{model}}} does not advertise image support. The agent can still inspect the file with its tools."
+        "body": "{count, plural, =1 {One image was not inlined} other {# images were not inlined}} for {model, select, '' {the session model} other {{model}}}. The model may lack image support, the file may exceed the inline limit, or the file may be unreadable; the agent can still inspect its path with tools."
       }
     },
     "openReview": "Open review",

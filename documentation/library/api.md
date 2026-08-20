@@ -51,7 +51,7 @@
 
 ## Resources and locations
 
-::: langmesh.base.content.attachments.AttachmentInput
+::: langmesh.base.content.attachments.ComposedAttachments
 
 ::: langmesh.base.content.attachments.PathAttachments
 

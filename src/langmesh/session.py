@@ -491,14 +491,14 @@ class Session:
             runtime.model_identifier,
             runtime.inline_image_bytes,
         )
-        runtime.note_attachments(composed.paths)
-        if composed.images_not_inlined:
+        runtime.note_attachments(composed.granted_paths)
+        if composed.omitted_image_count:
             logger.warning(
-                "%d attached image(s) were not inlined: %s does not advertise vision support. The model has the file paths and can open them with its tools.",
-                composed.images_not_inlined,
+                "%d attached image(s) were not inlined for %s because the model lacks image support, the file exceeds the inline limit, or the file could not be read; the paths remain available to tools.",
+                composed.omitted_image_count,
                 runtime.model_identifier or "the session model",
             )
-        return composed.value
+        return composed.content
 
     async def stream(
         self,
