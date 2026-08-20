@@ -758,8 +758,8 @@ class WebSurface(Surface):
         budget = _milliseconds(current_limits().browser_authorization)
         try:
             connected = self._playwright.chromium.connect_over_cdp(websocket_url, timeout=budget)
-        except PlaywrightTimeout:
-            raise ToolFailure(_awaiting_authorization_payload(budget / 1000.0))
+        except PlaywrightTimeout as error:
+            raise ToolFailure(_awaiting_authorization_payload(budget / 1000.0)) from error
         except PlaywrightError as error:
             # The switch is demonstrably on, so this cannot be advice to turn it on: that would dismiss any prompt still waiting.
             raise ToolFailure(
@@ -769,7 +769,7 @@ class WebSurface(Surface):
                     "code": "browser_connection_refused",
                     "enable_url": REMOTE_DEBUGGING_URL,
                 }
-            )
+            ) from error
         context = connected.contexts[0] if connected.contexts else connected.new_context()
         context.set_default_timeout(_milliseconds(current_limits().action_timeout))
         context.set_default_navigation_timeout(_milliseconds(current_limits().navigation_timeout))
@@ -1055,7 +1055,7 @@ class WebSurface(Surface):
                         "ok": False,
                         "error": f"Could not click {element}: {self._why_it_failed(page, element, error)}",
                     }
-                )
+                ) from error
             _await_quiet(page)
             return self._acted(session, page, f"Clicked {element}")
 
@@ -1086,7 +1086,7 @@ class WebSurface(Surface):
                         "ok": False,
                         "error": f"Could not type into {element}: {self._why_it_failed(page, element, error)}",
                     }
-                )
+                ) from error
             landed = self._field_text(locator)
             if not submit:
                 result: dict[str, Any] = {
@@ -1133,7 +1133,7 @@ class WebSurface(Surface):
                         "ok": False,
                         "error": f"Could not hover {element}: {self._why_it_failed(page, element, error)}",
                     }
-                )
+                ) from error
             settle(lambda: _element_signature(page))
             return self._acted(session, page, f"Hovered {element}")
 
@@ -1193,7 +1193,7 @@ class WebSurface(Surface):
                         "ok": False,
                         "error": f"Could not choose {option!r} in {element}: {self._why_it_failed(page, element, error)}",
                     }
-                )
+                ) from error
             result = self._acted(session, page, f"Chose {option!r} in {element}")
             result["chosen"] = chosen
             return result
@@ -1224,7 +1224,7 @@ class WebSurface(Surface):
                             "ok": False,
                             "error": f"Could not upload to {element}: {self._why_it_failed(page, element, error)}",
                         }
-                    )
+                    ) from error
             return self._acted(session, page, f"Attached {len(resolved)} file(s) to {element}")
 
         return self.guard(run)
@@ -1246,7 +1246,7 @@ class WebSurface(Surface):
                         "ok": False,
                         "error": f"Could not drag {element} to {onto}: {self._why_it_failed(page, element, error)}",
                     }
-                )
+                ) from error
             return self._acted(session, page, f"Dragged {element} onto {onto}")
 
         return self.guard(run)

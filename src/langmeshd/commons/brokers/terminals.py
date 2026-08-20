@@ -443,8 +443,8 @@ async def _terminal_context_for_request(session_id: str, working_directory: str)
     """Resolve the identifier a context's terminals are stored under."""
     try:
         directory = await asyncio.to_thread(_terminal_directory, session_id, working_directory)
-    except ValueError:
+    except ValueError as error:
         if session_id:
             return session_id
-        raise HTTPException(status_code=400, detail="Terminal directory does not exist.")
+        raise HTTPException(status_code=400, detail="Terminal directory does not exist.") from error
     return _terminal_context_identifier(session_id, directory)
