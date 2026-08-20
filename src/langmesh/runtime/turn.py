@@ -276,7 +276,11 @@ class _RunsTurns(_DispatchesTools, ABC):
                 "toolbox": toolbox,
                 "peer_sessions": peer_sessions,
                 "mcp_servers": mcp_servers,
+                "observational_memory": "",
+                "computer_control_guidance": "",
+                "task_guidance": "",
             }
+            self._features.compose_prompt(variables)
             if self._prompt_composer is None:
                 prompt = self._prompt_loader.load("system_prompt", variables)
             else:
