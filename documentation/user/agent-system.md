@@ -101,7 +101,7 @@ Bundled skills:
 
 `.agents/memories/*.md` are passages the user records. Only their metadata is injected into the prompt; the agent reads a memory's body **on demand**, so context stays small while knowledge accumulates across sessions.
 
-Observational memory is separate. `.agents/observations.sqlite` is current workspace knowledge maintained deliberately by an agent through Bash. It holds only current rows; Git provides history. The system prompt carries only a compact descriptor (resolved path, revision, per-ledger counts, timestamp extent) and a stable instruction to retrieve a relevant slice when prior work may matter. Exact retrieval uses SQLite; semantic retrieval exports minified JSONL into a fresh disposable Semble index. The `observational-memory` skill defines the retrieval and atomic write protocols; `consolidate-observations` runs only when the user explicitly invokes it.
+Observational memory is separate. `.agents/observations.sqlite` is current workspace knowledge maintained deliberately by an agent through Bash. It holds only current rows; Git provides history. The system prompt carries only a compact descriptor (resolved path, revision, per-ledger counts, timestamp extent, and a `status` of `ok`, `missing`, or `broken`) and a stable instruction to retrieve a relevant slice when prior work may matter. A missing or broken registry is reported through that descriptor, never read as empty — the agent is told the state and can repair it. Exact retrieval uses SQLite; semantic retrieval exports minified JSONL into a fresh disposable Semble index. The `observational-memory` skill defines the retrieval and atomic write protocols; `consolidate-observations` runs only when the user explicitly invokes it.
 
 ### MCP servers
 

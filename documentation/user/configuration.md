@@ -209,7 +209,7 @@ When a conversation reaches its recommended preparation threshold, LangMesh appe
 
 `goal_review.maximum_attempts` is the bound for the goal reviewer in `review` mode: after a reviewer that investigated but never submitted, it is asked again on a narrowed toolset up to this many times, then the goal parks and waits for a person.
 
-Observations are workspace-owned current state and explicit. Agents retrieve and maintain them through Bash using the `observational-memory` skill. The daemon watches each active location's registry through native filesystem notifications and shares one watcher across its sessions. A committed revision broadcasts a complete validated snapshot to the memory panel. The system prompt receives only progressive-disclosure metadata, never observation rows.
+Observations are workspace-owned current state and explicit. Agents retrieve and maintain them through Bash using the `observational-memory` skill. The daemon watches each active location's registry through native filesystem notifications and shares one watcher across its sessions. A committed revision broadcasts a complete validated snapshot to the memory panel. The system prompt receives only progressive-disclosure metadata, never observation rows. A registry that is missing or no longer matches its schema is itself reported as metadata (`status: missing|broken` with a problem message), so an agent hears about the state and repairs it rather than silently working without memory; the pre-columnar JSON-schema format is never read or migrated.
 
 ## Attachments
 
