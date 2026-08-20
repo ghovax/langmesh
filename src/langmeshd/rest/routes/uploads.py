@@ -38,25 +38,31 @@ async def upload_file(file: UploadFile = File(...)):
     suffix = Path(raw_name).suffix  # preserved so the stored file keeps a usable extension
     upload_id = f"upload-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
     uploads_root = uploads_directory()
-    uploads_root.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(uploads_root.mkdir, parents=True, exist_ok=True)
     # Stream to a temp file while hashing, then move it atomically once the digest is known.
     incoming_path = uploads_root / f".incoming-{upload_id}"
     digest = hashlib.sha256()
     size = 0
     try:
-        with incoming_path.open("wb") as handle:
+        handle = await asyncio.to_thread(incoming_path.open, "wb")
+        try:
             while chunk := await file.read(1024 * 1024):
                 size += len(chunk)
                 digest.update(chunk)
-                handle.write(chunk)
+                await asyncio.to_thread(handle.write, chunk)
+        finally:
+            await asyncio.to_thread(handle.close)
+    except BaseException:
+        await asyncio.to_thread(incoming_path.unlink, missing_ok=True)
+        raise
     finally:
         await file.close()
     sha256 = digest.hexdigest()
     target_path = uploads_root / f"{sha256}{suffix}"
-    if target_path.exists():
-        incoming_path.unlink(missing_ok=True)
+    if await asyncio.to_thread(target_path.exists):
+        await asyncio.to_thread(incoming_path.unlink, missing_ok=True)
     else:
-        incoming_path.replace(target_path)
+        await asyncio.to_thread(incoming_path.replace, target_path)
     mime_type = file.content_type or "application/octet-stream"
     return {
         "upload_id": upload_id,
@@ -76,9 +82,11 @@ async def reference_attachment(reference: AttachmentReference):
     try:
         return await asyncio.to_thread(attachment_from_path, reference.path)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="File not found, or not a regular file.")
+        raise HTTPException(
+            status_code=404, detail="File not found, or not a regular file."
+        ) from None
     except (OSError, RuntimeError):
-        raise HTTPException(status_code=400, detail="Attachment could not be read.")
+        raise HTTPException(status_code=400, detail="Attachment could not be read.") from None
 
 
 @router.get("/files/{file_path:path}")

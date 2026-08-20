@@ -440,7 +440,7 @@ async def _serve() -> int:
         )
         sys.stdout.flush()
         # Rebind rather than close: the starter still sees EOF, and libraries that print keep a writable stream.
-        sys.stdout = open(os.devnull, "w")
+        sys.stdout = await asyncio.to_thread(open, os.devnull, "w")
     logger.info(
         "langmeshd listening on %s and %s:%d",
         state.daemon_socket,
