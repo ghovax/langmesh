@@ -31,9 +31,7 @@ from langmesh.runtime.tools.arguments import with_shared_fields
 def _compaction_preparation(global_configuration: Any, runtime_directory: str) -> Any:
     """The compaction preparation the daemon owns, from the observation store."""
     return ObservationCompactionPreparation(
-        SQLiteObservationStore(
-            global_configuration.observation_database_for(runtime_directory)
-        )
+        SQLiteObservationStore(global_configuration.observation_database_for(runtime_directory))
     )
 
 
@@ -42,6 +40,7 @@ def _session_locations(session_id: str) -> list[dict[str, Any]] | None:
     from langmeshd.commons.services.locations import _resolve_session_locations
 
     return _resolve_session_locations(session_id)
+
 
 def compose_plugins(
     *,
@@ -95,6 +94,7 @@ def compose_plugins(
         "services": services,
     }
 
+
 def contributed_tools() -> dict[str, Any]:
     """Every tool the composed plugins contribute, keyed by name."""
     reviewer = PermissionReviewer()
@@ -115,7 +115,7 @@ def contributed_tools() -> dict[str, Any]:
     ]
     tools: dict[str, Any] = {}
     for feature in features:
-        for tool in (feature.contribute_tools() if hasattr(feature, "contribute_tools") else []):
+        for tool in feature.contribute_tools() if hasattr(feature, "contribute_tools") else []:
             name = getattr(tool, "name", "")
             if name:
                 tools[name] = with_shared_fields(tool)

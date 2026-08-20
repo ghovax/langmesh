@@ -213,6 +213,4 @@ class FileUrlSigner:
 
 def load_or_create_secret(home_directory: Path) -> bytes:
     """A stable per-install signing secret, persisted so signed links survive a restart."""
-    return load_or_create_private_value(
-        home_directory / "a2a_file_secret", lambda: os.urandom(32)
-    )
+    return load_or_create_private_value(home_directory / "a2a_file_secret", lambda: os.urandom(32))

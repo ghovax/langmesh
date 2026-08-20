@@ -46,7 +46,18 @@ def _strip_titles(node: object) -> object:
     return cleaned
 
 
-_STRUCTURAL = {"type", "$ref", "enum", "const", "anyOf", "oneOf", "allOf", "items", "properties", "tsType"}
+_STRUCTURAL = {
+    "type",
+    "$ref",
+    "enum",
+    "const",
+    "anyOf",
+    "oneOf",
+    "allOf",
+    "items",
+    "properties",
+    "tsType",
+}
 # The keywords whose values are themselves schemas, so the walk descends only into real schema positions.
 _SCHEMA_MAP_KEYS = {"properties", "$defs", "definitions", "patternProperties"}
 _SCHEMA_LIST_KEYS = {"anyOf", "allOf", "oneOf", "prefixItems"}
@@ -57,7 +68,11 @@ def _readable_types(node: object) -> object:
     """Give the generator clean types instead of anonymous index signatures everywhere."""
     if not isinstance(node, dict):
         return node
-    if node.get("type") == "object" and node.get("additionalProperties") is True and "properties" not in node:
+    if (
+        node.get("type") == "object"
+        and node.get("additionalProperties") is True
+        and "properties" not in node
+    ):
         return {"tsType": "Record<string, unknown>"}
     if not (_STRUCTURAL & set(node.keys())):
         keep = {key: node[key] for key in ("description", "default") if key in node}
@@ -72,7 +87,11 @@ def _readable_types(node: object) -> object:
             cleaned[key] = _readable_types(value)
         else:
             cleaned[key] = value
-    if cleaned.get("type") == "object" and "properties" in cleaned and "additionalProperties" not in cleaned:
+    if (
+        cleaned.get("type") == "object"
+        and "properties" in cleaned
+        and "additionalProperties" not in cleaned
+    ):
         cleaned["additionalProperties"] = False
     return cleaned
 
@@ -108,7 +127,10 @@ def _render_schema() -> str:
     definitions.update(wire.pop("$defs", {}))
     definitions["WireEvent"] = wire
 
-    cleaned = {name: _require_discriminant(_readable_types(_strip_titles(definition))) for name, definition in definitions.items()}
+    cleaned = {
+        name: _require_discriminant(_readable_types(_strip_titles(definition)))
+        for name, definition in definitions.items()
+    }
     schema = {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "title": "LangMeshEvents",
@@ -123,7 +145,8 @@ def _render_schema() -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--check", action="store_true",
+        "--check",
+        action="store_true",
         help="Verify the committed schema matches the Python models; exit 1 on drift instead of writing.",
     )
     arguments = parser.parse_args()

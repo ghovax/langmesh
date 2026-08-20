@@ -27,14 +27,20 @@ def _command_serve(arguments: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="langmesh", description="Serve the interface, with the daemon behind it.")
+    parser = argparse.ArgumentParser(
+        prog="langmesh", description="Serve the interface, with the daemon behind it."
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     serve = subparsers.add_parser(
         "serve", help="make LangMesh available: the interface and the daemon behind it"
     )
     serve.add_argument(
-        "-p", "--port", type=int, default=None, help="port to listen on (default 8824; 8825 with --reach)"
+        "-p",
+        "--port",
+        type=int,
+        default=None,
+        help="port to listen on (default 8824; 8825 with --reach)",
     )
     serve.add_argument(
         "--host",
