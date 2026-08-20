@@ -47,7 +47,9 @@ class _ProviderAuth:
         return {
             "signed_in": tokens is not None,
             "account": self.account(tokens) if tokens is not None else "",
-            "usage": get_usage_snapshot() if tokens is not None and self.flow_kind is ChatGPTLoginFlow else None,
+            "usage": get_usage_snapshot()
+            if tokens is not None and self.flow_kind is ChatGPTLoginFlow
+            else None,
         }
 
     async def start(self) -> dict:
@@ -58,7 +60,9 @@ class _ProviderAuth:
         try:
             await flow.start()
         except OSError as error:
-            raise HTTPException(status_code=409, detail=f"Could not start sign-in ({error}).") from error
+            raise HTTPException(
+                status_code=409, detail=f"Could not start sign-in ({error})."
+            ) from error
         setattr(state, self.in_flight, flow)
 
         async def _await_completion() -> None:
@@ -73,7 +77,9 @@ class _ProviderAuth:
                 if getattr(state, self.in_flight, None) is flow:
                     setattr(state, self.in_flight, None)
 
-        asyncio.create_task(_await_completion())
+        task = asyncio.create_task(_await_completion(), name=f"langmesh:auth:{self.in_flight}")
+        state._auth_tasks.add(task)
+        task.add_done_callback(state._auth_tasks.discard)
         return {"authorize_url": flow.authorize_url}
 
     async def signout(self) -> dict:

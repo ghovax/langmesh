@@ -194,7 +194,7 @@ class SessionExecutor(AgentExecutor):
         self._aborts: dict[str, AgentRuntime] = {}
         # One session, one conversation. The map has one entry, and exists because the machinery indexes it.
         self._conversations: dict[str, list] = {}
-        self._startup_resume_tasks: set[asyncio.Task] = set()
+        self._background_tasks: set[asyncio.Task[Any]] = set()
         # The background task that names the session after its first message, once.
         self._title_task: Optional[asyncio.Task] = None
         # The report reminder fires at most once for a session's whole life.
@@ -208,6 +208,28 @@ class SessionExecutor(AgentExecutor):
         self._send_lock = asyncio.Lock()
         self._observation_registry_metadata: dict[str, Any] = {}
         self._observation_registry_error: str | None = None
+
+    def _spawn_background(
+        self, coroutine: Coroutine[Any, Any, Any], *, name: str
+    ) -> asyncio.Task[Any]:
+        """Start session-owned work and retain it until completion or shutdown."""
+        task = asyncio.create_task(coroutine, name=f"langmesh:{self._session_id}:{name}")
+        self._background_tasks.add(task)
+        task.add_done_callback(self._finish_background)
+        return task
+
+    def _finish_background(self, task: asyncio.Task[Any]) -> None:
+        """Retire completed session work and surface an otherwise unobserved failure."""
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "session background task %s failed",
+                task.get_name(),
+                exc_info=(type(error), error, error.__traceback__),
+            )
 
     def _publish_stream_event(self, session_id: str, part) -> None:
         """Publish one structural part directly to the in-process live bus."""
@@ -248,8 +270,9 @@ class SessionExecutor(AgentExecutor):
 
     def _notify_permission_state(self, session_id: str, awaiting: bool) -> None:
         """Tell the host this session is parked on a human, so `ps` shows waiting rather than working."""
-        asyncio.create_task(
-            self._turn_store.publish_event({"session_id": session_id, "awaiting_input": awaiting})
+        self._spawn_background(
+            self._turn_store.publish_event({"session_id": session_id, "awaiting_input": awaiting}),
+            name="permission-state",
         )
 
     async def compact_context(self, session_id: str) -> dict:
@@ -556,7 +579,7 @@ class SessionExecutor(AgentExecutor):
             if goal.is_open
             else None,
         )
-        asyncio.create_task(self._persist_session_state(session_id, runtime))
+        self._spawn_background(self._persist_session_state(session_id, runtime), name="clear-goal")
         return True
 
     async def _persist_session_state(self, session_id: str, runtime: AgentRuntime) -> None:
@@ -675,7 +698,9 @@ class SessionExecutor(AgentExecutor):
             goal = _features.goal(state.runtime)
             if goal is not None and goal.is_open:
                 _features.park_goal(state.runtime)
-                asyncio.create_task(self._persist_session_state(session_id, state.runtime))
+                self._spawn_background(
+                    self._persist_session_state(session_id, state.runtime), name="park-goal"
+                )
             handled = True
         return handled
 
@@ -1097,9 +1122,9 @@ class SessionExecutor(AgentExecutor):
             )
         if not store.has_undelivered_jobs(self._session_id, self._agent_name):
             return
-        wake_task = asyncio.create_task(self._run_autonomous_turn(self._session_id))
-        self._startup_resume_tasks.add(wake_task)
-        wake_task.add_done_callback(self._startup_resume_tasks.discard)
+        self._spawn_background(
+            self._run_autonomous_turn(self._session_id), name="resume-autonomous-turn"
+        )
 
     def _workspace(self, requested_working_directory: str = "") -> SessionWorktree:
         """Where this session's work happens, resolved once by the host rather than renegotiated per turn."""
@@ -1232,9 +1257,7 @@ class SessionExecutor(AgentExecutor):
                 if not identified.done():
                     identified.set_result("")
 
-        turn = asyncio.create_task(drive())
-        self._startup_resume_tasks.add(turn)
-        turn.add_done_callback(self._startup_resume_tasks.discard)
+        self._spawn_background(drive(), name="relay-turn")
         return await identified
 
     def _title_from_first_message(self, parts: list) -> None:
@@ -1307,7 +1330,9 @@ class SessionExecutor(AgentExecutor):
                 task_id=turn_id,
                 context_id=self._session_id,
             )
-            asyncio.create_task(self._drive_input_response(handler, message))
+            self._spawn_background(
+                self._drive_input_response(handler, message), name="resume-input"
+            )
             return True
         return False
 
@@ -1456,6 +1481,14 @@ class SessionExecutor(AgentExecutor):
         if self._title_task is not None and not self._title_task.done():
             with contextlib.suppress(Exception):
                 await self._title_task
+        background_tasks = [task for task in self._background_tasks if not task.done()]
+        if background_tasks:
+            completed, pending = await asyncio.wait(
+                background_tasks, timeout=current_limits().sigterm_grace
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*completed, *pending, return_exceptions=True)
         if self._mcp_connect is not None and not self._mcp_connect.done():
             self._mcp_connect.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
