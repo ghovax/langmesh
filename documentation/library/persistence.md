@@ -46,7 +46,7 @@ The `Compaction` feature rejects a strategy that reclaims no messages, restores 
 
 With the built-in strategy, the runtime appends one private compaction instruction to the existing conversation and asks the model to answer with a `submit_compaction_summary` tool call. That request is the system prompt, the whole existing conversation, and one appended instruction, so the provider-cache prefix is preserved and only the new tail is uncached. The collected summary then continues the session as the system prompt, the summary, and the newest turns in that order. The summary sits as the first message after the system prompt, becomes part of the cached leading block, and is never a user-visible chat row.
 
-The verdict tool is carried on every request, alongside the other internal verdict tools, so the schema — and therefore the cache prefix — never changes. It exists only in the summarizer's lane: it is granted to that hidden session as a `ToolGrant`, so outside a compaction instruction there is nothing to call and no no-op verdict to enforce. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
+The verdict tool exists only in the summarizer's lane: it is granted to that hidden session as a `ToolGrant`, so the working session never carries a no-op verdict tool. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 
 The summary is best-effort by construction. A provider error, an empty reply, or a model that writes prose instead of calling the tool falls back to the plain tail compaction, which never blocks the session. Supply your own distillation through the `Compaction` feature's `summarizer` port to replace the model call:
 

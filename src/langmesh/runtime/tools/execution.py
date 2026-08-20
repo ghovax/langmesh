@@ -17,15 +17,14 @@ from typing import Any, AsyncIterator, Callable, Sequence
 from langchain_core.tools import BaseTool
 
 from langmesh.base.contracts.ports import ToolInvocation
-from langmesh.runtime.turn_events import Error, ToolResult
+from langmesh.runtime.turn_events import Error, ToolExecutionEvent, ToolResult
 from langmesh.runtime.values import ToolStatus
-
 
 #: What one tool call is handed when it runs: the services, name, arguments, call id, decision,
 #: policy, and resolved location. Each handler yields the events that become the transcript.
 ToolHandler = Callable[
     [Any, str, dict, str, Any, Any, Any],
-    AsyncIterator[Any],
+    AsyncIterator[ToolExecutionEvent],
 ]
 
 
@@ -107,7 +106,7 @@ async def invoke_supplied(
     decision: Any,
     policy: Any,
     resolved_location: Any,
-) -> AsyncIterator[Any]:
+) -> AsyncIterator[ToolExecutionEvent]:
     """Run a caller-supplied tool through LangChain's own invocation, wrapped by the middleware pipeline."""
     tool = None
     if services.tools is not None:

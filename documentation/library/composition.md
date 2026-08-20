@@ -277,7 +277,10 @@ class MetadataOnlyAttachments:
     def compose(self, message, attachments, model_identifier, inline_image_bytes):
         paths = tuple(str(path.resolve(strict=True)) for path in attachments)
         return AttachmentInput(
-            value={"request": message, "attachments": paths},
+            value=[
+                {"type": "text", "text": message},
+                {"type": "text", "text": f"Attached paths: {', '.join(paths)}"},
+            ],
             paths=paths,
         )
 

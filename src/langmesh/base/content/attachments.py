@@ -21,7 +21,7 @@ INLINE_IMAGE_MIME_PREFIX = "image/"
 class AttachmentInput:
     """A composed provider input plus the access and warning facts it produced."""
 
-    value: object
+    value: str | list[dict[str, Any]]
     paths: tuple[str, ...]
     images_not_inlined: int = 0
 
@@ -105,7 +105,7 @@ def compose_turn_input(
     structured_payloads: Sequence[dict[str, Any]],
     model_identifier: str,
     inline_image_bytes: int,
-) -> tuple[object, int]:
+) -> tuple[str | list[dict[str, Any]], int]:
     """Compose text, attachment metadata, and eligible image blocks for one provider request."""
     text_payload = compact({"text": user_text, "data_parts": list(structured_payloads)})
     images = image_attachments(structured_payloads)

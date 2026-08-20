@@ -26,8 +26,6 @@ class EventType(str, Enum):
     ERROR = "error"
     DENIED_INJECTION = "denied_injection"
     RETRY_REQUESTED = "retry_requested"
-    GROUP_STARTED = "group_started"
-    RELAYED = "relayed"
     STEERING = "steering"
     COMPACTION_STARTED = "compaction_started"
     COMPACTION_DONE = "compaction_done"
@@ -284,3 +282,6 @@ TurnEventUnion = Union[
     GoalReviewProgress,
     GoalReviewFinished,
 ]
+
+# Retry requests are consumed into a suspension before they leave the runtime stream.
+ToolExecutionEvent = TurnEventUnion | RetryRequested

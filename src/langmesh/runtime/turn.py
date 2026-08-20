@@ -2,59 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import platform
+import time
+import uuid
+from abc import ABC, abstractmethod
 from contextlib import ExitStack, suppress
 from datetime import datetime, timezone
-from langmesh.base.primitives import telemetry as _telemetry
-from langmesh.base.primitives.identifiers import new_id
-from langmesh.runtime.internals import (
-    _CONTINUE,
-    _detect_workspace,
-    _ModelCallOutcome,
-    _StepOutcome,
-    _PreflightGate,
-    _STOP,
-    _STREAM_EXHAUSTED,
-    _stream_next,
-    _ToolPlan,
-    _maybe_json,
-    conversation_tokens,
-    settled_arguments,
-)
-from langmesh.runtime.cache_trace import cache_lane
-from langmesh.runtime.tools.dispatch import _DispatchesTools
-from langmesh.runtime.values import PermissionAnswer, TurnContext
-from langmesh.base.content.instructions import instructions_payload
-from langmesh.base.content.memories import memories_payload
-from langmesh.base.content.message_content import (
-    CARRIED_REASONING_KEYS,
-    message_content_deltas,
-    message_text,
-)
-from langmesh.base.content.model_errors import ContextWindowExceeded, over_context_window
-from langmesh.base.contracts.ports import PromptLayer, TurnSummary
-from langmesh.base.primitives.errors import MaintenanceBlockedError
-from litellm.exceptions import ContextWindowExceededError as ProviderContextWindowExceeded
-from langchain_core.utils.json import parse_partial_json
-from langmesh.base.content.skills import enabled_skills, skills_for_agent, skills_payload
-from langmesh.base.confinement import Denial, child_environment
-from langmesh.runtime.turn_events import (
-    Checkpoint,
-    Done,
-    Error,
-    RetryRequested,
-    Steering,
-    Suspended,
-    PermissionReviewing,
-    SuspensionGate,
-    Status,
-    TextChunk,
-    Thinking,
-    ThinkingDone,
-    ToolCall,
-    TurnEvent,
-)
+from pathlib import Path
+from typing import Any, AsyncIterator, Callable, Optional, cast
+
 from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
@@ -63,18 +22,59 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_core.messages.ai import add_ai_message_chunks
-from pathlib import Path
-from typing import Any, AsyncIterator, Callable, cast, Optional
-import asyncio
-from abc import ABC, abstractmethod
-import platform
-import time
-import uuid
-from langmesh.base.primitives.serialization import compact, lines
+from langchain_core.utils.json import parse_partial_json
+from litellm.exceptions import ContextWindowExceededError as ProviderContextWindowExceeded
 
+from langmesh.base.confinement import Denial, child_environment
+from langmesh.base.content.instructions import instructions_payload
+from langmesh.base.content.memories import memories_payload
+from langmesh.base.content.message_content import (
+    CARRIED_REASONING_KEYS,
+    message_content_deltas,
+    message_text,
+)
+from langmesh.base.content.model_errors import ContextWindowExceeded, over_context_window
+from langmesh.base.content.skills import enabled_skills, skills_for_agent, skills_payload
+from langmesh.base.contracts.ports import PromptLayer, TurnSummary
+from langmesh.base.primitives import telemetry as _telemetry
+from langmesh.base.primitives.errors import MaintenanceBlockedError
+from langmesh.base.primitives.identifiers import new_id
 from langmesh.base.primitives.limits import current_limits
-
-
+from langmesh.base.primitives.serialization import compact, lines
+from langmesh.runtime.cache_trace import cache_lane
+from langmesh.runtime.internals import (
+    _CONTINUE,
+    _STOP,
+    _STREAM_EXHAUSTED,
+    _detect_workspace,
+    _maybe_json,
+    _ModelCallOutcome,
+    _PreflightGate,
+    _StepOutcome,
+    _stream_next,
+    _ToolPlan,
+    conversation_tokens,
+    settled_arguments,
+)
+from langmesh.runtime.tools.dispatch import _DispatchesTools
+from langmesh.runtime.turn_events import (
+    Checkpoint,
+    Done,
+    Error,
+    PermissionReviewing,
+    RetryRequested,
+    Status,
+    Steering,
+    Suspended,
+    SuspensionGate,
+    TextChunk,
+    Thinking,
+    ThinkingDone,
+    ToolCall,
+    TurnEventUnion,
+    Usage,
+)
+from langmesh.runtime.values import PermissionAnswer, TurnContext
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +144,7 @@ class _RunsTurns(_DispatchesTools, ABC):
         ...
 
     @abstractmethod
-    def _accumulate_usage(self, response: AIMessage) -> TurnEvent | None:
+    def _accumulate_usage(self, response: AIMessage) -> Usage | None:
         """Tally one call's usage into the turn's running total; the concrete runtime implements it."""
         ...
 
@@ -359,8 +359,8 @@ class _RunsTurns(_DispatchesTools, ABC):
             logger.warning("the transcript raised while recording a turn", exc_info=True)
         await self._hooks.after_turn(summary)
 
-    async def _drain_steering_messages(self) -> list[TurnEvent]:
-        events: list[TurnEvent] = []
+    async def _drain_steering_messages(self) -> list[Steering]:
+        events: list[Steering] = []
         pending = self._pending_steering
         if not pending:
             return events
@@ -454,17 +454,17 @@ class _RunsTurns(_DispatchesTools, ABC):
 
     async def resume_stream(
         self, plans: dict[str, dict], answers: dict[str, Any]
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[TurnEventUnion]:
         """Resume a suspended turn: run its pending batch with the recorded answers, then continue normally."""
         async for event in self.stream("", resume_plans=plans, resume_answers=answers):
             yield event
 
-    async def continue_stream(self) -> AsyncIterator[TurnEvent]:
+    async def continue_stream(self) -> AsyncIterator[TurnEventUnion]:
         """Continue an already-recorded user turn after a failed maintenance was retried successfully."""
         async for event in self.stream("", continue_existing=True):
             yield event
 
-    async def prepare_maintenance_stream(self) -> AsyncIterator[TurnEvent]:
+    async def prepare_maintenance_stream(self) -> AsyncIterator[TurnEventUnion]:
         """Run the private recording segment and maintenance, without inventing a user turn afterward."""
         async for event in self.stream("", continue_existing=True, stop_after_maintenance=True):
             yield event
@@ -479,7 +479,7 @@ class _RunsTurns(_DispatchesTools, ABC):
         resume_answers: Optional[dict[str, Any]] = None,
         continue_existing: bool = False,
         stop_after_maintenance: bool = False,
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[TurnEventUnion]:
         if self._features.blocked_reason() and not continue_existing:
             raise MaintenanceBlockedError(
                 f"Context maintenance failed: {self._features.blocked_reason()} Retry maintenance before sending more work."
@@ -520,6 +520,8 @@ class _RunsTurns(_DispatchesTools, ABC):
                 resume_outcomes,
                 resolved,
             ):
+                if isinstance(event, RetryRequested):
+                    raise AssertionError("a resolved suspension cannot request another retry")
                 yield event
             self._append_tool_results(response, resume_outcomes)
             if self._resource_sync is not None:
@@ -764,7 +766,7 @@ class _RunsTurns(_DispatchesTools, ABC):
 
     async def _stream_model_call(
         self, messages: list, outcome: _ModelCallOutcome
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[TurnEventUnion]:
         """One streamed model call, writing the assembled response or a terminal condition into ``outcome``."""
         response_chunks: list[AIMessageChunk] = []
         # Calls already announced from the stream, so the completed message does not announce them twice.
@@ -947,7 +949,7 @@ class _RunsTurns(_DispatchesTools, ABC):
         step: _StepOutcome,
         started_at: datetime,
         nudged: list[bool],
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[TurnEventUnion]:
         """Handle a response with no tool calls: retry a malformed batch, deliver agent messages, or finish."""
         if response.invalid_tool_calls:
             # Only malformed calls: a ToolMessage would be orphaned, so they are corrected by a reminder.
@@ -1010,7 +1012,7 @@ class _RunsTurns(_DispatchesTools, ABC):
         turn_tool_results_log,
         outcomes,
         decisions,
-    ):
+    ) -> AsyncIterator[TurnEventUnion]:
         """Run the calls a retry answer settled, once the rest of the batch has finished."""
         pending = [
             call
@@ -1026,6 +1028,8 @@ class _RunsTurns(_DispatchesTools, ABC):
             outcomes,
             decisions,
         ):
+            if isinstance(event, RetryRequested):
+                raise AssertionError("an approved retry cannot request another retry")
             yield event
 
     async def _run_tool_batch(
@@ -1035,7 +1039,7 @@ class _RunsTurns(_DispatchesTools, ABC):
         turn_tool_calls_log: list[dict],
         turn_tool_results_log: list[dict],
         step: _StepOutcome,
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[TurnEventUnion]:
         """Run the tool batch behind a durable checkpoint, with every permission resolved before any tool runs."""
         self._conversation.append(response)
         tool_calls = cast(list[dict], response.tool_calls)

@@ -8,13 +8,20 @@ a tool name.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-
 from contextlib import suppress
 from datetime import datetime, timezone
-from langmesh.base.primitives import telemetry as _telemetry
+from typing import Any, AsyncIterator, cast
+
+from langchain_core.messages import HumanMessage, ToolMessage
+from pydantic import ValidationError
+
+from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base.confinement import parse_access_request
+from langmesh.base.primitives import telemetry as _telemetry
+from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.internals import (
     _cap_model_result_payload,
     _coerce_mcp_arguments,
@@ -25,29 +32,22 @@ from langmesh.runtime.internals import (
     _tool_timing_metadata,
     _utc_timestamp,
 )
-from langmesh.runtime.tools import context as tool_context
-from langmesh.runtime.values import ToolStatus
-
-from langmesh.runtime.turn_events import (
-    DeniedInjection,
-    Error,
-    ToolCall,
-    ToolResult,
-    TurnEvent,
-)
-from langchain_core.messages import HumanMessage, ToolMessage
 from langmesh.runtime.locations import CallExecutionPolicy
-from langmesh.base.configuration.permission_mode import PermissionMode
-from pydantic import ValidationError
-from typing import Any, AsyncIterator, cast
-import asyncio
-from langmesh.base.primitives.serialization import compact
+from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.execution import (
     bind_tool_decision,
     bind_tool_services,
     unbind_tool_decision,
     unbind_tool_services,
 )
+from langmesh.runtime.turn_events import (
+    DeniedInjection,
+    Error,
+    ToolCall,
+    ToolExecutionEvent,
+    ToolResult,
+)
+from langmesh.runtime.values import ToolStatus
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ class _DispatchesTools:
         turn_tool_results_log: list[dict],
         outcomes: dict[str, dict],
         decision: _ResolvedToolDecision,
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[ToolExecutionEvent]:
         """Run one call and record its outcome. Self-contained, so it can run concurrently with other tools."""
         tool_name = tool_call_data["name"]
         tool_arguments = tool_call_data["args"]
@@ -200,7 +200,9 @@ class _DispatchesTools:
                 elif isinstance(event, DeniedInjection):
                     denied_commands.append(event.command)
         except asyncio.CancelledError:
-            result_content = "Tool call aborted by the user; if any, read their newest request first."
+            result_content = (
+                "Tool call aborted by the user; if any, read their newest request first."
+            )
             yield Error(
                 id=tool_call_identifier,
                 message=result_content,
@@ -245,13 +247,13 @@ class _DispatchesTools:
         turn_tool_results_log: list[dict],
         outcomes: dict[str, dict],
         decisions: dict[str, _ResolvedToolDecision],
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[ToolExecutionEvent]:
         # One call at a time, in order; a Stop or per-call cancel reaches the running task directly.
         for tool_call_data in tool_calls:
             if self._abort_event.is_set() or self._stop_requested:
                 break
             tool_call_identifier = tool_call_data["id"]
-            pipe: asyncio.Queue[TurnEvent | None] = asyncio.Queue()
+            pipe: asyncio.Queue[ToolExecutionEvent | None] = asyncio.Queue()
 
             async def run_one() -> None:
                 try:
@@ -391,7 +393,9 @@ class _DispatchesTools:
             )
             background_job_id = outcome.get("background_job_id")
             if background_job_id:
-                self._features.invoke("bind_background_tool", background_job_id, tool_call_identifier)
+                self._features.invoke(
+                    "bind_background_tool", background_job_id, tool_call_identifier
+                )
             denied_commands = outcome.get("denied_commands", [])
             if denied_commands:
                 guidance_notes.append(
@@ -425,7 +429,7 @@ class _DispatchesTools:
         tool_arguments: dict,
         tool_call_identifier: str,
         decision: _ResolvedToolDecision,
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[ToolExecutionEvent]:
         """Execute one call, yielding events. Permission is already resolved, so this path never prompts."""
         # A call that already ran is replayed: whatever side effects it had, it had once.
         if decision.completed is not None:
@@ -465,14 +469,14 @@ class _DispatchesTools:
         # Coerce JSON-string arguments up front, so validation and dispatch see the real container.
         schema = (
             self._features.maintenance_tool_schemas().get(tool_name)
-            if self._features.active_maintenance() and tool_name in self._features.maintenance_tool_schemas()
+            if self._features.active_maintenance()
+            and tool_name in self._features.maintenance_tool_schemas()
             else self._tool_schemas.get(tool_name)
         )
         if schema is not None:
             tool_arguments = _coerce_structured_arguments(schema, tool_arguments)
             # And fill the schema's defaults, so a documented default is the one that applies.
             tool_arguments = _with_schema_defaults(schema, tool_arguments)
-
 
         validation_error = self._validate_tool_call(
             tool_name,
@@ -525,4 +529,3 @@ class _DispatchesTools:
         finally:
             unbind_tool_decision(decision_token)
             unbind_tool_services(services_token)
-

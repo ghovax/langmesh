@@ -106,7 +106,6 @@ except Exception:
 | `GoalReviewStarted` / `GoalReviewProgress` / `GoalReviewFinished` | Independent goal review | Render review status separately from assistant prose |
 | `Error` | Structured turn or tool failure | Render its code and parameters |
 | `DeniedInjection` | A steered-in message was refused | Match the failed injection |
-| `RetryRequested` | A refused command offered a broader retry | Present the option if your client does |
 | `Done` | One model turn completed | Read final text and stop this stream |
 
 `Done` ends a turn, not the session. Autonomous goal or task continuation can produce several `Done` events inside one `Session.stream()` call. The session returns to `idle` only after continuation policy stops.
