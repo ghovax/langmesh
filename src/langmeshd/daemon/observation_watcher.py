@@ -63,9 +63,7 @@ class ObservationRegistryWatcher:
             message = str(error) or type(error).__name__
         else:
             return {**snapshot, "metadata": metadata, "error": ""}
-        # A registry that refused to validate is itself reported: describe() never raises and
-        # carries `status: broken|missing` plus the problem, so the LLM hears the state rather
-        # than only the absence of entries.
+        # A registry that refused to validate is itself reported: describe() never raises and carries `status: broken|missing` plus the problem.
         try:
             metadata = await store.describe()
         except Exception:  # noqa: BLE001 — a descriptor is best-effort around a broken file

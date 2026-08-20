@@ -187,7 +187,7 @@ class TokenUsageEvent(_EventBase):
     reasoning_tokens: int = 0
     # Session-lifetime running totals for this agent's own calls.
     cumulative: CumulativeUsage = Field(default_factory=CumulativeUsage)
-    # What the cache figure means, which the figure alone cannot say: a moved prefix, one the provider dropped, or unknown when there was no prior request to compare.
+    # What the cache figure means: moved, dropped, or unknown when there was no prior request.
     prefix_intact: Optional[bool] = None
     reachable_tokens: int = 0
     segments: int = 0

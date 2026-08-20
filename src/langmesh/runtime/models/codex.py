@@ -456,7 +456,7 @@ class ChatCodexModel(BaseChatModel):
     ) -> AsyncIterator[ChatGenerationChunk]:
         payload = self._build_payload(messages, stream=True, **kwargs)
         headers = await self._headers()
-        # The baseline advances at the request boundary, not when a response happens to report usage, so a usage-less or interrupted response still leaves the next request a true comparison.
+        # The baseline advances when the request is sent, so a usage-less or interrupted response still leaves the next request a true comparison.
         current_trace = self._trace_payload(payload)
         diagnosis = self._cache_diagnosis(current_trace)
         reported = False

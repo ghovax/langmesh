@@ -382,7 +382,7 @@ class ChatLiteLLMModel(BaseChatModel):
         sent = self._apply_cache_breakpoints(self._messages_to_dicts(messages))
         # Taken before the request and reported once the response says what the cache did.
         current_trace = self._trace_request(params, sent)
-        # The baseline advances at the request boundary, not when a response happens to report usage, so a usage-less or interrupted response still leaves the next request a true comparison.
+        # The baseline advances when the request is sent, so a usage-less or interrupted response still leaves the next request a true comparison.
         diagnosis = self._cache_diagnosis(current_trace)
         reported = False
         stream = cast(AsyncIterator[Any], await litellm.acompletion(messages=sent, **params))
