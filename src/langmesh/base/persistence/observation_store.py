@@ -1,4 +1,11 @@
-"""Read the current observational-memory registry owned by a workspace or location."""
+"""Read the current observational-memory registry owned by a workspace or location.
+
+The reader is an SQLAlchemy Core view over the agent-maintained registry. The ledgers live
+as explicit columns with CHECK invariants rather than JSON payloads, and the reader opens the
+database read-only and re-validates the schema before trusting any row. A missing or broken
+registry is never a crash: it is reported as metadata with a ``status`` so the LLM can hear
+about the problem and repair it.
+"""
 
 from __future__ import annotations
 
@@ -7,10 +14,14 @@ from datetime import datetime
 import os
 from pathlib import Path
 import re
-import sqlite3
+from urllib.parse import quote
 from enum import IntEnum
 from typing import Any, AsyncIterator
 
+from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine
+from sqlalchemy import func, select
+from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.pool import NullPool
 from watchdog.events import FileSystemEvent, FileSystemEventHandler, FileSystemMovedEvent
 from watchdog.observers import Observer
 
@@ -66,7 +77,6 @@ _CHECK_TOKENS = {
 }
 
 
-
 class ObservationRegistryError(ValueError):
     """A registry cannot be read as the current schema, stated so an agent can repair it."""
 
@@ -106,7 +116,10 @@ class NativeFileSubscription:
                 changes = {(kind, str(Path(os.fsdecode(event.src_path)).resolve(strict=False)))}
                 if isinstance(event, FileSystemMovedEvent):
                     changes = {
-                        (NativeFileChange.DELETED, str(Path(os.fsdecode(event.src_path)).resolve(strict=False))),
+                        (
+                            NativeFileChange.DELETED,
+                            str(Path(os.fsdecode(event.src_path)).resolve(strict=False)),
+                        ),
                         (
                             NativeFileChange.CREATED,
                             str(Path(os.fsdecode(event.dest_path)).resolve(strict=False)),
@@ -220,16 +233,55 @@ _LEDGER_FIELDS = {
     "directives": ("kind", "summary", "detail", "occasion", "files"),
 }
 
+#: SQLite declared types to the SQLAlchemy types this reader binds them to.
+_TYPE_MAP = {"TEXT": String, "INTEGER": Integer}
+
 
 class SQLiteObservationStore:
     """A read-only application view of the current-state registry the agent manages."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path).expanduser().resolve(strict=False)
+        self._engine = self._engine_for(self.path)
+        # A reader's view of the ledgers, generated from the same column fingerprint the agent's schema must match, so a Core select can never drift from what validation enforces.
+        self._metadata = MetaData()
+        self._tables: dict[str, Table] = {
+            name: Table(
+                name,
+                self._metadata,
+                *(
+                    Column(
+                        column_name,
+                        _TYPE_MAP[declared_type],
+                        primary_key=bool(primary_key),
+                        nullable=not bool(not_null),
+                    )
+                    for column_name, declared_type, not_null, primary_key in columns
+                ),
+            )
+            for name, columns in _ENTRY_COLUMNS.items()
+        }
+        self._registry_meta = Table(
+            "registry_meta",
+            self._metadata,
+            Column("id", Integer, primary_key=True),
+            Column("revision", Integer, nullable=False),
+        )
 
-    def _connect_read_only(self) -> sqlite3.Connection:
-        """Open an existing registry without a deletion race ever creating a replacement file."""
-        return sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True, timeout=30)
+    @staticmethod
+    def _engine_for(path: Path) -> Engine:
+        """A read-only engine: the file URI carries ``mode=ro``, so a missing file cannot be created and a replacement can never be written."""
+        url = make_url("sqlite+pysqlite://").set(
+            database=f"file:{quote(path.as_posix())}",
+            query={"mode": "ro", "uri": "true"},
+        )
+        return create_engine(url, poolclass=NullPool)
+
+    def _connection(self) -> Any:
+        """One read-only connection with a deferred read snapshot, matching the original driver's transaction shape."""
+        connection = self._engine.connect()
+        connection.exec_driver_sql("BEGIN")
+        return connection
 
     async def revision(self) -> int:
         return await asyncio.to_thread(self._revision_sync)
@@ -237,7 +289,7 @@ class SQLiteObservationStore:
     def _revision_sync(self) -> int:
         if not self.path.exists():
             return 0
-        with self._connect_read_only() as connection:
+        with self._connection() as connection:
             return self._validate_schema(connection)
 
     async def entries(self) -> dict[str, list[dict[str, Any]]]:
@@ -248,35 +300,67 @@ class SQLiteObservationStore:
         return await asyncio.to_thread(self._snapshot_sync)
 
     async def describe(self) -> dict[str, Any]:
-        """Return prompt-safe registry metadata without exposing any observation payload."""
+        """Return prompt-safe registry metadata, never raising: a missing or broken registry is itself reported."""
         return await asyncio.to_thread(self.describe_sync)
 
     def describe_sync(self) -> dict[str, Any]:
-        """Read bounded metadata from one validated transaction without loading payloads."""
+        """Read bounded metadata from one validated transaction without loading payloads.
+
+        A registry that is missing or does not match the current schema is detected here rather
+        than raised: the descriptor carries ``status: missing|broken`` and, on ``broken``, the
+        validation problem plus whatever counts can still be salvaged. That keeps the LLM
+        informed of the state without pretending an unreadable registry read cleanly.
+        """
         if not self.path.exists():
             return self._empty_description()
-        with self._connect_read_only() as connection:
-            connection.execute("BEGIN")
-            revision = self._validate_schema(connection)
-            aggregates: dict[str, tuple[int, object, object]] = {}
-            for ledger in _LEDGERS:
-                count, earliest, latest = connection.execute(
-                    f"SELECT COUNT(*), MIN(updated_at), MAX(updated_at) FROM {ledger}"
-                ).fetchone()
-                aggregates[ledger] = (int(count), earliest, latest)
+        revision = 0
+        aggregates: dict[str, tuple[int, object, object]] = {}
+        problem = ""
+        try:
+            with self._connection() as connection:
+                revision = self._validate_schema(connection)
+                aggregates = self._aggregates(connection)
+        except ObservationRegistryError as error:
+            problem = str(error)
+        return self._registry_description(revision, aggregates, problem=problem)
+
+    def _aggregates(self, connection: Any) -> dict[str, tuple[int, object, object]]:
+        """Per-ledger (count, earliest, latest) for ledgers whose schema validated."""
+        aggregates: dict[str, tuple[int, object, object]] = {}
+        for ledger in _LEDGERS:
+            table = self._tables[ledger]
+            count = connection.execute(select(func.count()).select_from(table)).scalar()
+            earliest = connection.execute(select(func.min(table.c.updated_at))).scalar()
+            latest = connection.execute(select(func.max(table.c.updated_at))).scalar()
+            aggregates[ledger] = (int(count or 0), earliest, latest)
+        return aggregates
+
+    def _registry_description(
+        self,
+        revision: int,
+        aggregates: dict[str, tuple[int, object, object]],
+        *,
+        problem: str,
+    ) -> dict[str, Any]:
+        """The descriptor every call path produces, unified on ``status`` and ``problem``."""
         earliest_values = [
             str(values[1]) for values in aggregates.values() if values[1] is not None
         ]
         latest_values = [str(values[2]) for values in aggregates.values() if values[2] is not None]
-        return {
+        descriptor = {
             "path": str(self.path),
-            "exists": True,
+            "exists": self.path.exists(),
             "revision": revision,
             "counts": {ledger: aggregates.get(ledger, (0, None, None))[0] for ledger in _LEDGERS},
             "updated_at": {
                 "earliest": min(earliest_values) if earliest_values else None,
                 "latest": max(latest_values) if latest_values else None,
             },
+        }
+        return {
+            **descriptor,
+            "status": _registry_status(descriptor["exists"], problem=problem),
+            "problem": problem,
         }
 
     async def snapshot_with_metadata(self) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -291,7 +375,7 @@ class SQLiteObservationStore:
         timestamps = [
             str(entry["updated_at"]) for ledger in _LEDGERS for entry in snapshot["entries"][ledger]
         ]
-        return {
+        descriptor = {
             "path": str(self.path),
             "exists": self.path.exists(),
             "revision": snapshot["revision"],
@@ -301,6 +385,11 @@ class SQLiteObservationStore:
                 "latest": max(timestamps) if timestamps else None,
             },
         }
+        return {
+            **descriptor,
+            "status": _registry_status(descriptor["exists"]),
+            "problem": "",
+        }
 
     def _empty_description(self) -> dict[str, Any]:
         return {
@@ -309,6 +398,8 @@ class SQLiteObservationStore:
             "revision": 0,
             "counts": {ledger: 0 for ledger in _LEDGERS},
             "updated_at": {"earliest": None, "latest": None},
+            "status": "missing",
+            "problem": "",
         }
 
     async def watch(self) -> AsyncIterator[dict[str, Any]]:
@@ -338,17 +429,19 @@ class SQLiteObservationStore:
                 "revision": 0,
                 "entries": {ledger: [] for ledger in _LEDGERS},
             }
-        with self._connect_read_only() as connection:
-            connection.execute("BEGIN")
+        with self._connection() as connection:
             revision = self._validate_schema(connection)
             rows_by_ledger: dict[str, list[tuple[Any, ...]]] = {}
             for ledger in _LEDGERS:
-                columns = ", ".join(("entry_id", *_LEDGER_FIELDS[ledger], "updated_at"))
+                table = self._tables[ledger]
+                columns = ("entry_id", *_LEDGER_FIELDS[ledger], "updated_at")
                 rows_by_ledger[ledger] = [
                     tuple(value for value in row)
                     for row in connection.execute(
-                        f"SELECT {columns} FROM {ledger} ORDER BY updated_at, entry_id"
-                    ).fetchall()
+                        select(*(table.c[column] for column in columns)).order_by(
+                            table.c.updated_at, table.c.entry_id
+                        )
+                    ).all()
                 ]
         entries: dict[str, list[dict[str, Any]]] = {ledger: [] for ledger in _LEDGERS}
         for ledger, rows in rows_by_ledger.items():
@@ -386,18 +479,17 @@ class SQLiteObservationStore:
                 entries[ledger].append(entry)
         return {"revision": revision, "entries": entries}
 
-    @staticmethod
-    def _validate_schema(connection: sqlite3.Connection) -> int:
+    def _validate_schema(self, connection: Any) -> int:
         """Verify the registry matches the documented columnar schema before any row is read.
 
         The ledgers are plain columns with NOT NULL and CHECK invariants rather than one JSON
         payload BLOB, so a writer cannot silently drop a required field. The reader re-checks
         every row semantically in ``_validate_row``; this pass checks the schema itself.
         """
-        integrity = connection.execute("PRAGMA quick_check").fetchone()
-        if integrity is None or str(integrity[0]).lower() != "ok":
+        integrity = connection.exec_driver_sql("PRAGMA quick_check").scalar()
+        if not isinstance(integrity, str) or integrity.strip().lower() != "ok":
             raise ObservationRegistryError(
-                f"SQLite integrity check failed: {integrity[0] if integrity else 'no result'}"
+                f"SQLite integrity check failed: {integrity if integrity is not None else 'no result'}"
             )
         expected = {
             "registry_meta": [
@@ -408,9 +500,9 @@ class SQLiteObservationStore:
         }
         user_objects = {
             (str(name), str(kind))
-            for name, kind in connection.execute(
+            for name, kind in connection.exec_driver_sql(
                 "SELECT name, type FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
-            ).fetchall()
+            ).all()
         }
         expected_objects = {
             ("registry_meta", "table"),
@@ -426,7 +518,7 @@ class SQLiteObservationStore:
         for table, columns in expected.items():
             found = [
                 (str(row[1]), str(row[2]).upper(), int(row[3]), int(row[5]))
-                for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+                for row in connection.exec_driver_sql(f"PRAGMA table_info({table})").all()
             ]
             if found != columns:
                 raise ObservationRegistryError(
@@ -434,12 +526,12 @@ class SQLiteObservationStore:
                 )
         for table in ("observations", "directives"):
             table_sql = str(
-                connection.execute(
+                connection.exec_driver_sql(
                     "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
                     (table,),
-                ).fetchone()[0]
+                ).scalar()
             )
-            compact_table_sql = re.sub(r'["`\[\]]', '', table_sql.upper())
+            compact_table_sql = re.sub(r'["`\[\]]', "", table_sql.upper())
             compact_table_sql = "".join(compact_table_sql.split())
             if "WITHOUTROWID" not in compact_table_sql:
                 raise ObservationRegistryError(f"{table} must be declared WITHOUT ROWID")
@@ -456,10 +548,10 @@ class SQLiteObservationStore:
                 )
         index_sql = {
             str(name): str(definition).upper()
-            for name, definition in connection.execute(
+            for name, definition in connection.exec_driver_sql(
                 "SELECT name, sql FROM sqlite_master WHERE type='index' "
                 "AND name NOT LIKE 'sqlite_%'"
-            ).fetchall()
+            ).all()
         }
         if "idx_observations_updated_at" not in index_sql or (
             "ONOBSERVATIONS" not in "".join(index_sql["idx_observations_updated_at"].split())
@@ -476,11 +568,11 @@ class SQLiteObservationStore:
                 "idx_directives_updated_at must index directives(updated_at)"
             )
         meta_sql = str(
-            connection.execute(
+            connection.exec_driver_sql(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name='registry_meta'"
-            ).fetchone()[0]
+            ).scalar()
         )
-        compact_meta_sql = "".join(re.sub(r'["`\[\]]', '', meta_sql.upper()).split())
+        compact_meta_sql = "".join(re.sub(r'["`\[\]]', "", meta_sql.upper()).split())
         missing_meta = [
             token for token in _CHECK_TOKENS["registry_meta"] if token not in compact_meta_sql
         ]
@@ -488,12 +580,12 @@ class SQLiteObservationStore:
             raise ObservationRegistryError(
                 "registry_meta is missing schema invariants: " + ", ".join(missing_meta)
             )
-        journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+        journal_mode = str(connection.exec_driver_sql("PRAGMA journal_mode").scalar()).lower()
         if journal_mode != "delete":
             raise ObservationRegistryError(
                 f"journal_mode must be DELETE for a self-contained tracked registry; found {journal_mode}"
             )
-        rows = connection.execute("SELECT id, revision FROM registry_meta").fetchall()
+        rows = connection.exec_driver_sql("SELECT id, revision FROM registry_meta").all()
         if (
             len(rows) != 1
             or type(rows[0][0]) is not int
@@ -505,6 +597,14 @@ class SQLiteObservationStore:
                 "registry_meta must contain exactly one row with id=1 and a non-negative revision"
             )
         return int(rows[0][1])
+
+
+def _registry_status(exists: bool, *, problem: str = "") -> str:
+    """A registry is ``missing``, ``ok``, or ``broken``; ``broken`` is the only problem state."""
+    if not exists:
+        return "missing"
+    return "broken" if problem else "ok"
+
 
 __all__ = [
     "OBSERVATIONS_FILENAME",
