@@ -28,8 +28,6 @@ from langmesh.base.content.models import find_model, resolve_litellm
 from langmesh.base.content.toolbox import toolbox_for
 from langmesh.base.contracts.catalogue import project_catalogue
 from langmesh.base.contracts.ports import Observation
-from langmesh.base.contracts.tools import as_tool_grants
-from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.features import (
@@ -309,15 +307,15 @@ class AgentRuntime(_RunsTurns):
         )
 
         self._file_lease_manager = components.file_leases
-        # The caller's tools, granted to this session. A grant is dispatchable and its description is appended to the conversation as a message, so the bound schema — and the provider cache prefix — never changes. A grant may therefore be added at creation or at any later moment; both are append-only.
-        self._tool_grants = tuple(as_tool_grants(tools))
+        # Caller-supplied tools join the initial provider schema, while a later grant deliberately changes that schema once.
+        supplied_tools = tuple(tools)
         # What a caller's tool is gated at: asking by default, so adding one cannot silently widen a session.
         self._tool_gate = components.tool_gate
         # The session's tools are composed by the caller, never forced: the complete roster comes from `toolset`, additions from `tools`/`grant_tool`, and nothing is injected by default.
         configured_tools = list(toolset) if toolset is not None else []
         # Every tool a session runs carries the shared `explanation` field, added here once.
         configured_tools = [with_shared_fields(tool) for tool in configured_tools]
-        # The dispatchable units: every tool the session runs, assembled from the caller's set and the caller's own tools. A caller's tool of the same name replaces a built-in's execution. The model binds the configured schemas; grants ride as appended messages and only change who executes, keeping the cache prefix untouched.
+        # The dispatchable units: every tool the session runs, assembled from the configured set and caller-supplied replacements.
         units: dict[str, Tool] = {}
         for tool in configured_tools:
             # A built-in keeps its event-rich handler only when it is the registry's own schema; a caller's tool of the same name is theirs to run through the generic invoke path.
@@ -332,21 +330,21 @@ class AgentRuntime(_RunsTurns):
                 description=tool.description or "",
                 handler=handler,
             )
-        for grant in self._tool_grants:
-            units[grant.tool.name] = Tool(
-                name=grant.tool.name,
-                schema=grant.tool,
-                description=(grant.tool.description or ""),
+        for tool in supplied_tools:
+            units[tool.name] = Tool(
+                name=tool.name,
+                schema=tool,
+                description=(tool.description or ""),
                 handler=invoke_supplied,
             )
         self._tool_units = units
         # The caller's own tools, for the gate and for replacing a built-in's execution.
-        self._supplied_tool_names = {grant.tool.name for grant in self._tool_grants}
+        self._supplied_tool_names = {tool.name for tool in supplied_tools}
         # Executable set (for gating, validation and direct invocation): configured plus grants, grants win.
         self._tools = [
             tool for tool in configured_tools if tool.name not in self._supplied_tool_names
-        ] + [grant.tool for grant in self._tool_grants]
-        self._model_tools = list(configured_tools)
+        ] + list(supplied_tools)
+        self._model_tools = list(self._tools)
         self._tool_schemas: dict[str, Any] = {tool.name: tool.args_schema for tool in self._tools}
         self._bound_model = self._bind_model_tools(self._model_tools)
         # The evaluator's own `tools_enabled` gate refuses what the profile did not declare.
@@ -385,8 +383,6 @@ class AgentRuntime(_RunsTurns):
         self._catalogue = catalogue
         self._prompt_loader = _CataloguePrompts(catalogue)
         # Creation-time grants are described from the first turn: their messages sit at the head of the conversation, before any user message, and are stable for the session's life.
-        for grant in self._tool_grants:
-            self._conversation.append(self._tool_grant_message(grant.tool))
         self._cached_system_prompt: str | None = None
         self._session_revision = 0
         self._persisted_session_revision = 0
@@ -650,11 +646,7 @@ class AgentRuntime(_RunsTurns):
         self._bound_model = self._bind_model_tools(only)
 
     def grant_tool(self, tool: BaseTool) -> None:
-        """Grant a tool to this session at any moment: dispatchable now, described to the model
-        by an appended message, so the bound schema — and the provider cache prefix — is untouched.
-        A grant of a name the session already runs replaces that tool's implementation."""
-        if tool.name in self._supplied_tool_names:
-            return
+        """Grant or replace a provider-visible tool, intentionally changing the next request's schema."""
         tool = with_shared_fields(tool)
         self._supplied_tool_names.add(tool.name)
         self._tool_units[tool.name] = Tool(
@@ -664,29 +656,12 @@ class AgentRuntime(_RunsTurns):
             handler=invoke_supplied,
         )
         self._tools = [existing for existing in self._tools if existing.name != tool.name] + [tool]
+        self._model_tools = [
+            existing for existing in self._model_tools if existing.name != tool.name
+        ] + [tool]
         self._tool_schemas[tool.name] = tool.args_schema
-        self._conversation.append(self._tool_grant_message(tool))
+        self._bound_model = self._bind_model_tools(self._model_tools)
         self._note_session_changed()
-
-    def _tool_grant_message(self, tool: BaseTool):
-        """The conversation message that describes a granted tool, schema included, so the model
-        can construct a call without the tool being bound into the provider schema."""
-        schema: dict[str, Any] = {}
-        args_schema = getattr(tool, "args_schema", None)
-        if args_schema is not None:
-            try:
-                schema = args_schema.model_json_schema()
-            except Exception:  # noqa: BLE001 — a malformed schema still leaves the description useful
-                schema = {}
-        content = self._prompt_loader.load(
-            "tool_grant",
-            {
-                "tool_name": tool.name,
-                "description": (tool.description or "").strip(),
-                "schema": compact(schema),
-            },
-        )
-        return self._reminder_message(content, marks={"tool_grant": True, "tool_name": tool.name})
 
     @property
     def token_usage(self) -> dict[str, int]:

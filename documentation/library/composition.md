@@ -77,7 +77,7 @@ The constructor keeps run facts (directory, identity, permission mode, confineme
 | `file_leases` | `FileLeases` | No cross-session mutation coordination |
 | `permissions` | `PermissionPolicy` | The per-agent `PermissionEvaluator` |
 | `prompt_composer` | `PromptComposer` | Catalogue `system_prompt` template |
-| `tools` | `BaseTool` or `ToolGrant` sequence | No supplied tools |
+| `tools` | `BaseTool` sequence | No supplied tools |
 | `toolset` | Complete `BaseTool` sequence | No tools |
 | `tool_gate` | `"ask"` / `"none"` | `"ask"` |
 | `hooks` | Any combination of the three hook protocols | None |
@@ -105,19 +105,19 @@ components = SessionComponents(
 )
 ```
 
-The `tools` field accepts bare tools or `ToolGrant` values, and a bare tool is normalized by `as_tool_grants`. A tool granted later, through `Session.grant_tool`, is described to the model by an appended conversation message rather than a schema change. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
+The `tools` field accepts ordinary LangChain `BaseTool` values. Tools supplied before the runtime is built join its initial provider schema; `Session.grant_tool()` changes that schema deliberately when a live session genuinely gains a new callable capability.
 
 ## Cache stability
 
 Components are fixed for a runtime because the model-visible tool schemas and static instructions form the provider-cache prefix. Runtime controls such as steering, permission-mode changes, and goal state are append-only or applied at execution boundaries; none rewrites an earlier model message. Interaction with the cache is measured and reported on each `Usage` event (`cache_prefix_reusable`, `reusable_prefix_tokens`, `segments`, `divergence`), so a custom model adapter can be verified rather than inferred.
 
-A granted tool is described by an appended message; the bound schema never changes. `BeforeModelHook` and `PromptComposer` run only when the cached prompt is built, and an explicit `Session.refresh_prompt()` invalidates that cache.
+`BeforeModelHook` can intentionally alter an individual request, while `PromptComposer` runs only when the cached prompt is built and an explicit `Session.refresh_prompt()` invalidates that cache. Ordinary turns, steering, tool results, and background results append to the conversation without changing the prompt or tool schema.
 
 ## Tools, hooks, and policy
 
 ### Granting a tool to a session
 
-Every tool a session can call is one **`Tool` unit**: its model-facing schema, its description, and the handler that runs it. The tools that ship in the library core (`call_mcp_server_tool`, the peer-session tools, `read_turn`, `load_skill`) live in `langmesh.runtime.tools.registry` and `langmesh.runtime.tools.sessions`; the rest — `bash`, the web tools, goal and task tools, `control_screen`, `ask_user`, and the hidden verdict tools — are contributed by plugins. The runtime dispatches every call generically by name, so there is no hard-coded routing and a caller's tool of the same name simply replaces a built-in's execution.
+Every tool a session can call is one **`Tool` unit**: its provider-visible schema, its description, and the handler that runs it. The tools that ship in the library core (`call_mcp_server_tool`, the peer-session tools, `read_turn`, `load_skill`) live in `langmesh.runtime.tools.registry` and `langmesh.runtime.tools.sessions`; the rest — `bash`, the web tools, goal and task tools, `control_screen`, `ask_user`, and the hidden verdict tools — are contributed by plugins. The runtime dispatches every call generically by name, so there is no hard-coded routing and a caller's tool of the same name simply replaces a built-in's execution and schema.
 
 Every tool a session runs, yours and the harness's alike, carries two shared argument fields injected once at registration: a required `explanation` (why the call is happening, in words the person watching reads) and a required `access_request` (what it says about changing anything and what it needs beyond confinement). They are described in `descriptions/explanation.md` and `descriptions/access_request.md`.
 
@@ -126,7 +126,7 @@ Every tool a session runs, yours and the harness's alike, carries two shared arg
 Three ways to compose a session's tools:
 
 - **The whole roster.** Pass `SessionComponents(toolset=[...])` to run exactly those tools, or `toolset=()` to run with no tools at all.
-- **Supplied tools.** Pass `tools=[...]`, or call `session.grant_tool(...)` later. A tool whose name the session already runs replaces its implementation.
+- **Supplied tools.** Pass `tools=[...]` before the first call for a stable initial schema, or call `session.grant_tool(...)` later when the session truly gains a new capability. A tool whose name the session already runs replaces its implementation and schema.
 - **Plugin tools.** Compose a feature that contributes tools — `Bash()`, `Web()`, `ComputerUse()`, `Interaction()`, `Continuation()`, `GoalReviewFeature()`, `Compaction()`, `PermissionReviewer()` — each gated by the agent's `tools_enabled`.
 
 ```python
@@ -169,20 +169,9 @@ def current_incident() -> dict:
 session.grant_tool(current_incident)
 ```
 
-`grant_tool` works at any moment, including after turns have run. Its description and schema are appended to the conversation as a message rather than bound into the provider schema, so the model learns to call it without the cache prefix moving.
+`grant_tool` works at any moment, including after turns have run. Because providers only emit structured calls for tools in the request schema, a mid-session grant rebinds the real schema instead of pretending prose can declare a function. That next call is an intentional cache divergence at the `tools` segment; subsequent calls reuse the new prefix. Supply predictable tools at construction when cache continuity matters.
 
-#### The `ToolGrant` value
-
-`tools` accepts either a bare tool or a `ToolGrant`. Use `ToolGrant` when you want to name the wrapper explicitly; `as_tool_grants` normalizes a mixed sequence.
-
-```python
-from langmesh import ToolGrant, as_tool_grants
-
-grants = as_tool_grants([incident_lookup, ToolGrant(current_incident)])
-session = Session(agent, directory="/srv/checkout", tools=grants)
-```
-
-The same mechanism powers the internal reviewers. The goal reviewer receives `submit_goal_review`, the compaction summarizer receives `submit_compaction_summary`, and the automatic permission reviewer receives `permission_decision`; the working session never carries any of them, so no tool is ever a no-op that exists only to be inert.
+The same binding mechanism powers the internal reviewers. The goal reviewer receives `submit_goal_review`, the compaction summarizer receives `submit_compaction_summary`, and the automatic permission reviewer receives `permission_decision`; the working session never carries any of them, so no tool is ever a no-op that exists only to be inert.
 
 ### Permission policy
 

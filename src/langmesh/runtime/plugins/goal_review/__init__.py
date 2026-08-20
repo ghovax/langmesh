@@ -23,7 +23,6 @@ from langmesh.base.configuration import PermissionEvaluator, PromptLoader
 from langmesh.base.contracts.ports import GoalReviewContext, GoalReviewOutcome
 from langmesh.base.primitives.identifiers import new_id
 from langmesh.base.primitives.serialization import compact
-from langmesh.base.contracts.tools import ToolGrant
 from langmesh.runtime.internals import race_interrupt
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.plugins.goal_review.goal import Goal
@@ -233,7 +232,7 @@ class GoalReviewFeature(Feature):
                 sessions=None,
                 mcp_servers=self._host.tools.tool_context.mcp_server_manager,
                 # The verdict tool is injected here and only here: the main session never carries it.
-                tools=[ToolGrant(submit_goal_review)],
+                tools=[submit_goal_review],
                 tool_gate=self._host.tools.tool_gate,
                 permissions=reviewer_permissions,
                 # What the parent's model sees, minus the tools a reviewer must never use.

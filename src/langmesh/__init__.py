@@ -54,7 +54,7 @@ from langmesh.base.contracts.ports import (
     TurnSummary,
     WorkspaceManager,
 )
-from langmesh.base.contracts.tools import ToolGrant, ToolLike, as_tool_grants
+from langmesh.base.contracts.tools import ToolLike
 from langmesh.base.persistence.observations import ObservationRegistry
 from langmesh.base.persistence.resources import (
     LocalResourceChanges,
@@ -214,7 +214,6 @@ __all__ = [
     "ThinkingDone",
     "ToolCall",
     "ToolExecution",
-    "ToolGrant",
     "ToolHandler",
     "ToolInvocation",
     "ToolLike",
@@ -234,7 +233,6 @@ __all__ = [
     "WorkspaceResourcesLike",
     "WorktreeStrategy",
     "__version__",
-    "as_tool_grants",
     "is_due",
     "next_firing",
     "validate_schedule",
