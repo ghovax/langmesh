@@ -170,3 +170,4 @@ class SessionLifecycle:
     async def aclose(self) -> None:
         """Sleep every hosted session; the records outlive the daemon and are what a restart reads."""
         await self.sleep_all()
+        await self._registry.aclose()

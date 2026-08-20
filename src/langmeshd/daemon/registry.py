@@ -141,6 +141,7 @@ class SessionRegistry:
         self._sessions: dict[str, SessionRecord] = {}
         self._store = store
         self._persistence_tasks: set[asyncio.Task[None]] = set()
+        self._persistence_tail: asyncio.Task[None] | None = None
 
     def restore(self, records: list[SessionRecord]) -> None:
         """Adopt the durable records at boot, each unhosted, which is what a live session asleep is."""
@@ -152,27 +153,48 @@ class SessionRegistry:
         if self._store is not None:
             self._store.save(record)
 
+    @staticmethod
+    def _snapshot(record: SessionRecord) -> SessionRecord:
+        """Copy one durable state so a later in-memory transition cannot change an enqueued write."""
+        return replace(record, sandbox=dict(record.sandbox))
+
+    def _schedule_persistence(self, record: SessionRecord) -> asyncio.Task[None]:
+        """Enqueue one immutable record snapshot after every write already submitted."""
+        snapshot = self._snapshot(record)
+        previous = self._persistence_tail
+
+        async def persist_in_order() -> None:
+            if previous is not None:
+                await asyncio.gather(previous, return_exceptions=True)
+            await asyncio.to_thread(self._persist, snapshot)
+
+        task = asyncio.create_task(persist_in_order(), name=f"persist-session-{record.id}")
+        self._persistence_tail = task
+        self._persistence_tasks.add(task)
+        task.add_done_callback(self._finish_persistence)
+        return task
+
     async def persist_off_loop(self, record: SessionRecord) -> None:
         """Write a record durably from the event loop without blocking it, for a caller that must not continue until the row exists."""
         if self._store is not None:
-            await asyncio.to_thread(self._persist, record)
+            await asyncio.shield(self._schedule_persistence(record))
 
     def _persist_wherever_we_are(self, record: SessionRecord) -> None:
         """Write a record from either side of the loop, since `mark` is called from coroutines and threads alike."""
         if self._store is None:
             return
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
-            self._persist(record)
+            self._persist(self._snapshot(record))
             return
-        task = loop.create_task(asyncio.to_thread(self._persist, record))
-        self._persistence_tasks.add(task)
-        task.add_done_callback(self._finish_persistence)
+        self._schedule_persistence(record)
 
     def _finish_persistence(self, task: asyncio.Task[None]) -> None:
         """Retire an asynchronous registry write and report a storage failure."""
         self._persistence_tasks.discard(task)
+        if self._persistence_tail is task:
+            self._persistence_tail = None
         if task.cancelled():
             return
         error = task.exception()
@@ -181,6 +203,11 @@ class SessionRegistry:
                 "could not persist a session record",
                 exc_info=(type(error), error, error.__traceback__),
             )
+
+    async def aclose(self) -> None:
+        """Wait until every submitted durable transition has reached the store."""
+        while self._persistence_tasks:
+            await asyncio.gather(*tuple(self._persistence_tasks), return_exceptions=True)
 
     def create(
         self,
