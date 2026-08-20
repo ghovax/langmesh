@@ -7,7 +7,6 @@ import {
   LuCheck,
   LuClock,
   LuCopy,
-  LuDot,
   LuFoldVertical,
   LuMessagesSquare,
   LuRotateCw,
@@ -159,10 +158,7 @@ function CompactionErrorCard({
       </Flex>
       {errorCode ? (
         <Box mt={1.5}>
-          <MarkdownContent
-            content={translation(`compactionErrors.${errorCode}`)}
-            fontSize="sm"
-          />
+          <MarkdownContent content={translation(`compactionErrors.${errorCode}`)} fontSize="sm" />
         </Box>
       ) : null}
       {onRetry && (
@@ -505,22 +501,16 @@ export const ChatMessageItem = memo(function ChatMessageItem({
               flexShrink={0}
               color={running ? "blue.fg" : undefined}
               title={
-                running || !before
-                  ? undefined
-                  : translation("compactedTooltip", { before, after })
+                running || !before ? undefined : translation("compactedTooltip", { before, after })
               }
             >
-              <ActivityIcon>
-                {running ? <ActivitySpinner /> : <LuFoldVertical />}
-              </ActivityIcon>
+              <ActivityIcon>{running ? <ActivitySpinner /> : <LuFoldVertical />}</ActivityIcon>
               <Box>
                 <Text
                   textStyle="fieldLabel"
                   className={running ? "running-title-shimmer" : undefined}
                 >
-                  {running
-                    ? translation("compactingContext")
-                    : translation("contextCompacted")}
+                  {running ? translation("compactingContext") : translation("contextCompacted")}
                 </Text>
               </Box>
             </Flex>

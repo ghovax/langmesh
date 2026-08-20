@@ -3,7 +3,15 @@
 import { Box, Button, Flex, List, Span, Spinner, Text } from "@chakra-ui/react";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { LuCircleCheck, LuCircleSlash, LuClipboardCheck, LuDot, LuSquare, LuTarget, LuX } from "react-icons/lu";
+import {
+  LuCircleCheck,
+  LuCircleSlash,
+  LuClipboardCheck,
+  LuDot,
+  LuSquare,
+  LuTarget,
+  LuX,
+} from "react-icons/lu";
 import { Tooltip } from "./ui/tooltip";
 import { ConfirmDialog } from "./ui/confirm-dialog";
 import { InlineMarkdown, MarkdownContent } from "./markdown-content";

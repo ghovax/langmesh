@@ -119,7 +119,13 @@ const COMPOSER_FIT_ORDER = [
 ] as const;
 
 // A filling ring for how full the context window is, shifting colour as it approaches the limit.
-function ContextFillRing({ fraction, tone = "context" }: { fraction: number; tone?: "context" | "tasks" }) {
+function ContextFillRing({
+  fraction,
+  tone = "context",
+}: {
+  fraction: number;
+  tone?: "context" | "tasks";
+}) {
   const clamped = Math.max(0, Math.min(1, fraction));
   const radius = 5.5;
   const circumference = 2 * Math.PI * radius;

@@ -610,7 +610,8 @@ export function ChatPanel({
     [sessionId],
   );
 
-  const currentCompactionerName = folderDisplayName(workingDirectory) || translation("thisCompactioner");
+  const currentCompactionerName =
+    folderDisplayName(workingDirectory) || translation("thisCompactioner");
   const renderedTimeline = useMemo(() => timelineItems(messages), [messages]);
   // The review a user message's turn started, so its transcript is reachable from that row.
   const reviewIdByUserMessage = useMemo(() => {
