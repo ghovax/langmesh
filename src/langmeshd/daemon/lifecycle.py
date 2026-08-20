@@ -15,12 +15,6 @@ from langmesh.protocol.metadata import Metadata
 logger = logging.getLogger(__name__)
 
 
-def _daemon_token() -> str:
-    from langmeshd.daemon import state
-
-    return state.daemon_token
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -54,9 +48,7 @@ class SessionLifecycle:
 
     async def start(self, record: SessionRecord) -> bool:
         """Give a record a live executor, which costs about what building the object costs."""
-        started = await self._host.start(
-            record, daemon_token=_daemon_token()
-        )
+        started = await self._host.start(record)
         if not started:
             self._registry.end(
                 record.id,

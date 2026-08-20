@@ -159,6 +159,28 @@ def _announcing_server_class():
     return AnnouncingServer
 
 
+def _session_route_allowed(scope: dict) -> bool:
+    """Whether an attributed session may reach a route that performs its own subtree authorization."""
+    if scope["type"] != "http":
+        return False
+    method = scope.get("method", "")
+    path = str(scope.get("path") or "")
+    if method == "POST" and path == "/rpc":
+        return True
+    if method != "GET":
+        return False
+    segments = path.strip("/").split("/")
+    return (
+        len(segments) == 3
+        and segments[2] == "attach"
+        and segments[0]
+        in {
+            "sessions",
+            "goal-reviews",
+        }
+    )
+
+
 def build_app() -> FastAPI:
     from langmeshd.daemon import state
     from langmeshd.daemon.api import RpcError
@@ -213,6 +235,8 @@ def build_app() -> FastAPI:
             if presented and secrets.compare_digest(presented, state.daemon_token):
                 # The daemon token says you may drive this daemon and nothing about who is asking, so a session stays itself.
                 scope["state"]["calling_session"] = peer_session or ""
+                if peer_session and not _session_route_allowed(scope):
+                    return await self._refuse(scope, receive, send, forbidden=True)
                 return await self.application(scope, receive, send)
             # A session's own token identifies which session is calling, which is what lets its control-plane calls be attributed to it.
             caller = (
@@ -224,17 +248,26 @@ def build_app() -> FastAPI:
                 return await self._refuse(scope, receive, send)
             # The kernel's answer wins over the token's, so a session holding another's token is still itself.
             scope["state"]["calling_session"] = peer_session or caller.id
+            if not _session_route_allowed(scope):
+                return await self._refuse(scope, receive, send, forbidden=True)
             return await self.application(scope, receive, send)
 
         @staticmethod
-        async def _refuse(scope, receive, send) -> None:
+        async def _refuse(scope, receive, send, *, forbidden: bool = False) -> None:
             """Say no in the shape the caller's transport understands, refusing a handshake rather than accepting and closing."""
             if scope["type"] == "websocket":
-                # 1008 is "policy violation", which is the closest the protocol has to a 401.
+                # 1008 is the websocket protocol's policy-violation refusal.
                 return await WebSocketClose(code=1008)(scope, receive, send)
             response = JSONResponse(
-                {"error": {"code": "unauthorized", "message": "Bad or missing token."}},
-                status_code=401,
+                {
+                    "error": {
+                        "code": "forbidden" if forbidden else "unauthorized",
+                        "message": "This session token cannot access that route."
+                        if forbidden
+                        else "Bad or missing token.",
+                    }
+                },
+                status_code=403 if forbidden else 401,
             )
             return await response(scope, receive, send)
 
