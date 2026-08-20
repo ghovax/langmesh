@@ -355,6 +355,8 @@ The hooks are the points in the turn where a feature can act. The full set a `Fe
 | `blocks_input()` | why new input must be refused (a failed fold, an unrepaired registry) |
 | `snapshot()` / `restore(snapshot)` | durable session state beside the checkpoint |
 
+`compose_prompt` is the home for stable model guidance because it runs when the cached system prompt is built. `prepare_request` is a deliberately sharper seam: a feature that changes the outgoing list must append the exact addition to durable conversation state so the following request retains it in the same position. A transient per-call reminder will move behind the next assistant response and destroy prefix reuse even when its text never changes. Use `prepare_request` for validated request-local recovery only, not recurring policy or feature instructions.
+
 ### Composing a session's features
 
 The application layer composes which features a session runs. The library ships no default battery: a session runs exactly the features you hand it, and a feature you leave out simply is not there.
