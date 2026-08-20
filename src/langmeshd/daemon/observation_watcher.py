@@ -63,6 +63,13 @@ class ObservationRegistryWatcher:
             message = str(error) or type(error).__name__
         else:
             return {**snapshot, "metadata": metadata, "error": ""}
+        # A registry that refused to validate is itself reported: describe() never raises and
+        # carries `status: broken|missing` plus the problem, so the LLM hears the state rather
+        # than only the absence of entries.
+        try:
+            metadata = await store.describe()
+        except Exception:  # noqa: BLE001 — a descriptor is best-effort around a broken file
+            metadata = {}
         previous = self._snapshots.get(path) or {
             "revision": 0,
             "entries": {"observations": [], "directives": []},
@@ -72,9 +79,11 @@ class ObservationRegistryWatcher:
                 "revision": 0,
                 "counts": {"observations": 0, "directives": 0},
                 "updated_at": {"earliest": None, "latest": None},
+                "status": "broken",
+                "problem": message,
             },
         }
-        return {**previous, "error": message}
+        return {**previous, "metadata": metadata, "error": message}
 
     async def _watch(self, path: Path, subscription: NativeFileSubscription) -> None:
         try:
