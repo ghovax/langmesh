@@ -108,14 +108,19 @@ async def open_shared_resources() -> None:
         state._remote_start_task = asyncio.create_task(commons_state.remote_agent_manager.start())
 
     _reload_agent_cards()
-    from langmeshd.daemon import scheduler
+    from langmeshd.daemon import api, scheduler
 
     state._watchers = [
         asyncio.create_task(_watch_agents_and_skills()),
         asyncio.create_task(_watch_configuration()),
         asyncio.create_task(_watch_ssh_hosts()),
         # Recurring prompts, alongside the watchers because they are the same kind of long-lived task.
-        asyncio.create_task(scheduler.run()),
+        asyncio.create_task(
+            scheduler.run(
+                create_session=api._session_create,
+                send_message=api._session_send,
+            )
+        ),
     ]
 
 
