@@ -1,6 +1,6 @@
 """Why a request did or did not hit the provider's prompt cache.
 
-``prefix_intact`` is tri-state: ``True`` means every segment this request shares with the
+``cache_prefix_reusable`` is tri-state: ``True`` means every segment this request shares with the
 previous request in its lane is byte-identical (so a prefix cache that kept the previous
 request would serve it), ``False`` means something moved or rewrote, and ``None`` means there
 is no previous reading to compare against, so the outcome is *unknown*, not a miss.
@@ -39,6 +39,7 @@ from langmesh.base.primitives.limits import count_tokens
 #: The kinds of thing a request is made of, in the order every provider reads them.
 INSTRUCTIONS = "instructions"
 TOOLS = "tools"
+SETTINGS = "settings"
 ITEM = "item"
 
 _CACHE_LANE = ContextVar("cache_lane", default="conversation")
@@ -122,7 +123,7 @@ def trace(pieces: Sequence[Piece]) -> RequestTrace:
     )
 
 
-def prefix_intact_label(value: Optional[bool]) -> str:
+def cache_prefix_label(value: Optional[bool]) -> str:
     """A human reading of the tri-state: the prefix was reusable, it moved, or we cannot tell."""
     if value is None:
         return "unknown"
@@ -132,13 +133,13 @@ def prefix_intact_label(value: Optional[bool]) -> str:
 def diagnose(current: RequestTrace, previous: Optional[RequestTrace]) -> dict[str, object]:
     """What this request kept from the last one, as fields to record beside the cache figure.
 
-    ``prefix_intact`` is ``None`` when there is no previous request to compare against: the
+    ``cache_prefix_reusable`` is ``None`` when there is no previous request to compare against: the
     outcome is unknown, which reads very differently from a confirmed miss.
     """
     if previous is None:
         return {
-            "prefix_intact": None,
-            "reachable_tokens": 0,
+            "cache_prefix_reusable": None,
+            "reusable_prefix_tokens": 0,
             "segments": len(current.segments),
             "shared_segments": 0,
             "divergence": None,
@@ -149,16 +150,16 @@ def diagnose(current: RequestTrace, previous: Optional[RequestTrace]) -> dict[st
             break
         shared += 1
     common = {
-        "reachable_tokens": sum(segment.tokens for segment in current.segments[:shared]),
+        "reusable_prefix_tokens": sum(segment.tokens for segment in current.segments[:shared]),
         "segments": len(current.segments),
         "shared_segments": shared,
     }
     if shared == len(previous.segments):
-        return {"prefix_intact": True, "divergence": None, **common}
+        return {"cache_prefix_reusable": True, "divergence": None, **common}
     here = current.segments[shared] if shared < len(current.segments) else None
     there = previous.segments[shared]
     return {
-        "prefix_intact": False,
+        "cache_prefix_reusable": False,
         "divergence": {
             "index": shared,
             "current": here.identity() if here else None,
@@ -173,31 +174,32 @@ def diagnose(current: RequestTrace, previous: Optional[RequestTrace]) -> dict[st
 def reconcile(diagnosis: dict, cache_read: int) -> dict:
     """Correct the pre-request verdict with what the provider actually served from cache.
 
-    ``diagnose`` reads only the two request shapes, so its ``prefix_intact`` may judge a
+    ``diagnose`` reads only the two request shapes, so its ``cache_prefix_reusable`` may judge a
     request a miss the provider's cache then served. This passes the byte verdict against the
     response's ``cache_read`` and adjusts the judgment in place, leaving the ``divergence``
     detail for anyone who wants to know exactly where the request changed.
     """
-    verdict = diagnosis.get("prefix_intact")
+    verdict = diagnosis.get("cache_prefix_reusable")
     if verdict is None or verdict is True:
         return diagnosis  # no baseline, or the byte prediction already held
-    reachable = int(diagnosis.get("reachable_tokens", 0) or 0)
+    reachable = int(diagnosis.get("reusable_prefix_tokens", 0) or 0)
     if cache_read <= 0:
         return diagnosis  # nothing was reused, so the confirmed break stands
     if reachable <= 0:
         # Real reuse beside a byte model that found no shared segment: the two requests never
         # lined up (a borrowed cross-lane baseline), so the outcome is unknown, not a miss.
-        diagnosis["prefix_intact"] = None
+        diagnosis["cache_prefix_reusable"] = None
         return diagnosis
     # reachable and cache_read are tokenizer-shaped, so the comparison allows a hair of variance.
     if cache_read >= reachable * 0.98:
-        diagnosis["prefix_intact"] = True  # the divergence cost nothing the cache had held
+        diagnosis["cache_prefix_reusable"] = True  # the divergence cost nothing the cache had held
     return diagnosis
 
 
 __all__ = [
     "INSTRUCTIONS",
     "ITEM",
+    "SETTINGS",
     "TOOLS",
     "Piece",
     "RequestTrace",
@@ -205,7 +207,7 @@ __all__ = [
     "active_cache_lane",
     "cache_lane",
     "diagnose",
-    "prefix_intact_label",
+    "cache_prefix_label",
     "reconcile",
     "trace",
     "provider_cache_key",

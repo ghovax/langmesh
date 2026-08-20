@@ -76,6 +76,10 @@
           "default": 0,
           "type": "integer"
         },
+        "cache_write_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
         "input_tokens": {
           "default": 0,
           "type": "integer"
@@ -88,11 +92,11 @@
           "default": 0,
           "type": "integer"
         },
-        "reachable_tokens": {
+        "reasoning_tokens": {
           "default": 0,
           "type": "integer"
         },
-        "reasoning_tokens": {
+        "reusable_prefix_tokens": {
           "default": 0,
           "type": "integer"
         },
@@ -580,7 +584,22 @@
     "TokenUsageEvent": {
       "additionalProperties": false,
       "properties": {
+        "cache_prefix_reusable": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "cache_read_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "cache_write_tokens": {
           "default": 0,
           "type": "integer"
         },
@@ -619,22 +638,11 @@
           "default": 0,
           "type": "integer"
         },
-        "prefix_intact": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "reachable_tokens": {
+        "reasoning_tokens": {
           "default": 0,
           "type": "integer"
         },
-        "reasoning_tokens": {
+        "reusable_prefix_tokens": {
           "default": 0,
           "type": "integer"
         },

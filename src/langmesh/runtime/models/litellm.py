@@ -26,6 +26,7 @@ from pydantic import Field, PrivateAttr, SecretStr
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.cache_trace import (
     ITEM,
+    SETTINGS,
     TOOLS,
     Piece,
     RequestTrace,
@@ -365,6 +366,17 @@ class ChatLiteLLMModel(BaseChatModel):
     def _trace_request(self, params: dict[str, Any], sent: list[dict[str, Any]]) -> RequestTrace:
         """Cut the outgoing request into the pieces a prompt cache matches on, in wire order."""
         pieces = [Piece(kind=TOOLS, text=compact(params.get("tools") or []))]
+        pieces.append(
+            Piece(
+                kind=SETTINGS,
+                text=compact(
+                    {
+                        "reasoning_effort": params.get("reasoning_effort"),
+                        "tool_choice": params.get("tool_choice"),
+                    }
+                ),
+            )
+        )
         for position, message in enumerate(sent):
             pieces.append(
                 Piece(
@@ -456,9 +468,19 @@ class ChatLiteLLMModel(BaseChatModel):
             if isinstance(usage, dict)
             else getattr(usage, "prompt_tokens_details", None)
         )
-        cache_read = _value(prompt_details, "cached_tokens")
-        if cache_read:
-            metadata["input_token_details"] = {"cache_read": cache_read}
+        cache_read = _value(prompt_details, "cached_tokens") or _value(
+            usage, "cache_read_input_tokens"
+        )
+        cache_write = (
+            _value(prompt_details, "cache_creation_tokens")
+            or _value(prompt_details, "cache_write_tokens")
+            or _value(usage, "cache_creation_input_tokens")
+        )
+        if cache_read or cache_write:
+            metadata["input_token_details"] = {
+                "cache_read": cache_read,
+                "cache_creation": cache_write,
+            }
         completion_details = (
             usage.get("completion_tokens_details")
             if isinstance(usage, dict)

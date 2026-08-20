@@ -161,19 +161,20 @@ A provider serves the longest prefix it recognises, so a low cache read is eithe
 | Recorded on each `Usage` event             | What it says |
 | ------------------------------------------ | ------------ |
 | `input_tokens`, `output_tokens`            | The call's own size, not a running total. |
-| `cache_read_tokens`, `reasoning_tokens`    | The call's own cache read and reasoning spend. |
-| `prefix_intact`                            | Whether every segment shared with the previous call was unchanged. |
-| `reachable_tokens`                         | Tokens of unchanged prefix, the ceiling `cache_read_tokens` is measured against. An estimate, counted with this harness's tokenizer. |
+| `cache_read_tokens`, `cache_write_tokens`  | The provider's actual cache reads and writes for this call. |
+| `reasoning_tokens`                        | The call's reasoning spend. |
+| `cache_prefix_reusable`                   | Whether the preceding request is a complete prefix of this one; unknown without a local baseline. |
+| `reusable_prefix_tokens`                  | Tokens of locally reusable prefix, the denominator for cache-read coverage. An estimate, counted with this harness's tokenizer. |
 | `segments`, `shared_segments`              | The same comparison in pieces rather than tokens. |
 | `divergence`                               | When the prefix moved: the segment index, the current and previous segment, and whether it was rewritten in place. |
 | `cumulative`                               | Session-lifetime totals. |
 
 Reading them together is what makes a diagnosis:
 
-- `prefix_intact` true with `cache_read_tokens` at zero means the provider was handed bytes it had already been sent and returned nothing for them: routing, not the request.
+- `cache_prefix_reusable` true with `cache_read_tokens` at zero means the provider was handed bytes it had already been sent and returned nothing for them: routing, not the request.
 - A `divergence` with `rewritten` true is the opposite: something here rewrote a message in place.
-- The first call of a session has nothing to compare against and always reports `prefix_intact` false, as does the first call after a worker restart; filter on `shared_segments > 0` to exclude them.
-- `reachable_tokens` can exceed `input_tokens` by a few percent, because the two are counted with different tokenizers; a large disagreement is worth looking at.
+- The first call in a lane and the first call after a worker restart report `cache_prefix_reusable` as unknown because there is no local baseline; provider-reported reads and writes remain authoritative.
+- `reusable_prefix_tokens` can exceed `input_tokens` by a few percent, because the two are counted with different tokenizers; a large disagreement is worth looking at.
 
 ## Where to go next
 

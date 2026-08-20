@@ -179,4 +179,4 @@ The static system prompt and tool schema form the reusable prefix. LangMesh pres
 
 `PromptComposer` runs only when the cached system prompt is built. Call `Session.refresh_prompt()` after changing an external source that the composer reads; that explicit refresh invalidates the static prompt cache. A `BeforeModelHook` runs on every request and can intentionally change the prefix, so cache-sensitive hooks should leave the first system message untouched.
 
-Usage events expose provider-reported cache reads, the reachable prefix, and the first divergence from the preceding request (`prefix_intact`, `reachable_tokens`, `segments`, `shared_segments`, `divergence`). Use these values to verify a custom model adapter instead of inferring cache behavior from latency alone.
+Usage events expose provider-reported cache reads, the reachable prefix, and the first divergence from the preceding request (`cache_prefix_reusable`, `reusable_prefix_tokens`, `segments`, `shared_segments`, `divergence`). Use these values to verify a custom model adapter instead of inferring cache behavior from latency alone.

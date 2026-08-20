@@ -109,7 +109,7 @@ The `tools` field accepts bare tools or `ToolGrant` values, and a bare tool is n
 
 ## Cache stability
 
-Components are fixed for a runtime because the model-visible tool schemas and static instructions form the provider-cache prefix. Runtime controls such as steering, permission-mode changes, and goal state are append-only or applied at execution boundaries; none rewrites an earlier model message. Interaction with the cache is measured and reported on each `Usage` event (`prefix_intact`, `reachable_tokens`, `segments`, `divergence`), so a custom model adapter can be verified rather than inferred.
+Components are fixed for a runtime because the model-visible tool schemas and static instructions form the provider-cache prefix. Runtime controls such as steering, permission-mode changes, and goal state are append-only or applied at execution boundaries; none rewrites an earlier model message. Interaction with the cache is measured and reported on each `Usage` event (`cache_prefix_reusable`, `reusable_prefix_tokens`, `segments`, `divergence`), so a custom model adapter can be verified rather than inferred.
 
 A granted tool is described by an appended message; the bound schema never changes. `BeforeModelHook` and `PromptComposer` run only when the cached prompt is built, and an explicit `Session.refresh_prompt()` invalidates that cache.
 

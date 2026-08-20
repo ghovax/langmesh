@@ -231,21 +231,21 @@ function ContextUsageChip({
         <InlineField label={translation("total")}>
           <Text>{tokenUsage.totalTokens.toLocaleString()}</Text>
         </InlineField>
-        {/* Always shown, because zero cache reads is the reading worth having, and the share is of what was reachable. When nothing prior exists to compare against, the outcome is unknown rather than a zero. */}
+        {/* Always shown because a zero provider cache read is still a useful measurement. */}
         <InlineField label={translation("cacheReads")}>
           <Text>
-            {tokenUsage.prefixIntact === null ? (
-              translation("cacheReadsUnknown")
-            ) : (
-              <>
-                {tokenUsage.cacheReadTokens.toLocaleString()}
-                {tokenUsage.cacheReachableTokens > 0 &&
-                  ` / ${tokenUsage.cacheReachableTokens.toLocaleString()} (${Math.round(
-                    (tokenUsage.cacheReadTokens / tokenUsage.cacheReachableTokens) * 100,
-                  )}%)`}
-              </>
-            )}
+            {tokenUsage.cacheReadTokens.toLocaleString()}
+            {tokenUsage.cacheReusablePrefixTokens > 0 &&
+              ` / ${tokenUsage.cacheReusablePrefixTokens.toLocaleString()} (${Math.min(
+                100,
+                Math.round(
+                  (tokenUsage.cacheReadTokens / tokenUsage.cacheReusablePrefixTokens) * 100,
+                ),
+              )}%)`}
           </Text>
+        </InlineField>
+        <InlineField label={translation("cacheWrites")}>
+          <Text>{tokenUsage.cacheWriteTokens.toLocaleString()}</Text>
         </InlineField>
         {tokenUsage.reasoningTokens > 0 && (
           <InlineField label={translation("reasoning")}>

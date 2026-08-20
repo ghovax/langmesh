@@ -371,8 +371,9 @@ class AgentRuntime(_RunsTurns):
             "output_tokens": 0,
             "total_tokens": 0,
             "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
             # What a cache could have returned, since the read alone has no honest denominator.
-            "reachable_tokens": 0,
+            "reusable_prefix_tokens": 0,
             "reasoning_tokens": 0,
             "model_calls": 0,
         }
@@ -700,18 +701,20 @@ class AgentRuntime(_RunsTurns):
         output_tokens = int(usage.get("output_tokens", 0) or 0)
         total_tokens = int(usage.get("total_tokens", 0) or 0) or (input_tokens + output_tokens)
         cache_read = int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0)
+        cache_write = int((usage.get("input_token_details") or {}).get("cache_creation", 0) or 0)
         reasoning = int((usage.get("output_token_details") or {}).get("reasoning", 0) or 0)
         if not (input_tokens or output_tokens or total_tokens):
             return None
         # What the adapter worked out about this request's prefix, read before the totals below.
         cache_trace = response.additional_kwargs.get("cache_trace") or {}
         # What could have been served, which is never less than what was, and zero on a session's first call.
-        reachable = max(int(cache_trace.get("reachable_tokens", 0) or 0), cache_read)
+        reachable = max(int(cache_trace.get("reusable_prefix_tokens", 0) or 0), cache_read)
         self._token_usage["input_tokens"] += input_tokens
         self._token_usage["output_tokens"] += output_tokens
         self._token_usage["total_tokens"] += total_tokens
         self._token_usage["cache_read_tokens"] += cache_read
-        self._token_usage["reachable_tokens"] += reachable
+        self._token_usage["cache_write_tokens"] += cache_write
+        self._token_usage["reusable_prefix_tokens"] += reachable
         self._token_usage["reasoning_tokens"] += reasoning
         self._token_usage["model_calls"] += 1
         # The latest call's input is the whole prompt, so it says how full the context is.
@@ -728,12 +731,13 @@ class AgentRuntime(_RunsTurns):
             output_tokens=output_tokens,
             total_tokens=total_tokens,
             cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
             reasoning_tokens=reasoning,
             context_window=context_window,
             context_window_estimated=self._context_window_estimated,
             cumulative=dict(self._token_usage),
-            prefix_intact=cache_trace.get("prefix_intact"),
-            reachable_tokens=reachable,
+            cache_prefix_reusable=cache_trace.get("cache_prefix_reusable"),
+            reusable_prefix_tokens=reachable,
             segments=int(cache_trace.get("segments", 0) or 0),
             shared_segments=int(cache_trace.get("shared_segments", 0) or 0),
             divergence=cache_trace.get("divergence"),

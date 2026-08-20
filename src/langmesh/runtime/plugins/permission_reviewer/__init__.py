@@ -16,7 +16,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from langmesh.base import confinement
-from langmesh.runtime.cache_trace import prefix_intact_label
+from langmesh.runtime.cache_trace import cache_prefix_label
 from langmesh.base.content.model_errors import ContextWindowExceeded
 from langmesh.base.content.instructions import instructions_payload
 from langmesh.base.primitives.serialization import compact
@@ -173,16 +173,17 @@ class PermissionReviewer(Feature):
             "input_tokens": int(usage.get("input_tokens", 0) or 0),
             "output_tokens": int(usage.get("output_tokens", 0) or 0),
             "cache_read_tokens": int(input_details.get("cache_read", 0) or 0),
-            "prefix_intact": cache_trace.get("prefix_intact"),
-            "reachable_tokens": int(cache_trace.get("reachable_tokens", 0) or 0),
+            "cache_write_tokens": int(input_details.get("cache_creation", 0) or 0),
+            "cache_prefix_reusable": cache_trace.get("cache_prefix_reusable"),
+            "reusable_prefix_tokens": int(cache_trace.get("reusable_prefix_tokens", 0) or 0),
             "shared_segments": int(cache_trace.get("shared_segments", 0) or 0),
             "segments": int(cache_trace.get("segments", 0) or 0),
         }
         self._host.bookkeeping.record_event("permission_reviewed", metrics)
         logger.info(
             "permission review session=%s action=%s attempts=%d duration_ms=%d tool_calls=%d "
-            "input_tokens=%d output_tokens=%d cache_read_tokens=%d prefix_intact=%s "
-            "reachable_tokens=%d shared_segments=%d segments=%d",
+            "input_tokens=%d output_tokens=%d cache_read_tokens=%d cache_write_tokens=%d cache_prefix_reusable=%s "
+            "reusable_prefix_tokens=%d shared_segments=%d segments=%d",
             self._context.session_id,
             metrics["action"],
             metrics["attempts"],
@@ -191,8 +192,9 @@ class PermissionReviewer(Feature):
             metrics["input_tokens"],
             metrics["output_tokens"],
             metrics["cache_read_tokens"],
-            prefix_intact_label(metrics["prefix_intact"]),
-            metrics["reachable_tokens"],
+            metrics["cache_write_tokens"],
+            cache_prefix_label(metrics["cache_prefix_reusable"]),
+            metrics["reusable_prefix_tokens"],
             metrics["shared_segments"],
             metrics["segments"],
         )
