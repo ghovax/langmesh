@@ -84,12 +84,9 @@ class Continuation(Feature):
         """The task-list tools this plugin owns."""
         return [set_tasks, update_tasks]
 
-    def prepare_request(self, messages: list) -> list:
-        """The task list and goal guidance ride as their own note after the core system prompt."""
-        return [
-            *messages,
-            self._host.turn.reminder_message(self._prompts.load("task_guidance", {}).strip()),
-        ]
+    def compose_prompt(self, variables: dict[str, str]) -> None:
+        """Place stable task guidance in the session prompt once so later calls remain append-only."""
+        variables["task_guidance"] = self._prompts.load("task_guidance", {}).strip()
 
     def snapshot(self) -> dict | None:
         return {

@@ -457,18 +457,13 @@ class ComputerUse(Feature):
     def contribute_tools(self) -> list:
         return [control_screen] if self._enabled else []
 
-    def prepare_request(self, messages: list) -> list:
-        """The screen-driving guidance rides as its own note when the feature is enabled."""
+    def compose_prompt(self, variables: dict[str, str]) -> None:
+        """Place stable screen guidance in the session prompt once when computer use is enabled."""
         if not self._enabled:
-            return messages
+            return
         guidance = self._prompts.load("computer_control_guidance", {}).strip()
-        if not guidance:
-            return messages
-        return (
-            [*messages, self._host.turn.reminder_message(guidance)]
-            if self._host is not None
-            else messages
-        )
+        if guidance:
+            variables["computer_control_guidance"] = guidance
 
     def compose_context(self, context: dict) -> None:
         """The screen targets and primitives, when the feature is enabled."""
