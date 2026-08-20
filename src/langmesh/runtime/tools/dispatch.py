@@ -33,7 +33,7 @@ from langmesh.runtime.internals import (
     _utc_timestamp,
 )
 from langmesh.runtime.features import BackgroundCapability, LocationsCapability
-from langmesh.runtime.locations import CallExecutionPolicy
+from langmesh.runtime.locations import CallExecutionPolicy, ExecutionTarget
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.execution import (
     bind_tool_decision,
@@ -113,10 +113,13 @@ class _DispatchesTools:
             },
         )
 
-    def _call_policy(self, _location: Any = None) -> CallExecutionPolicy:
+    def _call_policy(self, location: ExecutionTarget | None = None) -> CallExecutionPolicy:
         """One call's execution policy, as a value, so concurrent calls cannot cross."""
         return CallExecutionPolicy(
-            working_directory=self._working_directory, mode=self._permission_mode
+            working_directory=(
+                location.working_directory if location is not None else self._working_directory
+            ),
+            mode=self._permission_mode,
         )
 
     async def _run_one_tool(
@@ -506,7 +509,7 @@ class _DispatchesTools:
                 tool=tool_name,
             )
             return
-        policy = self._call_policy(None)
+        policy = self._call_policy(call_site)
 
         # Dispatch is data-driven over the session's own tool units: a built-in or a caller's tool is the same `Tool`, so there is no name table and a caller's implementation of the same name simply replaces the built-in's.
         unit = self._tool_units.get(tool_name)

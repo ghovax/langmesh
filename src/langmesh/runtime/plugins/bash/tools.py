@@ -75,7 +75,8 @@ async def handle_bash(
     raw_command = tool_arguments.get("command", "")
     # A named local location changes cwd; a remote location is forwarded through SSH.
     if call_site is not None:
-        executor, base_directory = call_site
+        executor = call_site.executor
+        base_directory = call_site.working_directory
         if executor.is_local:
             policy = replace(policy, working_directory=base_directory)
             call_site = None

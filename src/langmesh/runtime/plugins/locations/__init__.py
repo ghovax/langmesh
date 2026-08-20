@@ -15,6 +15,7 @@ from typing import Any
 from pydantic import Field
 
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
+from langmesh.runtime.locations import ExecutionTarget
 from langmesh.runtime.plugins.locations.resolver import (
     LocationAddress,
     executor_for,
@@ -99,7 +100,10 @@ class Locations(Feature):
                 f"The location {location_value!r} is unknown. "
                 f"Available: {', '.join(sorted(self._locations_by_name)) or 'the local folder'}"
             )
-        return (resolved["executor"], resolved["base_directory"])
+        return ExecutionTarget(
+            executor=resolved["executor"],
+            working_directory=resolved["base_directory"],
+        )
 
     def compose_context(self, context: dict) -> None:
         """The locations as the model sees them: the name to pass, and enough to choose the right one."""
