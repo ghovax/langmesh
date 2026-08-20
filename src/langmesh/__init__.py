@@ -395,7 +395,7 @@ class Session:
             if self._catalogue is None:
                 from langmesh.base.contracts.catalogue import project_catalogue
 
-                catalogue = project_catalogue(self._configuration, self._directory)
+                catalogue = project_catalogue()
             else:
                 catalogue = self._catalogue
             agent_configuration = self._agent

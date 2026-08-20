@@ -14,20 +14,6 @@ from langmesh.base.persistence.file_cache import parsed_file
 
 logger = logging.getLogger(__name__)
 
-# Instruction files a project may carry, in preference order, with the first match winning.
-PROJECT_INSTRUCTION_NAMES = ("AGENTS.md", "CLAUDE.md", "CONTEXT.md")
-
-
-# Well-known user-wide instruction files, read only when a catalogue is explicitly given them.
-def home_instruction_paths() -> tuple[Path, ...]:
-    home = Path.home()
-    return (
-        home / ".config" / "opencode" / "AGENTS.md",
-        home / ".claude" / "CLAUDE.md",
-        home / ".agents" / "AGENTS.md",
-        home / "AGENTS.md",
-    )
-
 
 @dataclass(frozen=True)
 class CatalogueRoots:
@@ -37,18 +23,8 @@ class CatalogueRoots:
     skills: tuple[Path, ...] = ()
     memories: tuple[Path, ...] = ()
     prompts: Optional[Path] = None
-    # Where to start walking for AGENTS.md / CLAUDE.md / CONTEXT.md.
-    project_directory: Optional[Path] = None
-    # Whether to also read the well-known user-wide instruction files, false for a library.
-    include_home_instructions: bool = False
-
-
-def _as_paths(directories: Iterable[str | Path] | str | Path | None) -> tuple[Path, ...]:
-    if directories is None:
-        return ()
-    if isinstance(directories, (str, Path)):
-        return (Path(directories).expanduser(),)
-    return tuple(Path(directory).expanduser() for directory in directories)
+    # Instruction files the host already discovered on its own terms, highest precedence first.
+    instruction_files: tuple[Path, ...] = ()
 
 
 class AgentLoader(Protocol):
@@ -104,54 +80,23 @@ class FileCatalogue:
     def instructions(self) -> list[Instruction]:
         entries: list[Instruction] = []
         seen: set[Path] = set()
-
-        if self._roots.include_home_instructions:
-            for path in home_instruction_paths():
-                try:
-                    resolved = path.expanduser().resolve()
-                except OSError:
-                    continue
-                if not resolved.is_file() or resolved in seen:
-                    continue
-                seen.add(resolved)
-                # A home-wide document governs everything, which is also why it loses to a project's own.
-                entries.append(
-                    Instruction(
-                        source=str(resolved),
-                        scope=str(resolved.parent),
-                        content=resolved.read_text(errors="ignore").strip(),
-                    )
-                )
-
-        project = self._project_instruction()
-        if project is not None and project not in seen:
+        for path in self._roots.instruction_files:
+            try:
+                resolved = path.expanduser().resolve()
+            except OSError:
+                continue
+            if not resolved.is_file() or resolved in seen:
+                continue
+            seen.add(resolved)
             entries.append(
                 Instruction(
-                    source=str(project),
-                    scope=str(project.parent),
-                    content=project.read_text(errors="ignore").strip(),
+                    source=str(resolved),
+                    scope=str(resolved.parent),
+                    content=resolved.read_text(errors="ignore").strip(),
                 )
             )
 
         return entries
-
-    def _project_instruction(self) -> Optional[Path]:
-        """The nearest instruction file at or above the project directory, stopping at the home directory."""
-        if self._roots.project_directory is None:
-            return None
-        try:
-            current = self._roots.project_directory.expanduser().resolve()
-            home = Path.home().resolve()
-        except OSError:
-            return None
-        while True:
-            for name in PROJECT_INSTRUCTION_NAMES:
-                candidate = current / name
-                if candidate.is_file():
-                    return candidate
-            if current == current.parent or current == home:
-                return None
-            current = current.parent
 
     # Prompt templates
 
@@ -224,43 +169,14 @@ def packaged_prompts_directory() -> Path:
     return Path(__file__).resolve().parent.parent.parent / "runtime" / "prompts"
 
 
-def machine_catalogue(
-    configuration: Any,
-    working_directory: str = "",
-    agent_loader: AgentLoader | None = None,
-) -> FileCatalogue:
-    """The catalogue a person's machine has, including the home roots."""
-    return FileCatalogue(
-        CatalogueRoots(
-            agents=_as_paths(configuration.agent_directories_for(working_directory)),
-            skills=_as_paths(configuration.skill_directories_for(working_directory)),
-            memories=_as_paths(configuration.memory_directories_for(working_directory)),
-            prompts=packaged_prompts_directory(),
-            project_directory=Path(working_directory).expanduser() if working_directory else None,
-            include_home_instructions=True,
-        ),
-        agent_loader=agent_loader,
-    )
-
-
-def project_catalogue(configuration: Any, working_directory: str) -> FileCatalogue:
+def project_catalogue() -> FileCatalogue:
     """The catalogue an embedded harness gets: nothing from disk.
 
-    The library is usable standalone in code: agents, skills and memories are environment
-    content that the host loads from disk and passes in. A bare library embedding carries
-    only its own prompts and none of the machine's profiles.
+    The library is usable standalone in code: instructions, agents, skills and memories are
+    environment content that the host loads from disk and passes in. A bare library embedding
+    carries only its own prompts and none of the machine's profiles.
     """
-    local = Path(working_directory).expanduser()
-    return FileCatalogue(
-        CatalogueRoots(
-            agents=(),
-            skills=(),
-            memories=(),
-            prompts=packaged_prompts_directory(),
-            project_directory=local,
-            include_home_instructions=False,
-        )
-    )
+    return FileCatalogue(CatalogueRoots(prompts=packaged_prompts_directory()))
 
 
 __all__ = [
@@ -268,9 +184,6 @@ __all__ = [
     "Catalogue",
     "CatalogueRoots",
     "FileCatalogue",
-    "PROJECT_INSTRUCTION_NAMES",
-    "home_instruction_paths",
-    "machine_catalogue",
     "packaged_prompts_directory",
     "project_catalogue",
 ]

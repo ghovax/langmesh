@@ -19,7 +19,7 @@ from langchain_core.messages import messages_from_dict
 
 from langmeshd.worker import features_access as _features
 from langmeshd.daemon.agent_files import AgentFileLoader, list_agents
-from langmesh.base.contracts.catalogue import machine_catalogue
+from langmeshd.daemon.machine import machine_catalogue
 from langmesh.base.primitives.limits import current_limits
 from langmesh.base.confinement.file_leases import FileLeaseManager
 from langmesh.base.configuration import Configuration
