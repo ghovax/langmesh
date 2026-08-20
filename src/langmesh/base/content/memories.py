@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from langmesh.base.persistence.file_cache import parsed_file
 
@@ -19,7 +19,7 @@ class Memory(BaseModel):
     title: str = ""
     description: str = ""
     importance: str = ""
-    tags: list[str] = []
+    tags: list[str] = Field(default_factory=list)
     body: str = ""
     path: str = ""
 

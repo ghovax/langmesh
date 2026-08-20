@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated, Any, ClassVar
 
-from pydantic import BaseModel, StringConstraints, model_validator
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 
 NonBlankText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -26,7 +26,7 @@ class Goal(BaseModel):
     #: What that end state is for, which is what lets a closed route be told apart from a lost goal.
     purpose: NonBlankText | None = None
     #: The minimum conditions that must hold for the goal to be met, each one checkable.
-    requirements: list[NonBlankText] = []
+    requirements: list[NonBlankText] = Field(default_factory=list)
     status: str = "active"
     #: What is in the way, written by the review when it accepts that nothing here can pass it.
     blocker: NonBlankText | None = None
