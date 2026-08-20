@@ -45,6 +45,7 @@ from langmesh.runtime.cache_trace import (
     active_cache_lane,
     diagnose,
     provider_cache_key,
+    reconcile,
     trace,
 )
 from langmesh.base.primitives.serialization import compact, upstream_detail
@@ -477,9 +478,15 @@ class ChatCodexModel(BaseChatModel):
                 async for line in response.aiter_lines():
                     chunk = self._line_to_chunk(line, state)
                     if chunk is not None:
+                        usage = getattr(chunk.message, "usage_metadata", None)
                         # Attached to the chunk carrying usage, so the diagnosis travels with the figure it explains.
-                        if getattr(chunk.message, "usage_metadata", None) and not reported:
+                        if usage and not reported:
                             reported = True
+                            # The byte verdict was made before the call; the response's cache figure corrects it.
+                            reconcile(
+                                diagnosis,
+                                int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0),
+                            )
                             chunk.message.additional_kwargs["cache_trace"] = diagnosis
                         yield chunk
 

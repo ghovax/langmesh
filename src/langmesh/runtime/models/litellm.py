@@ -31,6 +31,7 @@ from langmesh.runtime.cache_trace import (
     active_cache_lane,
     diagnose,
     provider_cache_key,
+    reconcile,
     trace,
 )
 from langmesh.base.content.message_content import (
@@ -389,9 +390,15 @@ class ChatLiteLLMModel(BaseChatModel):
         async for chunk in stream:
             generation_chunk = self._litellm_chunk_to_generation_chunk(chunk, block)
             if generation_chunk is not None:
+                usage = getattr(generation_chunk.message, "usage_metadata", None)
                 # Attached to the chunk carrying usage, so the diagnosis travels with the figure it explains.
-                if getattr(generation_chunk.message, "usage_metadata", None) and not reported:
+                if usage and not reported:
                     reported = True
+                    # The byte verdict was made before the call; the response's cache figure corrects it.
+                    reconcile(
+                        diagnosis,
+                        int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0),
+                    )
                     generation_chunk.message.additional_kwargs["cache_trace"] = diagnosis
                 yield generation_chunk
 
@@ -530,6 +537,12 @@ class ChatLiteLLMModel(BaseChatModel):
         response = await litellm.acompletion(
             messages=sent,
             **params,
+        )
+        # The byte verdict was made before the call; the response's cache figure corrects it.
+        reported_usage = self._usage_metadata(getattr(response, "usage", None)) or {}
+        reconcile(
+            diagnosis,
+            int((reported_usage.get("input_token_details") or {}).get("cache_read", 0) or 0),
         )
         result = self._response_to_result(response)
         if result.generations:

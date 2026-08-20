@@ -5,6 +5,11 @@ previous request in its lane is byte-identical (so a prefix cache that kept the 
 request would serve it), ``False`` means something moved or rewrote, and ``None`` means there
 is no previous reading to compare against, so the outcome is *unknown*, not a miss.
 
+The byte verdict is a prediction made before the call; :func:`reconcile` corrects it with the
+provider's actual ``cache_read`` once the response lands. A divergence the provider served
+straight through is not a miss, and real reuse beside a byte model that never lined up is
+unknown rather than a confirmed miss.
+
 Situation matrix, one row each:
 
 - First call in a lane or after a restart: no baseline, outcome unknown.
@@ -165,6 +170,31 @@ def diagnose(current: RequestTrace, previous: Optional[RequestTrace]) -> dict[st
     }
 
 
+def reconcile(diagnosis: dict, cache_read: int) -> dict:
+    """Correct the pre-request verdict with what the provider actually served from cache.
+
+    ``diagnose`` reads only the two request shapes, so its ``prefix_intact`` may judge a
+    request a miss the provider's cache then served. This passes the byte verdict against the
+    response's ``cache_read`` and adjusts the judgment in place, leaving the ``divergence``
+    detail for anyone who wants to know exactly where the request changed.
+    """
+    verdict = diagnosis.get("prefix_intact")
+    if verdict is None or verdict is True:
+        return diagnosis  # no baseline, or the byte prediction already held
+    reachable = int(diagnosis.get("reachable_tokens", 0) or 0)
+    if cache_read <= 0:
+        return diagnosis  # nothing was reused, so the confirmed break stands
+    if reachable <= 0:
+        # Real reuse beside a byte model that found no shared segment: the two requests never
+        # lined up (a borrowed cross-lane baseline), so the outcome is unknown, not a miss.
+        diagnosis["prefix_intact"] = None
+        return diagnosis
+    # reachable and cache_read are tokenizer-shaped, so the comparison allows a hair of variance.
+    if cache_read >= reachable * 0.98:
+        diagnosis["prefix_intact"] = True  # the divergence cost nothing the cache had held
+    return diagnosis
+
+
 __all__ = [
     "INSTRUCTIONS",
     "ITEM",
@@ -176,6 +206,7 @@ __all__ = [
     "cache_lane",
     "diagnose",
     "prefix_intact_label",
+    "reconcile",
     "trace",
     "provider_cache_key",
 ]
