@@ -165,7 +165,12 @@ def build_application(
     async def runtime(request) -> Response:
         if not _reach_authorized(request):
             return JSONResponse(
-                {"error": {"code": "unauthorized", "message": "This door is paired; present its token."}},
+                {
+                    "error": {
+                        "code": "unauthorized",
+                        "message": "This door is paired; present its token.",
+                    }
+                },
                 status_code=401,
             )
         # An empty base is the whole message: address the daemon relative to this origin.
@@ -206,7 +211,12 @@ def build_application(
         """A real file wins and everything else is the daemon's, which cannot be two routes."""
         if not _reach_authorized(request):
             return JSONResponse(
-                {"error": {"code": "unauthorized", "message": "This door is paired; present its token."}},
+                {
+                    "error": {
+                        "code": "unauthorized",
+                        "message": "This door is paired; present its token.",
+                    }
+                },
                 status_code=401,
             )
         if interface is not None and _wants_interface(request.url.path):
@@ -423,9 +433,7 @@ def run(arguments) -> int:
     ensure_daemon()
     try:
         started_daemon_process_id = (
-            int(daemon_pid_path().read_text().strip())
-            if started_the_daemon
-            else None
+            int(daemon_pid_path().read_text().strip()) if started_the_daemon else None
         )
     except (OSError, ValueError):
         started_daemon_process_id = None
@@ -435,9 +443,7 @@ def run(arguments) -> int:
         if started_daemon_process_id is None:
             return
         try:
-            current_daemon_process_id = int(
-                daemon_pid_path().read_text().strip()
-            )
+            current_daemon_process_id = int(daemon_pid_path().read_text().strip())
         except (OSError, ValueError):
             return
         if current_daemon_process_id != started_daemon_process_id:
@@ -485,7 +491,9 @@ def run(arguments) -> int:
         reach_token=reach_token_value,
     )
     if reach:
-        logger.info("langmesh: serving the paired door at the address above; this door is for your devices only.")
+        logger.info(
+            "langmesh: serving the paired door at the address above; this door is for your devices only."
+        )
         logger.info(
             "langmesh: pair a phone by scanning or pasting the pairing link below; it carries the token, so keep it to your devices."
         )

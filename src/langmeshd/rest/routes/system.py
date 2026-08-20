@@ -51,7 +51,9 @@ async def system_permissions():
 async def open_system_permission(request: PermissionOpenRequest):
     """Open (and prompt for, where required) the settings pane that grants one permission."""
     if request.permission not in _PERMISSIONS:
-        raise HTTPException(status_code=404, detail=f"No system permission named {request.permission!r}.")
+        raise HTTPException(
+            status_code=404, detail=f"No system permission named {request.permission!r}."
+        )
     prompt = _PROMPT.get(request.permission)
     if prompt is not None:
         await asyncio.to_thread(prompt)

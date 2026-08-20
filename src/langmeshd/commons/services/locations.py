@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from langmesh.runtime.plugins.locations.resolver import host_is_defined, location_uri_for, LocationAddress
+from langmesh.runtime.plugins.locations.resolver import (
+    host_is_defined,
+    location_uri_for,
+    LocationAddress,
+)
 from langmesh.protocol.dtos import LocationInput
 from itertools import combinations
 from pathlib import Path

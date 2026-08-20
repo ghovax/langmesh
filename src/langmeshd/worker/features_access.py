@@ -9,7 +9,6 @@ mirroring what used to live on the runtime so the harness reads the same way.
 from __future__ import annotations
 
 
-
 def _by(runtime, feature_type):
     return runtime.features.by_type(feature_type)
 
@@ -114,7 +113,9 @@ def continuation_content(runtime, *, goal_review: str = "", task_continuation: s
     feature = _by(runtime, Continuation)
     if feature is None:
         return task_continuation.strip() or goal_review.strip()
-    return feature.continuation_content(goal_review=goal_review, task_continuation=task_continuation)
+    return feature.continuation_content(
+        goal_review=goal_review, task_continuation=task_continuation
+    )
 
 
 def task_continuations(runtime) -> int:

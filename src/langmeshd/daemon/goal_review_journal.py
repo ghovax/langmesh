@@ -23,7 +23,9 @@ class _OpenReview:
 class HostGoalReviewJournal:
     """Translate the library's typed review stream into the product's durable and live lanes."""
 
-    def __init__(self, turn_store: Any, model_identifier: Callable[[], str], host: Any = None) -> None:
+    def __init__(
+        self, turn_store: Any, model_identifier: Callable[[], str], host: Any = None
+    ) -> None:
         self._turn_store = turn_store
         self._model_identifier = model_identifier
         self._reviews: dict[str, _OpenReview] = {}
