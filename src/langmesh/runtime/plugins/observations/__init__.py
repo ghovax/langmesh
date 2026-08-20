@@ -17,7 +17,6 @@ class ObservationMemory(Feature):
     opening hears about it exactly once, without it becoming user history.
     """
 
-
     def __init__(self) -> None:
         self._metadata: dict = {}
         self._error: str | None = None
