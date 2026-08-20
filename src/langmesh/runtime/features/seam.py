@@ -9,12 +9,14 @@ the caller's concern — not the core's and not this seam's.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, AsyncIterator, Sequence
+from typing import Any, AsyncIterator, Sequence, TypeVar, cast
 
 from langmesh.base.configuration import PromptLoader
 from langmesh.runtime.features.context import PluginContext
 from langmesh.runtime.features.host import PluginHost
 from langmesh.runtime.turn_events import TurnEventUnion
+
+_Capability = TypeVar("_Capability")
 
 plugins_package_root = Path(__file__).resolve().parents[1] / "plugins"
 
@@ -47,6 +49,14 @@ class Feature:
         """The tools this feature provides to the session's roster, empty when it provides none."""
         return []
 
+    def contribute_tool_handlers(self) -> dict[str, Any]:
+        """Event-rich handlers for contributed tools that cannot use the generic invocation path."""
+        return {}
+
+    def required_capabilities(self) -> tuple[type, ...]:
+        """Structural capabilities that must be installed beside this feature."""
+        return ()
+
     def contribute_schema_fields(self, tool_name: str) -> dict:
         """Extra argument fields to add to a tool's schema, by tool name.
 
@@ -55,15 +65,6 @@ class Feature:
         extra parameter lives with the plugin that contributes it.
         """
         return {}
-
-    def invoke(self, name: str, *args, **kwargs):
-        """Answer a named capability the core asks for by string, or ``None`` to pass.
-
-        The core never names a plugin or a port: it asks for a capability by name and the
-        first installed feature that answers it does. This is how a plugin exposes its
-        services without the core knowing which plugin owns them.
-        """
-        return None
 
     def compose_prompt(self, variables: dict[str, str]) -> None:
         """Contribute named prompt sections, merging into ``variables`` in place."""
@@ -178,17 +179,23 @@ class Features:
             (feature for feature in self._instances if isinstance(feature, feature_type)), None
         )
 
-    def invoke(self, name: str, *args, **kwargs):
-        """The first installed feature that answers a named capability, in composer order.
+    def capability(self, contract: type[_Capability]) -> _Capability | None:
+        """Return the first installed feature that structurally implements ``contract``."""
+        return next(
+            (
+                cast(_Capability, feature)
+                for feature in self._instances
+                if isinstance(feature, contract)
+            ),
+            None,
+        )
 
-        The core asks for capabilities by string name; the plugin that answers owns the
-        capability. Nothing answers (``None``) when no installed feature handles it.
-        """
-        for feature in self._instances:
-            result = feature.invoke(name, *args, **kwargs)
-            if result is not None:
-                return result
-        return None
+    def require(self, contract: type[_Capability]) -> _Capability:
+        """Return an installed capability or fail at the boundary that requires it."""
+        capability = self.capability(contract)
+        if capability is None:
+            raise RuntimeError(f"The {contract.__name__} feature capability is not installed.")
+        return capability
 
     # The context and the request.
 
@@ -202,6 +209,13 @@ class Features:
         for feature in self._instances:
             tools.extend(feature.contribute_tools())
         return tools
+
+    def contributed_tool_handlers(self) -> dict[str, Any]:
+        """Merge event-rich contributed handlers in feature order, with later features replacing earlier ones."""
+        handlers: dict[str, Any] = {}
+        for feature in self._instances:
+            handlers.update(feature.contribute_tool_handlers())
+        return handlers
 
     def contributed_schema_fields(self, tool_name: str) -> dict:
         """Every extra argument field the installed features add to one tool, merged in feature order."""
@@ -377,7 +391,14 @@ def build_features(
     installed = list(instances or ())
     for feature in installed:
         feature.attach(context, host)
-    return Features(installed)
+    features = Features(installed)
+    for feature in installed:
+        for contract in feature.required_capabilities():
+            if features.capability(contract) is None:
+                raise ValueError(
+                    f"{type(feature).__name__} requires the {contract.__name__} capability."
+                )
+    return features
 
 
 __all__ = [

@@ -343,8 +343,8 @@ The public surface lives in `langmesh.runtime.features`:
 
 - `Feature` — the hooks a feature implements. Hooks you omit are no-ops.
 - `PluginContext` — what a feature is given to live: identity, configuration, its templates, the bus.
-- `PluginBus` — the decoupled channel between features. `subscribe(type, handler)` to hear an event, `emit(event)` to publish one. The core also emits `TurnStarted` and `TurnEnded` here.
-- `Features` — the installed set, which the harness reaches with `features.by_type(SomeFeature)`.
+- `PluginBus` — the synchronous channel between features. `subscribe(type, handler)` hears an event and `emit(event)` delivers it immediately in subscription order.
+- `Features` — the installed set, reached by concrete type with `by_type(...)` or by structural contract with `capability(...)` and `require(...)`.
 - `feature_prompts(name, catalogue)` — a plugin's own templates, behind the catalogue's overrides and in front of the shared set.
 
 The hooks are the points in the turn where a feature can act. The full set a `Feature` may implement:
@@ -354,8 +354,9 @@ The hooks are the points in the turn where a feature can act. The full set a `Fe
 | `attach(context, host)` | installation; the library's own features keep the internal host here |
 | `compose_context(context)` | building the turn's model-facing context |
 | `contribute_tools()` | the tools this feature adds to the session's roster |
+| `contribute_tool_handlers()` | event-rich handlers supplied beside contributed tool schemas |
 | `contribute_schema_fields(tool_name)` | extra argument fields to extend another tool's contract (e.g. `location` on `bash`) |
-| `invoke(name, *args, **kwargs)` | answering a named capability the core asks for by string |
+| `required_capabilities()` | structural feature contracts that composition must satisfy |
 | `compose_prompt(variables)` | building the system prompt's named sections |
 | `assign_title(first_message)` | suggesting a session title |
 | `prepare_request(messages)` | the exact request about to leave |
@@ -386,7 +387,7 @@ session = Session(
 )
 ```
 
-The shipped classes are ordinary classes: construct them with the ports they declare (a journal, a strategy, a store) and hand the instances over. `features=()` runs a plain session with no features at all.
+The shipped classes are ordinary classes: construct them with the ports they declare (a journal, a strategy, a store) and hand the instances over. Structural dependencies are validated when the runtime is built, so a `Bash` or `Web` feature without the `BackgroundCapability` it uses fails immediately with a composition error. `features=()` runs a plain session with no features at all.
 
 What the product runs for a hosted session is the daemon's business, not the library's. `langmeshd.features.compose_plugins` builds the full set — goal review, compaction, permissions, the automatic reviewer, continuation, observational memory, background jobs, work habits, titling, locations, bash, web, interaction, and computer use — and hands it to each executor.
 

@@ -19,7 +19,6 @@ from langmesh.runtime.plugins.continuation.tools import set_tasks, update_tasks
 class Continuation(Feature):
     """Whether the session keeps going on its own, by the configured policy and the allowances spent."""
 
-
     def __init__(self, *, policy: Any = None) -> None:
         self._policy = policy if policy is not None else DefaultContinuationPolicy()
         # Independent from goal continuations: one may share a turn with the other, but neither consumes its allowance.
@@ -35,12 +34,6 @@ class Continuation(Feature):
     def task_manager(self):
         return self._task_manager
 
-    def invoke(self, name: str, *args, **kwargs):
-        """Answer the task-management capabilities the core and tools ask for by name."""
-        if name == "task_manager":
-            return self._task_manager
-        return None
-
     def unfinished(self) -> list[dict]:
         return self._task_manager.unfinished()
 
@@ -52,18 +45,10 @@ class Continuation(Feature):
         return self._task_continuations
 
     def should_continue_goal(self, goal) -> bool:
-        return bool(
-            self._policy.continue_goal(
-                goal, goal.continuations if goal is not None else 0
-            )
-        )
+        return bool(self._policy.continue_goal(goal, goal.continuations if goal is not None else 0))
 
     def should_continue_tasks(self, actionable: Sequence) -> bool:
-        return bool(
-            self._policy.continue_tasks(
-                actionable, self._task_continuations
-            )
-        )
+        return bool(self._policy.continue_tasks(actionable, self._task_continuations))
 
     def note_task_continuation(self) -> None:
         self._task_continuations += 1
@@ -81,9 +66,7 @@ class Continuation(Feature):
 
     def task_continuation_message(self, unfinished_tasks: list) -> str:
         """The hidden instruction that makes unfinished tracked work an actual next turn."""
-        return self._prompts.load(
-            "task_continuation_note", {"tasks": compact(unfinished_tasks)}
-        )
+        return self._prompts.load("task_continuation_note", {"tasks": compact(unfinished_tasks)})
 
     def continuation_content(self, *, goal_review: str = "", task_continuation: str = "") -> str:
         """The one message a continuation turn carries: the goal review's prose and the

@@ -33,12 +33,14 @@ from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.features import (
+    BackgroundCapability,
     BookkeepingView,
     BoundaryView,
     ConversationView,
     PluginBus,
     PluginContext,
     PluginHost,
+    LocationsCapability,
     ToolsView,
     TurnView,
     WindowView,
@@ -441,9 +443,7 @@ class AgentRuntime(_RunsTurns):
             boundary=BoundaryView(
                 sandbox=self._sandbox,
                 writes_anywhere=self.writes_anywhere,
-                resolve_execution=lambda tool_name, arguments: self._features.invoke(
-                    "resolve_execution", tool_name, arguments
-                ),
+                resolve_execution=self._resolve_execution,
                 call_policy=self._call_policy,
                 granted_profile=self._granted_profile,
                 access_grants=lambda: self._access_grants,
@@ -489,11 +489,9 @@ class AgentRuntime(_RunsTurns):
             services=components.services,
         )
         self._features = build_features(components.features, self._plugin_context, plugin_host)
-        # Features may contribute tools of their own (bash, computer use, ...); bind them to the
-        # model and make them executable alongside the configured roster. A feature that answers
-        # the `tool_handler` capability supplies the tool's event-rich handler; the generic path
-        # runs the rest. The core never names a tool's owning feature.
+        # Features may contribute tools and event-rich handlers without the core naming their owners.
         contributed = [with_shared_fields(tool) for tool in self._features.contributed_tools()]
+        contributed_handlers = self._features.contributed_tool_handlers()
         if contributed:
             contributed_names = {tool.name for tool in contributed}
             self._tools = [
@@ -504,7 +502,7 @@ class AgentRuntime(_RunsTurns):
             ] + list(contributed)
             self._tool_schemas.update({tool.name: tool.args_schema for tool in contributed})
             for tool in contributed:
-                handler = self._features.invoke("tool_handler", tool.name) or invoke_supplied
+                handler = contributed_handlers.get(tool.name, invoke_supplied)
                 self._tool_units[tool.name] = Tool(
                     name=tool.name,
                     schema=tool,
@@ -623,7 +621,15 @@ class AgentRuntime(_RunsTurns):
     @property
     def _background(self):
         """This runtime's background-job runner, owned by whatever plugin answers for it."""
-        return self._features.invoke("background")
+        capability = self._features.capability(BackgroundCapability)
+        return capability.runner if capability is not None else None
+
+    def _resolve_execution(self, tool_name: str, arguments: dict) -> Any:
+        """Resolve a feature-owned execution target without naming the feature that owns it."""
+        capability = self._features.capability(LocationsCapability)
+        return (
+            capability.resolve_execution(tool_name, arguments) if capability is not None else None
+        )
 
     def constrained_tool_named(self, tool_name: str):
         """One tool of a given name from the executable set, for a sub-session being bound down to its verdict tool."""

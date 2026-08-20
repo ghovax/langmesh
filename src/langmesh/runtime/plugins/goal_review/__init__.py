@@ -35,6 +35,7 @@ from langmesh.runtime.turn_events import (
     TurnEvent,
 )
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
+from langmesh.runtime.features import BackgroundCapability
 from langmesh.runtime.plugins.continuation import Continuation
 from langmesh.runtime.plugins.goal_review.models import GoalReview
 from langmesh.runtime.plugins.goal_review.tools import (
@@ -68,7 +69,6 @@ _REVIEWER_DISABLED_TOOLS = frozenset(
 class GoalReviewFeature(Feature):
     """The session's goal and the isolated review that decides where it stands."""
 
-
     def __init__(self, *, journal: Any = None) -> None:
         self._journal = journal
         self._goal: Optional[Goal] = None
@@ -100,20 +100,6 @@ class GoalReviewFeature(Feature):
     def set_listener(self, listener: Optional[Callable[[Optional[Goal]], None]]) -> None:
         """Install the callback that hears every goal change, which is how the interface learns of one."""
         self._listener = listener
-
-    def invoke(self, name: str, *args, **kwargs):
-        """Answer the goal capabilities the core and tools ask for by name."""
-        if name == "goal_current":
-            return self._goal
-        if name == "goal_write":
-            (goal,) = args
-            self.write(goal)
-            return True
-        if name == "submit_goal_review":
-            (review,) = args
-            self.submit(review)
-            return True
-        return None
 
     def compose_context(self, context: dict) -> None:
         """The goal as the model sees it, never the bookkeeping around it."""
@@ -187,7 +173,9 @@ class GoalReviewFeature(Feature):
         )
         reviewer_global_configuration = self._context.global_configuration.model_copy(
             update={
-                "toolbox": self._context.global_configuration.toolbox.model_copy(update={"enabled": False})
+                "toolbox": self._context.global_configuration.toolbox.model_copy(
+                    update={"enabled": False}
+                )
             }
         )
         reviewer_permissions = PermissionEvaluator(
@@ -301,9 +289,7 @@ class GoalReviewFeature(Feature):
                 with suppress(asyncio.CancelledError):
                     await review_turn
 
-    async def _open_goal_review_journal(
-        self, review_id: str, assignment: str, goal: Goal
-    ) -> None:
+    async def _open_goal_review_journal(self, review_id: str, assignment: str, goal: Goal) -> None:
         if self._journal is None:
             return
         await self._journal.open(
@@ -382,7 +368,9 @@ class GoalReviewFeature(Feature):
                 )
             )
 
-        async def finish_transcript(status: Literal["completed", "canceled", "failed"], review: GoalReview | None = None) -> None:
+        async def finish_transcript(
+            status: Literal["completed", "canceled", "failed"], review: GoalReview | None = None
+        ) -> None:
             nonlocal transcript_finished
             if transcript_finished:
                 return
@@ -466,7 +454,8 @@ class GoalReviewFeature(Feature):
                 raise
             finally:
                 reviewer.abort()
-                runner = reviewer.features.invoke("background")
+                background = reviewer.features.capability(BackgroundCapability)
+                runner = background.runner if background is not None else None
                 if runner is not None:
                     runner.cancel_all()
                 if not transcript_finished:

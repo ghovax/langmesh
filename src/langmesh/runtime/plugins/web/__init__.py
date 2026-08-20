@@ -7,7 +7,9 @@ composes it. A bare library embedding has no web surface at all.
 
 from __future__ import annotations
 
-from langmesh.runtime.features import Feature, PluginContext
+from typing import Any
+
+from langmesh.runtime.features import BackgroundCapability, Feature, PluginContext
 from langmesh.runtime.plugins.web.tools import download_file, fetch_url, search_web
 
 
@@ -27,26 +29,20 @@ class Web(Feature):
             return [search_web, fetch_url, download_file]
         declared = getattr(context, "agent_configuration", None)
         enabled = getattr(declared, "tools_enabled", None) or []
-        return [
-            tool
-            for tool in (search_web, fetch_url, download_file)
-            if tool.name in enabled
-        ]
+        return [tool for tool in (search_web, fetch_url, download_file) if tool.name in enabled]
 
-    def invoke(self, name: str, *args, **kwargs):
-        """The capability the runtime asks for: a tool's event-rich handler, by tool name."""
-        if name != "tool_handler" or not args:
-            return None
-        tool_name = args[0]
-        if tool_name == "search_web":
-            from langmesh.runtime.plugins.web.handlers import handle_search_web
+    def contribute_tool_handlers(self) -> dict[str, Any]:
+        """Provide the event-rich handlers beside their schemas."""
+        from langmesh.runtime.plugins.web.handlers import handle_download_file, handle_search_web
 
-            return handle_search_web
-        if tool_name == "download_file":
-            from langmesh.runtime.plugins.web.handlers import handle_download_file
+        return {
+            "download_file": handle_download_file,
+            "search_web": handle_search_web,
+        }
 
-            return handle_download_file
-        return None
+    def required_capabilities(self) -> tuple[type, ...]:
+        """Require the runner that owns slow searches, fetches, and downloads."""
+        return (BackgroundCapability,)
 
 
 __all__ = ["Web"]

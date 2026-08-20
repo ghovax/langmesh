@@ -14,6 +14,7 @@ from langmesh.base.primitives.identifiers import new_id
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.primitives.limits import current_limits
 from langmesh.runtime.background import current_background_jobs, current_tool_call_id
+from langmesh.runtime.features import BackgroundCapability
 from langmesh.runtime.tools import context as tool_context, fetching
 from langmesh.runtime.tools.execution import current_tool_services
 
@@ -88,14 +89,16 @@ async def search_web(
         run(),
         identifier=job_id,
         output_path=output_path,
-        arguments={"query": query, "explanation": kwargs.get("explanation", ""), "result_count": result_count},
+        arguments={
+            "query": query,
+            "explanation": kwargs.get("explanation", ""),
+            "result_count": result_count,
+        },
         # A search outliving the turn keeps running, so its result still lands and wakes the agent.
         detached=True,
     )
     # A short inline window, so the common case returns results rather than a pending handle.
-    settled = await jobs.settle_inline(
-        job_id, current_limits().web_search_sync_window
-    )
+    settled = await jobs.settle_inline(job_id, current_limits().web_search_sync_window)
     if settled is not None:
         return settled.result
     # No path or fetch-looking handle in the acknowledgement: the id is the only thing the model needs.
@@ -119,18 +122,18 @@ async def fetch_url(
 ) -> str:
     """Fetch a page; described in descriptions/fetch_url.md."""
     services = current_tool_services()
-    runner = services.features.invoke("background")
+    runner = services.features.require(BackgroundCapability).runner
     sync_window = float(timeout or current_limits().slow_tool_sync_window)
     configured = tool_context.current().fetch_timeout_seconds
     hard_deadline = int(hard_deadline or configured or 30)
     job_identifier = runner.spawn(
-        "fetch_url", fetching.fetch_url(url, format, hard_deadline),
-        tool_call_identifier=current_tool_call_id(), detached=background,
+        "fetch_url",
+        fetching.fetch_url(url, format, hard_deadline),
+        tool_call_identifier=current_tool_call_id(),
+        detached=background,
     )
     if not background:
-        completion = await runner.settle_inline(
-            job_identifier, sync_window
-        )
+        completion = await runner.settle_inline(job_identifier, sync_window)
         if completion is not None:
             return completion.result
     return compact({"code": "fetch_url_started", "status": "running", "job_id": job_identifier})
@@ -152,7 +155,7 @@ async def download_file(
     hard_deadline = int(hard_deadline or configured or 120)
     base = tool_context.current().workspace or ""
     resolved = os.path.abspath(os.path.join(base, path))
-    runner = services.features.invoke("background")
+    runner = services.features.require(BackgroundCapability).runner
     job_identifier = runner.spawn(
         "download_file",
         fetching.download_file(url, resolved, hard_deadline),
@@ -160,9 +163,7 @@ async def download_file(
         detached=background,
     )
     if not background:
-        completion = await runner.settle_inline(
-            job_identifier, sync_window
-        )
+        completion = await runner.settle_inline(job_identifier, sync_window)
         if completion is not None:
             return completion.result
     return compact({"code": "download_file_started", "status": "running", "job_id": job_identifier})

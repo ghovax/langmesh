@@ -47,6 +47,7 @@ MUTATING_SCREEN_PRIMITIVES = frozenset(
     }
 )
 
+
 def screen_mutations(script: str) -> tuple[str, ...]:
     """The state-changing primitives a script calls. Decides who is asked, never what is available."""
     try:
@@ -62,6 +63,7 @@ def screen_mutations(script: str) -> tuple[str, ...]:
                 found.append(name)
     return tuple(found)
 
+
 def _screen_primitive(func: ast.expr) -> str:
     """The primitive a call node names, bare or through ``screen``."""
     if isinstance(func, ast.Attribute):
@@ -69,6 +71,7 @@ def _screen_primitive(func: ast.expr) -> str:
     if isinstance(func, ast.Name):
         return func.id
     return ""
+
 
 class PermissionReview(Feature):
     """Whether a call runs, is asked about, or is refused, and what approval a session keeps."""
@@ -321,21 +324,6 @@ class PermissionReview(Feature):
             "confined_attempt": gate.refused_result,
         }
 
-    def invoke(self, name: str, *args, **kwargs):
-        """Answer the permission capabilities the core and tools ask for by name."""
-        if name == "retry_gate":
-            return self.retry_gate(*args, **kwargs)
-        if name == "decide_retry":
-            (gate,) = args
-            return self.decide_retry(gate)
-        if name == "retry_refusal_result":
-            (gate,) = args
-            return self.retry_refusal_result(gate, **kwargs)
-        if name == "reconsider_gate":
-            (gate,) = args
-            return self.reconsider_gate(gate)
-        return None
-
     def _rule_for(self, tool_name: str, tool_arguments: dict) -> tuple[str, str]:
         """What the configuration says about this call. The subject differs by tool, because the calls do."""
         tools = self._context.agent_configuration.tools
@@ -394,7 +382,9 @@ class PermissionReview(Feature):
             },
         }
 
-    def approve(self, gate: _PreflightGate, *, by: confinement.ApprovedBy, plan: Optional[_ToolPlan] = None) -> None:
+    def approve(
+        self, gate: _PreflightGate, *, by: confinement.ApprovedBy, plan: Optional[_ToolPlan] = None
+    ) -> None:
         """Carry out what approving a gate means, in one place, since it can grant two different things."""
         if gate.escape or gate.whole_disk:
             self.record_grant(
@@ -559,5 +549,6 @@ class PermissionReview(Feature):
             purpose=gate.explanation,
             whole_disk=True,
         )
+
 
 __all__ = ["MUTATING_SCREEN_PRIMITIVES", "PermissionReview", "screen_mutations"]

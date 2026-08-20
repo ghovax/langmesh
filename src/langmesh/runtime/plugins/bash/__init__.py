@@ -19,8 +19,12 @@ from langmesh.base import confinement as _confinement
 from langmesh.base.configuration import PromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.primitives.limits import current_limits, clip_to_tokens
-from langmesh.runtime.background import current_background_jobs, current_tool_call_id, record_child_group
-from langmesh.runtime.features import Feature
+from langmesh.runtime.background import (
+    current_background_jobs,
+    current_tool_call_id,
+    record_child_group,
+)
+from langmesh.runtime.features import BackgroundCapability, Feature
 from langmesh.runtime.tools import context as tool_context
 
 #: The tool's model-facing description, read from this plugin's own prompts directory.
@@ -104,9 +108,7 @@ async def bash(
         except asyncio.CancelledError:
             cancel_process()
             try:
-                await asyncio.wait_for(
-                    process.wait(), timeout=current_limits().sigterm_grace
-                )
+                await asyncio.wait_for(process.wait(), timeout=current_limits().sigterm_grace)
             except asyncio.TimeoutError:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
@@ -124,9 +126,7 @@ async def bash(
                 if output_path.exists()
                 else ""
             )
-            inline_output, output_truncated = clip_to_tokens(
-                output, current_limits().output_tokens
-            )
+            inline_output, output_truncated = clip_to_tokens(output, current_limits().output_tokens)
             payload = {
                 "code": "bash_cancelled",
                 "status": "error",
@@ -157,9 +157,7 @@ async def bash(
                     "returncode": return_code,
                 }
             )
-        inline_output, truncated = clip_to_tokens(
-            output, current_limits().output_tokens
-        )
+        inline_output, truncated = clip_to_tokens(output, current_limits().output_tokens)
         result = {
             "code": result_code,
             "status": result_status,
@@ -203,6 +201,7 @@ async def bash(
         }
     )
 
+
 class Bash(Feature):
     """Runs a shell command: contributes the bash tool and its event-rich handler."""
 
@@ -218,13 +217,15 @@ class Bash(Feature):
         declared = getattr(context.agent_configuration, "tools_enabled", None)
         return [bash] if declared is not None and "bash" in declared else []
 
-    def invoke(self, name: str, *args, **kwargs):
-        """The capability the runtime asks for: a tool's event-rich handler, by tool name."""
-        if name == "tool_handler" and args and args[0] == "bash":
-            from langmesh.runtime.plugins.bash.tools import handle_bash
+    def contribute_tool_handlers(self) -> dict[str, Any]:
+        """Provide Bash's event-rich handler beside its schema."""
+        from langmesh.runtime.plugins.bash.tools import handle_bash
 
-            return handle_bash
-        return None
+        return {"bash": handle_bash}
+
+    def required_capabilities(self) -> tuple[type, ...]:
+        """Require the runner used for both foreground settling and detached commands."""
+        return (BackgroundCapability,)
 
 
 # The tool's model-facing description is this plugin's own file, applied once at import.
