@@ -194,7 +194,7 @@ def trace(pieces: Sequence[Piece]) -> RequestTrace:
                 position=piece.position,
                 role=piece.role,
                 digest=hashlib.blake2b(piece.text.encode(), digest_size=8).hexdigest(),
-                tokens=count_tokens(piece.text),
+                tokens=0 if piece.kind == SETTINGS else count_tokens(piece.text),
             )
             for piece in pieces
         ]

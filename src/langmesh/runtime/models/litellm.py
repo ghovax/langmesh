@@ -25,6 +25,7 @@ from pydantic import Field, PrivateAttr, SecretStr
 
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.cache_trace import (
+    INSTRUCTIONS,
     ITEM,
     SETTINGS,
     TOOLS,
@@ -400,6 +401,10 @@ class ChatLiteLLMModel(BaseChatModel):
     def _trace_request(self, params: dict[str, Any], sent: list[dict[str, Any]]) -> RequestTrace:
         """Cut the outgoing request into the pieces a prompt cache matches on, in wire order."""
         pieces = [Piece(kind=TOOLS, text=compact(params.get("tools") or []))]
+        item_start = 0
+        if sent and sent[0].get("role") == "system":
+            pieces.append(Piece(kind=INSTRUCTIONS, text=compact(sent[0])))
+            item_start = 1
         pieces.append(
             Piece(
                 kind=SETTINGS,
@@ -411,7 +416,7 @@ class ChatLiteLLMModel(BaseChatModel):
                 ),
             )
         )
-        for position, message in enumerate(sent):
+        for position, message in enumerate(sent[item_start:], start=item_start):
             pieces.append(
                 Piece(
                     kind=ITEM,
