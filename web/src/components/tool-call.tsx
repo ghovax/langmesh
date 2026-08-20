@@ -98,7 +98,9 @@ function isToolErrorResult(content: string | null): boolean {
       !!parsed &&
       typeof parsed === "object" &&
       !Array.isArray(parsed) &&
-      (parsed as Record<string, unknown>).code === "tool_error"
+      ["tool_error", "tool_failed", "tool_interrupted"].includes(
+        String((parsed as Record<string, unknown>).code ?? ""),
+      )
     );
   } catch {
     // Not JSON — the plain text is what gets shown, which is the point of trying.
@@ -145,7 +147,7 @@ export function toolCallDetail(
     !!args && Object.keys(args).some((key) => key !== "explanation" && key !== "location");
   const resultContent =
     result == null ? null : typeof result === "string" ? result : JSON.stringify(result);
-  // A tool_error is surfaced on the line itself and leaves nothing for the body.
+  // A tool error is surfaced on the line itself and leaves nothing for the body.
   const showResult =
     resultContent != null &&
     !isToolErrorResult(resultContent) &&

@@ -1134,14 +1134,14 @@ function reduceDataPart(
       const toolName = event.tool_name ?? "";
       const toolCallId = event.tool_call_id ?? "";
       if (toolCallId) {
-        // Mark the call failed generically: the raw text is model-facing and must not leak to the UI.
+        // Mark the call failed with its safe outcome code while keeping raw model-facing text out of the UI.
         let matched = false;
         state.messages = state.messages.map((message) =>
           messageMatchesToolEvent(message, toolName, toolCallId)
             ? ((matched = true),
               {
                 ...message,
-                meta: { ...message.meta, status: "failed", result: { code: "tool_error" } },
+                meta: { ...message.meta, status: "failed", result: { code: event.code } },
               })
             : message,
         );

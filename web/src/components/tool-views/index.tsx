@@ -1192,7 +1192,7 @@ export function ToolResultView({
     const data = parsed as Record<string, unknown>;
     const code = asString(data.code);
     if (status === "running" && hasBackgroundJobId(data)) return null;
-    if (code === "tool_error") return null;
+    if (["tool_error", "tool_failed", "tool_interrupted"].includes(code)) return null;
     if (code === "web_search_completed") return <SearchWebResultView data={data} />;
     if (code === "web_search_error")
       return <ErrorView message={asString(data.message) || translation("searchFailed")} />;
