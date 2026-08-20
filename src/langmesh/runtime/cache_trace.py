@@ -1,30 +1,20 @@
 """Why a request did or did not hit the provider's prompt cache.
 
 ``prefix_intact`` is tri-state: ``True`` means every segment this request shares with the
-previous request in its lane is byte-identical (so a prefix cache that keeps the previous
+previous request in its lane is byte-identical (so a prefix cache that kept the previous
 request would serve it), ``False`` means something moved or rewrote, and ``None`` means there
 is no previous reading to compare against, so the outcome is *unknown*, not a miss.
 
-The paired state matrix for the situations the harness actually produces:
+Situation matrix, one row each:
 
-- First call in a lane (no baseline): outcome unknown; ``prefix_intact=None``.
-- User interrupt or steering while the model is not streaming: the next request simply appends
-  the new message; the shared prefix stays intact -> intact.
-- Steering arriving during a stream: queued and drained at the model boundary, so it lands on
-  the next request, appended -> intact.
-- Tool interrupt: each tool result appends a ``tool`` message; the request grows, the prefix
-  stays -> intact.
-- Network drop on a request: the outgoing request is atomic; the retry resends the identical
-  bytes, so the baseline from the first attempt still matches -> intact. A dropped response is
-  not itself a reading, so the comparison stays on the request boundary, not the response.
-- Background job returning late: delivered as steering on the next request, appended -> intact.
-- Compaction: the fold rewrites the head of the conversation, so the previous prefixes no
-  longer match and the first request after a fold diagnoses a divergence -> miss.
-- Session/daemon restart: the in-memory baseline is gone; the first request is unknown again.
-- Auxiliary lanes (permission review, compaction summary): fall back to the conversation lane's
-  baseline so their diagnosis is against the main session's request, not nothing.
-- A response that carries no usage reading: the request itself is still the baseline, so the
-  follow-up request is diagnosed against it even though no token figure was reported.
+- First call in a lane or after a restart: no baseline, outcome unknown.
+- User interrupt or steering while idle: next request appends the message; prefix stays intact.
+- Steering during a stream: queued, drained at the model boundary, appended; stays intact.
+- Tool interrupt: each tool result appends a message; request grows, prefix stays intact.
+- Network drop: the retry resends identical bytes, so the first attempt still matches; a dropped response is not a reading.
+- Background job returning late: delivered as steering on the next request, appended; stays intact.
+- Compaction: rewrites the conversation head, so the first request after a fold diverges; miss.
+- Usage-less or interrupted response: the request itself is still the baseline for the next request.
 
 The invariant this locks in: every request advances the baseline at the point it is sent, so
 the next request always compares against the bytes that were actually sent, never against a

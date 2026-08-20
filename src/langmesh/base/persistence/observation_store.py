@@ -1,10 +1,8 @@
 """Read the current observational-memory registry owned by a workspace or location.
 
-The reader is an SQLAlchemy Core view over the agent-maintained registry. The ledgers live
-as explicit columns with CHECK invariants rather than JSON payloads, and the reader opens the
-database read-only and re-validates the schema before trusting any row. A missing or broken
-registry is never a crash: it is reported as metadata with a ``status`` so the LLM can hear
-about the problem and repair it.
+An SQLAlchemy Core view over the agent-maintained registry: read-only (`mode=ro`), re-validating
+the documented columnar schema before trusting any row. A missing or broken registry is never a
+crash — it is reported as metadata with a ``status`` so the LLM hears about it and repairs it.
 """
 
 from __future__ import annotations
@@ -243,7 +241,7 @@ class SQLiteObservationStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path).expanduser().resolve(strict=False)
         self._engine = self._engine_for(self.path)
-        # A reader's view of the ledgers, generated from the same column fingerprint the agent's schema must match, so a Core select can never drift from what validation enforces.
+        # The reader's table defs come from the same column fingerprint validation enforces, so a Core select can never drift from it.
         self._metadata = MetaData()
         self._tables: dict[str, Table] = {
             name: Table(
@@ -306,10 +304,7 @@ class SQLiteObservationStore:
     def describe_sync(self) -> dict[str, Any]:
         """Read bounded metadata from one validated transaction without loading payloads.
 
-        A registry that is missing or does not match the current schema is detected here rather
-        than raised: the descriptor carries ``status: missing|broken`` and, on ``broken``, the
-        validation problem plus whatever counts can still be salvaged. That keeps the LLM
-        informed of the state without pretending an unreadable registry read cleanly.
+        Never raises: a registry that is missing or mis-schemed is itself the report — ``status: missing|broken`` plus a ``problem`` message.
         """
         if not self.path.exists():
             return self._empty_description()
