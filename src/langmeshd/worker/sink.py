@@ -11,7 +11,7 @@ from langmesh.protocol.events import (
     CompactionEvent,
     CumulativeUsage,
     ErrorEvent,
-    McpEvent as McpWireEvent,
+    MCPEvent as MCPWireEvent,
     PermissionRequestEvent,
     PrefixDivergence,
     QuestionEvent,
@@ -33,7 +33,7 @@ from langmesh.runtime.turn_events import (
     GoalReviewFinished,
     GoalReviewProgress,
     GoalReviewStarted,
-    Mcp,
+    MCPEvent,
     Status,
     Steering,
     Suspended,
@@ -214,11 +214,11 @@ class _TurnEventSink:
             case Checkpoint():
                 # A durable-safe point: snapshot the conversation so a crash leaves completed tools' results in the record.
                 await self._save_conversation()
-            case Mcp():
+            case MCPEvent():
                 await self.flush()
                 await self._emit(
                     _event_part(
-                        McpWireEvent(
+                        MCPWireEvent(
                             server=event.server,
                             tool=event.tool,
                             event=event.event if event.event is not None else {},

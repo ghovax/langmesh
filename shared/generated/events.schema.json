@@ -217,7 +217,7 @@
       ],
       "type": "object"
     },
-    "McpEvent": {
+    "MCPEvent": {
       "additionalProperties": false,
       "properties": {
         "event": {
@@ -891,7 +891,7 @@
           "done": "#/$defs/DoneEvent",
           "error": "#/$defs/ErrorEvent",
           "inbound_message": "#/$defs/InboundMessageEvent",
-          "mcp_event": "#/$defs/McpEvent",
+          "mcp_event": "#/$defs/MCPEvent",
           "permission_request": "#/$defs/PermissionRequestEvent",
           "question": "#/$defs/QuestionEvent",
           "retry": "#/$defs/RetryEvent",
@@ -923,7 +923,7 @@
           "$ref": "#/$defs/ToolResultEvent"
         },
         {
-          "$ref": "#/$defs/McpEvent"
+          "$ref": "#/$defs/MCPEvent"
         },
         {
           "$ref": "#/$defs/StatusEvent"

@@ -94,7 +94,7 @@ class ToolResultEvent(_EventBase):
     metadata: ToolMetadata
 
 
-class McpEvent(_EventBase):
+class MCPEvent(_EventBase):
     kind: Literal["mcp_event"] = "mcp_event"
     tool_call_id: str
     server: str = ""
@@ -245,7 +245,7 @@ WireEvent = Annotated[
         ThinkingDoneEvent,
         ToolCallEvent,
         ToolResultEvent,
-        McpEvent,
+        MCPEvent,
         StatusEvent,
         DoneEvent,
         CompactionEvent,
@@ -267,7 +267,7 @@ WIRE_EVENT_MODELS: tuple[type[_EventBase], ...] = (
     ThinkingDoneEvent,
     ToolCallEvent,
     ToolResultEvent,
-    McpEvent,
+    MCPEvent,
     StatusEvent,
     DoneEvent,
     CompactionEvent,
