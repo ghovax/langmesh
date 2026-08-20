@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Where state lives is the placement layer's business, resolved in `langmesh.base.confinement.paths`.
 
+
 def _bundled_dotagents_root() -> Path:
     """The ``.agents`` directory shipped with the harness, so every folder sees the base profiles."""
     if getattr(sys, "frozen", False):
@@ -681,7 +682,9 @@ class BashToolConfiguration(BaseModel):
         parts = segment.split()
         if not parts or parts[0] != "rm" or len(parts) < 2:
             return segment
-        flag_tokens = [part for part in parts[1:] if part.startswith("-") and not part.startswith("--")]
+        flag_tokens = [
+            part for part in parts[1:] if part.startswith("-") and not part.startswith("--")
+        ]
         if not flag_tokens:
             return segment
         flags = "".join(part.lstrip("-") for part in flag_tokens)
@@ -690,7 +693,9 @@ class BashToolConfiguration(BaseModel):
         canonical = "".join(dict.fromkeys(flags.lower()))
         if "r" in canonical and "f" in canonical:
             canonical = "rf"
-        rest = [part for part in parts[1:] if not (part.startswith("-") and not part.startswith("--"))]
+        rest = [
+            part for part in parts[1:] if not (part.startswith("-") and not part.startswith("--"))
+        ]
         return " ".join(["rm", f"-{canonical}", *rest])
 
     @staticmethod
@@ -806,7 +811,9 @@ class PromptLoader:
         path = self._directory / f"{template_name}.{self._extension}"
         content = parsed_file(path, lambda each: each.read_text())
         if content is None:
-            return self._fallback.load(template_name, variables) if self._fallback is not None else ""
+            return (
+                self._fallback.load(template_name, variables) if self._fallback is not None else ""
+            )
         return self._replace_variables(content, variables, template_name)
 
     @classmethod

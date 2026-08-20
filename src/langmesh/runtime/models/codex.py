@@ -485,7 +485,10 @@ class ChatCodexModel(BaseChatModel):
                             # The byte verdict was made before the call; the response's cache figure corrects it.
                             reconcile(
                                 diagnosis,
-                                int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0),
+                                int(
+                                    (usage.get("input_token_details") or {}).get("cache_read", 0)
+                                    or 0
+                                ),
                             )
                             chunk.message.additional_kwargs["cache_trace"] = diagnosis
                         yield chunk

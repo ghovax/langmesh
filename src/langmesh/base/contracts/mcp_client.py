@@ -280,9 +280,7 @@ class _StatefulStdioSession:
         self, event_callback: MCPServerEventCallback | None = None
     ) -> AsyncIterator[ClientSession]:
         # Bounded like the startup connect, so an endpoint that never completes its handshake cannot hold the caller.
-        session = await asyncio.wait_for(
-            self._connect(), timeout=current_limits().mcp_connect
-        )
+        session = await asyncio.wait_for(self._connect(), timeout=current_limits().mcp_connect)
         async with self._operation_lock:
             if event_callback is not None:
                 self._callbacks.add(event_callback)
@@ -359,9 +357,7 @@ class _StatefulStreamableHTTPSession:
         self, event_callback: MCPServerEventCallback | None = None
     ) -> AsyncIterator[ClientSession]:
         # Bounded like the startup connect, so an endpoint that never completes its handshake cannot hold the caller.
-        session = await asyncio.wait_for(
-            self._connect(), timeout=current_limits().mcp_connect
-        )
+        session = await asyncio.wait_for(self._connect(), timeout=current_limits().mcp_connect)
         async with self._operation_lock:
             if event_callback is not None:
                 self._callbacks.add(event_callback)

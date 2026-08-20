@@ -22,10 +22,7 @@ class DefaultContinuationPolicy:
         unfinished_tasks: Sequence[Mapping[str, Any]],
         completed_turns: int,
     ) -> bool:
-        return bool(
-            unfinished_tasks
-            and completed_turns < current_limits().task_continuation_turns
-        )
+        return bool(unfinished_tasks and completed_turns < current_limits().task_continuation_turns)
 
 
 __all__ = ["DefaultContinuationPolicy"]

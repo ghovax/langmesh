@@ -20,7 +20,15 @@ from langchain.tools import tool
 from langmesh.base.configuration import PromptLoader
 from langmesh.base.primitives.limits import current_limits
 from langmesh.base.primitives.serialization import compact
-from langmesh.computer import control, engine as native_surface, retrieval, surface as surface_module, targets as target_registry, web as web_surface, workflows as workflow_registry
+from langmesh.computer import (
+    control,
+    engine as native_surface,
+    retrieval,
+    surface as surface_module,
+    targets as target_registry,
+    web as web_surface,
+    workflows as workflow_registry,
+)
 from langmesh.computer.retrieval import retrieval_policy_from, set_retrieval_policy
 from langmesh.computer.surface import message_loader
 from langmesh.runtime.features import Feature
@@ -40,9 +48,11 @@ _asked_queries: list[tuple[Any, str]] = []
 # What an element id looks like on both surfaces, so one can be told from a description of an element.
 _ELEMENT_ID = re.compile(r"(?:f\d+)?e\d+|req\d+|ws\d+|\d+(?:\.\d+)+")
 
+
 def _surface_for(surface_name: str):
     """The live surface a screen tool names: the native macOS tree, or the user's Chrome."""
     return native_surface.SURFACE if surface_name == "computer" else web_surface.SURFACE
+
 
 @tool
 async def control_screen(
@@ -57,17 +67,21 @@ async def control_screen(
         return compact({"ok": False, "error": "control_screen needs a script to run."})
     target_id = str(target or "").strip()
     if not target_id:
-        return compact({
-            "ok": False,
-            "error": "control_screen needs a target — the window or tab to act in.",
-            "targets": {"current": target_registry.describe_all()},
-        })
+        return compact(
+            {
+                "ok": False,
+                "error": "control_screen needs a target — the window or tab to act in.",
+                "targets": {"current": target_registry.describe_all()},
+            }
+        )
     target_obj = target_registry.find_target(target_id)
     if target_obj is None:
         listing = target_registry.list_targets()
         same_app = [place for place in listing if place.app.lower() == target_id.strip().lower()]
         if same_app:
-            described = target_registry.describe_all(sorted(same_app, key=target_registry._worth_naming))
+            described = target_registry.describe_all(
+                sorted(same_app, key=target_registry._worth_naming)
+            )
             error = f"{target_id!r} is an application, not a window — an application has no single place to act in. Its windows are listed under 'candidates', likeliest first."
             payload = {"ok": False, "error": error, "targets": {"candidates": described}}
         else:
@@ -75,7 +89,10 @@ async def control_screen(
             payload = {
                 "ok": False,
                 "error": error,
-                "targets": {"missing": [target_id], "current": target_registry.describe_all(listing)},
+                "targets": {
+                    "missing": [target_id],
+                    "current": target_registry.describe_all(listing),
+                },
             }
         return compact(payload)
     surface_name = target_obj.surface
@@ -146,7 +163,9 @@ async def control_screen(
         asked.append((vector, top))
         del asked[:-12]
 
-    def _rank(query: str, limit: int, floor: float = 0.0, facets: dict | None = None, near: str = "") -> list:
+    def _rank(
+        query: str, limit: int, floor: float = 0.0, facets: dict | None = None, near: str = ""
+    ) -> list:
         raw = surface.documents(target_id)
         if not raw.get("ok"):
             read_failures.append({key: value for key, value in raw.items() if key != "ok"})
@@ -154,7 +173,9 @@ async def control_screen(
         documents = raw.get("documents", [])
         candidates = _matching(documents, facets or {})
         if not candidates and documents:
-            logger.info("screen find: facets %r admitted nothing; ranking the whole surface", facets)
+            logger.info(
+                "screen find: facets %r admitted nothing; ranking the whole surface", facets
+            )
             candidates = documents
         index = retrieval.Index(candidates)
         if near:
@@ -256,7 +277,11 @@ async def control_screen(
         for record in records:
             _register(record)
         ran.append(
-            {"find_many": str(query), "matched": len(records), "ids": [record["id"] for record in records]}
+            {
+                "find_many": str(query),
+                "matched": len(records),
+                "ids": [record["id"] for record in records],
+            }
         )
         return records
 
@@ -271,12 +296,16 @@ async def control_screen(
         top, top_score = scored[0]
         shortlist = current_limits().find_candidates
         competitive = [
-            record for record, score in scored[:shortlist] if top_score <= 0 or score >= 0.9 * top_score
+            record
+            for record, score in scored[:shortlist]
+            if top_score <= 0 or score >= 0.9 * top_score
         ]
         twins = [record for record in competitive[1:] if _identity(record) == _identity(top)]
         if twins:
             raise RuntimeError(
-                control_message("ambiguous_match", query=str(query), candidates=_candidates([top, *twins]))
+                control_message(
+                    "ambiguous_match", query=str(query), candidates=_candidates([top, *twins])
+                )
             )
         runner_up = scored[1][1] if len(scored) > 1 else 0.0
         spread = statistics.pstdev([score for _record, score in scored]) if len(scored) > 1 else 0.0
@@ -345,7 +374,9 @@ async def control_screen(
             args = await asyncio.to_thread(_resolve_target, name, list(args))
         watched = name in watched_verbs
         before = (
-            await asyncio.to_thread(surface.glance, target_id) if watched else surface_module.Glance()
+            await asyncio.to_thread(surface.glance, target_id)
+            if watched
+            else surface_module.Glance()
         )
         outcome = await asyncio.to_thread(surface.perform, target_id, name, list(args), keywords)
         if isinstance(outcome, dict):
@@ -375,7 +406,9 @@ async def control_screen(
         workspace=active.workspace,
         primitives=tuple(sorted(permitted_primitives)),
         target=target_id,
-        import_roots=workflow_registry.import_roots(services.project_directory or active.workspace or ""),
+        import_roots=workflow_registry.import_roots(
+            services.project_directory or active.workspace or ""
+        ),
         dependency_roots=workflow_registry.dependency_roots(
             services.project_directory or active.workspace or ""
         ),
@@ -397,6 +430,7 @@ async def control_screen(
     if rephrased and isinstance(result, dict):
         result.setdefault("note", rephrased[0])
     return compact(result)
+
 
 class ComputerUse(Feature):
     """Drives the screen: contributes the control_screen tool and the screen context."""
@@ -430,7 +464,11 @@ class ComputerUse(Feature):
         guidance = self._prompts.load("computer_control_guidance", {}).strip()
         if not guidance:
             return messages
-        return [*messages, self._host.turn.reminder_message(guidance)] if self._host is not None else messages
+        return (
+            [*messages, self._host.turn.reminder_message(guidance)]
+            if self._host is not None
+            else messages
+        )
 
     def compose_context(self, context: dict) -> None:
         """The screen targets and primitives, when the feature is enabled."""

@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from langmesh.base.configuration import Configuration
-from langmesh.base.persistence.observation_store import OBSERVATIONS_FILENAME, SQLiteObservationStore
+from langmesh.base.persistence.observation_store import (
+    OBSERVATIONS_FILENAME,
+    SQLiteObservationStore,
+)
 from langmesh.base.persistence.resources import MaterializedResources, WorkspaceResourcesLike
 
 

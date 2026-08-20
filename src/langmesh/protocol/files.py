@@ -80,7 +80,9 @@ async def ingest_file_part(
     client: Optional[httpx.AsyncClient] = None,
 ) -> Optional[dict[str, Any]]:
     """Materialize an inbound file part into the upload store, or `None` when it is too large or unfetchable."""
-    file = getattr(part, "root", part).file if hasattr(part, "root") else getattr(part, "file", None)
+    file = (
+        getattr(part, "root", part).file if hasattr(part, "root") else getattr(part, "file", None)
+    )
     if file is None:
         return None
     name = file.name or "file"
@@ -171,9 +173,7 @@ class FileUrlSigner:
         return self._within_root(file_path)
 
     def sign(self, file_path: str, *, ttl_seconds: Optional[int] = None) -> str:
-        ttl_seconds = int(
-            ttl_seconds if ttl_seconds is not None else current_limits().file_url_ttl
-        )
+        ttl_seconds = int(ttl_seconds if ttl_seconds is not None else current_limits().file_url_ttl)
         if not self._within_root(file_path):
             raise PathNotServableError(f"{file_path!r} is outside the servable file root")
         token = jwt.encode(

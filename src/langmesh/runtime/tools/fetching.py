@@ -68,9 +68,7 @@ async def fetch_url(url: str, output_format: str = "markdown", timeout_seconds: 
         output_format = _FORMATS[0]
     content, engine = await _fetch_through_engines(_http_url(url), output_format, timeout_seconds)
 
-    inline_content, truncated = clip_to_tokens(
-        content, current_limits().fetch_tokens
-    )
+    inline_content, truncated = clip_to_tokens(content, current_limits().fetch_tokens)
     fields: dict[str, object] = {
         "url": url,
         "format": output_format,

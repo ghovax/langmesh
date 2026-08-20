@@ -91,8 +91,5 @@ class ObservationMemory(Feature):
             return messages
         return [
             *messages,
-            *(
-                self._host.turn.reminder_message(note.strip())
-                for note in notes
-            ),
+            *(self._host.turn.reminder_message(note.strip()) for note in notes),
         ]

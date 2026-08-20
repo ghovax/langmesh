@@ -145,7 +145,9 @@ class BackgroundJobs:
     def _persist_finished(self, identifier: str) -> None:
         record = self._jobs.get(identifier)
         if record is not None and self._session_id:
-            self._store.record_finished(identifier, self._result_string(record), status=STATUS_COMPLETED)
+            self._store.record_finished(
+                identifier, self._result_string(record), status=STATUS_COMPLETED
+            )
 
     def bind_tool_call(self, identifier: str, tool_call_identifier: str) -> None:
         """Correlate a job with the tool call that started it, so its completion can reference that call."""
@@ -213,8 +215,7 @@ class BackgroundJobs:
         if not self._jobs:
             return
         waiters = [
-            asyncio.ensure_future(asyncio.shield(record.task))
-            for record in self._jobs.values()
+            asyncio.ensure_future(asyncio.shield(record.task)) for record in self._jobs.values()
         ]
         for wake_event in wake_events:
             waiters.append(asyncio.ensure_future(wake_event.wait()))

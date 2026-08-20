@@ -42,9 +42,7 @@ class AgentLoader(Protocol):
 class FileCatalogue:
     """The `.agents` trees on disk: what LangMesh has always read, now behind the interface."""
 
-    def __init__(
-        self, roots: CatalogueRoots, agent_loader: AgentLoader | None = None
-    ) -> None:
+    def __init__(self, roots: CatalogueRoots, agent_loader: AgentLoader | None = None) -> None:
         self._roots = roots
         self._agent_loader = agent_loader
 
