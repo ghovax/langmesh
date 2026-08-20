@@ -111,13 +111,13 @@ snapshot = await registry.load()
 for entry in snapshot["entries"]["observations"]:
     ...  # Each entry carries id, updated_at, and the validated observation fields.
 
-descriptor = await registry.describe()  # path, revision, counts, and timestamp extent only
+descriptor = await registry.describe()  # path, revision, counts, status, and timestamp extent
 
 async for changed in registry.watch():
     ...  # A complete validated snapshot, same revision/entries shape as load().
 ```
 
-The snapshot is a plain mapping: `revision` is an integer, and `entries` maps each ledger name (`observations`, `directives`) to a list of validated entry dicts. An observation entry carries `id` and `updated_at` plus the validated fields (`category`, `claim`, `detail`, `evidence`, `standing`, `files`); a directive entry carries `id`, `updated_at`, `kind`, `summary`, `detail`, `occasion`, and `files`. The registry stores each entry as explicit columns, never one JSON blob, so the required fields of the row (its `category`, `claim`, and `standing`) are enforced by the schema rather than left to a writer's memory. `load()` and `watch()` validate every row and timestamp; a malformed registry raises `ObservationRegistryError`. All three methods are read-only and create nothing. A configured `Session` exposes this same object as `session.observations`, so code already driving an agent does not configure the resource boundary twice.
+The snapshot is a plain mapping: `revision` is an integer, and `entries` maps each ledger name (`observations`, `directives`) to a list of validated entry dicts. An observation entry carries `id` and `updated_at` plus the validated fields (`category`, `claim`, `detail`, `evidence`, `standing`, `files`); a directive entry carries `id`, `updated_at`, `kind`, `summary`, `detail`, `occasion`, and `files`. The registry stores each entry as explicit columns, never one JSON blob, so the required fields of the row (its `category`, `claim`, and `standing`) are enforced by the schema rather than left to a writer's memory. `load()` and `watch()` validate every row and timestamp; a malformed registry raises `ObservationRegistryError`. Reads run through an SQLAlchemy Core view that opens the database read-only (`mode=ro`) and re-validates the schema before trusting any row. `describe()` never raises: a registry that is absent or no longer matches the current schema is itself the answer, reported as `status: "missing" | "broken"` with a `problem` message when broken, so the LLM hears about the state instead of silently getting no entries. There is no backward compatibility with the pre-columnar JSON-schema format — such a file is detected and reported as broken, never interpreted. All three methods are read-only and create nothing. A configured `Session` exposes this same object as `session.observations`, so code already driving an agent does not configure the resource boundary twice.
 
 Three more things sit around the turn: bound it, wrap its tools, decide how its history compacts. Each one is an object with a method or two, so your own is as short as the ones that ship:
 

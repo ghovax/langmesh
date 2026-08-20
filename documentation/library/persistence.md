@@ -116,7 +116,7 @@ Call `refresh_resources()` at an idle boundary to adopt external changes, and `s
 
 ### Observational memory
 
-`session.observations` is a configured `ObservationRegistry` over the same resources. `describe()` returns bounded metadata, `load()` returns the validated current snapshot, and `watch()` yields committed revisions without polling.
+`session.observations` is a configured `ObservationRegistry` over the same resources. `describe()` returns bounded metadata — path, revision, per-ledger counts, timestamp extent, and a `status` of `ok`, `missing`, or `broken` with a `problem` message when broken. It never raises, because an absent or unreadable registry is itself the report. `load()` returns the validated current snapshot, and `watch()` yields committed revisions without polling.
 
 ```python
 descriptor = await session.observations.describe()
@@ -127,6 +127,8 @@ async for changed in session.observations.watch():
 ```
 
 These APIs are read-only. `load()` returns a mapping: `entries` maps the ledger names (`observations`, `directives`) to lists of validated entry dicts — an observation entry carries `id` and `updated_at` plus the validated fields (`category`, `claim`, `detail`, `evidence`, `standing`, `files`), a directive entry carries `id`, `updated_at`, `kind`, `summary`, `detail`, `occasion`, and `files`. The agent changes `.agents/observations.sqlite` through the documented atomic Bash protocol in the `observational-memory` skill.
+
+Registry reads are an SQLAlchemy Core view over a database opened read-only (`mode=ro`) — the file can never be created or written by the reader. The schema is re-validated before any row is trusted, and a registry that is missing or does not match the current columnar schema is detected and surfaced as `status` metadata rather than read as empty. Legacy JSON-schema databases from before the columnar layout are not read or migrated; they register as broken.
 
 ### Checkpoints
 
