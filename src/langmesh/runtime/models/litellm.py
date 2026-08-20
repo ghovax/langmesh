@@ -641,10 +641,21 @@ class ChatLiteLLMModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         params = self._completion_kwargs(stop=stop, **kwargs)
-        sent, cache_candidate = self._apply_cache_breakpoints(self._messages_to_dicts(messages))
+        translated = self._messages_to_dicts(messages)
+        current_trace = self._trace_request(params, translated)
+        sent, cache_candidate = self._apply_cache_breakpoints(translated)
         self._remember_cache_candidate(cache_candidate)
+        diagnosis = self._cache_diagnosis(current_trace)
         response = litellm.completion(messages=sent, **params)
-        return self._response_to_result(response)
+        reported_usage = self._usage_metadata(getattr(response, "usage", None)) or {}
+        reconcile(
+            diagnosis,
+            int((reported_usage.get("input_token_details") or {}).get("cache_read", 0) or 0),
+        )
+        result = self._response_to_result(response)
+        if result.generations:
+            result.generations[0].message.additional_kwargs["cache_trace"] = diagnosis
+        return result
 
     def _response_to_result(self, response: Any) -> ChatResult:
         import json as _json

@@ -558,6 +558,8 @@ class ChatCodexModel(BaseChatModel):
             raise ChatGPTAuthError("Not signed in to ChatGPT (or the session expired).")
         payload = self._build_payload(messages, stream=True, **kwargs)
         headers = request_headers(tokens, self.session_id)
+        diagnosis = self._cache_diagnosis(self._trace_payload(payload))
+        reported = False
         # Carried so a failure can name the model that refused the request and the window it was measured against.
         state: dict[str, Any] = {
             "saw_tool_call": False,
@@ -575,5 +577,16 @@ class ChatCodexModel(BaseChatModel):
                 for line in response.iter_lines():
                     chunk = self._line_to_chunk(line, state)
                     if chunk is not None:
+                        usage = getattr(chunk.message, "usage_metadata", None)
+                        if usage and not reported:
+                            reported = True
+                            reconcile(
+                                diagnosis,
+                                int(
+                                    (usage.get("input_token_details") or {}).get("cache_read", 0)
+                                    or 0
+                                ),
+                            )
+                            chunk.message.additional_kwargs["cache_trace"] = diagnosis
                         chunks.append(cast(AIMessageChunk, chunk.message))
         return self._chunks_to_result(chunks)
