@@ -458,9 +458,14 @@ class ChatCodexModel(BaseChatModel):
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
         }
-        cached = (usage.get("input_tokens_details") or {}).get("cached_tokens")
-        if cached:
-            metadata["input_token_details"] = {"cache_read": int(cached)}
+        input_details = usage.get("input_tokens_details") or {}
+        cached = int(input_details.get("cached_tokens") or 0)
+        cache_write = int(input_details.get("cache_write_tokens") or 0)
+        if cached or cache_write:
+            metadata["input_token_details"] = {
+                "cache_read": cached,
+                "cache_creation": cache_write,
+            }
         reasoning = (usage.get("output_tokens_details") or {}).get("reasoning_tokens")
         if reasoning:
             metadata["output_token_details"] = {"reasoning": int(reasoning)}
