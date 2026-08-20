@@ -201,8 +201,8 @@ class PermissionReview(Feature):
             return plan
 
         subject, rule = self._rule_for(tool_name, tool_arguments)
-        # A call with an execution target (a remote location) has no box here to escape, so the rules are the whole policy.
-        profile = None if call_site is not None else self.granted_profile()
+        # A remote call has no local sandbox to escape, while a named local target retains the local boundary.
+        profile = None if call_site is not None and call_site.is_remote else self.granted_profile()
         request, _ = parse_access_request(tool_arguments.get("access_request"))
         escape = escape_of(request, profile, workspace=policy.working_directory)
 
