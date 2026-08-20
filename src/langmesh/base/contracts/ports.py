@@ -29,6 +29,19 @@ if TYPE_CHECKING:  # pragma: no cover - import only for typing; `base` stays fre
 # Who decides whether a gated tool call proceeds.
 
 
+@runtime_checkable
+class DurableModelCache(Protocol):
+    """Persists provider-native cache continuity beside the session checkpoint."""
+
+    def model_cache_snapshot(self) -> dict[str, Any]:
+        """Return JSON-safe cache state owned by this model and session."""
+        ...
+
+    def restore_model_cache(self, snapshot: object) -> None:
+        """Restore a prior snapshot or ignore one that does not belong to this model route."""
+        ...
+
+
 @dataclass(frozen=True)
 class SuspensionGate:
     """One decision a turn is blocked on. Its fields are the runtime gate's, since one is built from the other."""
@@ -614,6 +627,7 @@ __all__ = [
     "CatalogueLike",
     "Checkpoints",
     "Credentials",
+    "DurableModelCache",
     "GoalReviewContext",
     "GoalReviewJournal",
     "GoalReviewOutcome",
