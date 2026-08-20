@@ -39,7 +39,7 @@ from langmesh.base.contracts.ports import (
     WorkspaceManager,
     describe_unmet,
 )
-from langmesh.base.contracts.tools import ToolGrant, ToolLike, as_tool_grants
+from langmesh.base.contracts.tools import ToolLike
 from langmesh.base.persistence.observations import ObservationRegistry
 from langmesh.base.persistence.resources import (
     MaterializedResources,
@@ -144,11 +144,11 @@ class Session:
         if tools:
             components = dataclasses.replace(
                 components,
-                tools=[*components.tools, *as_tool_grants(tools)],
+                tools=[*components.tools, *tools],
             )
         self._components = components
-        # Grants handed to `grant_tool` before the runtime exists, applied when it is built.
-        self._pending_grants: list[ToolGrant] = []
+        # Tools handed to `grant_tool` before the runtime exists join its initial stable schema.
+        self._pending_tools: list[ToolLike] = []
         self._mcp_server_manager = components.mcp_servers
         self._lifecycle = AsyncExitStack()
         # Reading configuration must not leave a file in the caller's home directory.
@@ -277,20 +277,17 @@ class Session:
                         environment=environment,
                     ),
                 )
-            for grant in self._pending_grants:
-                self._runtime.grant_tool(grant.tool)
-            self._pending_grants = []
+            for tool in self._pending_tools:
+                self._runtime.grant_tool(tool)
+            self._pending_tools = []
         return self._runtime
 
     def grant_tool(self, tool: ToolLike) -> None:
-        """Grant a tool to this session now: dispatchable immediately, and described to the model
-        by an appended conversation message from the next model call. Append-only, so the provider
-        cache prefix is untouched. Works before the first turn as well as mid-session."""
-        grant = as_tool_grants([tool])[0]
+        """Grant a real provider-visible tool, replacing one of the same name when present."""
         if self._runtime is None:
-            self._pending_grants.append(grant)
+            self._pending_tools.append(tool)
         else:
-            self._runtime.grant_tool(grant.tool)
+            self._runtime.grant_tool(tool)
 
     async def prepare_worktree(self, strategy: WorktreeStrategy = "worktree") -> str:
         """Give this session its own git worktree and run its tools there; opt-in, because it writes to disk."""

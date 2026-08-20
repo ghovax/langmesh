@@ -94,7 +94,7 @@ session = Session(agent, directory="/srv/checkout", components=components)
 
 ## Supplied tools
 
-Pass tools to `Session(..., tools=[...])`, or add one at any later moment with `session.grant_tool(...)`. Both are append-only: the tool's description and schema ride as an appended conversation message, so the provider-cache prefix never changes. A caller-supplied tool is gated by default.
+Pass predictable tools to `Session(..., tools=[...])` so they join the initial stable provider schema, or add or replace one later with `session.grant_tool(...)`. A live grant intentionally changes the next request's tool segment, then becomes the reusable schema for following calls. A caller-supplied tool is gated by default.
 
 ```python
 from langchain_core.tools import tool

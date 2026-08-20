@@ -9,7 +9,6 @@ from typing import Any, Awaitable, Callable, Sequence
 from langchain_core.tools import BaseTool
 
 from langmesh.base.configuration import AgentConfiguration, Configuration
-from langmesh.base.contracts.tools import ToolGrant
 from langmesh.base.contracts.ports import (
     Approvals,
     CatalogueLike,
@@ -61,7 +60,7 @@ class RuntimeComponents:
     file_leases: Any = None
     permissions: Any = None
     prompt_composer: Any = None
-    tools: Sequence[BaseTool | ToolGrant] = field(default_factory=tuple)
+    tools: Sequence[BaseTool] = field(default_factory=tuple)
     toolset: Sequence[BaseTool] | None = None
     tool_gate: str = "ask"
     hooks: Sequence[Any] = field(default_factory=tuple)
