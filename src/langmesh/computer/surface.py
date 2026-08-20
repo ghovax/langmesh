@@ -9,7 +9,7 @@ import queue
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, ClassVar, Optional
 
 from langmesh.base.configuration import PromptLoader
 from langmesh.base.primitives.limits import current_limits
@@ -244,7 +244,7 @@ class Surface:
         return {"ok": False, "error": detail}
 
     # The primitives the dispatcher services rather than the surface, so their shapes are written here.
-    PROVIDED_SIGNATURES = {
+    PROVIDED_SIGNATURES: ClassVar[dict[str, str]] = {
         "find_one": 'screen.find_one(query, clickable=None, near="", name="", context="")',
         "find_many": 'screen.find_many(query, limit=8, clickable=None, near="", name="", context="")',
         "wait_for": 'screen.wait_for(query, seconds=5, clickable=None, near="", name="", context="")',

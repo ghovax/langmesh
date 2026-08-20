@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Callable, Optional, Sequence, cast
+from typing import Any, AsyncIterator, Callable, ClassVar, Optional, Sequence, cast
 from uuid import uuid4
 
 import litellm
@@ -206,7 +206,7 @@ class ChatLiteLLMModel(BaseChatModel):
     _TRAILING_BREAKPOINTS = 2
 
     #: Copilot resells Claude but reads a differently named marker, so the key is named per route rather than assumed.
-    _CACHE_CONTROL_KEYS = {"github_copilot": "copilot_cache_control"}
+    _CACHE_CONTROL_KEYS: ClassVar[dict[str, str]] = {"github_copilot": "copilot_cache_control"}
     _DEFAULT_CACHE_CONTROL_KEY = "cache_control"
 
     def _route(self) -> str:
