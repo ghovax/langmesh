@@ -377,9 +377,9 @@ class AgentRuntime(_RunsTurns):
         }
 
         # Where the prompt's material comes from, supplied rather than found by walking hardcoded paths.
-        # The library default discovers no skills on disk: they are voluntary, injected by the caller.
+        # The library default discovers no skills or instruction files on disk: they are voluntary, injected by the caller.
         if catalogue is None:
-            catalogue = project_catalogue(global_configuration, self._project_directory)
+            catalogue = project_catalogue()
         self._catalogue = catalogue
         self._prompt_loader = _CataloguePrompts(catalogue)
         # Creation-time grants are described from the first turn: their messages sit at the head of the conversation, before any user message, and are stable for the session's life.
