@@ -78,7 +78,6 @@ async def control_screen(
                 "targets": {"missing": [target_id], "current": target_registry.describe_all(listing)},
             }
         return compact(payload)
-        return
     surface_name = target_obj.surface
     surface = _surface_for(surface_name)
     gate = surface.preflight("documents")
