@@ -32,10 +32,10 @@ def load_or_create_private_value(path: Path, create: Callable[[], bytes]) -> byt
             os.fsync(temporary.fileno())
         try:
             os.link(temporary_path, path)
-        except FileExistsError:
+        except FileExistsError as error:
             winner = path.read_bytes()
             if not winner:
-                raise RuntimeError(f"Private value at {path} is empty.")
+                raise RuntimeError(f"Private value at {path} is empty.") from error
             return winner
         return created
     finally:
