@@ -36,6 +36,7 @@ from langmesh.runtime.features import BackgroundCapability, LocationsCapability
 from langmesh.runtime.locations import CallExecutionPolicy, ExecutionTarget
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.execution import (
+    ToolExecution,
     bind_tool_decision,
     bind_tool_services,
     unbind_tool_decision,
@@ -524,15 +525,16 @@ class _DispatchesTools:
         services_token = bind_tool_services(self._services)
         decision_token = bind_tool_decision(decision)
         try:
-            async for event in unit.handler(
-                self._services,
-                tool_name,
-                tool_arguments,
-                tool_call_identifier,
-                decision,
-                policy,
-                call_site,
-            ):
+            execution = ToolExecution(
+                services=self._services,
+                name=tool_name,
+                arguments=tool_arguments,
+                call_id=tool_call_identifier,
+                decision=decision,
+                policy=policy,
+                location=call_site,
+            )
+            async for event in unit.handler(execution):
                 yield event
         finally:
             unbind_tool_decision(decision_token)

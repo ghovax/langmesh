@@ -26,6 +26,7 @@ from langmesh.runtime.features import BackgroundCapability, PermissionsCapabilit
 from langmesh.runtime.plugins.bash import bash as bash_tool
 from langmesh.runtime.internals import _maybe_json
 from langmesh.runtime.tools import context as tool_context
+from langmesh.runtime.tools.execution import ToolExecution
 from langmesh.runtime.turn_events import Error, RetryRequested, ToolResult
 
 
@@ -67,9 +68,14 @@ def sandbox_denial(services: Any, result_data: Any, policy: Any) -> Any:
     )
 
 
-async def handle_bash(
-    services, tool_name, tool_arguments, tool_call_identifier, decision, policy, call_site
-) -> AsyncIterator[Any]:
+async def handle_bash(execution: ToolExecution) -> AsyncIterator[Any]:
+    services = execution.services
+    tool_name = execution.name
+    tool_arguments = execution.arguments
+    tool_call_identifier = execution.call_id
+    decision = execution.decision
+    policy = execution.policy
+    call_site = execution.location
     background = services.features.require(BackgroundCapability)
     permissions = services.features.require(PermissionsCapability)
     raw_command = tool_arguments.get("command", "")
