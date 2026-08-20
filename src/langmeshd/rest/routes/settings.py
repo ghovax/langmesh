@@ -226,7 +226,6 @@ async def update_settings(request: AppSettingsUpdateRequest):
             configuration.agent.permission_mode = _normalize_permission_mode(
                 request.permission_mode
             )
-            await state.reset_runtimes()
         if request.exa_api_key is not None:
             configuration.exa.api_key = request.exa_api_key
         if request.composio_api_key is not None:
@@ -265,6 +264,7 @@ async def update_settings(request: AppSettingsUpdateRequest):
             )
         configuration.providers = merged_providers
         await _apply_live_credentials()
+        await state.reset_runtimes()
     _publish_broadcast({"type": "settings_changed"})
     return {"status": "saved"}
 
@@ -391,7 +391,7 @@ async def update_user_context(request: UserContextUpdateRequest):
 
 @router.post("/settings/computer-control")
 async def update_computer_control(request: ComputerControlUpdateRequest):
-    """Persist and apply the computer-use toggle, dropping cached runtimes since the tool set is built per turn."""
+    """Persist and apply the computer-use toggle, dropping cached runtimes since their tool set is fixed at construction."""
     assert state.global_configuration is not None
     async with state.configuration_lock:
         await _persist_configuration(computer_control_enabled=request.enabled)
