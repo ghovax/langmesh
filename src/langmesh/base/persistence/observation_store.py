@@ -2,7 +2,7 @@
 
 An SQLAlchemy Core view over the agent-maintained registry: read-only (`mode=ro`), re-validating
 the documented columnar schema before trusting any row. A missing or broken registry is never a
-crash — it is reported as metadata with a ``status`` so the LLM hears about it and repairs it.
+crash — it is reported as metadata with a ``status`` so the model hears about it and repairs it.
 """
 
 from __future__ import annotations
