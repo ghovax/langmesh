@@ -670,7 +670,7 @@ class _RunsTurns(_DispatchesTools, ABC):
             # Nothing to call: retry a malformed batch, answer agents, or finish the turn.
             if not response.tool_calls:
                 step = _StepOutcome()
-                async for event in self._finalize_no_tool_calls(
+                async for event in self._complete_no_tool_calls(
                     response,
                     recorded_user_message,
                     turn_tool_calls_log,
@@ -938,7 +938,7 @@ class _RunsTurns(_DispatchesTools, ABC):
             else AIMessageChunk(content="")
         )
 
-    async def _finalize_no_tool_calls(
+    async def _complete_no_tool_calls(
         self,
         response: AIMessageChunk,
         recorded_user_message: str,
