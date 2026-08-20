@@ -80,6 +80,7 @@ from langmesh.base.persistence.worktrees import (
     WorktreeStrategy,
 )
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile, SessionComponents
+from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.hooks import MaximumToolCalls
 from langmesh.runtime.session_control import PendingTurn, SessionPhase, SessionState
 from langmesh.runtime.turn_events import (
@@ -190,6 +191,7 @@ __all__ = [
     "ResourceChangeSource",
     "ResourceWatchUnsupported",
     "RuntimeComponents",
+    "RuntimeEnvironment",
     "RuntimeProfile",
     "SandboxConfiguration",
     "ScheduleError",

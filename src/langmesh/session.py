@@ -189,7 +189,6 @@ class Session:
         self._materialized_resources: MaterializedResources | None = None
         # Where tools actually run. Equal to `directory` unless a workspace repointed it.
         self._runtime_directory = self._directory
-        self._bindings: list = []
         self._runtime: AgentRuntime | None = None
         self._restored = False
         self._turn_lock = asyncio.Lock()
@@ -220,22 +219,18 @@ class Session:
                     raise RuntimeError(
                         "non-local resources require `async with Session(...)` so LangMesh can hold their materialized POSIX view"
                     )
-            from langmesh.base.primitives.limits import limits_from_configuration, set_limits
+            from langmesh.base.primitives.limits import limits_from_configuration
+            from langmesh.runtime.environment import RuntimeEnvironment
             from langmesh.runtime.runtime import AgentRuntime
 
-            # The limits are bound for the task, scoped to the caller rather than the interpreter.
-            set_limits(limits_from_configuration(self._configuration.tuning))
-            # Both are bound per task, so two sessions in one interpreter can hold different credentials and tracers.
-            if self._credentials is not None:
-                from langmesh.base.identity.credentials import set_credentials
-
-                self._bindings.append(("credentials", set_credentials(self._credentials)))
+            tracer = None
             if self._tracer_provider is not None:
-                from langmesh.base.primitives.telemetry import set_tracer
-
-                self._bindings.append(
-                    ("tracer", set_tracer(self._tracer_provider.get_tracer("langmesh")))
-                )
+                tracer = self._tracer_provider.get_tracer("langmesh")
+            environment = RuntimeEnvironment(
+                limits=limits_from_configuration(self._configuration.tuning),
+                credentials=self._credentials,
+                tracer=tracer,
+            )
             # The directory the caller supplied plus the packaged base layer, and deliberately nothing of `$HOME`.
             if self._catalogue is None:
                 from langmesh.base.contracts.catalogue import project_catalogue
@@ -254,31 +249,33 @@ class Session:
                 agent_configuration = agent_configuration.model_copy(
                     update={"provider": provider, "model": model}
                 )
-            self._runtime = AgentRuntime(
-                RuntimeProfile(
-                    agent=agent_configuration,
-                    configuration=self._configuration,
-                    session_id=self._session_id,
-                    working_directory=self._runtime_directory,
-                    project_directory=self._directory,
-                    permission_mode=self._permission_mode,
-                    sandbox=self._sandbox,
-                ),
-                self._components.for_runtime(
-                    catalogue=catalogue,
-                    jobs=self._jobs,
-                    observer=self._observer,
-                    approvals=self._approvals,
-                    transcript=self._transcript,
-                    mcp_servers=self._mcp_server_manager,
-                    synchronize_resources=(
-                        self._materialized_resources.sync
-                        if self._materialized_resources is not None
-                        else None
+            with environment.bind():
+                self._runtime = AgentRuntime(
+                    RuntimeProfile(
+                        agent=agent_configuration,
+                        configuration=self._configuration,
+                        session_id=self._session_id,
+                        working_directory=self._runtime_directory,
+                        project_directory=self._directory,
+                        permission_mode=self._permission_mode,
+                        sandbox=self._sandbox,
                     ),
-                    features=self._components.features or [],
-                ),
-            )
+                    self._components.for_runtime(
+                        catalogue=catalogue,
+                        jobs=self._jobs,
+                        observer=self._observer,
+                        approvals=self._approvals,
+                        transcript=self._transcript,
+                        mcp_servers=self._mcp_server_manager,
+                        synchronize_resources=(
+                            self._materialized_resources.sync
+                            if self._materialized_resources is not None
+                            else None
+                        ),
+                        features=self._components.features or [],
+                        environment=environment,
+                    ),
+                )
             for grant in self._pending_grants:
                 self._runtime.grant_tool(grant.tool)
             self._pending_grants = []
@@ -642,18 +639,6 @@ class Session:
         if self._runtime is not None:
             with contextlib.suppress(Exception):
                 self._runtime.abort()
-        # Unbind what the session bound, so a caller's credentials and tracer do not outlive it.
-        for kind, token in reversed(self._bindings):
-            with contextlib.suppress(Exception):
-                if kind == "credentials":
-                    from langmesh.base.identity.credentials import reset_credentials
-
-                    reset_credentials(token)
-                else:
-                    from langmesh.base.primitives.telemetry import reset_tracer
-
-                    reset_tracer(token)
-        self._bindings.clear()
         await self._lifecycle.aclose()
         self._materialized_resources = None
         self._runtime = None
