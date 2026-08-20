@@ -31,6 +31,7 @@ from langmesh.base.contracts.ports import Observation
 from langmesh.base.contracts.tools import as_tool_grants
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
+from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.features import (
     BookkeepingView,
     BoundaryView,
@@ -262,6 +263,7 @@ class AgentRuntime(_RunsTurns):
         toolset = components.toolset
 
         self._components = components
+        self._environment = components.environment or RuntimeEnvironment()
         self._prompt_composer = components.prompt_composer
         self._hooks = HookRunner(components.hooks)
         self._pipeline = ToolPipeline(components.middleware)

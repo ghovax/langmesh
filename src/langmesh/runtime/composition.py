@@ -23,6 +23,7 @@ from langmesh.base.contracts.ports import (
     Transcript,
     describe_unmet,
 )
+from langmesh.runtime.environment import RuntimeEnvironment
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,7 @@ class RuntimeComponents:
     # library supplies a minimal platform-only snapshot and no personal context.
     machine_snapshot: dict[str, Any] | None = None
     user_context: dict[str, Any] | None = None
+    environment: RuntimeEnvironment | None = None
 
     def __post_init__(self) -> None:
         if self.tool_gate not in {"ask", "none"}:
@@ -118,10 +120,7 @@ class SessionComponents(RuntimeComponents):
 
     def for_runtime(self, **updates: Any) -> RuntimeComponents:
         """Project session ownership out, leaving exactly what an ``AgentRuntime`` consumes."""
-        values = {
-            name: getattr(self, name)
-            for name in RuntimeComponents.__dataclass_fields__
-        }
+        values = {name: getattr(self, name) for name in RuntimeComponents.__dataclass_fields__}
         values.update(updates)
         return RuntimeComponents(**values)
 

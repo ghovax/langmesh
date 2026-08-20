@@ -42,6 +42,7 @@ from langmesh.base.primitives.identifiers import new_id
 from langmesh.base.primitives.limits import current_limits
 from langmesh.base.primitives.serialization import compact, lines
 from langmesh.runtime.cache_trace import cache_lane
+from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.internals import (
     _CONTINUE,
     _STOP,
@@ -102,6 +103,8 @@ def _chunk_advances_model_response(chunk: Any) -> bool:
 
 class _RunsTurns(_DispatchesTools, ABC):
     """The turn itself: what the model is told, what comes back, and when it is over."""
+
+    _environment: RuntimeEnvironment
 
     # The session state this mixin reads. Attributes the dispatch mixin already declares
     # (`_features`, `_conversation`, `_prompt_loader`, `_tool_context`, `_access_grants`,
@@ -479,6 +482,29 @@ class _RunsTurns(_DispatchesTools, ABC):
         resume_answers: Optional[dict[str, Any]] = None,
         continue_existing: bool = False,
         stop_after_maintenance: bool = False,
+    ) -> AsyncIterator[TurnEventUnion]:
+        with self._environment.bind():
+            async for event in self._stream(
+                user_message,
+                as_system_note=as_system_note,
+                opens_exchange=opens_exchange,
+                resume_plans=resume_plans,
+                resume_answers=resume_answers,
+                continue_existing=continue_existing,
+                stop_after_maintenance=stop_after_maintenance,
+            ):
+                yield event
+
+    async def _stream(
+        self,
+        user_message: str | list,
+        *,
+        as_system_note: bool,
+        opens_exchange: bool,
+        resume_plans: Optional[dict[str, dict]],
+        resume_answers: Optional[dict[str, Any]],
+        continue_existing: bool,
+        stop_after_maintenance: bool,
     ) -> AsyncIterator[TurnEventUnion]:
         if self._features.blocked_reason() and not continue_existing:
             raise MaintenanceBlockedError(
