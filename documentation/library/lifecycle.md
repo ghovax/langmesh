@@ -164,7 +164,7 @@ components = SessionComponents(model=application_model)
 session = Session(agent_without_provider, directory="/srv/checkout", components=components)
 ```
 
-The model must implement `bind_tools()` and streaming. LangMesh binds one stable ordered tool schema when the runtime is constructed.
+The model must implement `bind_tools()` and streaming. LangMesh binds one stable ordered tool schema when the runtime is constructed. A custom adapter with provider-native checkpoints or local cache diagnostics may additionally satisfy `DurableModelCache`: `model_cache_snapshot()` returns JSON-safe state and `restore_model_cache(snapshot)` validates and adopts it. `Session` then persists that state beside its conversation without knowing the provider's representation.
 
 ### Preserve provider caches
 
