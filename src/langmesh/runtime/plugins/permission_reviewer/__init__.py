@@ -16,6 +16,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from langmesh.base import confinement
+from langmesh.runtime.cache_trace import prefix_intact_label
 from langmesh.base.content.model_errors import ContextWindowExceeded
 from langmesh.base.content.instructions import instructions_payload
 from langmesh.base.primitives.serialization import compact
@@ -172,7 +173,7 @@ class PermissionReviewer(Feature):
             "input_tokens": int(usage.get("input_tokens", 0) or 0),
             "output_tokens": int(usage.get("output_tokens", 0) or 0),
             "cache_read_tokens": int(input_details.get("cache_read", 0) or 0),
-            "prefix_intact": bool(cache_trace.get("prefix_intact", False)),
+            "prefix_intact": cache_trace.get("prefix_intact"),
             "reachable_tokens": int(cache_trace.get("reachable_tokens", 0) or 0),
             "shared_segments": int(cache_trace.get("shared_segments", 0) or 0),
             "segments": int(cache_trace.get("segments", 0) or 0),
@@ -190,7 +191,7 @@ class PermissionReviewer(Feature):
             metrics["input_tokens"],
             metrics["output_tokens"],
             metrics["cache_read_tokens"],
-            metrics["prefix_intact"],
+            prefix_intact_label(metrics["prefix_intact"]),
             metrics["reachable_tokens"],
             metrics["shared_segments"],
             metrics["segments"],

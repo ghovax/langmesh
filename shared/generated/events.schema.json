@@ -620,8 +620,15 @@
           "type": "integer"
         },
         "prefix_intact": {
-          "default": false,
-          "type": "boolean"
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "reachable_tokens": {
           "default": 0,
@@ -822,15 +829,9 @@
     },
     "TurnContext": {
       "additionalProperties": false,
-      "description": "Session context captured in the cache-stable system prompt.",
+      "description": "Session context captured in the cache-stable system prompt.\n\nOnly the core's own fields are declared here. The plugins contribute their own\ncontext through ``compose_context``, which merges it into the prompt dict; the\ncore never names a plugin's context.",
       "properties": {
-        "background": {
-          "tsType": "Record<string, unknown>"
-        },
         "confinement": {
-          "tsType": "Record<string, unknown>"
-        },
-        "goal": {
           "tsType": "Record<string, unknown>"
         },
         "locations": {
@@ -846,15 +847,6 @@
         "pwd": {
           "default": "",
           "type": "string"
-        },
-        "screen": {
-          "tsType": "Record<string, unknown>"
-        },
-        "tasks": {
-          "items": {
-            "tsType": "Record<string, unknown>"
-          },
-          "type": "array"
         }
       },
       "type": "object"

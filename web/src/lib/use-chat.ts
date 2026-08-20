@@ -152,7 +152,8 @@ export interface TokenUsage {
   // What the latest call's cache did and why, since a running total cannot say which call missed.
   contextCacheReadTokens: number;
   reachableTokens: number;
-  prefixIntact: boolean;
+  // null means the latest call had no previous request to compare, so the cache outcome is unknown.
+  prefixIntact: boolean | null;
   divergence: PrefixDivergence | null;
 }
 
@@ -941,7 +942,7 @@ function reduceDataPart(
         contextWindowEstimated: event.context_window_estimated ?? false,
         contextCacheReadTokens: event.cache_read_tokens ?? 0,
         reachableTokens: event.reachable_tokens ?? 0,
-        prefixIntact: event.prefix_intact ?? false,
+        prefixIntact: event.prefix_intact ?? null,
         divergence: event.divergence ?? null,
       };
       break;

@@ -81,6 +81,7 @@
     "agentPlaceholder": "エージェントを選択",
     "attachFiles": "ファイルを添付",
     "cacheReads": "キャッシュ読み取り",
+    "cacheReadsUnknown": "キャッシュ読み取り（不明）",
     "compact": "圧縮",
     "compactBody": "エージェントが永続的なワークスペース知識を先に保存し、その後で直近の作業をそのまま残して古い会話を破棄します。会話に空きができますが、破棄された会話は復元できません。",
     "compactConfirm": "今すぐ圧縮",

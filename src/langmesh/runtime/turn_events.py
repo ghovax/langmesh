@@ -123,8 +123,8 @@ class Usage(TurnEvent):
     context_window: int = 0
     context_window_estimated: bool = False
     cumulative: dict[str, Any] = field(default_factory=dict)
-    #: Whether every byte shared with the last request was unchanged, which is what makes the read figure readable.
-    prefix_intact: bool = False
+    #: Whether every byte shared with the last request was unchanged; ``None`` means there was no previous request in the lane, so the outcome is unknown rather than a miss.
+    prefix_intact: bool | None = None
     #: How much of the prefix was unchanged, estimated with this harness's tokenizer rather than the provider's.
     reachable_tokens: int = 0
     #: How many segments the request had, and how many the previous one already carried unchanged.

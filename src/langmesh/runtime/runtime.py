@@ -722,7 +722,7 @@ class AgentRuntime(_RunsTurns):
             context_window=context_window,
             context_window_estimated=self._context_window_estimated,
             cumulative=dict(self._token_usage),
-            prefix_intact=bool(cache_trace.get("prefix_intact", False)),
+            prefix_intact=cache_trace.get("prefix_intact"),
             reachable_tokens=reachable,
             segments=int(cache_trace.get("segments", 0) or 0),
             shared_segments=int(cache_trace.get("shared_segments", 0) or 0),

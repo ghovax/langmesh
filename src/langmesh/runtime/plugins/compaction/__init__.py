@@ -48,7 +48,7 @@ from langmesh.runtime.turn_events import (
     TurnEvent,
     Usage,
 )
-from langmesh.runtime.cache_trace import cache_lane
+from langmesh.runtime.cache_trace import cache_lane, prefix_intact_label
 
 logger = logging.getLogger(__name__)
 
@@ -696,7 +696,7 @@ class Compaction(Feature):
                     if last_usage is not None:
                         logger.info(
                             "compaction summary cache lane=compaction-summary prefix_intact=%s cache_read_tokens=%d reachable_tokens=%d shared_segments=%d segments=%d input_tokens=%d output_tokens=%d",
-                            last_usage.prefix_intact,
+                            prefix_intact_label(last_usage.prefix_intact),
                             last_usage.cache_read_tokens,
                             last_usage.reachable_tokens,
                             last_usage.shared_segments,
