@@ -84,7 +84,7 @@ async def delete_schedule(schedule_id: str):
 @router.post("/schedules/{schedule_id}/run")
 async def run_schedule(schedule_id: str):
     """Fire now without moving the window, so a wrong agent name is found before six tomorrow morning."""
-    from langmeshd.daemon import scheduler
+    from langmeshd.daemon import api, scheduler
     from langmeshd.commons.database import ScheduleRecord
     from langmeshd.commons import state as commons_state
 
@@ -101,5 +101,9 @@ async def run_schedule(schedule_id: str):
     record = await asyncio.to_thread(_detached)
     if record is None:
         raise HTTPException(status_code=404, detail=f"No schedule {schedule_id!r}.")
-    await scheduler._fire(record)
+    await scheduler.fire(
+        record,
+        create_session=api._session_create,
+        send_message=api._session_send,
+    )
     return await asyncio.to_thread(_schedules.get, schedule_id)
