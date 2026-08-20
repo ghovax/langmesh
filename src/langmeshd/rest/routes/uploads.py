@@ -7,6 +7,7 @@ from langmesh.base.confinement.paths import uploads_directory
 from pathlib import Path
 import asyncio
 import hashlib
+from typing import Annotated
 from langmesh.protocol.dtos import (
     AttachmentReference,
 )
@@ -32,7 +33,7 @@ async def serve_a2a_file(token: str):
 
 
 @router.post("/uploads")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: Annotated[UploadFile, File()]):
     """Store a user file under LangMesh's managed home, content-addressed, and return its generic metadata."""
     raw_name = Path(file.filename or "upload").name
     suffix = Path(raw_name).suffix  # preserved so the stored file keeps a usable extension

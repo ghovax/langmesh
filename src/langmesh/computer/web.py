@@ -671,7 +671,7 @@ def _match_rectangle(bounds: Optional[dict], windows: list[tuple[tuple, int]]) -
     if any(value is None for value in wanted):
         return None
     for rectangle, identifier in windows:
-        if all(abs(a - b) <= 2 for a, b in zip(rectangle, wanted)):
+        if all(abs(a - b) <= 2 for a, b in zip(rectangle, wanted, strict=True)):
             return identifier
     return None
 

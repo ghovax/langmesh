@@ -225,7 +225,7 @@ def _read(element: Any) -> Optional[dict[str, Any]]:
     if error != 0 or values is None:
         return None
     attributes: dict[str, Any] = {}
-    for name, value in zip(BATCH_ATTRIBUTES, values):
+    for name, value in zip(BATCH_ATTRIBUTES, values, strict=False):
         if value is None:
             attributes[name] = None
             continue
