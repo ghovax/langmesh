@@ -113,7 +113,9 @@ class SessionEventBus:
                 previous["chunks"].extend(event.get("chunks", ()))
                 previous["seq"] = event["seq"]
                 return
-        tail.events.append({**event, **({"chunks": list(event["chunks"])} if "chunks" in event else {})})
+        tail.events.append(
+            {**event, **({"chunks": list(event["chunks"])} if "chunks" in event else {})}
+        )
 
     def _fan_out(self, session_id: str, event: dict) -> None:
         for subscription in tuple(self._subscribers.get(session_id, ())):

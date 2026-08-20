@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 from dataclasses import dataclass, field, replace
@@ -31,6 +31,7 @@ EXITED = "exited"
 FAILED = "failed"
 
 TERMINAL_OUTCOMES = frozenset({EXITED, FAILED})
+logger = logging.getLogger(__name__)
 
 
 def _master_key() -> bytes:
@@ -139,6 +140,7 @@ class SessionRegistry:
     def __init__(self, store: Optional[Any] = None) -> None:
         self._sessions: dict[str, SessionRecord] = {}
         self._store = store
+        self._persistence_tasks: set[asyncio.Task[None]] = set()
 
     def restore(self, records: list[SessionRecord]) -> None:
         """Adopt the durable records at boot, each unhosted, which is what a live session asleep is."""
@@ -164,7 +166,21 @@ class SessionRegistry:
         except RuntimeError:
             self._persist(record)
             return
-        loop.create_task(asyncio.to_thread(self._persist, record))
+        task = loop.create_task(asyncio.to_thread(self._persist, record))
+        self._persistence_tasks.add(task)
+        task.add_done_callback(self._finish_persistence)
+
+    def _finish_persistence(self, task: asyncio.Task[None]) -> None:
+        """Retire an asynchronous registry write and report a storage failure."""
+        self._persistence_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "could not persist a session record",
+                exc_info=(type(error), error, error.__traceback__),
+            )
 
     def create(
         self,

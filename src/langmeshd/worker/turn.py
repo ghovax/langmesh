@@ -505,7 +505,8 @@ class _TurnRunner:
             existing_state = self._executor._contexts.get(task.context_id)
             existing_runtime = existing_state.runtime if existing_state is not None else None
             has_live_result = (
-                existing_runtime is not None and _features.has_completed_undelivered_jobs(existing_runtime)
+                existing_runtime is not None
+                and _features.has_completed_undelivered_jobs(existing_runtime)
             )
             has_stored_result = self._executor._job_store.has_undelivered_jobs(
                 task.context_id, self._executor._agent_name
@@ -602,8 +603,8 @@ class _TurnRunner:
         if prepared.resolved.ingested.mode is not _TurnMode.COMPACTION:
             return None
         try:
-            async for compaction_event in _features.compact(prepared.runtime, 
-                reason=_features.pending_compaction_reason(prepared.runtime)
+            async for compaction_event in _features.compact(
+                prepared.runtime, reason=_features.pending_compaction_reason(prepared.runtime)
             ):
                 await prepared.sink.emit_compaction(compaction_event)
         except asyncio.CancelledError:
@@ -691,7 +692,13 @@ class _TurnRunner:
     def _task_continuation_note(runtime: AgentRuntime) -> str:
         return _PROMPTS.load(
             "task_continuation_note",
-            {"tasks": compact(_features.unfinished_tasks(runtime, ))},
+            {
+                "tasks": compact(
+                    _features.unfinished_tasks(
+                        runtime,
+                    )
+                )
+            },
         )
 
     async def _stream_complete(self, composed: _ComposedTurn) -> None:
@@ -748,9 +755,7 @@ class _TurnRunner:
         logger.error("agent turn failed", exc_info=exception)
         error_part = _event_part(
             # `_safe_turn_error` returns fields typed object; the pydantic constructor validates them.
-            ErrorEvent.model_validate(
-                _safe_turn_error(exception, had_images=self._turn_has_images)
-            )
+            ErrorEvent.model_validate(_safe_turn_error(exception, had_images=self._turn_has_images))
         )
         # The failed turn's terminal message is the chain's identity. A retry continues the chain its
         # failure opened, so a retried failure carries the root id rather than another per-attempt one:
@@ -844,9 +849,8 @@ class _TurnRunner:
         if sink is None:
             return _ContinuationPlan()
         # A goal-continuation turn that produced neither prose nor tool work answered the review with nothing; immediately re-reviewing would only spin the review loop, so the goal parks instead and waits for a person.
-        if (
-            self._mode is _TurnMode.GOAL_CONTINUATION
-            and not (sink.final_text.strip() or sink.tool_results)
+        if self._mode is _TurnMode.GOAL_CONTINUATION and not (
+            sink.final_text.strip() or sink.tool_results
         ):
             return _ContinuationPlan()
         return _ContinuationPlan(
@@ -896,4 +900,6 @@ class _TurnRunner:
             return
         if self._executor._nudged_to_report:
             return
-        asyncio.create_task(self._executor.nudge_to_report(self._task.context_id))
+        self._executor._spawn_background(
+            self._executor.nudge_to_report(self._task.context_id), name="report-reminder"
+        )

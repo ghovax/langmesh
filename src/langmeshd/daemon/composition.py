@@ -121,8 +121,15 @@ async def open_shared_resources() -> None:
 
 async def close_shared_resources() -> None:
     """Release everything the opener built, ordered and individually guarded."""
+    for name in ("chatgpt_login_flow", "cursor_login_flow"):
+        flow = getattr(commons_state, name, None)
+        if flow is not None:
+            with contextlib.suppress(Exception):
+                await flow.close()
+            setattr(commons_state, name, None)
     for task in [
         *getattr(state, "_watchers", []),
+        *getattr(commons_state, "_auth_tasks", set()),
         state.__dict__.get("_mcp_start_task"),
         state.__dict__.get("_remote_start_task"),
     ]:
@@ -130,6 +137,7 @@ async def close_shared_resources() -> None:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
+    commons_state._auth_tasks.clear()
     if commons_state.terminal_manager is not None:
         with contextlib.suppress(Exception):
             await commons_state.terminal_manager.close_all()
