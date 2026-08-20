@@ -26,7 +26,7 @@ LangMesh follows the XDG Base Directory convention rather than one dot-directory
 | `$XDG_CACHE_HOME/langmesh/`  | caches                                                                      |
 | `$XDG_RUNTIME_DIR/langmesh/` | the daemon's socket, port, pid, lock, and token                             |
 
-The runtime directory is `0700`, and the token files inside it are `0600`. When `XDG_RUNTIME_DIR` is unset, as on macOS, the fallback is a per-user directory under the system temporary directory. The OS clears the runtime directory when you log out, so a crashed daemon leaves nothing behind.
+The runtime directory is `0700`, and its daemon handshake files are `0600`. When `XDG_RUNTIME_DIR` is unset, as on macOS, the fallback is a per-user directory under the system temporary directory. The OS clears the runtime directory when you log out, so a crashed daemon leaves nothing behind. Private values that must survive logout, including the session-token master key and Reach pairing token, live in the XDG data directory and are created atomically with mode `0600`.
 
 ## Model providers
 
