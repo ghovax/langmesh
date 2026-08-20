@@ -15,7 +15,7 @@ from langmesh.base.configuration import PromptLoader
 from langmesh.runtime import plugins as _plugins_package
 from langmesh.runtime.features.context import PluginContext
 from langmesh.runtime.features.host import PluginHost
-from langmesh.runtime.turn_events import TurnEvent
+from langmesh.runtime.turn_events import TurnEventUnion
 
 plugins_package_root = Path(_plugins_package.__file__).resolve().parent
 
@@ -83,12 +83,12 @@ class Feature:
     def begin_maintenance(self, *, reason: str, resume_after: bool) -> None:
         """Start holding the loop, preparing the durable handoff the fold needs."""
 
-    async def advance_maintenance(self) -> AsyncIterator[TurnEvent]:
+    async def advance_maintenance(self) -> AsyncIterator[TurnEventUnion]:
         """Advance the hold one step (record a handoff, announce a phase), yielding its events."""
         if False:
             yield None
 
-    async def run_maintenance(self, *, reason: str) -> AsyncIterator[TurnEvent]:
+    async def run_maintenance(self, *, reason: str) -> AsyncIterator[TurnEventUnion]:
         """Complete the hold and reclaim context, yielding the fold's events."""
         if False:
             yield None
@@ -113,7 +113,7 @@ class Feature:
         """The refusal a model is given for calling outside the held loop's protocol."""
         return ""
 
-    async def fail_maintenance(self, message: str) -> AsyncIterator[TurnEvent]:
+    async def fail_maintenance(self, message: str) -> AsyncIterator[TurnEventUnion]:
         """The hold could not complete; fail it as a durable blocker, yielding its events."""
         if False:
             yield None
@@ -141,7 +141,7 @@ class Feature:
         """The verdict a feature that gates decides for one automatic gate, or ``None`` to pass."""
         return None
 
-    def drain(self) -> list[TurnEvent]:
+    def drain(self) -> list[TurnEventUnion]:
         """The events this feature has finished producing since the last drain."""
         return []
 

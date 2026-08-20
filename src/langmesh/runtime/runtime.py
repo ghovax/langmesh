@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence, cast
 
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     messages_to_dict,
@@ -15,44 +16,24 @@ from langchain_core.tools import BaseTool
 from pydantic import SecretStr
 
 from langmesh.base import confinement as _confinement
-from langmesh.base.confinement import Grant, Profile
 from langmesh.base.configuration import (
     AgentConfiguration,
     Configuration,
     PermissionEvaluator,
     SandboxConfiguration,
 )
-from langchain_core.language_models.chat_models import BaseChatModel
-from langmesh.runtime.models.litellm import ChatLiteLLMModel
-from langmesh.runtime.models.codex import ChatCodexModel
-from langmesh.runtime.models.cursor import ChatCursorModel
-from langmesh.base.content.models import find_model, resolve_litellm
-from langmesh.base.contracts.tools import as_tool_grants
-from langmesh.base.contracts.catalogue import project_catalogue
-from langmesh.runtime.tools.arguments import with_shared_fields
-from langmesh.runtime.tools.execution import Tool, ToolServices, invoke_supplied
-from langmesh.runtime.tools import registry as tools_registry
-from langmesh.runtime.tools.handlers import HANDLERS
-from langmesh.base.contracts.ports import Observation
-from langmesh.runtime.tools.context import ToolContext
-
 from langmesh.base.configuration.permission_mode import PermissionMode
-
-from langmesh.runtime.turn_events import (
-    TurnEvent,
-    Usage,
-)
-
-from langmesh.runtime.turn import (
-    _RunsTurns,
-)
-
-from langmesh.base.primitives.serialization import compact
+from langmesh.base.confinement import Grant, Profile
+from langmesh.base.content.models import find_model, resolve_litellm
 from langmesh.base.content.toolbox import toolbox_for
+from langmesh.base.contracts.catalogue import project_catalogue
+from langmesh.base.contracts.ports import Observation
+from langmesh.base.contracts.tools import as_tool_grants
+from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.features import (
-    BoundaryView,
     BookkeepingView,
+    BoundaryView,
     ConversationView,
     PluginBus,
     PluginContext,
@@ -64,10 +45,24 @@ from langmesh.runtime.features import (
     feature_prompts,
 )
 from langmesh.runtime.hooks import HookRunner
-from langmesh.runtime.pipeline import ToolPipeline
 from langmesh.runtime.internals import (
     _utc_timestamp,
     conversation_tokens,
+)
+from langmesh.runtime.models.codex import ChatCodexModel
+from langmesh.runtime.models.cursor import ChatCursorModel
+from langmesh.runtime.models.litellm import ChatLiteLLMModel
+from langmesh.runtime.pipeline import ToolPipeline
+from langmesh.runtime.tools import registry as tools_registry
+from langmesh.runtime.tools.arguments import with_shared_fields
+from langmesh.runtime.tools.context import ToolContext
+from langmesh.runtime.tools.execution import Tool, ToolServices, invoke_supplied
+from langmesh.runtime.tools.handlers import HANDLERS
+from langmesh.runtime.turn import (
+    _RunsTurns,
+)
+from langmesh.runtime.turn_events import (
+    Usage,
 )
 
 logger = logging.getLogger(__name__)
@@ -682,7 +677,7 @@ class AgentRuntime(_RunsTurns):
     def token_usage(self) -> dict[str, int]:
         return dict(self._token_usage)
 
-    def _accumulate_usage(self, response: AIMessage) -> TurnEvent | None:
+    def _accumulate_usage(self, response: AIMessage) -> Usage | None:
         """Accumulate one call's usage into the session total and answer a USAGE event, or ``None`` when none was reported."""
         usage = getattr(response, "usage_metadata", None)
         if not usage:
