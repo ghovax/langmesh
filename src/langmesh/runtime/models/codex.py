@@ -113,11 +113,19 @@ class ChatCodexModel(BaseChatModel):
 
     def model_cache_snapshot(self) -> dict[str, object]:
         """Serialize this session's bounded request-diagnostic baselines."""
-        return {"version": 1, "traces": request_traces_snapshot(self._previous_traces)}
+        return {
+            "version": 1,
+            "model": self.model,
+            "traces": request_traces_snapshot(self._previous_traces),
+        }
 
     def restore_model_cache(self, snapshot: object) -> None:
         """Restore validated request-diagnostic baselines from durable session state."""
-        if isinstance(snapshot, dict) and snapshot.get("version") == 1:
+        if (
+            isinstance(snapshot, dict)
+            and snapshot.get("version") == 1
+            and snapshot.get("model") == self.model
+        ):
             self._previous_traces = restore_request_traces(snapshot.get("traces"))
 
     # The same tool-binding surface as the LiteLLM client; the Responses-shaped flattening happens at payload-build time.
