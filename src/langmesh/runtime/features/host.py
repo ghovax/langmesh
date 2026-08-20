@@ -30,6 +30,7 @@ class BoundaryView:
     """The confinement a feature is held to, and the reach approved so far."""
 
     sandbox: Profile  #: The configured confinement the operating system will enforce.
+    writes_anywhere: bool  #: Whether the configured confinement permits any filesystem writes.
     resolve_execution: Callable[[str, dict], Any]  #: A call's opaque execution target, from the features; ``None`` means local.
     call_policy: Callable[[Any], CallExecutionPolicy]  #: One call's policy.
     granted_profile: Callable[[], Profile]  #: The confinement with every standing grant compacted in.

@@ -443,6 +443,7 @@ class AgentRuntime(_RunsTurns):
             ),
             boundary=BoundaryView(
                 sandbox=self._sandbox,
+                writes_anywhere=self.writes_anywhere,
                 resolve_execution=lambda tool_name, arguments: self._features.invoke(
                     "resolve_execution", tool_name, arguments
                 ),

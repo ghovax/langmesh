@@ -8,6 +8,7 @@ names it.
 from __future__ import annotations
 
 import shlex
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -66,13 +67,17 @@ async def handle_bash(
     services, tool_name, tool_arguments, tool_call_identifier, decision, policy, call_site
 ) -> AsyncIterator[Any]:
     raw_command = tool_arguments.get("command", "")
-    # A feature that owns execution targets answers with an opaque call site: forward the command through it, letting the remote draw its own boundary.
+    # A named local location changes cwd; a remote location is forwarded through SSH.
     if call_site is not None:
         executor, base_directory = call_site
-        remote_argv = executor.ssh_argv(raw_command, base_directory)
-        tool_arguments = dict(tool_arguments)
-        tool_arguments["command"] = shlex.join(remote_argv)
-        tool_context.bind(services.tool_context.for_remote())
+        if executor.is_local:
+            policy = replace(policy, working_directory=base_directory)
+            call_site = None
+        else:
+            remote_argv = executor.ssh_argv(raw_command, base_directory)
+            tool_arguments = dict(tool_arguments)
+            tool_arguments["command"] = shlex.join(remote_argv)
+            tool_context.bind(services.tool_context.for_remote())
     # `location` is the execution-target selector, resolved above; the plain tool never sees it.
     tool_arguments.pop("location", None)
     directory = policy.working_directory

@@ -116,7 +116,7 @@ class Locations(Feature):
                 "kind": entry["kind"],
                 "base_directory": entry["base_directory"],
                 "writable": entry["kind"] == "remote"
-                or bool(getattr(self._host, "writes_anywhere", False)),
+                or self._host.boundary.writes_anywhere,
             }
             for entry in self._locations.values()
         ]
