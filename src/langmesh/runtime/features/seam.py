@@ -39,6 +39,8 @@ class Feature:
     hooks and the context.
     """
 
+    __slots__ = ("_langmesh_session_id",)
+
     def attach(self, context: PluginContext, host: "PluginHost | None" = None) -> None:
         """Installed by the runtime; library features keep the internal view here."""
 
@@ -167,10 +169,11 @@ class Features:
     """
 
     def __init__(self, instances: Sequence[Feature] = ()) -> None:
-        self._instances = list(instances)
+        self._instances = tuple(instances)
 
     @property
-    def instances(self) -> list[Feature]:
+    def instances(self) -> tuple[Feature, ...]:
+        """The fixed feature roster in installation order."""
         return self._instances
 
     def by_type(self, feature_type: type) -> Feature | None:
@@ -388,9 +391,7 @@ def build_features(
     classes; installing only hands each its context and, for library features, the internal
     host. Nothing here names a feature or inspects how it was built.
     """
-    installed = list(instances or ())
-    for feature in installed:
-        feature.attach(context, host)
+    installed = tuple(instances or ())
     features = Features(installed)
     for feature in installed:
         for contract in feature.required_capabilities():
@@ -398,6 +399,14 @@ def build_features(
                 raise ValueError(
                     f"{type(feature).__name__} requires the {contract.__name__} capability."
                 )
+        owner = getattr(feature, "_langmesh_session_id", None)
+        if owner is not None and owner != context.session_id:
+            raise ValueError(
+                f"{type(feature).__name__} is already attached to session {owner!r}; feature instances cannot be shared between sessions."
+            )
+    for feature in installed:
+        feature.attach(context, host)
+        setattr(feature, "_langmesh_session_id", context.session_id)
     return features
 
 

@@ -91,6 +91,8 @@ The constructor keeps run facts (directory, identity, permission mode, confineme
 
 `SessionComponents` additionally owns `checkpoints`, `attachments`, `credentials`, `workspace`, and `tracer_provider`.
 
+A feature instance belongs to one session because attachment gives it session-specific context and state. Construct fresh feature instances when composing another session; attempting to share one now fails during runtime construction instead of silently redirecting its state to the last session that attached it.
+
 There is no `compaction`, `compaction_preparation`, `continuations`, or `goal_review_journal` field. Those are features now: pass their instances through `features`, and any ports they need through `services` or a constructor argument:
 
 ```python
