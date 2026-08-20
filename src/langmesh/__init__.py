@@ -83,6 +83,7 @@ from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile, Sess
 from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.hooks import MaximumToolCalls
 from langmesh.runtime.session_control import PendingTurn, SessionPhase, SessionState
+from langmesh.runtime.tools.execution import ToolExecution, ToolHandler, ToolServices
 from langmesh.runtime.turn_events import (
     Checkpoint,
     CompactionDone,
@@ -212,11 +213,14 @@ __all__ = [
     "Thinking",
     "ThinkingDone",
     "ToolCall",
+    "ToolExecution",
     "ToolGrant",
+    "ToolHandler",
     "ToolInvocation",
     "ToolLike",
     "ToolMiddleware",
     "ToolResult",
+    "ToolServices",
     "ToolboxConfiguration",
     "ToolsConfiguration",
     "Transcript",

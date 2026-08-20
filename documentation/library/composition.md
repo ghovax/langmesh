@@ -354,7 +354,7 @@ The hooks are the points in the turn where a feature can act. The full set a `Fe
 | `attach(context, host)` | installation; the library's own features keep the internal host here |
 | `compose_context(context)` | building the turn's model-facing context |
 | `contribute_tools()` | the tools this feature adds to the session's roster |
-| `contribute_tool_handlers()` | event-rich handlers supplied beside contributed tool schemas |
+| `contribute_tool_handlers()` | event-rich handlers supplied beside contributed tool schemas; each receives one immutable `ToolExecution` value |
 | `contribute_schema_fields(tool_name)` | extra argument fields to extend another tool's contract (e.g. `location` on `bash`) |
 | `required_capabilities()` | structural feature contracts that composition must satisfy |
 | `compose_prompt(variables)` | building the system prompt's named sections |

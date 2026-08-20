@@ -11,6 +11,7 @@ from langmesh.runtime.background import bind_background_jobs, unbind_background_
 from langmesh.runtime.features import BackgroundCapability
 from langmesh.runtime.internals import _maybe_json
 from langmesh.runtime.tools import context as tool_context, fetching
+from langmesh.runtime.tools.execution import ToolExecution
 from langmesh.runtime.turn_events import Error, ToolResult
 
 
@@ -71,9 +72,12 @@ def confinement_refusal(services: Any, resolved: str, policy: Any, *, writing: b
     )
 
 
-async def handle_download_file(
-    services, tool_name, tool_arguments, tool_call_identifier, decision, policy, call_site
-) -> AsyncIterator[Any]:
+async def handle_download_file(execution: ToolExecution) -> AsyncIterator[Any]:
+    services = execution.services
+    tool_name = execution.name
+    tool_arguments = execution.arguments
+    tool_call_identifier = execution.call_id
+    policy = execution.policy
     url = str(tool_arguments.get("url", ""))
     destination = str(tool_arguments.get("path", ""))
     sync_window = float(
@@ -137,14 +141,13 @@ async def handle_download_file(
         services.leases.release(lease_token)
 
 
-async def handle_search_web(
-    services, tool_name, tool_arguments, tool_call_identifier, decision, policy, call_site
-) -> AsyncIterator[Any]:
+async def handle_search_web(execution: ToolExecution) -> AsyncIterator[Any]:
+    services = execution.services
     from langmesh.runtime.plugins.web.tools import search_web as search_web_tool
 
     background_token = bind_background_jobs(services.features.require(BackgroundCapability).runner)
     try:
-        result = await search_web_tool.ainvoke(tool_arguments)
+        result = await search_web_tool.ainvoke(execution.arguments)
     finally:
         unbind_background_jobs(background_token)
     result_data = _maybe_json(result)
@@ -152,8 +155,8 @@ async def handle_search_web(
     if isinstance(result_data, dict) and result_data.get("code") == "web_search_started":
         model_guidance = services.prompt_loader.load("web_search_started_note", {})
     yield ToolResult(
-        id=tool_call_identifier,
-        name=tool_name,
+        id=execution.call_id,
+        name=execution.name,
         result=result_data,
         model_guidance=model_guidance,
     )
