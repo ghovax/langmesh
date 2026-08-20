@@ -1,212 +1,202 @@
-"""The bash plugin's event-rich handler: confinement, lease, retry, and background correlation.
-
-The handler rides the same `ToolServices` bundle every tool handler runs against, so nothing
-here reaches into the runtime. It is contributed through the feature seam and the core never
-names it.
-"""
+"""The Bash tool schema and its confined command execution."""
 
 from __future__ import annotations
 
-import shlex
-from dataclasses import replace
+import asyncio
+import os
+import signal
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
+
+from langchain.tools import tool
 
 from langmesh.base import confinement as _confinement
-from langmesh.base.confinement import parse_access_request
-from langmesh.base.confinement.file_leases import FileLeaseConflict
-from langmesh.base.configuration import PermissionDenied
+from langmesh.base.configuration import PromptLoader
+from langmesh.base.primitives.serialization import compact
+from langmesh.base.primitives.limits import current_limits, clip_to_tokens
 from langmesh.runtime.background import (
-    bind_background_jobs,
-    bind_tool_call_id,
-    unbind_background_jobs,
-    unbind_tool_call_id,
+    current_background_jobs,
+    current_tool_call_id,
+    record_child_group,
 )
-from langmesh.runtime.features import BackgroundCapability, PermissionsCapability
-from langmesh.runtime.plugins.bash import bash as bash_tool
-from langmesh.runtime.internals import _maybe_json
 from langmesh.runtime.tools import context as tool_context
-from langmesh.runtime.tools.execution import ToolExecution
-from langmesh.runtime.turn_events import Error, RetryRequested, ToolResult
+
+#: The tool's model-facing description, read from this plugin's own prompts directory.
+_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
 
 
-async def run_bash(
-    services: Any, tool_arguments: dict, tool_call_identifier: str, *, retry_grant=None
-) -> Any:
-    """One run of the bash tool, inside whatever confinement this attempt carries."""
-    if retry_grant is not None:
-        tool_context.bind(tool_context.current().for_retry(retry_grant))
-    background_token = bind_background_jobs(services.features.require(BackgroundCapability).runner)
-    tool_call_token = bind_tool_call_id(tool_call_identifier)
-    try:
-        result = await bash_tool.ainvoke(tool_arguments)
-    finally:
-        unbind_tool_call_id(tool_call_token)
-        unbind_background_jobs(background_token)
-    return _maybe_json(result)
+@tool
+async def bash(
+    *,
+    command: str,
+    background: bool = False,
+    timeout: float = 60.0,
+    **kwargs: Any,
+) -> str:
+    """Run a shell command inside the session's confinement; described in descriptions/bash.md."""
+    active = tool_context.current()
+    profile, workspace = active.sandbox, active.workspace
+    output_path = active.spill_path("bash")
+    process_holder: dict[str, Any] = {}
 
-
-def sandbox_denial(services: Any, result_data: Any, policy: Any) -> Any:
-    """Whether a finished command looks like the operating system stopped it."""
-    if not isinstance(result_data, dict):
-        return None
-    if result_data.get("code") == "bash_started":
-        return None
-    exit_code = result_data.get("returncode")
-    if not isinstance(exit_code, int):
-        return None
-    output = " ".join(
-        str(result_data.get(key, "")) for key in ("stdout", "stderr", "output", "error")
-    )
-    return _confinement.denial_in(
-        exit_code=exit_code,
-        output=output,
-        attempt=_confinement.first_attempt(
-            tool_context.current().sandbox,
-            workspace=policy.working_directory,
-        ),
-    )
-
-
-async def handle_bash(execution: ToolExecution) -> AsyncIterator[Any]:
-    services = execution.services
-    tool_name = execution.name
-    tool_arguments = execution.arguments
-    tool_call_identifier = execution.call_id
-    decision = execution.decision
-    policy = execution.policy
-    call_site = execution.location
-    background = services.features.require(BackgroundCapability)
-    permissions = services.features.require(PermissionsCapability)
-    raw_command = tool_arguments.get("command", "")
-    # A named local location changes cwd; a remote location is forwarded through SSH.
-    if call_site is not None:
-        executor = call_site.executor
-        base_directory = call_site.working_directory
-        if executor.is_local:
-            policy = replace(policy, working_directory=base_directory)
-            call_site = None
-        else:
-            remote_argv = executor.ssh_argv(raw_command, base_directory)
-            tool_arguments = dict(tool_arguments)
-            tool_arguments["command"] = shlex.join(remote_argv)
-            tool_context.bind(services.tool_context.for_remote())
-    # `location` is the execution-target selector, resolved above; the plain tool never sees it.
-    tool_arguments.pop("location", None)
-    directory = policy.working_directory
-    if directory and call_site is None:
-        directory_path = Path(directory).expanduser()
-        if not directory_path.is_absolute():
-            yield Error(
-                id=tool_call_identifier,
-                code="invalid_working_directory",
-                message=f"Working directory must be an absolute path: {directory}",
-                tool=tool_name,
-            )
+    def cancel_process() -> None:
+        process = process_holder.get("process")
+        if process is None or process.returncode is not None:
             return
-        if not directory_path.is_dir():
-            yield Error(
-                id=tool_call_identifier,
-                code="invalid_working_directory",
-                message=f"Working directory does not exist: {directory}",
-                tool=tool_name,
-            )
-            return
-        tool_context.bind(
-            services.tool_context.for_directory(str(directory_path))
-            .with_grants(services.access_grants)
-            .with_attachments(services.attached_files)
-        )
-    requested, _ = parse_access_request(tool_arguments.get("access_request"))
-    declared_read_only = requested is not None and requested.mutates is False
-
-    wants_background = tool_arguments.get("background", False)
-    if isinstance(wants_background, str):
-        wants_background = wants_background.lower() == "true"
-    if wants_background:
         try:
-            services.permissions.check_bash_background()
-        except PermissionDenied as denial:
-            yield Error(
-                id=tool_call_identifier,
-                code="background_not_allowed",
-                message=str(denial),
-                tool=tool_name,
-            )
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
             return
-
-    lease_token = ""
-    if not declared_read_only and call_site is None:
-        try:
-            lease_token = await services.leases.acquire(
-                scope="worktree",
-                path=services.leases.canonical_working_directory(policy.working_directory),
-                description=f"mutating bash: {raw_command}",
-                working_directory=policy.working_directory,
-            )
-        except FileLeaseConflict as exception:
-            yield Error(
-                id=tool_call_identifier,
-                code="filesystem_lease_conflict",
-                message=str(exception),
-                tool=tool_name,
-            )
-            return
-
-    try:
-        if decision.retry_grant is not None:
-            result_data = await run_bash(
-                services, tool_arguments, tool_call_identifier, retry_grant=decision.retry_grant
-            )
-            yield ToolResult(id=tool_call_identifier, name=tool_name, result=result_data)
-            return
-        result_data = await run_bash(services, tool_arguments, tool_call_identifier)
-        model_guidance = ""
-        denial = sandbox_denial(services, result_data, policy)
-        if denial is not None:
-            retry_gate = permissions.retry_gate(
-                tool_call_id=tool_call_identifier,
-                command=raw_command,
-                denial=denial,
-                explanation=str(tool_arguments.get("explanation", "") or ""),
-            )
-            verdict, grant = await permissions.decide_retry(retry_gate)
-            if verdict == "run" and grant is not None:
-                result_data = await run_bash(
-                    services, tool_arguments, tool_call_identifier, retry_grant=grant
-                )
-            elif verdict == "ask":
-                yield RetryRequested(
-                    id=tool_call_identifier,
-                    command=raw_command,
-                    denial_kind=denial.kind,
-                    denial_evidence=denial.evidence,
-                    explanation=str(tool_arguments.get("explanation", "") or ""),
-                    result=result_data,
-                )
+        except Exception:
+            try:
+                process.terminate()
+            except ProcessLookupError:
                 return
-            else:
-                result_data = permissions.retry_refusal_result(retry_gate)
-                model_guidance = retry_gate.deny_message
-        yield ToolResult(
-            id=tool_call_identifier,
-            name=tool_name,
-            result=result_data,
-            model_guidance=model_guidance,
+
+    async def run() -> str:
+        # The session's own tools ride in the environment the confinement builds, already on `PATH`.
+        spawn = _confinement.spawn_recipe(
+            _confinement.first_attempt(profile, workspace=workspace),
+            workspace=workspace,
+            extra_environment=active.child_environment(),
         )
-        if isinstance(result_data, dict) and result_data.get("code") == "bash_started":
-            job_id = result_data.get("job_id", "")
-            if job_id:
-                services.record_event(
-                    "background_bash_started", {"job_id": job_id, "command": raw_command}
+        process = await asyncio.create_subprocess_exec(
+            # Still a shell command; the working directory is the process's own, not a `cd` the model can escape.
+            *_confinement.resolve_command(command, spawn),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=workspace or None,
+            env=spawn.environment,
+            preexec_fn=spawn.preexec,
+            # A new session denies terminal prompts while still giving `killpg` a dedicated group.
+            start_new_session=True,
+        )
+        process_holder["process"] = process
+        process_id = process.pid
+        # Persist the group id, so a subtree orphaned by a crash is reaped on the next startup.
+        try:
+            group = os.getpgid(process_id)
+            current_background_jobs().store.record_process_group(job_id, group)
+            # And tell the host, which is how a call this child makes is attributed back to this session.
+            record_child_group(active.session_id, group)
+        except (ProcessLookupError, OSError):
+            pass
+
+        async def write_stream(stream, handle):
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                handle.write(line.decode())
+                handle.flush()
+
+        try:
+            with output_path.open("w") as file_handle:
+                await asyncio.gather(
+                    write_stream(process.stdout, file_handle),
+                    write_stream(process.stderr, file_handle),
                 )
-                if lease_token and background.runner.add_done_callback(
-                    job_id,
-                    lambda _identifier, token=lease_token: services.leases.release(token),
-                ):
-                    lease_token = ""
-    finally:
-        services.leases.release(lease_token)
+
+            await process.wait()
+        except asyncio.CancelledError:
+            cancel_process()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=current_limits().sigterm_grace)
+            except asyncio.TimeoutError:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except Exception:
+                    try:
+                        process.kill()
+                    except ProcessLookupError:
+                        pass
+                await process.wait()
+            # Read off the loop: a large log would otherwise block every session sharing it.
+            output = (
+                await asyncio.to_thread(output_path.read_text, errors="replace")
+                if output_path.exists()
+                else ""
+            )
+            inline_output, output_truncated = clip_to_tokens(output, current_limits().output_tokens)
+            payload = {
+                "code": "bash_cancelled",
+                "status": "error",
+                "output": inline_output,
+                "output_file": str(output_path),
+                "truncated": output_truncated,
+                "pid": process_id,
+                "size": len(output),
+                "returncode": process.returncode,
+            }
+            return compact(payload)
+        # Off the loop, for the same reason: a multi-megabyte output must not stall it.
+        output = await asyncio.to_thread(output_path.read_text)
+        # A non-zero exit is a failure the model must see, or `exit 7` reads as success.
+        return_code = process.returncode or 0
+        result_code = "bash_completed" if return_code == 0 else "bash_failed"
+        result_status = "ok" if return_code == 0 else "error"
+        if not output:
+            return compact(
+                {
+                    "code": result_code,
+                    "status": result_status,
+                    "output": "",
+                    "output_file": str(output_path),
+                    "truncated": False,
+                    "pid": process_id,
+                    "size": 0,
+                    "returncode": return_code,
+                }
+            )
+        inline_output, truncated = clip_to_tokens(output, current_limits().output_tokens)
+        result = {
+            "code": result_code,
+            "status": result_status,
+            "output": inline_output,
+            "output_file": str(output_path),
+            "truncated": truncated,
+            "pid": process_id,
+            "size": len(output),
+            "returncode": return_code,
+        }
+        return compact(result)
+
+    jobs = current_background_jobs()
+    job_id = jobs.spawn(
+        "bash",
+        run(),
+        output_path=output_path,
+        cancel_callback=cancel_process,
+        arguments={
+            "command": command,
+            "access_request": kwargs.get("access_request", {}),
+            "explanation": kwargs.get("explanation", ""),
+            "background": background,
+        },
+        # Correlate the job with its tool call, so a blocking foreground command can be backgrounded by that id.
+        tool_call_identifier=current_tool_call_id(),
+        # A backgrounded command is detached and survives a Stop; a synchronous one is killed by it.
+        detached=background,
+    )
+    if not background:
+        # Block and hand back real output, so the model never mistakes a placeholder for unfinished work.
+        settled = await jobs.settle_inline(job_id, timeout)
+        if settled is not None:
+            return settled.result
+    return compact(
+        {
+            "code": "bash_started",
+            "status": "running",
+            "job_id": job_id,
+            "output_file": str(output_path),
+        }
+    )
 
 
-__all__ = ["handle_bash", "run_bash"]
+# The tool's model-facing description is this plugin's own file, applied once at import.
+bash.description = _DESCRIPTIONS.load("bash", {}).strip() or bash.description
+
+__all__ = ["bash"]
