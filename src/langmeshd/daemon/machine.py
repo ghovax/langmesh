@@ -9,7 +9,7 @@ from langmesh.base.configuration import Configuration
 from langmesh.base.contracts.catalogue import AgentLoader, CatalogueRoots, FileCatalogue
 from langmesh.base.contracts.catalogue import packaged_prompts_directory
 from langmeshd.commons.configuration_io import load_configuration  # noqa: F401 — re-exported for callers of machine.load_configuration
-from langmeshd.daemon.agent_files import AgentFileLoader
+from langmeshd.commons.agent_files import AgentFileLoader
 
 # Instruction files a project may carry, in preference order, with the first match winning.
 PROJECT_INSTRUCTION_NAMES = ("AGENTS.md", "CLAUDE.md", "CONTEXT.md")

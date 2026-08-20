@@ -1,4 +1,4 @@
-"""The daemon's AGENT.md file I/O: reading and writing profile files with YAML frontmatter.
+"""The daemon's shared AGENT.md file I/O: reading and writing profile files with YAML frontmatter.
 
 The library's AgentConfiguration is a pure model; reading and writing the files that carry
 one is the daemon's job.
