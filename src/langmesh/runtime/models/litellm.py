@@ -33,7 +33,10 @@ from langmesh.runtime.cache_trace import (
     active_cache_lane,
     diagnose,
     provider_cache_key,
+    remember_cache_lane,
     reconcile,
+    request_traces_snapshot,
+    restore_request_traces,
     trace,
 )
 from langmesh.base.content.message_content import (
@@ -275,7 +278,38 @@ class ChatLiteLLMModel(BaseChatModel):
         if candidate is not None:
             lane, identity = candidate
             prior = self._cache_anchors.get(lane, ())
-            self._cache_anchors[lane] = tuple(dict.fromkeys((identity, *prior)))[:2]
+            remember_cache_lane(
+                self._cache_anchors,
+                lane,
+                tuple(dict.fromkeys((identity, *prior)))[:2],
+            )
+
+    def model_cache_snapshot(self) -> dict[str, object]:
+        """Serialize the bounded diagnostics and explicit breakpoint anchors owned by this session."""
+        return {
+            "version": 1,
+            "traces": request_traces_snapshot(self._previous_traces),
+            "anchors": {lane: list(anchors) for lane, anchors in self._cache_anchors.items()},
+        }
+
+    def restore_model_cache(self, snapshot: object) -> None:
+        """Restore validated diagnostics and breakpoint anchors from durable session state."""
+        if not isinstance(snapshot, dict) or snapshot.get("version") != 1:
+            return
+        self._previous_traces = restore_request_traces(snapshot.get("traces"))
+        self._cache_anchors = {}
+        raw_anchors = snapshot.get("anchors")
+        if not isinstance(raw_anchors, dict):
+            return
+        for raw_lane, raw_values in list(raw_anchors.items())[-16:]:
+            lane = str(raw_lane).strip()
+            if not lane or not isinstance(raw_values, list):
+                continue
+            anchors = tuple(
+                value for raw in raw_values[:2] if (value := str(raw).strip()) and len(value) <= 128
+            )
+            if anchors:
+                remember_cache_lane(self._cache_anchors, lane, anchors)
 
     @staticmethod
     def _mark_cached(entry: dict[str, Any], key: str = "cache_control") -> bool:
@@ -395,7 +429,7 @@ class ChatLiteLLMModel(BaseChatModel):
         if previous is None and lane != "conversation":
             previous = self._previous_traces.get("conversation")
         diagnosis = diagnose(current, previous)
-        self._previous_traces[lane] = current
+        remember_cache_lane(self._previous_traces, lane, current)
         return diagnosis
 
     # Streaming generation.

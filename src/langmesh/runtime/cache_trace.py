@@ -12,7 +12,7 @@ unknown rather than a confirmed miss.
 
 Situation matrix, one row each:
 
-- First call in a lane or after a restart: no baseline, outcome unknown.
+- First-ever call in a lane: no baseline, outcome unknown; a restored session retains its baseline.
 - User interrupt or steering while idle: next request appends the message; prefix stays intact.
 - Steering during a stream: queued, drained at the model boundary, appended; stays intact.
 - Tool interrupt: each tool result appends a message; request grows, prefix stays intact.
@@ -32,7 +32,7 @@ import hashlib
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Generator, Optional, Sequence
+from typing import Generator, MutableMapping, Optional, Sequence, TypeVar
 
 from langmesh.base.primitives.limits import count_tokens
 
@@ -105,6 +105,84 @@ class RequestTrace:
     @property
     def tokens(self) -> int:
         return sum(segment.tokens for segment in self.segments)
+
+
+_LaneValue = TypeVar("_LaneValue")
+
+
+def remember_cache_lane(
+    lanes: MutableMapping[str, _LaneValue],
+    lane: str,
+    value: _LaneValue,
+    *,
+    limit: int = 16,
+) -> None:
+    """Remember the newest bounded lane value while preferentially retaining the conversation baseline."""
+    lanes.pop(lane, None)
+    lanes[lane] = value
+    while len(lanes) > max(1, limit):
+        oldest = next((name for name in lanes if name != "conversation"), next(iter(lanes)))
+        del lanes[oldest]
+
+
+def request_trace_snapshot(value: RequestTrace) -> dict[str, object]:
+    """Serialize a request trace into the JSON-safe form stored beside a session."""
+    return {
+        "segments": [
+            {
+                "kind": segment.kind,
+                "position": segment.position,
+                "role": segment.role,
+                "digest": segment.digest,
+                "tokens": segment.tokens,
+            }
+            for segment in value.segments
+        ]
+    }
+
+
+def restore_request_trace(value: object) -> Optional[RequestTrace]:
+    """Restore one defensively validated request trace or reject the malformed snapshot."""
+    if not isinstance(value, dict) or not isinstance(value.get("segments"), list):
+        return None
+    segments: list[Segment] = []
+    try:
+        for raw in value["segments"]:
+            if not isinstance(raw, dict):
+                return None
+            digest = str(raw["digest"])
+            if not digest:
+                return None
+            segments.append(
+                Segment(
+                    kind=str(raw["kind"]),
+                    position=int(raw["position"]),
+                    role=str(raw["role"]),
+                    digest=digest,
+                    tokens=max(0, int(raw["tokens"])),
+                )
+            )
+    except (KeyError, TypeError, ValueError):
+        return None
+    return RequestTrace(segments)
+
+
+def request_traces_snapshot(values: dict[str, RequestTrace]) -> dict[str, object]:
+    """Serialize the bounded cache-lane baselines in their recency order."""
+    return {lane: request_trace_snapshot(value) for lane, value in values.items()}
+
+
+def restore_request_traces(value: object, *, limit: int = 16) -> dict[str, RequestTrace]:
+    """Restore at most the newest validated cache-lane baselines."""
+    restored: dict[str, RequestTrace] = {}
+    if not isinstance(value, dict):
+        return restored
+    for raw_lane, raw_trace in list(value.items())[-max(1, limit) :]:
+        lane = str(raw_lane).strip()
+        candidate = restore_request_trace(raw_trace)
+        if lane and candidate is not None:
+            remember_cache_lane(restored, lane, candidate, limit=limit)
+    return restored
 
 
 def trace(pieces: Sequence[Piece]) -> RequestTrace:
@@ -211,4 +289,9 @@ __all__ = [
     "reconcile",
     "trace",
     "provider_cache_key",
+    "remember_cache_lane",
+    "request_trace_snapshot",
+    "request_traces_snapshot",
+    "restore_request_trace",
+    "restore_request_traces",
 ]

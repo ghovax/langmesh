@@ -46,7 +46,10 @@ from langmesh.runtime.cache_trace import (
     active_cache_lane,
     diagnose,
     provider_cache_key,
+    remember_cache_lane,
     reconcile,
+    request_traces_snapshot,
+    restore_request_traces,
     trace,
 )
 from langmesh.base.primitives.serialization import compact, upstream_detail
@@ -107,6 +110,15 @@ class ChatCodexModel(BaseChatModel):
     @property
     def _identifying_params(self) -> dict[str, Any]:
         return {"model": self.model, "reasoning_effort": self.reasoning_effort}
+
+    def model_cache_snapshot(self) -> dict[str, object]:
+        """Serialize this session's bounded request-diagnostic baselines."""
+        return {"version": 1, "traces": request_traces_snapshot(self._previous_traces)}
+
+    def restore_model_cache(self, snapshot: object) -> None:
+        """Restore validated request-diagnostic baselines from durable session state."""
+        if isinstance(snapshot, dict) and snapshot.get("version") == 1:
+            self._previous_traces = restore_request_traces(snapshot.get("traces"))
 
     # The same tool-binding surface as the LiteLLM client; the Responses-shaped flattening happens at payload-build time.
 
@@ -455,7 +467,7 @@ class ChatCodexModel(BaseChatModel):
         if previous is None and lane != "conversation":
             previous = self._previous_traces.get("conversation")
         diagnosis = diagnose(current, previous)
-        self._previous_traces[lane] = current
+        remember_cache_lane(self._previous_traces, lane, current)
         return diagnosis
 
     async def _astream(
