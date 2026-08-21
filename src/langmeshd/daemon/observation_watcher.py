@@ -78,12 +78,13 @@ class ObservationRegistryWatcher:
             metadata = (await store.describe()).model_dump(mode="json")
         except Exception:  # noqa: BLE001 — a descriptor is best-effort around a broken file
             metadata = {}
+        exists = await asyncio.to_thread(path.exists)
         previous = self._snapshots.get(path) or {
             "revision": 0,
             "entries": {"observations": [], "directives": []},
             "metadata": {
                 "path": str(path),
-                "exists": path.exists(),
+                "exists": exists,
                 "revision": 0,
                 "counts": {"observations": 0, "directives": 0},
                 "updated_at": {"earliest": None, "latest": None},

@@ -7,6 +7,7 @@ names it.
 
 from __future__ import annotations
 
+import asyncio
 import shlex
 from dataclasses import replace
 from pathlib import Path
@@ -28,6 +29,11 @@ from langmesh.runtime.internals import _maybe_json
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.execution import ToolExecution
 from langmesh.runtime.turn_events import Error, RetryRequested, ToolResult
+
+
+def _inspect_local_directory(directory: str) -> tuple[Path, bool, bool]:
+    directory_path = Path(directory).expanduser()
+    return directory_path, directory_path.is_absolute(), directory_path.is_dir()
 
 
 async def run_bash(
@@ -95,8 +101,10 @@ async def handle_bash(execution: ToolExecution) -> AsyncIterator[Any]:
     tool_arguments.pop("location", None)
     directory = policy.working_directory
     if directory and call_site is None:
-        directory_path = Path(directory).expanduser()
-        if not directory_path.is_absolute():
+        directory_path, is_absolute, is_directory = await asyncio.to_thread(
+            _inspect_local_directory, directory
+        )
+        if not is_absolute:
             yield Error(
                 id=tool_call_identifier,
                 code="invalid_working_directory",
@@ -104,7 +112,7 @@ async def handle_bash(execution: ToolExecution) -> AsyncIterator[Any]:
                 tool=tool_name,
             )
             return
-        if not directory_path.is_dir():
+        if not is_directory:
             yield Error(
                 id=tool_call_identifier,
                 code="invalid_working_directory",
