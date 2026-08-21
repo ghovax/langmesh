@@ -54,6 +54,23 @@ class GoalReviewState:
 
     goal: Goal | None = None
 
+    @classmethod
+    def from_data(cls, value: object) -> "GoalReviewState":
+        """Validate a goal-review state from its storage representation."""
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, Mapping):
+            return cls()
+        stored = value.get("goal")
+        if isinstance(stored, Goal):
+            return cls(stored.model_copy(deep=True))
+        if isinstance(stored, Mapping) and str(stored.get("text", "")).strip():
+            try:
+                return cls(Goal.model_validate(stored))
+            except ValidationError:
+                logger.warning("discarding a stored goal that no longer validates")
+        return cls()
+
 
 #: A goal's schema descriptions and its instructions, both configurable beside this plugin.
 _DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
@@ -121,18 +138,10 @@ class GoalReviewFeature(Feature):
         return GoalReviewState(self.goal.model_copy(deep=True) if self.goal is not None else None)
 
     def restore(self, state: object) -> None:
-        stored = state.goal if isinstance(state, GoalReviewState) else None
-        if isinstance(state, Mapping):
-            stored = state.get("goal")
-        goal = None
-        if isinstance(stored, Goal):
-            goal = stored.model_copy(deep=True)
-        elif isinstance(stored, Mapping) and str(stored.get("text", "")).strip():
-            try:
-                goal = Goal.model_validate(stored)
-            except ValidationError:
-                logger.warning("discarding a stored goal that no longer validates")
-        self._goal = goal
+        restored = GoalReviewState.from_data(state)
+        self._goal = (
+            restored.goal.model_copy(deep=True) if restored.goal is not None else None
+        )
 
     def write(self, goal: Optional[Goal]) -> None:
         """Set, replace or drop the goal, and announce it. The single writer, so no path changes it silently."""

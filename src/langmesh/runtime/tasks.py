@@ -26,6 +26,18 @@ class TaskState:
     tasks: tuple[TaskItem, ...] = ()
     next_identifier: int = 1
 
+    @classmethod
+    def from_data(cls, value: object) -> "TaskState":
+        """Validate the storage representation of a task state."""
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, Mapping):
+            return cls()
+        return cls(
+            tasks=tuple(TaskItem.model_validate(task) for task in value.get("tasks", ())),
+            next_identifier=max(1, int(value.get("next_identifier", 1))),
+        )
+
 
 class TaskManager:
     def __init__(self):
@@ -111,16 +123,8 @@ class TaskManager:
 
     def restore(self, state: object) -> None:
         """Rehydrate from :meth:`snapshot`, tolerating a missing or partial one by staying empty."""
-        if isinstance(state, TaskState):
-            tasks = state.tasks
-            stored_next = state.next_identifier
-        elif isinstance(state, Mapping):
-            tasks = tuple(TaskItem.model_validate(task) for task in state.get("tasks", ()))
-            stored_next = int(state.get("next_identifier", 1))
-        else:
-            tasks = ()
-            stored_next = 1
-        self._tasks = [TaskItem.model_validate(task) for task in tasks]
+        restored = TaskState.from_data(state)
+        self._tasks = [TaskItem.model_validate(task) for task in restored.tasks]
         self._by_identifier = {task.identifier: task for task in self._tasks}
         if len(self._by_identifier) != len(self._tasks):
             raise ValueError("task snapshot contains duplicate identifiers")
@@ -129,7 +133,9 @@ class TaskManager:
             for task in self._tasks
             if task.identifier.removeprefix("task-").isdigit()
         ]
-        self._next_identifier = max(stored_next, max(numeric_identifiers, default=0) + 1)
+        self._next_identifier = max(
+            restored.next_identifier, max(numeric_identifiers, default=0) + 1
+        )
 
 
 __all__ = ["TaskItem", "TaskManager", "TaskState"]

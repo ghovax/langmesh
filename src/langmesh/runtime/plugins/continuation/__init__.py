@@ -25,6 +25,18 @@ class ContinuationState:
     tasks: TaskState
     task_continuations: int = 0
 
+    @classmethod
+    def from_data(cls, value: object) -> "ContinuationState | None":
+        """Validate a continuation state from its storage representation."""
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, Mapping):
+            return None
+        return cls(
+            tasks=TaskState.from_data(value.get("tasks")),
+            task_continuations=max(0, int(value.get("task_continuations", 0) or 0)),
+        )
+
 
 class Continuation(Feature):
     """Whether the session keeps going on its own, by the configured policy and the allowances spent."""
@@ -102,13 +114,8 @@ class Continuation(Feature):
         return ContinuationState(self._task_manager.snapshot(), self._task_continuations)
 
     def restore(self, state: object) -> None:
-        if isinstance(state, ContinuationState):
-            tasks = state.tasks
-            task_continuations = state.task_continuations
-        elif isinstance(state, Mapping):
-            tasks = state.get("tasks", {})
-            task_continuations = int(state.get("task_continuations", 0) or 0)
-        else:
+        restored = ContinuationState.from_data(state)
+        if restored is None:
             return
-        self._task_manager.restore(tasks)
-        self.restore_task_continuations(task_continuations)
+        self._task_manager.restore(restored.tasks)
+        self.restore_task_continuations(restored.task_continuations)
