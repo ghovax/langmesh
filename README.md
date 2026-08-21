@@ -14,7 +14,7 @@ One conversation with an agent is a **session**. You create one, send it work, a
 
 LangMesh is four layers, and the first three are two packages that ship as one image. Each layer uses the one under it and adds a single thing:
 
-1. **The library** — `import langmesh`. `langmesh.Session` runs an agent in your own process. You give it the agent, the model, the working directory (or a virtual workspace) and the credentials; it reads no file you did not name, starts no daemon, and forces no plugin. This is the harness itself, and the three layers above are all built on it. See [As a library](documentation/library/index.md).
+1. **The library** — `import langmesh`. `langmesh.Session` runs an agent in your own process. You give it the agent, the model, an absolute working directory, and the credentials; it performs no implicit user or project discovery, starts no daemon, and forces no plugin. Explicit tools operate only when composed, while shipped prompt assets remain package resources. This is the harness itself, and the three layers above are all built on it. See [As a library](documentation/library/index.md).
 2. **The machine loaders and the daemon** — the `langmeshd` package. The machine loaders (`langmeshd.daemon.machine`) read your configuration file and the agents in your `.agents` directories and turn them into what the library takes. `langmeshd` then hosts every session. This layer knows your home directory exists; the library does not.
 3. **The clients** — the `langmesh` command (whose one verb is `serve`), the macOS app, and a phone. All talk to the daemon and contain no harness of their own; anything one can do, the others can.
 
@@ -45,7 +45,7 @@ The same harness, reached two ways. Start at the layer you want: an object in yo
 
 ### As a library
 
-No daemon and nothing read from or written to your home directory. The agent, its prompt, its features, and its credentials are values in your program:
+No daemon and no implicit home-directory discovery or persistence. The agent, its prompt, its features, and its credentials are values in your program; explicit tools may operate only within the authority you compose:
 
 ```python
 import asyncio
@@ -88,37 +88,22 @@ async for event in session.stream("Summarise what the test suite covers."):
     ...  # Dispatch on each typed TurnEvent as it arrives.
 ```
 
-Because the library forces nothing, the agent above has no shell until `Bash()` is composed; a `SessionComponents()` with no features is a plain model turn and nothing else. `SessionComponents` carries the models, prompt and attachment composition, checkpoints, jobs, transcripts, approvals, audit, tools, permission policy, hooks, middleware, peer sessions, MCP servers, workspaces, file leases, credentials, and tracing — plus the `features` list and the `services` bundle the host hands its plugins. Run facts (directory, identity, permission mode, confinement) are passed to `Session`, never to the components, so a persistence adapter cannot silently change the boundary.
+Because the library forces nothing, the agent above has no shell until `Bash()` is composed; a `SessionComponents()` with no features is a plain model turn and nothing else. `SessionComponents` carries the models, prompt and attachment composition, checkpoints, artifacts, jobs, transcripts, approvals, audit, tools, permission policy, hooks, middleware, peer sessions, MCP servers, file leases, credentials, and tracing — plus the `features` list and the `services` bundle the host hands its plugins. Run facts (directory, identity, permission mode, confinement) are passed to `Session`, never to the components, so a persistence adapter cannot silently change the boundary.
 
-A virtual workspace replaces a directory, and observational memory belongs to those resources rather than the session:
-
-```python
-from langmesh import Session, WorkspaceResources
-
-resources = WorkspaceResources.memory({"README.md": "# Virtual workspace"})
-async with Session(reviewer, resources=resources, providers={"anthropic": "sk-ant-…"}) as session:
-    answer = await session.ask("Add a short usage section to the README.")
-updated = await resources.read("README.md")  # The write is visible in the workspace.
-```
-
-Library callers can read or subscribe to the same validated observation registry without starting a daemon or polling:
+Checkpoint storage is an adapter choice. The default is isolated in-memory state; `SQLiteCheckpoints` uses a caller-owned SQLite connection, which may itself be in memory or backed by a file:
 
 ```python
-from langmesh import ObservationRegistry, WorkspaceResources
+import sqlite3
+from langmesh import Session, SessionComponents, SQLiteCheckpoints
 
-resources = WorkspaceResources.local("/srv/checkout")
-registry = ObservationRegistry(resources)
-snapshot = await registry.load()
-for entry in snapshot["entries"]["observations"]:
-    ...  # Each entry carries id, updated_at, and the validated observation fields.
-
-descriptor = await registry.describe()  # path, revision, counts, status, and timestamp extent
-
-async for changed in registry.watch():
-    ...  # A complete validated snapshot, same revision/entries shape as load().
+connection = sqlite3.connect("sessions.sqlite")
+checkpoints = SQLiteCheckpoints(connection)
+components = SessionComponents(checkpoints=checkpoints)
+async with Session(reviewer, directory="/srv/checkout", components=components) as session:
+    answer = await session.ask("Explain the persistence boundary.")
 ```
 
-The snapshot is a plain mapping: `revision` is an integer, and `entries` maps each ledger name (`observations`, `directives`) to a list of validated entry dicts. An observation entry carries `id` and `updated_at` plus the validated fields (`category`, `claim`, `detail`, `evidence`, `standing`, `files`); a directive entry carries `id`, `updated_at`, `kind`, `summary`, `detail`, `occasion`, and `files`. The registry stores each entry as explicit columns, never one JSON blob, so the required fields of the row (its `category`, `claim`, and `standing`) are enforced by the schema rather than left to a writer's memory. `load()` and `watch()` validate every row and timestamp; a malformed registry raises `ObservationRegistryError`. Reads run through an SQLAlchemy Core view that opens the database read-only (`mode=ro`) and re-validates the schema before trusting any row. `describe()` never raises: a registry that is absent or no longer matches the current schema is itself the answer, reported as `status: "missing" | "broken"` with a `problem` message when broken, so the model hears about the state instead of silently getting no entries. There is no backward compatibility with the pre-columnar JSON-schema format — such a file is detected and reported as broken, never interpreted. All three methods are read-only and create nothing. A configured `Session` exposes this same object as `session.observations`, so code already driving an agent does not configure the resource boundary twice.
+`SessionCheckpoint`, `SessionSnapshot`, `PendingInput`, `PendingTurn`, and every feature state are typed values with explicit fields and `to_data()`/`from_data()` storage boundaries. The library never chooses a project file or home-directory database. Tool outputs use the same rule: `MemoryArtifacts` is the neutral default, `session.artifacts.read(identifier)` exposes the bytes, and the daemon selects its own atomic file adapter. A caller may implement the `Checkpoints`, `Artifacts`, `JobStore`, `Transcript`, `CredentialStore`, or other structural protocols and inject them through `SessionComponents`.
 
 Three more things sit around the turn: bound it, wrap its tools, decide how its history compacts. Each one is an object with a method or two, so your own is as short as the ones that ship:
 
@@ -173,7 +158,7 @@ Everything else — creating and messaging sessions, answering permission reques
 The screen-control tools need a one-time Accessibility grant and Chrome's remote-debugging toggle — see the [Installation guide](documentation/user/installation.md#permissions-the-app-may-ask-for).
 
 > [!NOTE]
-> You can opt in to send a snapshot of how you work. The system prompt then carries it to your model provider. This is off by default. See [what the agent sends to your model provider](SECURITY.md#what-the-agent-sends-to-your-model-provider).
+> You can opt in to send a snapshot of how you work. LangMesh appends it to the model conversation as session context and sends it to your model provider. This is off by default. See [what the agent sends to your model provider](SECURITY.md#what-the-agent-sends-to-your-model-provider).
 
 ## How it compares
 

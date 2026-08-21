@@ -118,5 +118,4 @@ See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 
 - [Composition](composition.md) explains every configured value, the plugin seam, and the product boundary.
 - [Lifecycle and driving](lifecycle.md) covers suspension, resume, interrupts, steering, retries, and the complete stream contract.
-- [Compaction and continuation](persistence.md) covers history compaction and autonomous work.
-- [Resources and persistence](persistence.md) covers virtual workspaces, checkpoints, transcripts, observational memory, and background jobs.
+- [Compaction, continuation, and persistence](persistence.md) covers history compaction, autonomous work, checkpoints, artifacts, transcripts, observational memory, and background jobs.

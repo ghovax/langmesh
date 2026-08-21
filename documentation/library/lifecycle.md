@@ -65,7 +65,7 @@ await session.steer("Check the migration too.")
 await session.set_permission_mode("automatic")
 ```
 
-`set_permission_mode()` changes the next tool decision and reconsiders unanswered suspended gates, returning the updated state. The modes are `ask`, `automatic`, and `allow`; see [Permission modes](../user/configuration.md#permission-modes). Changing mode preserves the existing conversation prefix.
+`set_permission_mode()` checkpoints the new mode before the runtime adopts it, changes the next tool decision, and reconsiders unanswered suspended gates, returning the updated state. The modes are `ask`, `automatic`, and `allow`; see [Permission modes](../user/configuration.md#permission-modes). Changing mode preserves the existing conversation prefix and survives an immediate restart.
 
 ## Failure and retry
 
@@ -83,7 +83,7 @@ except Exception:
 
 ## Session close
 
-`aclose()` cancels only this session's background jobs, releases its resource lease, closes MCP server connections it opened, and unbinds its credentials and tracer. It does not shut down process-global runners owned by another session.
+`aclose()` stops live in-process work as a restart boundary, waits for the active turn to leave its lock, restores an existing checkpoint first when necessary, writes the final typed checkpoint, and only then releases the runtime. If the save fails, the runtime remains available and the error is returned to the caller. Supplied MCP servers, checkpoint connections, artifact stores, credentials, and tracers remain caller-owned and are never closed implicitly.
 
 ## Events and driving patterns
 
@@ -168,16 +168,17 @@ The model must implement `bind_tools()` and streaming. LangMesh binds one stable
 
 ### Preserve provider caches
 
-The static system prompt and tool schema form the reusable prefix. LangMesh preserves that prefix by construction:
+Stable instructions and the tool schema form the reusable prefix. LangMesh preserves that prefix by construction:
 
 - `SessionComponents` is frozen and snapshots sequence fields.
 - Prior conversation messages are append-only until an explicit compaction.
+- Session identity, paths, confinement, machine and user snapshots, feature state, and background events are a marked conversation message; a changed digest appends a replacement instead of rebuilding the stable instructions.
 - The goal and permission reviewers inherit the main conversation and stable tool schema, then append their private instructions.
 - Tools supplied before the first call stay fixed in the reusable schema. A live `grant_tool()` is an explicit capability change and therefore an intentional one-call divergence at the tools segment. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 - Steering appends at a provider boundary; it never edits an earlier message.
 - Permission-mode changes apply during execution without rewriting model history.
 - Session checkpoints include bounded request baselines, rolling Claude anchors, and account-scoped Cursor resumptions, so rebuilding a runtime does not make an otherwise reusable request locally unknowable.
 
-`PromptComposer` runs only when the cached system prompt is built. Call `Session.refresh_prompt()` after changing an external source that the composer reads; that explicit refresh invalidates the static prompt cache. A `BeforeModelHook` runs on every request and can intentionally change the prefix, so cache-sensitive hooks should leave the first system message untouched.
+`PromptComposer` runs only when the stable instructions are built. Call `Session.refresh_prompt()` after changing an application-owned source that the composer reads; that explicit refresh invalidates the instructions cache. The exact instructions and their construction revision are checkpointed, while dynamic context lives in the checkpointed conversation. The hook surface cannot rewrite provider requests, so reload reconstructs the same prefix by construction.
 
 Usage events expose provider-reported cache reads and writes, the reusable prefix, and the first divergence from the preceding request (`cache_read_tokens`, `cache_write_tokens`, `cache_prefix_reusable`, `reusable_prefix_tokens`, `segments`, `shared_segments`, `divergence`). Local reuse means the previously sent eligible prefix stayed byte-identical; an actual provider hit still depends on minimum token thresholds, retention TTL, routing, account identity, and whether an earlier concurrent request finished warming the entry. Use these values together to verify a custom model adapter instead of inferring cache behavior from latency alone.
