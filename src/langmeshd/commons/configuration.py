@@ -16,6 +16,10 @@ from langmesh.protocol.dtos import SettingsUpdateRequest
 from langmeshd.commons import timing
 
 
+class AppConfigurationSection(BaseModel, extra="forbid"):
+    """A daemon-owned configuration section that rejects unknown fields."""
+
+
 class AppSettingsUpdateRequest(SettingsUpdateRequest):
     """The library's settings request, plus the app-owned Composio key."""
 
@@ -28,7 +32,7 @@ class DictationUpdateRequest(BaseModel):
     enabled: bool
 
 
-class DictationTimingConfiguration(BaseModel):
+class DictationTimingConfiguration(AppConfigurationSection):
     """How long dictation waits before giving up, separated because these are what a slow machine must move."""
 
     minimum_transcription_timeout_seconds: float = Field(default=30.0)
@@ -37,7 +41,7 @@ class DictationTimingConfiguration(BaseModel):
     worker_shutdown_seconds: float = Field(default=2.0)
 
 
-class DaemonConfiguration(BaseModel):
+class DaemonConfiguration(AppConfigurationSection):
     """The daemon's own lifecycle timings, configurable in the file and never part of the library.
 
     The library must not carry these: they are properties of the daemon process, not of a
@@ -53,7 +57,7 @@ class DaemonConfiguration(BaseModel):
     session_idle_sleep_seconds: float = Field(default=timing.SESSION_IDLE_SLEEP_SECONDS)
 
 
-class DictationConfiguration(BaseModel):
+class DictationConfiguration(AppConfigurationSection):
     """Opt-in speech-to-text, transcribed locally. Off by default: the first use downloads about a gigabyte."""
 
     enabled: bool = Field(default=False)
@@ -61,7 +65,7 @@ class DictationConfiguration(BaseModel):
     timing: DictationTimingConfiguration = Field(default_factory=DictationTimingConfiguration)
 
 
-class ComposioConfiguration(BaseModel):
+class ComposioConfiguration(AppConfigurationSection):
     """Composio's hosted MCP endpoint, exposed as an ordinary streamable_http server."""
 
     enabled: bool = Field(default=False)
