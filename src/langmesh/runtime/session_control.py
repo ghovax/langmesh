@@ -73,12 +73,25 @@ class PendingTurn:
     @classmethod
     def from_data(cls, state: Mapping[str, Any]) -> "PendingTurn":
         """Decode the storage representation produced by :meth:`to_data`."""
+        interactions = state.get("interactions", ())
+        plans = state.get("plans", {})
+        decisions = state.get("decisions", {})
+        if not isinstance(interactions, (list, tuple)):
+            raise TypeError("pending interactions must be a sequence")
+        if not isinstance(plans, Mapping):
+            raise TypeError("pending plans must be a mapping")
+        if not isinstance(decisions, Mapping):
+            raise TypeError("pending decisions must be a mapping")
+        if any(not isinstance(gate, Mapping) for gate in interactions):
+            raise ValueError("each pending interaction must be a mapping")
+        if any(not isinstance(decision, Mapping) for decision in decisions.values()):
+            raise ValueError("each pending decision must be a mapping")
         return cls(
-            interactions=tuple(SuspensionGate(**gate) for gate in state.get("interactions", ())),
-            plans=dict(state.get("plans", {})),
+            interactions=tuple(SuspensionGate(**gate) for gate in interactions),
+            plans=cast(Mapping[str, dict[str, Any]], _plain(plans)),
             decisions={
                 str(request_id): Approval(**decision)
-                for request_id, decision in state.get("decisions", {}).items()
+                for request_id, decision in decisions.items()
             },
         )
 
@@ -152,17 +165,33 @@ class SessionSnapshot:
     def from_data(cls, data: Mapping[str, Any]) -> "SessionSnapshot":
         """Decode the storage representation produced by :meth:`to_data`."""
         recovery = str(data.get("turn_recovery") or "none")
-        if recovery == "retrying":
-            recovery = "retryable"
         if recovery not in {"none", "retryable"}:
-            recovery = "none"
+            raise ValueError(f"invalid turn recovery state: {recovery!r}")
         raw_features = data.get("features", ())
         raw_prompt = data.get("system_prompt")
         raw_pending_input = data.get("pending_input")
-        features = tuple(
-            FeatureState(name=str(item["name"]), value=item.get("value"))
+        if not isinstance(raw_features, (list, tuple)):
+            raise TypeError("session features must be a sequence")
+        if any(
+            not isinstance(item, Mapping) or not str(item.get("name") or "")
             for item in raw_features
-            if isinstance(item, Mapping) and str(item.get("name") or "")
+        ):
+            raise ValueError("each session feature must have a non-empty name")
+        if raw_prompt is not None and (
+            not isinstance(raw_prompt, Mapping)
+            or not str(raw_prompt.get("instructions") or "")
+            or not str(raw_prompt.get("revision") or "")
+        ):
+            raise ValueError("system_prompt must contain instructions and revision")
+        if raw_pending_input is not None and (
+            not isinstance(raw_pending_input, Mapping)
+            or not isinstance(raw_pending_input.get("message"), Mapping)
+        ):
+            raise ValueError("pending_input must contain a message mapping")
+        features = tuple(
+            FeatureState(name=str(item["name"]), value=_plain(item.get("value")))
+            for item in raw_features
+            if isinstance(item, Mapping)
         )
         return cls(
             features=features,
@@ -170,7 +199,7 @@ class SessionSnapshot:
             turn_failure_root=str(data["turn_failure_root"])
             if data.get("turn_failure_root")
             else None,
-            model_cache=data.get("model_cache"),
+            model_cache=_plain(data.get("model_cache")),
             system_prompt=RenderedPrompt(
                 instructions=str(raw_prompt.get("instructions") or ""),
                 revision=str(raw_prompt.get("revision") or ""),
@@ -180,7 +209,7 @@ class SessionSnapshot:
             and str(raw_prompt.get("revision") or "")
             else None,
             pending_input=PendingInput(
-                message=dict(raw_pending_input.get("message") or {}),
+                message=cast(Mapping[str, Any], _plain(raw_pending_input.get("message"))),
                 recorded_text=str(raw_pending_input.get("recorded_text") or ""),
             )
             if isinstance(raw_pending_input, Mapping)
@@ -200,7 +229,7 @@ class SessionCheckpoint:
     def to_data(self) -> dict[str, Any]:
         """Encode this value for a storage or transport adapter."""
         return {
-            "conversation": list(self.conversation),
+            "conversation": _plain(self.conversation),
             "session": self.session.to_data(),
             "pending": self.pending.to_data() if self.pending is not None else None,
         }
@@ -210,13 +239,22 @@ class SessionCheckpoint:
         """Decode the storage representation produced by :meth:`to_data`."""
         raw_session = data.get("session")
         raw_pending = data.get("pending")
+        raw_conversation = data.get("conversation", ())
+        if not isinstance(raw_conversation, (list, tuple)):
+            raise TypeError("checkpoint conversation must be a sequence")
+        if any(not isinstance(item, Mapping) for item in raw_conversation):
+            raise ValueError("each checkpoint conversation item must be a mapping")
+        if not isinstance(raw_session, Mapping):
+            raise ValueError("checkpoint session must be a mapping")
+        if raw_pending is not None and not isinstance(raw_pending, Mapping):
+            raise ValueError("checkpoint pending turn must be a mapping")
         return cls(
             conversation=tuple(
-                item for item in data.get("conversation", ()) if isinstance(item, dict)
+                cast(dict[str, Any], _plain(item))
+                for item in raw_conversation
+                if isinstance(item, Mapping)
             ),
-            session=SessionSnapshot.from_data(raw_session)
-            if isinstance(raw_session, Mapping)
-            else SessionSnapshot(),
+            session=SessionSnapshot.from_data(raw_session),
             pending=PendingTurn.from_data(raw_pending)
             if isinstance(raw_pending, Mapping)
             else None,
