@@ -198,7 +198,7 @@ class Session:
                 credentials=self._credential_store,
                 tracer=tracer,
             )
-            # The directory the caller supplied plus the packaged base layer, and deliberately nothing of `$HOME`.
+            # A bare session uses only caller-supplied values and the packaged prompt layer.
             if self._catalogue is None:
                 from langmesh.base.contracts.catalogue import project_catalogue
 
