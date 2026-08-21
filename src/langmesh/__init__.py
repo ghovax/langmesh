@@ -17,8 +17,7 @@ from langmesh.base.configuration import (
     ToolsConfiguration,
 )
 from langmesh.base.configuration.permission_mode import PermissionMode
-from langmesh.base.confinement.file_leases import FileLeaseManager
-from langmesh.base.content.attachments import ComposedAttachments, PathAttachments
+from langmesh.base.content.attachments import Attachment, AttachmentComposer, ComposedAttachments
 from langmesh.base.content.instructions import Instruction
 from langmesh.base.content.observations import (
     DirectiveEntry,
@@ -61,20 +60,8 @@ from langmesh.base.contracts.ports import (
     Transcript,
     TurnHook,
     TurnSummary,
-    WorkspaceManager,
 )
 from langmesh.base.contracts.tools import ToolLike
-from langmesh.base.persistence.observations import ObservationRegistry
-from langmesh.base.persistence.resources import (
-    LocalResourceChanges,
-    MaterializedResources,
-    OverlayResources,
-    ResourceChange,
-    ResourceChangeSource,
-    ResourceWatchUnsupported,
-    WorkspaceResources,
-    WorkspaceResourcesLike,
-)
 from langmesh.base.persistence.schedules import (
     ScheduleError,
     is_due,
@@ -82,11 +69,6 @@ from langmesh.base.persistence.schedules import (
 )
 from langmesh.base.persistence.schedules import (
     validate as validate_schedule,
-)
-from langmesh.base.persistence.worktrees import (
-    SessionWorktree,
-    SessionWorktreeManager,
-    WorktreeStrategy,
 )
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile, SessionComponents
 from langmesh.runtime.environment import RuntimeEnvironment
@@ -156,6 +138,8 @@ __all__ = [
     "AgentRuntime",
     "Approval",
     "Approvals",
+    "Attachment",
+    "AttachmentComposer",
     "Attachments",
     "BashToolConfiguration",
     "BeforeModelHook",
@@ -176,7 +160,6 @@ __all__ = [
     "Done",
     "Error",
     "EventType",
-    "FileLeaseManager",
     "FileLeases",
     "FilesystemConfiguration",
     "FeatureState",
@@ -185,12 +168,10 @@ __all__ = [
     "GoalReviewStarted",
     "Instruction",
     "JobStore",
-    "LocalResourceChanges",
     "MCPConfiguration",
     "MCPServerConfiguration",
     "MCPServerManager",
     "MCPServers",
-    "MaterializedResources",
     "MaximumToolCalls",
     "MCPEvent",
     "MemoryCheckpoints",
@@ -198,20 +179,14 @@ __all__ = [
     "MemoryTranscript",
     "Observation",
     "ObservationEntry",
-    "ObservationRegistry",
     "ObservationSnapshot",
     "Observer",
-    "OverlayResources",
-    "PathAttachments",
     "PendingTurn",
     "PermissionMode",
     "PermissionPolicy",
     "PermissionReviewing",
     "PromptComposer",
     "PromptLayer",
-    "ResourceChange",
-    "ResourceChangeSource",
-    "ResourceWatchUnsupported",
     "RegistryCounts",
     "RegistryMetadata",
     "RegistryTimestamps",
@@ -227,8 +202,6 @@ __all__ = [
     "SessionPhase",
     "SessionSnapshot",
     "SessionState",
-    "SessionWorktree",
-    "SessionWorktreeManager",
     "Skill",
     "SshExecutor",
     "Status",
@@ -254,10 +227,6 @@ __all__ = [
     "TurnHook",
     "TurnSummary",
     "Usage",
-    "WorkspaceManager",
-    "WorkspaceResources",
-    "WorkspaceResourcesLike",
-    "WorktreeStrategy",
     "__version__",
     "is_due",
     "next_firing",

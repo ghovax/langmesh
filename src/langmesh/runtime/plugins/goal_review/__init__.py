@@ -15,7 +15,6 @@ from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any, Awaitable, Callable, Literal, Optional
 
 from pydantic import ValidationError
@@ -179,7 +178,7 @@ class GoalReviewFeature(Feature):
         """The reviewer's verdict tool lands here, so the review loop reads one submission slot."""
         self._submitted = review
 
-    def _goal_reviewer(self, scratch_directory: str):
+    def _goal_reviewer(self):
         reviewer_configuration = self._context.agent_configuration.model_copy(
             update={"permission_mode": "automatic"}
         )
@@ -205,17 +204,9 @@ class GoalReviewFeature(Feature):
         )
         granted_sandbox = self._host.boundary.granted_profile()
         reviewer_sandbox = granted_sandbox.narrowed(
-            writable=(scratch_directory,),
+            writable=(),
             network=granted_sandbox.network,
             workspace=self._context.working_directory,
-        )
-        reviewer_sandbox = replace(
-            reviewer_sandbox,
-            environment={
-                **reviewer_sandbox.environment,
-                "TMPDIR": scratch_directory,
-                "XDG_CACHE_HOME": scratch_directory,
-            },
         )
         toolbox = self._host.tools.tool_context.toolbox
         if toolbox is not None:
@@ -405,73 +396,70 @@ class GoalReviewFeature(Feature):
                     )
                 )
 
-        with TemporaryDirectory(prefix="langmesh-goal-review-") as scratch_directory:
-            reviewer = self._goal_reviewer(scratch_directory)
-            try:
-                from langmesh.runtime.verdict import drive_verdict_session
+        reviewer = self._goal_reviewer()
+        try:
+            from langmesh.runtime.verdict import drive_verdict_session
 
-                maximum_attempts = self._context.global_configuration.goal_review.maximum_attempts
+            maximum_attempts = self._context.global_configuration.goal_review.maximum_attempts
 
-                async def _run_turn(instruction: str) -> bool:
-                    ran = await self._run_goal_review_turn(
-                        reviewer, instruction, review_id, publish
-                    )
-                    if not ran:
-                        await finish_transcript("canceled")
-                    return ran
-
-                def _submitted():
-                    feature = reviewer._features.by_type(GoalReview)
-                    return feature.submitted if feature is not None else None
-
-                async def _on_success(review):
-                    review._review_id = review_id
-                    await finish_transcript("completed", review)
-
-                def _on_empty(attempt: int, maximum: int) -> None:
-                    logger.warning(
-                        "the goal reviewer stopped without submitting its verdict (attempt %d/%d); continuing it",
-                        attempt,
-                        maximum,
-                    )
-
-                async def _on_exhausted():
-                    logger.error(
-                        "goal reviewer did not submit after %d attempts; last text: %r",
-                        maximum_attempts,
-                        getattr(reviewer, "_last_review_text", ""),
-                    )
-                    await finish_transcript("failed")
-
-                review = await drive_verdict_session(
-                    attempts=maximum_attempts,
-                    reason=f"goal review {review_id}",
-                    run_turn=_run_turn,
-                    submitted=_submitted,
-                    require_submission=lambda: self._require_review_submission(reviewer),
-                    missing_instruction=lambda: self._prompts.load("goal_review_missing", {}),
-                    aborted=lambda: self._host.turn.abort_event.is_set(),
-                    initial_instruction=instructions,
-                    on_success=_on_success,
-                    on_empty=_on_empty,
-                    on_exhausted=_on_exhausted,
-                )
-                if review is not None:
-                    return review
-            except asyncio.CancelledError:
-                await finish_transcript("canceled")
-                raise
-            except Exception:
-                await finish_transcript("failed")
-                raise
-            finally:
-                reviewer.abort()
-                background = reviewer.features.capability(BackgroundCapability)
-                runner = background.runner if background is not None else None
-                if runner is not None:
-                    runner.cancel_all()
-                if not transcript_finished:
+            async def _run_turn(instruction: str) -> bool:
+                ran = await self._run_goal_review_turn(reviewer, instruction, review_id, publish)
+                if not ran:
                     await finish_transcript("canceled")
+                return ran
+
+            def _submitted():
+                feature = reviewer._features.by_type(GoalReview)
+                return feature.submitted if feature is not None else None
+
+            async def _on_success(review):
+                review._review_id = review_id
+                await finish_transcript("completed", review)
+
+            def _on_empty(attempt: int, maximum: int) -> None:
+                logger.warning(
+                    "the goal reviewer stopped without submitting its verdict (attempt %d/%d); continuing it",
+                    attempt,
+                    maximum,
+                )
+
+            async def _on_exhausted():
+                logger.error(
+                    "goal reviewer did not submit after %d attempts; last text: %r",
+                    maximum_attempts,
+                    getattr(reviewer, "_last_review_text", ""),
+                )
+                await finish_transcript("failed")
+
+            review = await drive_verdict_session(
+                attempts=maximum_attempts,
+                reason=f"goal review {review_id}",
+                run_turn=_run_turn,
+                submitted=_submitted,
+                require_submission=lambda: self._require_review_submission(reviewer),
+                missing_instruction=lambda: self._prompts.load("goal_review_missing", {}),
+                aborted=lambda: self._host.turn.abort_event.is_set(),
+                initial_instruction=instructions,
+                on_success=_on_success,
+                on_empty=_on_empty,
+                on_exhausted=_on_exhausted,
+            )
+            if review is not None:
+                return review
+        except asyncio.CancelledError:
+            await finish_transcript("canceled")
+            raise
+        except Exception:
+            await finish_transcript("failed")
+            raise
+        finally:
+            reviewer.abort()
+            background = reviewer.features.capability(BackgroundCapability)
+            runner = background.runner if background is not None else None
+            if runner is not None:
+                runner.cancel_all()
+            if not transcript_finished:
+                await finish_transcript("canceled")
         return None
 
     def apply(self, review: Optional[GoalReview]) -> Optional[Goal]:
