@@ -355,9 +355,9 @@ class AgentDefaults(Section):
     permission_mode: Literal["ask", "automatic", "allow"] = Field(default="ask")
 
 
-class Configuration(Section, extra="allow"):
-    # The configuration file is shared with the host app, which owns sections the library does not
-    # model (dictation, composio, ...). Unknown top-level sections are tolerated, never rejected.
+class Configuration(Section):
+    """The library-owned configuration surface, with every unknown field rejected."""
+
     providers: dict[str, ProviderCredential] = Field(default_factory=dict)
     exa: ExaConfiguration = Field(default_factory=ExaConfiguration)
     jina: JinaConfiguration = Field(default_factory=JinaConfiguration)

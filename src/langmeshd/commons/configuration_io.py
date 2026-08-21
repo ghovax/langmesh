@@ -69,7 +69,10 @@ def load_configuration(*, seed: bool = True) -> Configuration:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(packaged_configuration_yaml())
     data = configuration_file.load()
-    configuration = Configuration(**(data or {}))
+    invalid = configuration_file.rejects(data)
+    if invalid:
+        raise ValueError(f"invalid configuration: {invalid}")
+    configuration = Configuration.model_validate(configuration_file.library_document(data or {}))
     configuration.mcp = mcp_configuration("")
     configuration.remote_agents = remote_agents_configuration("")
     return configuration
