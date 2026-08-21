@@ -65,9 +65,9 @@ _REPLAYABLE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "DELETE"})
 def reach_token() -> str:
     """The door's durable pairing token, minted once and kept beside the daemon's own state."""
     from langmesh.base.confinement.paths import reach_token_path
-    from langmesh.base.persistence.secrets import load_or_create_private_value
+    from langmesh.base.persistence.secrets import ensure_private_value
 
-    return load_or_create_private_value(
+    return ensure_private_value(
         reach_token_path(), lambda: secrets.token_urlsafe(48).encode()
     ).decode("ascii")
 
@@ -207,7 +207,7 @@ def build_application(
             response.set_cookie(_REACH_COOKIE, reach_token, httponly=True, samesite="strict")
         return response
 
-    async def serve_or_proxy(request) -> Response:
+    async def dispatch_request(request) -> Response:
         """A real file wins and everything else is the daemon's, which cannot be two routes."""
         if not _reach_authorized(request):
             return JSONResponse(
@@ -382,7 +382,7 @@ def build_application(
             WebSocketRoute("/_next/{path:path}", proxy_interface_websocket),
             Route(
                 "/{path:path}",
-                serve_or_proxy,
+                dispatch_request,
                 methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
             ),
         ]
@@ -555,7 +555,7 @@ def _open_when_listening(address: str) -> None:
     parsed = urllib.parse.urlparse(address)
     host, port = parsed.hostname or "127.0.0.1", parsed.port or 80
 
-    def wait_and_open() -> None:
+    def open_when_ready() -> None:
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             with socket.socket() as probe:
@@ -570,4 +570,4 @@ def _open_when_listening(address: str) -> None:
         except Exception:  # noqa: BLE001 — no browser is not an error, the address is printed
             pass
 
-    threading.Thread(target=wait_and_open, name="langmesh-web-open", daemon=True).start()
+    threading.Thread(target=open_when_ready, name="langmesh-web-open", daemon=True).start()

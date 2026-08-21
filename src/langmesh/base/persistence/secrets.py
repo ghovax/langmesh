@@ -8,7 +8,7 @@ import tempfile
 from typing import Callable
 
 
-def load_or_create_private_value(path: Path, create: Callable[[], bytes]) -> bytes:
+def ensure_private_value(path: Path, create: Callable[[], bytes]) -> bytes:
     """Read a nonempty private value or atomically install exactly one newly created value."""
     try:
         existing = path.read_bytes()
@@ -44,4 +44,4 @@ def load_or_create_private_value(path: Path, create: Callable[[], bytes]) -> byt
         temporary_path.unlink(missing_ok=True)
 
 
-__all__ = ["load_or_create_private_value"]
+__all__ = ["ensure_private_value"]

@@ -39,7 +39,7 @@ async def open_shared_resources() -> None:
         PersistentPushNotificationConfigurationStore,
         PinnedPushNotificationSender,
     )
-    from langmesh.protocol.files import FileUrlSigner, load_or_create_secret
+    from langmesh.protocol.files import FileUrlSigner, ensure_signing_secret
     from langmeshd.commons.brokers.terminals import TerminalSessionManager
 
     assert commons_state.global_configuration is not None
@@ -81,7 +81,7 @@ async def open_shared_resources() -> None:
 
     signing_root = data_directory()
     commons_state.file_url_signer = FileUrlSigner(
-        load_or_create_secret(signing_root),
+        ensure_signing_secret(signing_root),
         f"http://127.0.0.1:{commons_state.daemon_port}",
         allowed_root=signing_root / "uploads",
     )
@@ -111,7 +111,7 @@ async def open_shared_resources() -> None:
     from langmeshd.daemon import api, scheduler
 
     state._watchers = [
-        asyncio.create_task(_watch_agents_and_skills()),
+        asyncio.create_task(_watch_catalogue()),
         asyncio.create_task(_watch_configuration()),
         asyncio.create_task(_watch_ssh_hosts()),
         # Recurring prompts, alongside the watchers because they are the same kind of long-lived task.
@@ -176,7 +176,7 @@ def _watched_agent_paths() -> list[str]:
     return watched
 
 
-async def _watch_agents_and_skills() -> None:
+async def _watch_catalogue() -> None:
     """Pick up agents, skills, MCP servers, and remote peers as they change on disk."""
     from watchfiles import awatch
 
