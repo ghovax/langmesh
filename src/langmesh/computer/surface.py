@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Optional
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.limits import current_limits
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ def machinery_ceiling() -> float:
 
 def message_loader(folder: str) -> Callable[..., str]:
     """A message function bound to one surface's own folder, so files are named for what they say."""
-    loader = PromptLoader(Path(__file__).parent / "messages" / folder)
+    loader = PackagePromptLoader(Path(__file__).parent / "messages" / folder)
 
     def message(name: str, **variables: str) -> str:
         return loader.load(name, variables).strip()

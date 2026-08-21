@@ -78,7 +78,7 @@ async def _drain_observer(pending) -> None:
 
 
 class _CataloguePrompts:
-    """A `PromptLoader`-shaped view of a catalogue, so the template seam cost one adapter rather than a rewrite."""
+    """A prompt-template view of a catalogue, so the template seam costs one adapter."""
 
     def __init__(self, catalogue: Any) -> None:
         self._catalogue = catalogue

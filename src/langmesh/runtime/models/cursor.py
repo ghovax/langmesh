@@ -44,7 +44,7 @@ from langmesh.base.identity.cursor_credentials import (
     load_tokens,
     valid_tokens,
 )
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.runtime.cache_trace import active_cache_lane
 from langmesh.base.identity.cursor_subscription import (
     APPEND_PATH,
@@ -68,7 +68,7 @@ from langmesh.base.primitives.limits import current_limits
 
 
 # Everything this client says to a model is a prompt on disk, like every other prompt the harness sends.
-_PROMPTS = PromptLoader(Path(__file__).resolve().parent.parent / "prompts")
+_PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent.parent / "prompts")
 
 # A translated built-in has no reason of its own, so it says what it truthfully is for the permission surface.
 _BUILTIN_JUSTIFICATION = "Requested by the Cursor agent while working on this turn."

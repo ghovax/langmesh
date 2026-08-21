@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Protocol, Sequence
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader, PromptTemplates
 from langmesh.base.content.instructions import Instruction
 from langmesh.base.content.memories import parse_memory
 from langmesh.base.content.skills import parse_skill
@@ -107,10 +107,10 @@ class FileCatalogue:
     def prompt(self, name: str, variables: Mapping[str, str]) -> str:
         template = self.prompt_override(name)
         if template is not None:
-            return PromptLoader.render(template, variables, name)
+            return PromptTemplates.render(template, variables, name)
         if self._fallback_prompts is None:
             return ""
-        return PromptLoader(self._fallback_prompts).load(name, variables)
+        return PackagePromptLoader(self._fallback_prompts).load(name, variables)
 
     def prompt_override(self, name: str) -> Optional[str]:
         for root in reversed(self._roots.agents):

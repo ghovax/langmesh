@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from langchain.tools import tool
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.identifiers import new_id
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.primitives.limits import current_limits
@@ -19,7 +19,7 @@ from langmesh.runtime.tools import context as tool_context, fetching
 from langmesh.runtime.tools.execution import current_tool_services
 
 #: The tools' model-facing descriptions, read from this plugin's own prompts directory.
-_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
+_DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 
 
 @tool

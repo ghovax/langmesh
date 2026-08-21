@@ -13,13 +13,13 @@ from langmesh.runtime.tools.execution import current_tool_services
 from langmesh.base.content.skills import enabled_skills
 from langmesh.runtime.internals import _background_handle_kind
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 
 # What each tool and shared field tells the model, read from `descriptions/*.md` at import rather than inlined here.
 logger = logging.getLogger(__name__)
 
 # What an element id looks like on both surfaces, so one can be told from a description of an element.
-_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "descriptions")
+_DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "descriptions")
 
 
 def _require_mcp_server_manager():
