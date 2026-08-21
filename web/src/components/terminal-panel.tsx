@@ -160,7 +160,7 @@ export function TerminalSurface({
       notifyTerminal("error", title, description, key);
     };
 
-    const fitAndResize = () => {
+    const synchronizeSize = () => {
       if (!host.clientWidth || !host.clientHeight) return;
       fitAddon.fit();
       if (socket?.readyState === WebSocket.OPEN) {
@@ -170,13 +170,13 @@ export function TerminalSurface({
       }
     };
 
-    const scheduleFitAndResize = () => {
+    const scheduleSizeSync = () => {
       if (fitAnimationFrame !== null) {
         cancelAnimationFrame(fitAnimationFrame);
       }
       fitAnimationFrame = requestAnimationFrame(() => {
         fitAnimationFrame = null;
-        fitAndResize();
+        synchronizeSize();
       });
     };
 
@@ -185,7 +185,7 @@ export function TerminalSurface({
       if (resetBeforeReplay) {
         terminal.reset();
       }
-      fitAndResize();
+      synchronizeSize();
       socketHadError = false;
       setConnectionStatus({ state: "connecting", label: "Connecting terminal" });
       // Awaited, since a restarted daemon changes the address and token, and re-checked in case of teardown.
@@ -203,7 +203,7 @@ export function TerminalSurface({
       socket = new WebSocket(url);
 
       socket.addEventListener("open", () => {
-        fitAndResize();
+        synchronizeSize();
         terminal.focus();
       });
       socket.addEventListener("message", (event) => {
@@ -302,16 +302,16 @@ export function TerminalSurface({
         );
       }
     });
-    const resizeObserver = new ResizeObserver(() => scheduleFitAndResize());
+    const resizeObserver = new ResizeObserver(() => scheduleSizeSync());
     resizeObserver.observe(host);
     if (containerRef.current) {
       resizeObserver.observe(containerRef.current);
     }
-    window.addEventListener("resize", scheduleFitAndResize);
+    window.addEventListener("resize", scheduleSizeSync);
     void host.ownerDocument.fonts.ready.finally(() => {
       if (terminalRef.current !== terminal) return;
       void openSocket();
-      scheduleFitAndResize();
+      scheduleSizeSync();
     });
 
     return () => {
@@ -324,7 +324,7 @@ export function TerminalSurface({
         window.clearTimeout(reconnectTimer);
       }
       resizeObserver.disconnect();
-      window.removeEventListener("resize", scheduleFitAndResize);
+      window.removeEventListener("resize", scheduleSizeSync);
       dataDisposable.dispose();
       if (
         socket &&
