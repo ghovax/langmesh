@@ -15,7 +15,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from langmesh.base.confinement.paths import ssh_control_directory, ssh_control_identifier
+import hashlib
 
 
 # Baseline command and connect ceilings, scaled at each subprocess boundary by the active timeout knob.
@@ -115,15 +115,16 @@ class SshExecutor(LocationExecutor):
 
     is_local = False
 
-    def __init__(self, alias: str, control_directory: Path | None = None):
+    def __init__(self, alias: str, control_directory: Path):
         self.alias = alias
-        # Runtime state, so the control socket has the lifetime the OS gives the runtime directory.
-        self._control_directory = control_directory or ssh_control_directory()
-        self._control_directory.mkdir(parents=True, exist_ok=True)
+        if not control_directory.is_absolute():
+            raise ValueError("control_directory must be absolute")
+        self._control_directory = control_directory
 
     def _mux_options(self) -> list[str]:
         # Our own digest of the alias rather than ssh's, whose full hash overran the unix socket path limit.
-        control_path = str(self._control_directory / ssh_control_identifier(self.alias))
+        identifier = hashlib.sha256(self.alias.encode()).hexdigest()[:16]
+        control_path = str(self._control_directory / identifier)
         return [
             "-o",
             "ControlMaster=auto",

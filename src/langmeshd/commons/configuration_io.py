@@ -9,7 +9,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from langmesh.base.confinement.paths import configuration_file_path
+from langmeshd.commons.paths import configuration_file_path
 from langmesh.base.configuration import Configuration, MCPConfiguration, RemoteAgentsConfiguration
 from langmeshd.commons import configuration_file
 

@@ -26,6 +26,7 @@ from langmesh.base.identity.subscription import (
 from langmeshd.commons import state
 from langmeshd.commons.services.broadcast import _publish_broadcast
 from langmeshd.commons.services.workspaces import _reset_all_runtimes
+from langmeshd.daemon.persistence.credentials import file_credential_store
 
 router = APIRouter()
 
@@ -34,15 +35,19 @@ router = APIRouter()
 class _ProviderAuth:
     """One subscription provider's sign-in: its flow, credential store, and state slot."""
 
-    flow_kind: type
-    load: Callable[[], Any]
-    clear: Callable[[], None]
+    flow_kind: Callable[[Any], Any]
+    load: Callable[[Any], Any]
+    clear: Callable[[Any], None]
     in_flight: str
     clear_caches: Callable[[], None]
     account: Callable[[Any], str] = staticmethod(lambda _tokens: "")
 
+    @property
+    def store(self):
+        return file_credential_store()
+
     async def status(self) -> dict:
-        tokens = await asyncio.to_thread(self.load)
+        tokens = await asyncio.to_thread(self.load, self.store)
         return {
             "signed_in": tokens is not None,
             "account": self.account(tokens) if tokens is not None else "",
@@ -55,7 +60,7 @@ class _ProviderAuth:
         pending = getattr(state, self.in_flight, None)
         if pending is not None:
             await pending.close()
-        flow = self.flow_kind()
+        flow = self.flow_kind(self.store)
         try:
             await flow.start()
         except OSError as error:
@@ -86,7 +91,7 @@ class _ProviderAuth:
         if pending is not None:
             await pending.close()
             setattr(state, self.in_flight, None)
-        await asyncio.to_thread(self.clear)
+        await asyncio.to_thread(self.clear, self.store)
         self.clear_caches()
         await _reset_all_runtimes()
         _publish_broadcast({"type": "settings_changed"})

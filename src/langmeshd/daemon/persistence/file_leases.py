@@ -1,4 +1,4 @@
-"""Session-scoped filesystem mutation leases, so concurrent sessions' writes have a coordination point."""
+"""Daemon-owned leases for coordinating concurrent filesystem mutations."""
 
 from __future__ import annotations
 
@@ -13,12 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-
-class FileLeaseConflict(RuntimeError):
-    def __init__(self, message: str, *, owner_session_id: str = "", path: str = ""):
-        super().__init__(message)
-        self.owner_session_id = owner_session_id
-        self.path = path
+from langmesh.base.contracts.ports import FileLeaseConflict
 
 
 @dataclass

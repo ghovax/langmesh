@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from langmesh.base.persistence.observation_store import SQLiteObservationStore
+from langmeshd.daemon.persistence.observation_registry import SQLiteObservationStore
 from langmesh.runtime.plugins.compaction import ObservationCompactionPreparation
 from langmesh.runtime.plugins.background import BackgroundJobsFeature
 from langmesh.runtime.plugins.bash import Bash
@@ -26,6 +26,7 @@ from langmesh.runtime.plugins.titling import TitleAssignment
 from langmesh.runtime.plugins.web import Web
 from langmesh.runtime.plugins.work_habits import WorkHabits
 from langmesh.runtime.tools.arguments import with_shared_fields
+from langmeshd.daemon.machine_environment import _shell_command_usage
 
 
 def _compaction_preparation(global_configuration: Any, runtime_directory: str) -> Any:
@@ -39,7 +40,20 @@ def _session_locations(session_id: str) -> list[dict[str, Any]] | None:
     """The workspace's locations for a session, resolved by the daemon's own services."""
     from langmeshd.commons.services.locations import _resolve_session_locations
 
-    return _resolve_session_locations(session_id)
+    from langmesh.runtime.plugins.locations.resolver import LocationAddress, executor_for
+    from langmeshd.commons.paths import ssh_control_directory
+
+    locations = _resolve_session_locations(session_id)
+    for location in locations or []:
+        address = LocationAddress(
+            kind=str(location.get("kind") or "local"),
+            base_directory=str(location.get("base_directory") or ""),
+            host_alias=str(location.get("host_alias") or ""),
+        )
+        location["executor"] = executor_for(
+            address, control_directory=ssh_control_directory()
+        )
+    return locations
 
 
 def compose_plugins(
@@ -69,7 +83,7 @@ def compose_plugins(
         Continuation(policy=None),
         ObservationMemory(),
         BackgroundJobsFeature(store=job_store),
-        WorkHabits(),
+        WorkHabits(_shell_command_usage()),
         TitleAssignment(),
         # The locations plugin is opt-in: it is composed only when the workspace has locations.
         *([Locations()] if locations else []),

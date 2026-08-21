@@ -25,10 +25,13 @@ class RuntimeEnvironment:
                 token = bind_limits(self.limits)
                 stack.callback(reset_limits, token)
             if self.credentials is not None:
-                from langmesh.base.identity.credentials import reset_credentials, set_credentials
+                from langmesh.base.identity.credential_store import (
+                    bind_credential_store,
+                    reset_credential_store,
+                )
 
-                token = set_credentials(self.credentials)
-                stack.callback(reset_credentials, token)
+                token = bind_credential_store(self.credentials)
+                stack.callback(reset_credential_store, token)
             if self.tracer is not None:
                 from langmesh.base.primitives.telemetry import reset_tracer, set_tracer
 

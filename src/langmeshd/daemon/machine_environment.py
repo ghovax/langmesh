@@ -1,4 +1,4 @@
-"""Probes the local machine and the user's own context, as the two JSON snapshots the system prompt carries."""
+"""Machine and user-environment probes owned by the daemon."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import platform
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator, Optional, Sequence
-from langmesh.base.confinement.paths import state_directory
+from langmeshd.commons.paths import state_directory
 from langmesh.base.primitives.serialization import compact
 
 logger = logging.getLogger(__name__)

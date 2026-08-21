@@ -24,7 +24,7 @@ from langmesh.base.contracts.ports import (
     Attachments,
     CatalogueLike,
     Checkpoints,
-    Credentials,
+    CredentialStore,
     FileLeases,
     JobStore,
     MCPServers,
@@ -158,7 +158,9 @@ class Session:
             _require(Transcript, components.transcript, "components.transcript")
             or MemoryTranscript()
         )
-        self._credentials = _require(Credentials, components.credentials, "components.credentials")
+        self._credential_store = _require(
+            CredentialStore, components.credential_store, "components.credential_store"
+        )
         _require(PermissionPolicy, components.permissions, "components.permissions")
         _require(FileLeases, components.file_leases, "components.file_leases")
         _require(SessionAccess, components.sessions, "components.sessions")
@@ -190,7 +192,7 @@ class Session:
                 tracer = self._tracer_provider.get_tracer("langmesh")
             environment = RuntimeEnvironment(
                 limits=limits_from_configuration(self._configuration.tuning),
-                credentials=self._credentials,
+                credentials=self._credential_store,
                 tracer=tracer,
             )
             # The directory the caller supplied plus the packaged base layer, and deliberately nothing of `$HOME`.

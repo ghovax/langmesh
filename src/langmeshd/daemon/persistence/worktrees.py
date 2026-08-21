@@ -1,4 +1,4 @@
-"""Session workspace strategies: the project stays the scope, the runtime directory is where tools run."""
+"""Daemon session worktrees with distinct project and runtime directories."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from langmesh.base.confinement.paths import workspaces_directory
+from langmeshd.commons.paths import workspaces_directory
 
 
 WorktreeStrategy = Literal["none", "branch", "worktree"]

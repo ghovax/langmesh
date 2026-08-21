@@ -52,7 +52,11 @@ async def host_home_directory(alias: str):
         if not host_is_defined(alias):
             return ""
         try:
-            result = SshExecutor(alias).run('printf %s "$HOME"', ".", timeout=8.0)
+            from langmeshd.commons.paths import ssh_control_directory
+
+            result = SshExecutor(alias, ssh_control_directory()).run(
+                'printf %s "$HOME"', ".", timeout=8.0
+            )
             return result.stdout.strip() if result.returncode == 0 else ""
         except Exception:
             return ""

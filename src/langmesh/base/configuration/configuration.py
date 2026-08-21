@@ -13,17 +13,13 @@ from typing import Any, Callable, ClassVar, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from langmesh.base.confinement.paths import configuration_file_path, database_file_path  # noqa: F401 — re-exported
 from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base import confinement
-from langmesh.base.persistence.observation_store import OBSERVATIONS_FILENAME
+from langmesh.base.content.observations import OBSERVATIONS_FILENAME
 from langmesh.base.persistence.file_cache import parsed_file
 
 
 logger = logging.getLogger(__name__)
-
-
-# Where state lives is the placement layer's business, resolved in `langmesh.base.confinement.paths`.
 
 
 def _bundled_dotagents_root() -> Path:

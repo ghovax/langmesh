@@ -1,4 +1,4 @@
-"""Where LangMesh keeps things on disk, split by what each thing is, following the XDG convention."""
+"""Where the daemon stores its files under the XDG conventions."""
 
 from __future__ import annotations
 

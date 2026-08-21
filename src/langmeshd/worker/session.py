@@ -20,12 +20,13 @@ from langchain_core.messages import messages_from_dict
 from langmeshd.worker import features_access as _features
 from langmeshd.commons.agent_files import AgentFileLoader, list_agents
 from langmeshd.daemon.machine import machine_catalogue
+from langmeshd.commons.toolboxes import toolbox_for
 from langmesh.base.primitives.limits import current_limits
-from langmesh.base.confinement.file_leases import FileLeaseManager
+from langmeshd.daemon.persistence.file_leases import FileLeaseManager
 from langmesh.base.configuration import Configuration
-from langmesh.base.persistence.background_store import get_background_job_store
+from langmeshd.daemon.persistence.background_jobs import get_background_job_store
 from langmesh.base.contracts.ports import JobStore
-from langmesh.base.persistence.worktrees import SessionWorktree
+from langmeshd.daemon.persistence.worktrees import SessionWorktree
 from langmesh.protocol.metadata import (
     AUTONOMOUS_RESUME_KIND,
     COMPACTION_KIND,
@@ -48,6 +49,7 @@ from langmesh.protocol.turn_record import PendingInteraction, ToolGate, TurnReco
 from langmesh.runtime.plugins.goal_review.goal import Goal, GoalReviewPhase
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.runtime import AgentRuntime
+from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.session_control import SessionSnapshot
 from langmesh.runtime.features import LocationsCapability
 from langmesh.runtime.turn_events import SuspensionGate
@@ -56,6 +58,7 @@ from langmeshd.worker.host import HostServices, NullHostServices
 from langmeshd.worker.peers import PeerSessions
 from langmeshd.worker.turn import _ContextState, _ContinuationPlan, _TurnRunner
 from langmeshd.worker.turn_store import HostTurnStore
+from langmeshd.daemon.persistence.credentials import file_credential_store
 from langmesh.base.primitives.serialization import compact
 
 logger = logging.getLogger(__name__)
@@ -961,6 +964,11 @@ class SessionExecutor(AgentExecutor):
         )
         # The host's plugin bundle: which features run and the ports they need.
         bundle = self._compose_plugins(session_id, runtime_directory, configuration, catalogue)
+        toolbox = toolbox_for(
+            session_id, enabled=self._global_configuration.toolbox.enabled
+        )
+        if toolbox is not None:
+            toolbox.prepare()
         runtime = AgentRuntime(
             RuntimeProfile(
                 agent=configuration,
@@ -982,9 +990,11 @@ class SessionExecutor(AgentExecutor):
                 related_turns=self._build_turn_reader(),
                 features=(bundle.get("features") or []),
                 services=bundle.get("services"),
+                toolbox=toolbox,
                 # The host probes the machine and the user's context; the library never does.
                 machine_snapshot=self._machine_snapshot(),
                 user_context=self._user_context_snapshot(),
+                environment=RuntimeEnvironment(credentials=file_credential_store()),
             ),
             conversation=conversation,
         )
@@ -998,7 +1008,7 @@ class SessionExecutor(AgentExecutor):
 
     def _machine_snapshot(self) -> dict:
         """The machine snapshot for this session, probed by the host and passed into the runtime."""
-        from langmesh.runtime.prompt_environment import probe_local_environment
+        from langmeshd.daemon.machine_environment import probe_local_environment
 
         import json as _json
 
@@ -1013,7 +1023,7 @@ class SessionExecutor(AgentExecutor):
         user_context = getattr(self._global_configuration, "user_context", None)
         if user_context is None or not user_context.enabled:
             return {}
-        from langmesh.runtime.prompt_environment import probe_user_context
+        from langmeshd.daemon.machine_environment import probe_user_context
 
         import json as _json
 

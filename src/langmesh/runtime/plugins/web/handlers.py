@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any, AsyncIterator
 
-from langmesh.base.confinement.file_leases import FileLeaseConflict
+from langmesh.base.contracts.ports import FileLeaseConflict
 from langmesh.base.primitives.limits import current_limits
 from langmesh.runtime.background import bind_background_jobs, unbind_background_jobs
 from langmesh.runtime.features import BackgroundCapability

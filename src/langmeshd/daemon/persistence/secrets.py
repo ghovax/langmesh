@@ -1,4 +1,4 @@
-"""Atomic persistence for private values that must stay stable across process restarts."""
+"""Daemon-owned private values persisted atomically across process restarts."""
 
 from __future__ import annotations
 

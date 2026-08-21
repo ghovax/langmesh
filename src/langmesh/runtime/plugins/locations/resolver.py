@@ -38,14 +38,14 @@ def host_is_defined(alias: str) -> bool:
     return any(host.alias == alias for host in list_ssh_hosts())
 
 
-def executor_for(
-    address: LocationAddress, *, control_directory: Path | None = None
-) -> LocationExecutor:
+def executor_for(address: LocationAddress, *, control_directory: Path | None = None) -> LocationExecutor:
     """The executor that runs tools against this location."""
     if address.kind == "local":
         return LocalExecutor()
     if address.kind == "remote":
         if not address.host_alias:
             raise ValueError("A remote location requires an ssh host alias.")
+        if control_directory is None:
+            raise ValueError("A remote location requires an SSH control directory from its host.")
         return SshExecutor(address.host_alias, control_directory=control_directory)
     raise ValueError(f"Unknown location kind: {address.kind!r}")

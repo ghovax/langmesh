@@ -1,4 +1,4 @@
-"""Read the current observational-memory registry owned by a workspace or location.
+"""Read the daemon's observational-memory registry for a workspace or location.
 
 An SQLAlchemy Core view over the agent-maintained registry: read-only (`mode=ro`), re-validating
 the documented columnar schema before trusting any row. A missing or broken registry is never a

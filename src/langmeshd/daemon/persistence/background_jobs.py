@@ -1,4 +1,4 @@
-"""The durable record of background jobs, so an interrupted task survives a restart."""
+"""The daemon's durable record of background jobs across restarts."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from langmesh.base.confinement.paths import BACKGROUND_DATABASE_FILENAME, data_directory
+from langmeshd.commons.paths import BACKGROUND_DATABASE_FILENAME, data_directory
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from langmesh.base.contracts.ports import JobStore

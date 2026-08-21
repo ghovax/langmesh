@@ -3,7 +3,7 @@
 from __future__ import annotations
 from fastapi import APIRouter
 from langmeshd.commons.database import SessionRecord, WorkspaceRecord
-from langmesh.base.confinement.paths import uploads_directory
+from langmeshd.commons.paths import uploads_directory
 import asyncio
 import re
 from langmeshd.rest.routes.observations import registry_snapshot

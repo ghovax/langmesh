@@ -7,12 +7,16 @@ the turn's model-facing context, so a bare library embedding stays free of it.
 
 from __future__ import annotations
 
+from typing import Any, Mapping
+
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
-from langmesh.runtime.prompt_environment import _shell_command_usage
 
 
 class WorkHabits(Feature):
     """The user's habitual commands, as a nested histogram, contributed to the machine context."""
+
+    def __init__(self, habits: Mapping[str, Any] | None = None) -> None:
+        self._habits = dict(habits or {})
 
     def attach(self, context: PluginContext, host: PluginHost) -> None:
         self._context = context
@@ -20,7 +24,7 @@ class WorkHabits(Feature):
 
     def compose_context(self, context: dict) -> None:
         """The habitual commands as the model sees them, under ``work_habits``."""
-        context["work_habits"] = _shell_command_usage()
+        context["work_habits"] = self._habits
 
 
 __all__ = ["WorkHabits"]

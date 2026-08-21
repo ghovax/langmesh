@@ -25,7 +25,6 @@ from langmesh.base.configuration import (
 from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base.confinement import Grant, Profile
 from langmesh.base.content.models import find_model, resolve_litellm
-from langmesh.base.content.toolbox import toolbox_for
 from langmesh.base.contracts.catalogue import project_catalogue
 from langmesh.base.contracts.ports import Observation
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
@@ -165,12 +164,11 @@ def _build_tool_context(
     session_access: Any = None,
     conversation_snapshot: Optional[Callable[[], list[dict[str, Any]]]] = None,
     mcp_server_manager: Any = None,
+    toolbox: Any = None,
 ) -> ToolContext:
     """The session-shaped state this runtime's tools read, derived from configuration rather than installed."""
     # The session's own tools, and the one widening that goes with them: it cannot install where it may not write.
-    toolbox = toolbox_for(session_id, enabled=global_configuration.toolbox.enabled)
     if toolbox is not None:
-        toolbox.prepare()
         sandbox = sandbox.with_grant(
             _confinement.approved(
                 _confinement.AccessRequest(mutates=True, writes=(str(toolbox.root),)),
@@ -402,6 +400,7 @@ class AgentRuntime(_RunsTurns):
             session_access=components.sessions,
             conversation_snapshot=self._peer_conversation_snapshot,
             mcp_server_manager=components.mcp_servers,
+            toolbox=components.toolbox,
         )
         # What was approved beyond the configured profile. The boundary is the core's; only the permission plugin adds to it, so other plugins never need to know that plugin exists.
         self._access_grants: list[Grant] = []

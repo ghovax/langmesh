@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from a2a.types import DataPart, FilePart, Part, TextPart
+from a2a.types import DataPart, Part, TextPart
 
 from langmesh.base.content.message_content import content_block_metadata
-from langmesh.base.confinement.paths import uploads_directory
 from langmesh.protocol.events import (
     ToolMetadata,
     ToolResultEvent,
@@ -15,7 +14,6 @@ from langmesh.protocol.events import (
     _EventBase,
 )
 from langmesh.runtime.values import ToolStatus
-from langmesh.protocol.files import ingest_file_part
 from langmesh.protocol.metadata import (
     INPUT_RESPONSE_KIND,
     PART_KIND,
@@ -32,18 +30,6 @@ def _input_response_payload(message) -> Optional[dict]:
         if payload.get(PART_KIND) == INPUT_RESPONSE_KIND:
             return dict(payload)
     return None
-
-
-async def _ingest_incoming_file_parts(message) -> list[dict]:
-    """Materialize every inbound file part into the upload store, so a peer's file arrives like a local attachment."""
-    attachments: list[dict] = []
-    for part in message.parts or []:
-        root = getattr(part, "root", part)
-        if isinstance(root, FilePart):
-            attachment = await ingest_file_part(part, uploads_directory().parent)
-            if attachment is not None:
-                attachments.append(attachment)
-    return attachments
 
 
 def _structured_data_payloads(message) -> list[dict]:

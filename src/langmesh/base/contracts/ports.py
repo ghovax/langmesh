@@ -346,16 +346,32 @@ class MemoryTranscript:
 
 
 @runtime_checkable
-class Credentials(Protocol):
-    """Where an account provider's OAuth tokens are kept, rather than a fixed path under the user's home."""
+class CredentialStore(Protocol):
+    """Stores OAuth tokens by provider without prescribing persistence."""
 
-    def load(self) -> Any:
+    def load(self, provider_identifier: str) -> Any:
         """The stored tokens, or ``None`` when nothing is signed in."""
         ...
 
-    def save(self, tokens: Any) -> None: ...
+    def save(self, provider_identifier: str, tokens: Any) -> None: ...
 
-    def clear(self) -> None: ...
+    def clear(self, provider_identifier: str) -> None: ...
+
+
+class MemoryCredentialStore:
+    """Keeps provider credentials in memory for storage-neutral embeddings."""
+
+    def __init__(self) -> None:
+        self._tokens: dict[str, Any] = {}
+
+    def load(self, provider_identifier: str) -> Any:
+        return self._tokens.get(provider_identifier)
+
+    def save(self, provider_identifier: str, tokens: Any) -> None:
+        self._tokens[provider_identifier] = tokens
+
+    def clear(self, provider_identifier: str) -> None:
+        self._tokens.pop(provider_identifier, None)
 
 
 # Where the prompt's material comes from.
@@ -509,6 +525,15 @@ class FileLeases(Protocol):
     def release(self, token: str) -> None: ...
 
 
+class FileLeaseConflict(RuntimeError):
+    """A requested mutation overlaps a lease held by another session."""
+
+    def __init__(self, message: str, *, owner_session_id: str = "", path: str = "") -> None:
+        super().__init__(message)
+        self.owner_session_id = owner_session_id
+        self.path = path
+
+
 @runtime_checkable
 class SessionAccess(Protocol):
     """Creates and addresses peer sessions without coupling the core to a host transport."""
@@ -613,14 +638,16 @@ __all__ = [
     "BeforeToolsHook",
     "CatalogueLike",
     "Checkpoints",
-    "Credentials",
+    "CredentialStore",
     "DurableModelCache",
     "GoalReviewContext",
     "GoalReviewJournal",
     "GoalReviewOutcome",
     "FileLeases",
+    "FileLeaseConflict",
     "JobStore",
     "MemoryCheckpoints",
+    "MemoryCredentialStore",
     "MemoryJobStore",
     "MemoryTranscript",
     "MCPServers",
