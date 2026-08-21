@@ -176,7 +176,7 @@ class SessionSnapshot:
                 revision=str(raw_prompt.get("revision") or ""),
             )
             if isinstance(raw_prompt, Mapping)
-            and str(raw_prompt.get("content") or "")
+            and str(raw_prompt.get("instructions") or "")
             and str(raw_prompt.get("revision") or "")
             else None,
             pending_input=PendingInput(
