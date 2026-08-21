@@ -27,7 +27,7 @@ from langmesh.base.content.attachments import (
 from langmesh.base.primitives import telemetry as _telemetry
 from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.contracts.catalogue import packaged_prompts_directory
-from langmesh.base.primitives.serialization import compact, conversation_snapshot_id
+from langmesh.base.primitives.serialization import conversation_snapshot_id
 from langmesh.protocol.errors import _safe_turn_error
 from langmesh.protocol.events import ErrorEvent, InboundMessageEvent, RetryEvent, StatusEvent
 from langmesh.protocol.metadata import (
@@ -78,13 +78,18 @@ class _ContinuationPlan:
 
     goal: bool = False
     tasks: bool = False
+    review: bool = False
 
     def merged(self, other: "_ContinuationPlan") -> "_ContinuationPlan":
-        return _ContinuationPlan(goal=self.goal or other.goal, tasks=self.tasks or other.tasks)
+        return _ContinuationPlan(
+            goal=self.goal or other.goal,
+            tasks=self.tasks or other.tasks,
+            review=self.review or other.review,
+        )
 
     @property
     def any(self) -> bool:
-        return self.goal or self.tasks
+        return self.goal or self.tasks or self.review
 
 
 @dataclass
@@ -669,18 +674,14 @@ class _TurnRunner:
             # The accepted user message is already the conversation tail. This turn merely resumes the model call that the failed compaction prevented.
             self._turn_input = ""
         elif mode is _TurnMode.GOAL_CONTINUATION:
-            # Goal review prose stays visible, while an independent task obligation rides inside its reminder.
-            self._turn_input = self._user_text
+            # The goal's own segment stays visible, and every other pending obligation appends
+            # its own segment into the single continuation request rather than opening its own turn.
+            segments = [self._user_text]
             if prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
-                self._turn_input = _PROMPTS.load(
-                    "goal_and_task_continuation",
-                    {
-                        "goal_review": self._user_text,
-                        "task_continuation": self._task_continuation_note(runtime),
-                    },
-                ).strip()
+                segments.append(_features.task_continuation_message(runtime))
+            self._turn_input = _features.continuation_content(runtime, segments=segments)
         elif mode is _TurnMode.TASK_CONTINUATION:
-            self._turn_input = self._task_continuation_note(runtime)
+            self._turn_input = _features.task_continuation_message(runtime)
         elif mode is _TurnMode.REPORT_REMINDER:
             # A reminder, never user prose: this is the harness speaking, not the person the session works for.
             self._turn_input = _PROMPTS.load(
@@ -733,19 +734,6 @@ class _TurnRunner:
             await self._save_runtime_conversation()
         await self._announce_persisted_work(prepared)
         return composed
-
-    @staticmethod
-    def _task_continuation_note(runtime: AgentRuntime) -> str:
-        return _PROMPTS.load(
-            "task_continuation_note",
-            {
-                "tasks": compact(
-                    _features.unfinished_tasks(
-                        runtime,
-                    )
-                )
-            },
-        )
 
     async def _stream_complete(self, composed: _ComposedTurn) -> None:
         """Drive the runtime's stream through the sink, then close the task as completed or canceled."""
@@ -904,6 +892,7 @@ class _TurnRunner:
         ):
             return _ContinuationPlan()
         return _ContinuationPlan(
+            review=bool(goal is not None and goal.pending_review),
             goal=bool(
                 goal is not None and goal.is_open and _features.should_continue_goal(runtime)
             ),

@@ -482,7 +482,8 @@ class SessionExecutor(AgentExecutor):
         self._maybe_evict(session_id)
 
     async def _continue(self, session_id: str, plan: _ContinuationPlan) -> None:
-        """Review a goal first, then carry either or both obligations in one next turn."""
+        """A marked goal is settled by a secondary review; an open, unmarked goal is reminded;
+        either rides with the task obligation in a single next turn."""
         state = self._contexts.get(session_id)
         runtime = state.runtime if state is not None else None
         if runtime is None:
@@ -492,32 +493,40 @@ class SessionExecutor(AgentExecutor):
         review_phase_active = False
         try:
             goal = _features.goal(runtime)
-            if plan.goal and goal is not None and goal.is_open:
-                if _features.goal_review_mode(runtime) == "self_managed":
-                    # The simple goal mode: no reviewer. The session re-opens on the goal
-                    # itself, and the agent owns it through the update_goal tool.
+            if plan.review and goal is not None and goal.pending_review:
+                # The secondary review settles the status the agent marked; the review itself
+                # drives no model turn, so what opens next is decided from its verdict.
+                await self._continue_with_review(session_id, state, runtime, goal)
+                review_phase_active = True
+                goal = _features.goal(runtime)
+                if goal is not None and goal.is_open and goal.review_message:
                     await self._drive_self_sent_turn(
                         session_id,
                         GOAL_CONTINUATION_KIND,
                         metadata_flags={
                             Metadata.GOAL_CONTINUATION: True,
+                            Metadata.GOAL_REVIEW_ID: goal.review_id,
                             **({Metadata.TASK_CONTINUATION: True} if plan.tasks else {}),
                         },
-                        text=goal.text,
+                        text=goal.review_message,
                     )
-                else:
-                    await self._continue_with_review(session_id, state, runtime, plan, goal)
-            goal = _features.goal(runtime)
-            if goal is not None and goal.is_open and goal.review_message:
+                elif plan.tasks:
+                    await self._drive_self_sent_turn(
+                        session_id,
+                        TASK_CONTINUATION_KIND,
+                        metadata_flags={Metadata.TASK_CONTINUATION: True},
+                    )
+            elif plan.goal and goal is not None and goal.is_open:
+                # The goal is still open and the agent did not mark it: a light reminder to
+                # keep going or state where it stands, carrying the task obligation with it.
                 await self._drive_self_sent_turn(
                     session_id,
                     GOAL_CONTINUATION_KIND,
                     metadata_flags={
                         Metadata.GOAL_CONTINUATION: True,
-                        Metadata.GOAL_REVIEW_ID: goal.review_id,
                         **({Metadata.TASK_CONTINUATION: True} if plan.tasks else {}),
                     },
-                    text=goal.review_message,
+                    text=_features.goal_continuation_message(runtime),
                 )
             elif plan.tasks:
                 await self._drive_self_sent_turn(
@@ -531,8 +540,8 @@ class SessionExecutor(AgentExecutor):
             # Exactly one release for the plan hold, whichever obligation opened the next turn.
             self._notify_turn_state(session_id, False)
 
-    async def _continue_with_review(self, session_id, state, runtime, plan, goal) -> None:
-        """Review an open goal first; a verdict that lands decides the next turn."""
+    async def _continue_with_review(self, session_id, state, runtime, goal) -> None:
+        """Settle a marked goal: the secondary review either confirms the claimed status or overrides it."""
         self._notify_goal_state(session_id, goal, review_phase=GoalReviewPhase.CHECKING)
         review = asyncio.create_task(cast(Coroutine[Any, Any, Any], _features.review_goal(runtime)))
         state.continuation.attach_review(review)

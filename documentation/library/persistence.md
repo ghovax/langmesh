@@ -83,9 +83,9 @@ from langmesh.runtime.plugins.continuation import Continuation, DefaultContinuat
 components = SessionComponents(features=[Continuation(policy=DefaultContinuationPolicy())])
 ```
 
-The standard policy reads the independent goal and task allowances (`goal_continuation_turns`, `task_continuation_turns`) from the current limits. A goal is reviewed before its continuation message is accepted, and when goal and task work are both due, LangMesh composes them into one next turn so the obligations do not race or consume each other's allowance.
+The standard policy keeps an open goal going on its own and reads the task allowance (`task_continuation_turns`) from the current limits. Each plugin that has a next obligation contributes its own message segment — the goal its reminder or review prose, tracked tasks their note — and they are appended into one next turn, so the obligations never race or open competing turns.
 
-A new user message restores both allowances. Clearing a goal goes through the goal feature (`update_goal` sets it; the review that closes it is separate).
+A new user message restores the task allowance and resumes a parked goal. Clearing a goal goes through the goal feature (`update_goal` sets it; the review that closes it is separate).
 
 ## Persistence adapters
 

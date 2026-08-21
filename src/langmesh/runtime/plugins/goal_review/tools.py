@@ -41,6 +41,7 @@ async def update_goal(
     goal: str,
     purpose: str,
     requirements: list[str],
+    status: str = Goal.ACTIVE,
 ) -> str:
     """Set the goal; described in descriptions/update_goal.md."""
     services = current_tool_services()
@@ -51,7 +52,18 @@ async def update_goal(
     def refuse(message: str) -> dict[str, Any]:
         return {"code": "goal_update_error", "status": "error", "message": message}
 
-    if not goal_text:
+    status_text = str(status).strip().lower()
+    if status_text not in {
+        Goal.ACTIVE,
+        Goal.SATISFIED,
+        Goal.BLOCKED,
+        Goal.PARKED,
+        Goal.CLEARED,
+    }:
+        result = refuse(
+            f"Unknown goal status {status!r}: use active, satisfied, blocked, parked or cleared."
+        )
+    elif not goal_text:
         result = refuse("Say what the goal is: the end state, written so it is either true or not.")
     elif not purpose_text:
         result = refuse(
@@ -64,20 +76,28 @@ async def update_goal(
     else:
         goals = services.features.require(GoalCapability)
         current = goals.goal
+        # A mark the agent sets for itself earns a secondary review only when it is a
+        # completion or blockage claim worth auditing; a deferral or a clear is administrative.
+        pending_review = status_text if status_text in (Goal.SATISFIED, Goal.BLOCKED) else None
         goals.write(
             Goal(
                 text=goal_text,
                 purpose=purpose_text,
                 requirements=requirement_lines,
+                status=status_text,
+                pending_review=pending_review,
                 continuations=current.continuations if current is not None else 0,
             ),
         )
         result = {
-            "code": "goal_active",
+            "code": "goal_active" if status_text == Goal.ACTIVE else "goal_status",
             "goal": goal_text,
             "purpose": purpose_text,
             "requirements": requirement_lines,
+            "status": status_text,
         }
+        if pending_review is not None:
+            result["pending_review"] = pending_review
         services.record_event("goal_updated", result)
     return compact(result)
 

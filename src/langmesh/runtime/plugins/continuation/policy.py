@@ -8,14 +8,10 @@ from langmesh.base.primitives.limits import current_limits
 
 
 class DefaultContinuationPolicy:
-    """The plain goal and task allowances, read from the current limits."""
+    """The goal keeps going while it is open; only the task allowance is bounded."""
 
-    def continue_goal(self, goal: Any, completed_turns: int) -> bool:
-        return bool(
-            goal is not None
-            and goal.is_open
-            and completed_turns < current_limits().goal_continuation_turns
-        )
+    def continue_goal(self, goal: Any) -> bool:
+        return bool(goal is not None and goal.is_open)
 
     def continue_tasks(
         self,

@@ -659,7 +659,6 @@
         "find_rephrasing_similarity": "Rephrasing similarity",
         "focus_settle": "Focus settle",
         "frame_resolve_timeout": "Frame resolve timeout",
-        "goal_continuation_turns": "Goal continuation turns",
         "task_continuation_turns": "Task continuation turns",
         "mcp_connect": "MCP connect",
         "model_catalogue_ttl": "Model catalogue lifetime",
@@ -844,7 +843,6 @@
         "find_rephrasing_similarity": "How alike two screen queries must be, as a cosine in the retrieval model's own space, before a second one landing on the same element counts as the first asked again.",
         "focus_settle": "Pause after focusing a field, before typing into it.",
         "frame_resolve_timeout": "How long resolving a frame reference waits. Deliberately well below the action timeout: a frame that has gone waits out its budget rather than erroring, and listing every frame would otherwise stall on the one that left.",
-        "goal_continuation_turns": "How many turns in a row a session may open for its own goal before it stops and waits for the person. The goal review can end a run earlier than this; nothing can carry one past it.",
         "task_continuation_turns": "How many turns in a row unfinished tracked tasks may reopen automatically before the session waits for the person. A new user message restores the allowance.",
         "mcp_connect": "How long connecting to one MCP server waits.",
         "model_catalogue_ttl": "How long the list of available models is cached.",
@@ -902,9 +900,8 @@
       "summary_attempts": "How many times the hidden summarizer may be asked again after reviewing but not submitting. Once exhausted, the compaction stops and the conversation is left unchanged until it is retried."
     },
     "goal_review": {
-      "_": "How the independent goal review is driven.",
-      "maximum_attempts": "How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset before the goal carries unchanged.",
-      "mode": "How the goal is driven after a turn leaves it open: by an independent reviewer, or by the session's own agent."
+      "_": "How the secondary review settles an agent-marked goal.",
+      "maximum_attempts": "How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset before the goal carries unchanged."
     }
   },
   "SettingsChoices": {
@@ -934,12 +931,6 @@
           "http/protobuf": "HTTP (protobuf)",
           "grpc": "gRPC"
         }
-      }
-    },
-    "goal_review": {
-      "mode": {
-        "review": "Independent reviewer",
-        "self_managed": "Agent self-managed"
       }
     }
   },
@@ -1140,6 +1131,7 @@
     "goalActive": "Now working toward this",
     "goalPurpose": "So that",
     "goalRequirements": "Minimum conditions",
+    "goalReviewPending": "Secondary review pending",
     "include": "Include",
     "language": "Language",
     "limit": "Limit",

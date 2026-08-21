@@ -538,7 +538,7 @@ class CompactionPreparation(Protocol):
 class ContinuationPolicy(Protocol):
     """Decides whether unfinished goals and tracked tasks may open another autonomous turn."""
 
-    def continue_goal(self, goal: Any, completed_turns: int) -> bool: ...
+    def continue_goal(self, goal: Any) -> bool: ...
 
     def continue_tasks(
         self,

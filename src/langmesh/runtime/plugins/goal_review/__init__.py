@@ -116,13 +116,6 @@ class GoalReviewFeature(Feature):
         """The verdict a reviewer session has handed over, read once the review turn ends."""
         return self._submitted
 
-    @property
-    def review_mode(self) -> str:
-        """How a goal that is still open is driven: ``review`` or ``self_managed``."""
-        if self._context is None:
-            return "review"
-        return self._context.global_configuration.goal_review.mode
-
     def set_listener(self, listener: Optional[Callable[[Optional[Goal]], None]]) -> None:
         """Install the callback that hears every goal change, which is how the interface learns of one."""
         self._listener = listener
@@ -159,6 +152,12 @@ class GoalReviewFeature(Feature):
                 review_message=None,
                 review_id=None,
             )
+        )
+
+    def goal_continuation_message(self, goal: Optional[Goal]) -> str:
+        """The goal's own continuation reminder: work is still pending, so the session should keep going."""
+        return self._prompts.load(
+            "goal_continuation_note", {"goal": goal.text if goal is not None else ""}
         )
 
     def restore_allowance(self) -> None:
@@ -338,8 +337,11 @@ class GoalReviewFeature(Feature):
     ) -> Optional[GoalReview]:
         """Run the linked reviewer until it submits a verdict or the parent turn is cancelled."""
         goal = self.goal
-        if goal is None or not goal.is_open:
+        if goal is None or (not goal.is_open and not goal.pending_review):
             return None
+        # A marked status is a claim the secondary review confirms or overrides; it is told
+        # what the session asserted so it audits that rather than reviewing in a vacuum.
+        claimed_status = goal.status if goal.pending_review else ""
         instructions = self._prompts.load(
             "goal_review",
             {
@@ -351,6 +353,7 @@ class GoalReviewFeature(Feature):
                     }
                 ),
                 "previous_review_message": goal.review_message,
+                "claimed_status": claimed_status,
             },
         )
         review_id = new_id("review")
@@ -472,11 +475,19 @@ class GoalReviewFeature(Feature):
     def apply(self, review: Optional[GoalReview]) -> Optional[Goal]:
         """Write the verdict onto the goal and answer with it, so the caller reads one value rather than two."""
         goal = self.goal
-        if goal is None or not goal.is_open:
+        if goal is None or (not goal.is_open and not goal.pending_review):
             return goal
         if review is None:
-            logger.warning("the goal review did not land; carrying the goal on unchanged")
-            self.write(goal.updated(review_message=None, review_id=None))
+            logger.warning("the goal review did not land; the claimed status is not confirmed")
+            # An unverified claim is no verdict: return the goal to work so it is not silently settled.
+            self.write(
+                goal.updated(
+                    status=Goal.ACTIVE,
+                    review_message=None,
+                    review_id=None,
+                    pending_review=None,
+                )
+            )
             return self.goal
         if review.standing == "satisfied":
             self.write(
@@ -486,6 +497,7 @@ class GoalReviewFeature(Feature):
                     evidence=review.evidence,
                     review_message=None,
                     review_id=None,
+                    pending_review=None,
                 )
             )
             return self.goal
@@ -497,15 +509,19 @@ class GoalReviewFeature(Feature):
                     evidence=None,
                     review_message=None,
                     review_id=None,
+                    pending_review=None,
                 )
             )
             return self.goal
+        # unmet: the reviewer overrides any status the session claimed, returning the goal to work.
         self.write(
             goal.updated(
+                status=Goal.ACTIVE,
                 blocker=None,
                 evidence=None,
                 review_message=review.message,
                 review_id=review._review_id,
+                pending_review=None,
             )
         )
         return self.goal

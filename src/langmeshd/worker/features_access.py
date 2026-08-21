@@ -8,6 +8,8 @@ mirroring what used to live on the runtime so the harness reads the same way.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 
 def _by(runtime, feature_type):
     return runtime.features.by_type(feature_type)
@@ -18,14 +20,6 @@ def goal(runtime):
 
     feature = _by(runtime, GoalReviewFeature)
     return feature.goal if feature is not None else None
-
-
-def goal_review_mode(runtime) -> str:
-    """How this session's open goal is driven: ``review`` or ``self_managed``."""
-    from langmesh.runtime.plugins.goal_review import GoalReviewFeature
-
-    feature = _by(runtime, GoalReviewFeature)
-    return feature.review_mode if feature is not None else "review"
 
 
 def set_goal_listener(runtime, listener) -> None:
@@ -107,15 +101,22 @@ def task_continuation_message(runtime) -> str:
     return feature.task_continuation_message(feature.unfinished())
 
 
-def continuation_content(runtime, *, goal_review: str = "", task_continuation: str = "") -> str:
+def goal_continuation_message(runtime) -> str:
+    from langmesh.runtime.plugins.goal_review import GoalReviewFeature
+
+    feature = _by(runtime, GoalReviewFeature)
+    if feature is None:
+        return ""
+    return feature.goal_continuation_message(goal(runtime))
+
+
+def continuation_content(runtime, *, segments: Sequence[str] = ()) -> str:
     from langmesh.runtime.plugins.continuation import Continuation
 
     feature = _by(runtime, Continuation)
     if feature is None:
-        return task_continuation.strip() or goal_review.strip()
-    return feature.continuation_content(
-        goal_review=goal_review, task_continuation=task_continuation
-    )
+        return "\n\n".join(segment.strip() for segment in segments if segment.strip())
+    return feature.continuation_content(segments=segments)
 
 
 def task_continuations(runtime) -> int:
@@ -275,7 +276,7 @@ __all__ = [
     "compaction_failure",
     "continuation_content",
     "goal",
-    "goal_review_mode",
+    "goal_continuation_message",
     "has_actionable_tasks",
     "has_completed_undelivered_jobs",
     "has_pending_jobs",

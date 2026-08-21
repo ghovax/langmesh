@@ -173,7 +173,7 @@ A search or download that runs longer than its inline window moves to the backgr
 
 A goal is not a longer task list. The task list is the steps; the goal is the outcome the steps are for. When a turn ends with actionable tracked tasks unfinished, the harness opens a hidden reminder turn that asks the session to reassess the user's requests, add any omitted work, and continue instead of merely describing it. Explicitly blocked tasks wait for the person, and a bounded continuation allowance prevents a stale list from running forever.
 
-An open goal keeps going through its independent review machinery (see [Goals](../internal/architecture.md#goals)). The goal plugin also offers `self_managed` mode, which skips the reviewer and simply re-prompts the agent on the goal itself. See [Configuration](configuration.md#conversation-compaction).
+An open goal keeps going through its own status machinery. The agent owns the goal's `status` through `update_goal`: staying `active` while working, marking `satisfied` or `blocked` when it believes the work or a blockage is real, or `parked`/`cleared` to set it aside. A `satisfied` or `blocked` mark is settled by the independent secondary review (see [Goals](../internal/architecture.md#goals)), which confirms it only on evidence and overrides a mark the work does not support; an open goal a turn ends on without a mark is re-opened with a light continuation reminder. See [Configuration](configuration.md#conversation-compaction).
 
 ### Peer sessions
 

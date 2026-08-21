@@ -67,7 +67,7 @@ class Continuation(Feature):
         return self._task_continuations
 
     def should_continue_goal(self, goal) -> bool:
-        return bool(self._policy.continue_goal(goal, goal.continuations if goal is not None else 0))
+        return bool(self._policy.continue_goal(goal))
 
     def should_continue_tasks(self, actionable: Sequence) -> bool:
         return bool(self._policy.continue_tasks(actionable, self._task_continuations))
@@ -90,13 +90,10 @@ class Continuation(Feature):
         """The hidden instruction that makes unfinished tracked work an actual next turn."""
         return self._prompts.load("task_continuation_note", {"tasks": compact(unfinished_tasks)})
 
-    def continuation_content(self, *, goal_review: str = "", task_continuation: str = "") -> str:
-        """The one message a continuation turn carries: the goal review's prose and the
-        task note, composed by the shared template rather than joined in Python."""
-        return self._prompts.load(
-            "goal_and_task_continuation",
-            {"goal_review": goal_review, "task_continuation": task_continuation},
-        ).strip()
+    def continuation_content(self, *, segments: Sequence[str] = ()) -> str:
+        """The one message a continuation turn carries: every plugin's own segment, appended
+        in order into a single request, rather than each obligation opening its own turn."""
+        return "\n\n".join(segment.strip() for segment in segments if segment.strip())
 
     def compose_context(self, context: dict) -> None:
         """The tracked tasks as the model sees them."""
