@@ -15,7 +15,7 @@ from langmeshd.commons.agent_files import (
     list_agents,
     load_agent_configuration,
 )
-from langmesh.base.content.models import find_model, provider_and_suffix
+from langmesh.base.content.models import find_model, split_model_identifier
 from langmesh.base.content.skills import load_skills, skills_for_agent
 from pathlib import Path
 import langmesh.base.configuration as _configuration
@@ -41,7 +41,7 @@ def _record_model_selection(model_identifier: str) -> None:
     if not model_identifier or state.session_factory is None:
         return
     definition = find_model(model_identifier)
-    split = provider_and_suffix(model_identifier)
+    split = split_model_identifier(model_identifier)
     if definition is None and split is None:
         return
     if split is not None:

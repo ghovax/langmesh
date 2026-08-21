@@ -387,7 +387,7 @@ class TerminalSessionManager:
         self._sessions: dict[tuple[str, str], TerminalSession] = {}
         self._lock = asyncio.Lock()
 
-    async def get_or_create(
+    async def open(
         self,
         session_id: str,
         directory: Path,

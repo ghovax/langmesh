@@ -183,7 +183,7 @@ def _without_repeated_words(text: str) -> str:
     return " ".join(kept)
 
 
-def text_or_fallback(text: str, fallback: str) -> str:
+def prefer_text(text: str, fallback: str) -> str:
     """`text` if it says anything, otherwise `fallback`, never both."""
     return text if text.strip() else fallback.strip()
 
@@ -192,8 +192,8 @@ def web_element_text(name: str = "", url: str = "", title: str = "", value: str 
     """The retrieval key for a web element: what it is called, where it goes, and what it says it is for."""
     parts = (name, url_in_words(url), title)
     written = _without_repeated_words(" ".join(part for part in parts if part).strip())
-    # `value` is a fallback, never an addition — see `text_or_fallback`.
-    return text_or_fallback(written, value)
+    # `value` is a fallback, never an addition — see `prefer_text`.
+    return prefer_text(written, value)
 
 
 @dataclass

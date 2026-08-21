@@ -398,9 +398,9 @@ async def _serve() -> int:
         commons_state.global_configuration,
     )
     # The two places a workspace change has a supervision consequence, filled in only where there is a control plane to tell.
-    from langmeshd.daemon.pending_input import settle_and_reap
+    from langmeshd.daemon.pending_input import retire_session
 
-    commons_state.on_session_deleted = settle_and_reap
+    commons_state.on_session_deleted = retire_session
     commons_state.reset_live_session_runtimes = state.reset_live_session_runtimes
     commons_state.refresh_live_session_locations = state.refresh_workspace_locations
 

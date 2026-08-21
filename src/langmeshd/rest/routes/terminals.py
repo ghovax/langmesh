@@ -94,7 +94,7 @@ async def terminal_websocket(
             directory = Path(location_base_directory.strip()).expanduser()
         else:
             directory = _terminal_directory(session_id, working_directory)
-        session = await state.terminal_manager.get_or_create(
+        session = await state.terminal_manager.open(
             session_id,
             directory,
             rows,

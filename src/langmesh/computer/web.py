@@ -934,7 +934,7 @@ class WebSurface(Surface):
             )
         return frame
 
-    def _frame_or_page(self, session: _Session, page, identifier: str):
+    def _resolve_frame(self, session: _Session, page, identifier: str):
         return self._frame(session, page, identifier) if identifier else page
 
     # Perceiving — find.
@@ -1321,7 +1321,7 @@ class WebSurface(Surface):
                 # An element id already names its own frame, so `frame` adds nothing here.
                 source = self._locator(page, element).inner_text(timeout=timeout)
             else:
-                source = self._frame_or_page(session, page, frame).inner_text(
+                source = self._resolve_frame(session, page, frame).inner_text(
                     "body", timeout=timeout
                 )
             # Lines, like a window's read: a script that wants the whole thing can join them, but cannot unjoin them.
@@ -1342,7 +1342,7 @@ class WebSurface(Surface):
             if not expression_text:
                 return {"ok": False, "error": "evaluate needs a JavaScript expression to run."}
             # A frame is its own origin with its own session, so running in one uses the credentials it actually holds.
-            target = self._frame_or_page(session, page, frame)
+            target = self._resolve_frame(session, page, frame)
             try:
                 value = target.evaluate(expression_text, argument)
             except Exception as error:

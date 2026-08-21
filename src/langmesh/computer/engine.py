@@ -9,7 +9,7 @@ from typing import Any, Optional, cast
 import ApplicationServices as AS
 
 from langmesh.computer import accessibility, input_synthesis, permissions
-from langmesh.computer.retrieval import Document, element_text, text_or_fallback
+from langmesh.computer.retrieval import Document, element_text, prefer_text
 from langmesh.computer.surface import (
     Element,
     Glance,
@@ -375,13 +375,13 @@ class NativeSurface(Surface):
                 # `shown` is the element's own words for a reader, while `key` is what is embedded.
                 shown = element_text(name=element.name or "", value=element.value)
                 # What the element is called, falling back to what it says, since two thirds of native elements have no name.
-                said = text_or_fallback(
+                said = prefer_text(
                     element_text(name=element.name or ""),
                     element.value if isinstance(element.value, str) else "",
                 )
                 # And then the kind of control in the application's own words, which is what makes a nameless control reachable.
                 kind = str(element.flags.get("role_description") or "")
-                key = f"{said} {kind}".strip() if said and kind else text_or_fallback(said, kind)
+                key = f"{said} {kind}".strip() if said and kind else prefer_text(said, kind)
                 payload: dict[str, Any] = {"role": element.role}
                 if ax_placeholder := element.flags.get("placeholder"):
                     payload["placeholder"] = ax_placeholder

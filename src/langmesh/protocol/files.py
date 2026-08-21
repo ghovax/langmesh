@@ -20,7 +20,7 @@ from a2a.types import FilePart, FileWithBytes, FileWithUri
 
 from langmesh.base.content.attachments import attachment_from_path
 from langmesh.base.confinement.outbound import UntrustedHostError, pin_to_ip, resolve_public_ips
-from langmesh.base.persistence.secrets import load_or_create_private_value
+from langmesh.base.persistence.secrets import ensure_private_value
 
 from langmesh.base.primitives.limits import current_limits
 
@@ -211,6 +211,6 @@ class FileUrlSigner:
         return path
 
 
-def load_or_create_secret(home_directory: Path) -> bytes:
+def ensure_signing_secret(home_directory: Path) -> bytes:
     """A stable per-install signing secret, persisted so signed links survive a restart."""
-    return load_or_create_private_value(home_directory / "a2a_file_secret", lambda: os.urandom(32))
+    return ensure_private_value(home_directory / "a2a_file_secret", lambda: os.urandom(32))
