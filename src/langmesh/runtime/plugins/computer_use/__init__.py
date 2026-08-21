@@ -53,6 +53,11 @@ def _workflow_catalogue(services: Any) -> Any:
     return bundle.get("workflows") if isinstance(bundle, dict) else None
 
 
+def _plugin_service(services: Any, name: str) -> Any:
+    bundle = services.plugin_services
+    return bundle.get(name) if isinstance(bundle, dict) else None
+
+
 def _surface_for(surface_name: str):
     """The live surface a screen tool names: the native macOS tree, or the user's Chrome."""
     return native_surface.SURFACE if surface_name == "computer" else web_surface.SURFACE
@@ -403,23 +408,32 @@ async def control_screen(
 
     active = tool_context.current()
     workflows = _workflow_catalogue(services)
+    scratch_spaces = _plugin_service(services, "scratch_spaces")
+    scratch = await scratch_spaces.create("screen") if scratch_spaces is not None else ""
     project_directory = services.project_directory or active.workspace or ""
     targets_before = target_registry.list_targets()
-    result = await control.run_control_script(
-        script,
-        dispatch,
-        profile=active.sandbox,
-        workspace=active.workspace,
-        primitives=tuple(sorted(permitted_primitives)),
-        target=target_id,
-        import_roots=workflows.import_roots(project_directory) if workflows is not None else None,
-        dependency_roots=(
-            workflows.dependency_roots(project_directory) if workflows is not None else None
-        ),
-        library_roots=(
-            workflows.library_roots(project_directory) if workflows is not None else None
-        ),
-    )
+    try:
+        result = await control.run_control_script(
+            script,
+            dispatch,
+            profile=active.sandbox,
+            workspace=active.workspace,
+            primitives=tuple(sorted(permitted_primitives)),
+            target=target_id,
+            import_roots=(
+                workflows.import_roots(project_directory) if workflows is not None else None
+            ),
+            dependency_roots=(
+                workflows.dependency_roots(project_directory) if workflows is not None else None
+            ),
+            library_roots=(
+                workflows.library_roots(project_directory) if workflows is not None else None
+            ),
+            scratch=scratch,
+        )
+    finally:
+        if scratch_spaces is not None and scratch:
+            await scratch_spaces.release(scratch)
     if isinstance(result, dict):
         moved = target_registry.difference(targets_before, target_registry.list_targets())
         if moved:
@@ -444,6 +458,11 @@ class ComputerUse(Feature):
         self._host = host
         bundle = getattr(host, "services", None) or {}
         self._workflows = bundle.get("workflows") if isinstance(bundle, dict) else None
+        if isinstance(bundle, dict):
+            web_surface.SURFACE.configure(
+                endpoint_resolver=bundle.get("browser_endpoint"),
+                download_handler=bundle.get("browser_download"),
+            )
         self._prompts = context.prompts("computer_use")
         # Bind which models rank a screen, from the loaded configuration.
         screen = getattr(context.global_configuration, "computer_control", None)

@@ -6,7 +6,6 @@ import asyncio
 import logging
 import json
 import os
-import shutil
 import sys
 from typing import Any, Awaitable, Callable, Optional
 
@@ -58,6 +57,7 @@ async def run_control_script(
     import_roots: Optional[list[str]] = None,
     dependency_roots: Optional[list[str]] = None,
     library_roots: Optional[list[str]] = None,
+    scratch: str = "",
 ) -> dict:
     """Execute `script` in a child process, servicing its primitive calls, and return the child's result."""
     timeout = timeout if timeout is not None else _script_ceiling()
@@ -84,7 +84,6 @@ async def run_control_script(
     # The two pipe descriptors go on argv rather than the environment, which would leak them into every subprocess.
     child_command = _child_command(request_write, reply_read)
     # Strictly less than the session holds: everything this child does is bridged over the pipes, so it needs nothing itself.
-    scratch = confinement.private_scratch(profile, workspace=workspace, prefix="langmesh-screen-")
     child_profile = (
         profile.narrowed(writable=[scratch] if scratch else [], network=False, workspace=workspace)
         if profile is not None
@@ -159,9 +158,6 @@ async def run_control_script(
         pump_task.cancel()
         _quietly_close(requests)
         _quietly_close(replies)
-        # The scratch directory was made for this run, and a directory per call would otherwise accumulate.
-        if scratch:
-            shutil.rmtree(scratch, ignore_errors=True)
 
     result = _parse_result(stdout, stderr, process.returncode)
     if result.get("error_code") == "syntax_error":

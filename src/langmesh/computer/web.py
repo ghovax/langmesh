@@ -7,7 +7,6 @@ import logging
 import os
 import re
 import time
-import tempfile
 from collections import deque
 from dataclasses import dataclass
 from itertools import count
@@ -121,14 +120,6 @@ def _merged_shape(left: Any, right: Any) -> Any:
     return left
 
 
-# The Chromium browsers we can drive, mapped to the support directory holding each one's DevToolsActivePort file.
-_SUPPORT_ROOT = Path.home() / "Library" / "Application Support"
-BROWSERS = {
-    "chrome": {"data": _SUPPORT_ROOT / "Google" / "Chrome"},
-    "edge": {"data": _SUPPORT_ROOT / "Microsoft Edge"},
-    "brave": {"data": _SUPPORT_ROOT / "BraveSoftware" / "Brave-Browser"},
-}
-
 # Where the user turns on Chrome's remote-debugging switch, surfaced so the interface can offer a one-click button.
 REMOTE_DEBUGGING_URL = "chrome://inspect/#remote-debugging"
 
@@ -154,28 +145,13 @@ def _awaiting_authorization_payload(seconds: float) -> dict:
     }
 
 
-def _devtools_websocket_url(browser: str) -> Optional[str]:
-    """The browser-level DevTools WebSocket URL from the `DevToolsActivePort` file, or `None` when the switch is off."""
-    specification = BROWSERS.get(browser)
-    if specification is None:
-        return None
-    try:
-        lines = (specification["data"] / "DevToolsActivePort").read_text().splitlines()
-    except OSError:
-        return None
-    port = lines[0].strip() if lines else ""
-    path = lines[1].strip() if len(lines) > 1 else ""
-    if not port or not path:
-        return None
-    return f"ws://127.0.0.1:{port}{path}"
-
-
 class _Session:
     """Everything about the live connection, touched only from the worker thread."""
 
-    def __init__(self, playwright_browser, context) -> None:
+    def __init__(self, playwright_browser, context, download_handler=None) -> None:
         self.browser = playwright_browser
         self.context = context
+        self.download_handler = download_handler
         self.page = None
         # Which pages have had their dialog, download and network handlers wired; ids come from the browser's own target list.
         self.tab_ids: dict[Any, bool] = {}
@@ -313,11 +289,11 @@ class _Session:
 
         def on_download(download) -> None:
             try:
-                destination = os.path.join(
-                    tempfile.mkdtemp(prefix="langmesh-web-download-"), download.suggested_filename
-                )
-                download.save_as(destination)
-                self.events.append({"download": {"path": destination, "url": download.url}})
+                if self.download_handler is None:
+                    download.cancel()
+                    raise RuntimeError("The embedding supplied no browser download handler.")
+                result = self.download_handler(download)
+                self.events.append({"download": result})
             except Exception as error:
                 self.events.append({"download": {"url": download.url, "error": str(error)}})
 
@@ -722,6 +698,13 @@ class WebSurface(Surface):
         super().__init__("langmesh-playwright", message)
         self._playwright = None
         self._session: Optional[_Session] = None
+        self._endpoint_resolver = None
+        self._download_handler = None
+
+    def configure(self, *, endpoint_resolver=None, download_handler=None) -> None:
+        """Adopt the application services that discover browsers and retain downloads."""
+        self._endpoint_resolver = endpoint_resolver
+        self._download_handler = download_handler
 
     # Failure and recovery.
 
@@ -734,7 +717,7 @@ class WebSurface(Surface):
 
     def preflight(self, operation: str) -> Optional[dict]:
         """Gate a read on the browser being reachable, so a switched-off Chrome surfaces as the not-connected payload up front."""
-        if operation == "documents" and _devtools_websocket_url("chrome") is None:
+        if operation == "documents" and self._endpoint("chrome") is None:
             return _not_connected_payload()
         return None
 
@@ -751,7 +734,7 @@ class WebSurface(Surface):
             from playwright.sync_api import sync_playwright
 
             self._playwright = sync_playwright().start()
-        websocket_url = _devtools_websocket_url(browser)
+        websocket_url = self._endpoint(browser)
         if websocket_url is None:
             raise ToolFailure(_not_connected_payload())
         # Budgeted as a human reaction time rather than a network timeout, since the user has to find and click Allow.
@@ -773,12 +756,15 @@ class WebSurface(Surface):
         context = connected.contexts[0] if connected.contexts else connected.new_context()
         context.set_default_timeout(_milliseconds(current_limits().action_timeout))
         context.set_default_navigation_timeout(_milliseconds(current_limits().navigation_timeout))
-        session = _Session(connected, context)
+        session = _Session(connected, context, self._download_handler)
         # Pages are adopted when something first acts in them, since the listing reads from the browser and needs no handlers.
         context.on("page", session.adopt)
         session.page = self._pick_page(session)
         self._session = session
         return session
+
+    def _endpoint(self, browser: str) -> Optional[str]:
+        return self._endpoint_resolver(browser) if self._endpoint_resolver is not None else None
 
     @staticmethod
     def _pick_page(session: _Session):
