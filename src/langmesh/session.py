@@ -52,7 +52,13 @@ from langmesh.base.persistence.worktrees import (
 )
 from langmesh.runtime.composition import RuntimeProfile, SessionComponents
 from langmesh.runtime.features import PermissionsCapability
-from langmesh.runtime.session_control import PendingTurn, SessionPhase, SessionState
+from langmesh.runtime.session_control import (
+    PendingTurn,
+    SessionCheckpoint,
+    SessionPhase,
+    SessionSnapshot,
+    SessionState,
+)
 
 # The vocabulary `stream()` speaks, exported because a caller driving a turn has to dispatch on it.
 if TYPE_CHECKING:
@@ -349,6 +355,11 @@ class Session:
             ),
         )
 
+    @property
+    def snapshot(self) -> SessionSnapshot:
+        """The current durable runtime state as documented fields."""
+        return self.runtime.session_snapshot()
+
     def interrupt(self) -> bool:
         """Request cancellation of the turn currently running."""
         if self._runtime is None or self._phase not in {
@@ -431,23 +442,25 @@ class Session:
             return await self._restore()
 
     async def _restore(self) -> bool:
-        state = await self._checkpoints.load(self._session_id)
-        if not state:
+        checkpoint = await self._checkpoints.load(self._session_id)
+        if checkpoint is None:
             self._restored = True
             return False
-        messages = state.get("conversation") or []
-        session_state = state.get("session") or {}
-        pending_state = state.get("pending")
-        if not messages and not session_state and not pending_state:
+        if not isinstance(checkpoint, SessionCheckpoint):
+            raise TypeError("checkpoint adapters must return a SessionCheckpoint value")
+        if (
+            not checkpoint.conversation
+            and checkpoint.session == SessionSnapshot()
+            and checkpoint.pending is None
+        ):
             self._restored = True
             return False
         from langchain_core.messages import messages_from_dict
 
-        self.runtime.conversation[:] = messages_from_dict(messages)
-        if session_state:
-            self.runtime.restore_session(session_state)
-        if isinstance(pending_state, Mapping):
-            self._pending = PendingTurn.restore(pending_state)
+        self.runtime.conversation[:] = messages_from_dict(list(checkpoint.conversation))
+        self.runtime.restore_session(checkpoint.session)
+        if checkpoint.pending is not None:
+            self._pending = checkpoint.pending
             self._phase = SessionPhase.SUSPENDED
         self._restored = True
         return True
@@ -462,11 +475,11 @@ class Session:
 
         await self._checkpoints.save(
             self._session_id,
-            {
-                "conversation": [message_to_dict(message) for message in self.conversation],
-                "session": self.runtime.session_snapshot(),
-                "pending": self._pending.snapshot() if self._pending is not None else None,
-            },
+            SessionCheckpoint(
+                conversation=tuple(message_to_dict(message) for message in self.conversation),
+                session=self.runtime.session_snapshot(),
+                pending=self._pending,
+            ),
         )
 
     def _compose(

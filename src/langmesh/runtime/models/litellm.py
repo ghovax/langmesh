@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, ClassVar, Optional, Sequence, cast
 from uuid import uuid4
 
@@ -36,7 +38,6 @@ from langmesh.runtime.cache_trace import (
     provider_cache_key,
     remember_cache_lane,
     reconcile,
-    request_traces_snapshot,
     restore_request_traces,
     trace,
 )
@@ -58,6 +59,16 @@ _ALWAYS_REASONING_ROUTES = ("deepseek",)
 
 #: Providers whose reasoning is only recoverable through the Responses API rather than Chat Completions.
 _RESPONSES_ROUTES = ("openai", "azure")
+
+
+@dataclass(frozen=True)
+class LiteLLMCacheState:
+    """The diagnostics and explicit breakpoints retained for one LiteLLM route."""
+
+    model: str
+    api_base: str
+    traces: Mapping[str, RequestTrace]
+    anchors: Mapping[str, tuple[str, ...]]
 
 
 class ChatLiteLLMModel(BaseChatModel):
@@ -285,23 +296,27 @@ class ChatLiteLLMModel(BaseChatModel):
                 tuple(dict.fromkeys((identity, *prior)))[:2],
             )
 
-    def model_cache_snapshot(self) -> dict[str, object]:
-        """Serialize the bounded diagnostics and explicit breakpoint anchors owned by this session."""
-        return {
-            "version": 1,
-            "model": self.model,
-            "api_base": self.api_base or "",
-            "traces": request_traces_snapshot(self._previous_traces),
-            "anchors": {lane: list(anchors) for lane, anchors in self._cache_anchors.items()},
-        }
+    def model_cache_snapshot(self) -> LiteLLMCacheState:
+        """Return the bounded diagnostics and explicit breakpoints owned by this session."""
+        return LiteLLMCacheState(
+            model=self.model,
+            api_base=self.api_base or "",
+            traces=dict(self._previous_traces),
+            anchors=dict(self._cache_anchors),
+        )
 
     def restore_model_cache(self, snapshot: object) -> None:
         """Restore validated diagnostics and breakpoint anchors from durable session state."""
-        if (
-            not isinstance(snapshot, dict)
-            or snapshot.get("version") != 1
-            or snapshot.get("model") != self.model
-            or snapshot.get("api_base", "") != (self.api_base or "")
+        if isinstance(snapshot, LiteLLMCacheState):
+            if snapshot.model != self.model or snapshot.api_base != (self.api_base or ""):
+                return
+            self._previous_traces = dict(snapshot.traces)
+            self._cache_anchors = dict(snapshot.anchors)
+            return
+        if not isinstance(snapshot, Mapping):
+            return
+        if snapshot.get("model") != self.model or snapshot.get("api_base", "") != (
+            self.api_base or ""
         ):
             return
         self._previous_traces = restore_request_traces(snapshot.get("traces"))

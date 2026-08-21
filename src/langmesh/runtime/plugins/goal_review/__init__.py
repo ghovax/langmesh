@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -45,6 +46,14 @@ from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.runtime import AgentRuntime
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class GoalReviewState:
+    """The goal currently owned by the goal-review plugin."""
+
+    goal: Goal | None = None
+
 
 #: A goal's schema descriptions and its instructions, both configurable beside this plugin.
 _DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
@@ -108,13 +117,17 @@ class GoalReviewFeature(Feature):
         """The goal and review tools this plugin owns."""
         return [update_goal, submit_goal_review]
 
-    def snapshot(self) -> dict | None:
-        return {"goal": self.goal.model_dump() if self.goal is not None else None}
+    def snapshot(self) -> GoalReviewState:
+        return GoalReviewState(self.goal.model_copy(deep=True) if self.goal is not None else None)
 
-    def restore(self, snapshot: dict) -> None:
-        stored = snapshot.get("goal")
+    def restore(self, state: object) -> None:
+        stored = state.goal if isinstance(state, GoalReviewState) else None
+        if isinstance(state, Mapping):
+            stored = state.get("goal")
         goal = None
-        if isinstance(stored, dict) and str(stored.get("text", "")).strip():
+        if isinstance(stored, Goal):
+            goal = stored.model_copy(deep=True)
+        elif isinstance(stored, Mapping) and str(stored.get("text", "")).strip():
             try:
                 goal = Goal.model_validate(stored)
             except ValidationError:

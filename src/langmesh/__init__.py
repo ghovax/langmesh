@@ -83,7 +83,14 @@ from langmesh.base.persistence.worktrees import (
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile, SessionComponents
 from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.hooks import MaximumToolCalls
-from langmesh.runtime.session_control import PendingTurn, SessionPhase, SessionState
+from langmesh.runtime.session_control import (
+    FeatureState,
+    PendingTurn,
+    SessionCheckpoint,
+    SessionPhase,
+    SessionSnapshot,
+    SessionState,
+)
 from langmesh.runtime.tools.execution import ToolExecution, ToolHandler, ToolServices
 from langmesh.runtime.turn_events import (
     Checkpoint,
@@ -163,6 +170,7 @@ __all__ = [
     "FileLeaseManager",
     "FileLeases",
     "FilesystemConfiguration",
+    "FeatureState",
     "GoalReviewFinished",
     "GoalReviewProgress",
     "GoalReviewStarted",
@@ -201,7 +209,9 @@ __all__ = [
     "Session",
     "SessionAccess",
     "SessionComponents",
+    "SessionCheckpoint",
     "SessionPhase",
+    "SessionSnapshot",
     "SessionState",
     "SessionWorktree",
     "SessionWorktreeManager",

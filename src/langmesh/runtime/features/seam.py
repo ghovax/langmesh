@@ -14,6 +14,7 @@ from typing import Any, AsyncIterator, Sequence, TypeVar, cast
 from langmesh.base.configuration import PromptLoader
 from langmesh.runtime.features.context import PluginContext
 from langmesh.runtime.features.host import PluginHost
+from langmesh.runtime.session_control import FeatureState
 from langmesh.runtime.turn_events import TurnEventUnion
 
 _Capability = TypeVar("_Capability")
@@ -40,6 +41,11 @@ class Feature:
     """
 
     __slots__ = ("_langmesh_session_id",)
+
+    @property
+    def state_name(self) -> str:
+        """The stable namespace used for this plugin's durable state."""
+        return f"{type(self).__module__}.{type(self).__qualname__}"
 
     def attach(self, context: PluginContext, host: "PluginHost | None" = None) -> None:
         """Installed by the runtime; library features keep the internal view here."""
@@ -153,12 +159,12 @@ class Feature:
         """Why new input must be refused (a failed fold, an unrepaired registry), or ``None``."""
         return None
 
-    def snapshot(self) -> dict | None:
+    def snapshot(self) -> object | None:
         """This feature's durable state to persist beside the checkpoint, or ``None``."""
         return None
 
-    def restore(self, snapshot: dict) -> None:
-        """Rehydrate from the durable checkpoint, reading the keys this feature wrote."""
+    def restore(self, state: object) -> None:
+        """Rehydrate the durable value previously returned by :meth:`snapshot`."""
 
 
 class Features:
@@ -337,17 +343,19 @@ class Features:
             events.extend(feature.drain())
         return events
 
-    def snapshot(self) -> dict:
-        merged: dict[str, Any] = {}
+    def snapshot(self) -> tuple[FeatureState, ...]:
+        states: list[FeatureState] = []
         for feature in self._instances:
             own = feature.snapshot()
-            if own:
-                merged.update(own)
-        return merged
+            if own is not None:
+                states.append(FeatureState(feature.state_name, own))
+        return tuple(states)
 
-    def restore(self, snapshot: dict) -> None:
+    def restore(self, states: Sequence[FeatureState]) -> None:
+        by_name = {state.name: state.value for state in states}
         for feature in self._instances:
-            feature.restore(snapshot)
+            if feature.state_name in by_name:
+                feature.restore(by_name[feature.state_name])
 
     def blocked_reason(self) -> str | None:
         """Why new input must be refused, per the first feature that blocks it."""

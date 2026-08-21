@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum, StrEnum
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping, cast
 
 from langmesh.base.contracts.ports import Approval, SuspensionGate
 
@@ -60,7 +60,8 @@ class PendingTurn:
             decisions={**self.decisions, request_id: decision},
         )
 
-    def snapshot(self) -> dict[str, Any]:
+    def to_data(self) -> dict[str, Any]:
+        """Encode this value for a storage or transport adapter."""
         return {
             "interactions": [_plain(gate) for gate in self.interactions],
             "plans": _plain(self.plans),
@@ -70,7 +71,8 @@ class PendingTurn:
         }
 
     @classmethod
-    def restore(cls, state: Mapping[str, Any]) -> "PendingTurn":
+    def from_data(cls, state: Mapping[str, Any]) -> "PendingTurn":
+        """Decode the storage representation produced by :meth:`to_data`."""
         return cls(
             interactions=tuple(SuspensionGate(**gate) for gate in state.get("interactions", ())),
             plans=dict(state.get("plans", {})),
@@ -94,4 +96,101 @@ class SessionState:
     permission_mode: str
 
 
-__all__ = ["PendingTurn", "SessionPhase", "SessionState"]
+@dataclass(frozen=True)
+class FeatureState:
+    """One plugin's namespaced durable value."""
+
+    name: str
+    value: object
+
+
+@dataclass(frozen=True)
+class SessionSnapshot:
+    """The runtime state that is durable independently of its conversation."""
+
+    features: tuple[FeatureState, ...] = ()
+    turn_recovery: Literal["none", "retryable"] = "none"
+    turn_failure_root: str | None = None
+    model_cache: object | None = None
+
+    def feature(self, name: str) -> object | None:
+        """Return one plugin's state by its stable name."""
+        return next((item.value for item in self.features if item.name == name), None)
+
+    def to_data(self) -> dict[str, Any]:
+        """Encode this value for a storage or transport adapter."""
+        return {
+            "features": [
+                {"name": feature.name, "value": _plain(feature.value)} for feature in self.features
+            ],
+            "turn_recovery": self.turn_recovery,
+            "turn_failure_root": self.turn_failure_root,
+            "model_cache": _plain(self.model_cache),
+        }
+
+    @classmethod
+    def from_data(cls, data: Mapping[str, Any]) -> "SessionSnapshot":
+        """Decode the storage representation produced by :meth:`to_data`."""
+        recovery = str(data.get("turn_recovery") or "none")
+        if recovery == "retrying":
+            recovery = "retryable"
+        if recovery not in {"none", "retryable"}:
+            recovery = "none"
+        raw_features = data.get("features", ())
+        features = tuple(
+            FeatureState(name=str(item["name"]), value=item.get("value"))
+            for item in raw_features
+            if isinstance(item, Mapping) and str(item.get("name") or "")
+        )
+        return cls(
+            features=features,
+            turn_recovery=cast(Literal["none", "retryable"], recovery),
+            turn_failure_root=str(data["turn_failure_root"])
+            if data.get("turn_failure_root")
+            else None,
+            model_cache=data.get("model_cache"),
+        )
+
+
+@dataclass(frozen=True)
+class SessionCheckpoint:
+    """Everything an embedded session gives its caller-owned checkpoint adapter."""
+
+    conversation: tuple[dict[str, Any], ...]
+    session: SessionSnapshot
+    pending: PendingTurn | None = None
+
+    def to_data(self) -> dict[str, Any]:
+        """Encode this value for a storage or transport adapter."""
+        return {
+            "conversation": list(self.conversation),
+            "session": self.session.to_data(),
+            "pending": self.pending.to_data() if self.pending is not None else None,
+        }
+
+    @classmethod
+    def from_data(cls, data: Mapping[str, Any]) -> "SessionCheckpoint":
+        """Decode the storage representation produced by :meth:`to_data`."""
+        raw_session = data.get("session")
+        raw_pending = data.get("pending")
+        return cls(
+            conversation=tuple(
+                item for item in data.get("conversation", ()) if isinstance(item, dict)
+            ),
+            session=SessionSnapshot.from_data(raw_session)
+            if isinstance(raw_session, Mapping)
+            else SessionSnapshot(),
+            pending=PendingTurn.from_data(raw_pending)
+            if isinstance(raw_pending, Mapping)
+            else None,
+        )
+
+
+__all__ = [
+    "FeatureState",
+    "PendingTurn",
+    "SessionCheckpoint",
+    "SessionPhase",
+    "SessionSnapshot",
+    "SessionState",
+]

@@ -21,6 +21,7 @@ if TYPE_CHECKING:  # pragma: no cover - import only for typing; `base` stays fre
     from pathlib import Path
 
     from langmesh.base.content.attachments import ComposedAttachments
+    from langmesh.runtime.session_control import SessionCheckpoint
 
     # The model seam as a type: every provider and every mock in that ecosystem already implements it.
     ChatModel = BaseChatModel
@@ -33,8 +34,8 @@ if TYPE_CHECKING:  # pragma: no cover - import only for typing; `base` stays fre
 class DurableModelCache(Protocol):
     """Persists provider-native cache continuity beside the session checkpoint."""
 
-    def model_cache_snapshot(self) -> dict[str, Any]:
-        """Return JSON-safe cache state owned by this model and session."""
+    def model_cache_snapshot(self) -> object:
+        """Return typed cache state owned by this model and session."""
         ...
 
     def restore_model_cache(self, snapshot: object) -> None:
@@ -148,10 +149,10 @@ class GoalReviewJournal(Protocol):
 class Checkpoints(Protocol):
     """Where a session's resumable state lives, which is what makes it survive the process that ran it."""
 
-    async def save(self, session_id: str, state: Mapping[str, Any]) -> None: ...
+    async def save(self, session_id: str, checkpoint: SessionCheckpoint) -> None: ...
 
-    async def load(self, session_id: str) -> Optional[Mapping[str, Any]]:
-        """The last saved state, or ``None`` for a session that has never been saved."""
+    async def load(self, session_id: str) -> Optional[SessionCheckpoint]:
+        """The last checkpoint, or ``None`` for a session that has never been saved."""
         ...
 
 
@@ -172,12 +173,12 @@ class MemoryCheckpoints:
     """Checkpoints in a dictionary: the default, so a library session can resume without a store."""
 
     def __init__(self) -> None:
-        self._states: dict[str, Mapping[str, Any]] = {}
+        self._states: dict[str, SessionCheckpoint] = {}
 
-    async def save(self, session_id: str, state: Mapping[str, Any]) -> None:
-        self._states[session_id] = dict(state)
+    async def save(self, session_id: str, checkpoint: SessionCheckpoint) -> None:
+        self._states[session_id] = checkpoint
 
-    async def load(self, session_id: str) -> Optional[Mapping[str, Any]]:
+    async def load(self, session_id: str) -> Optional[SessionCheckpoint]:
         return self._states.get(session_id)
 
 

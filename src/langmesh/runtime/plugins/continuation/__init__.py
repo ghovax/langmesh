@@ -7,13 +7,23 @@ reads it from the goal plugin, so no feature needs to know another.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Sequence
 
 from langmesh.base.primitives.serialization import compact
-from langmesh.runtime.tasks import TaskManager
+from langmesh.runtime.tasks import TaskManager, TaskState
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.plugins.continuation.policy import DefaultContinuationPolicy
 from langmesh.runtime.plugins.continuation.tools import set_tasks, update_tasks
+
+
+@dataclass(frozen=True)
+class ContinuationState:
+    """The plugin's task list and consumed autonomous-turn allowance."""
+
+    tasks: TaskState
+    task_continuations: int = 0
 
 
 class Continuation(Feature):
@@ -88,12 +98,17 @@ class Continuation(Feature):
         """Place stable task guidance in the session prompt once so later calls remain append-only."""
         variables["task_guidance"] = self._prompts.load("task_guidance", {}).strip()
 
-    def snapshot(self) -> dict | None:
-        return {
-            "tasks": self._task_manager.snapshot(),
-            "task_continuations": self._task_continuations,
-        }
+    def snapshot(self) -> ContinuationState:
+        return ContinuationState(self._task_manager.snapshot(), self._task_continuations)
 
-    def restore(self, snapshot: dict) -> None:
-        self._task_manager.restore(snapshot.get("tasks", {}) or {})
-        self.restore_task_continuations(snapshot.get("task_continuations", 0) or 0)
+    def restore(self, state: object) -> None:
+        if isinstance(state, ContinuationState):
+            tasks = state.tasks
+            task_continuations = state.task_continuations
+        elif isinstance(state, Mapping):
+            tasks = state.get("tasks", {})
+            task_continuations = int(state.get("task_continuations", 0) or 0)
+        else:
+            return
+        self._task_manager.restore(tasks)
+        self.restore_task_continuations(task_continuations)

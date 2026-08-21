@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
+
 from pydantic import BaseModel, Field
 
 from langmesh.base.primitives.serialization import compact
@@ -14,6 +17,14 @@ class TaskItem(BaseModel):
     description: str
     status: str = "pending"
     dependencies: list[str] = Field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class TaskState:
+    """The task list and the next identifier it will allocate."""
+
+    tasks: tuple[TaskItem, ...] = ()
+    next_identifier: int = 1
 
 
 class TaskManager:
@@ -92,13 +103,24 @@ class TaskManager:
             and all(dependency in completed for dependency in task.dependencies)
         ]
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> TaskState:
         """The manager's durable state, so a rebuilt runtime restores the tasks and keeps minting fresh ids."""
-        return {"tasks": self.to_dict_list(), "next_identifier": self._next_identifier}
+        return TaskState(
+            tuple(task.model_copy(deep=True) for task in self._tasks), self._next_identifier
+        )
 
-    def restore(self, snapshot: dict) -> None:
+    def restore(self, state: object) -> None:
         """Rehydrate from :meth:`snapshot`, tolerating a missing or partial one by staying empty."""
-        self._tasks = [TaskItem.model_validate(task) for task in snapshot.get("tasks", [])]
+        if isinstance(state, TaskState):
+            tasks = state.tasks
+            stored_next = state.next_identifier
+        elif isinstance(state, Mapping):
+            tasks = tuple(TaskItem.model_validate(task) for task in state.get("tasks", ()))
+            stored_next = int(state.get("next_identifier", 1))
+        else:
+            tasks = ()
+            stored_next = 1
+        self._tasks = [TaskItem.model_validate(task) for task in tasks]
         self._by_identifier = {task.identifier: task for task in self._tasks}
         if len(self._by_identifier) != len(self._tasks):
             raise ValueError("task snapshot contains duplicate identifiers")
@@ -107,8 +129,7 @@ class TaskManager:
             for task in self._tasks
             if task.identifier.removeprefix("task-").isdigit()
         ]
-        stored_next = int(snapshot.get("next_identifier", 1))
         self._next_identifier = max(stored_next, max(numeric_identifiers, default=0) + 1)
 
 
-__all__ = ["TaskItem", "TaskManager"]
+__all__ = ["TaskItem", "TaskManager", "TaskState"]

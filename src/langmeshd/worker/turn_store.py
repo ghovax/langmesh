@@ -8,6 +8,7 @@ from typing import Any, Optional
 from a2a.server.tasks import TaskStore
 from a2a.types import Task
 from langmesh.protocol.turn_record import TurnRecord
+from langmesh.runtime.session_control import SessionSnapshot
 from langmeshd.worker.host import HostServices, NullHostServices
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ class HostTurnStore(TaskStore):
         session_id: str,
         turn_id: str,
         messages: list,
-        session_state: Optional[dict] = None,
+        session_state: Optional[SessionSnapshot] = None,
         inherited_snapshot_id: str = "",
     ) -> None:
         await self._call(
@@ -56,14 +57,16 @@ class HostTurnStore(TaskStore):
             session_id=session_id,
             turn_id=turn_id,
             messages=messages,
-            session_state=session_state,
+            session_state=session_state.to_data() if session_state is not None else None,
             inherited_snapshot_id=inherited_snapshot_id,
         )
 
-    async def save_session_state(self, session_id: str, session_state: dict) -> None:
+    async def save_session_state(self, session_id: str, session_state: SessionSnapshot) -> None:
         """Write the durable goal/task state alone, for a change that happened between turns."""
         await self._call(
-            "turn.save_session_state", session_id=session_id, session_state=session_state
+            "turn.save_session_state",
+            session_id=session_id,
+            session_state=session_state.to_data(),
         )
 
     async def load_checkpoint(self, session_id: str) -> dict:
@@ -73,8 +76,9 @@ class HostTurnStore(TaskStore):
             "inherited_message_count": 0,
         }
 
-    async def load_session_state(self, session_id: str) -> dict:
-        return await self._call("turn.load_session_state", session_id=session_id) or {}
+    async def load_session_state(self, session_id: str) -> SessionSnapshot:
+        raw = await self._call("turn.load_session_state", session_id=session_id) or {}
+        return SessionSnapshot.from_data(raw)
 
     async def create_goal_review(
         self, review_id: str, session_id: str, goal: str, created_at: str
