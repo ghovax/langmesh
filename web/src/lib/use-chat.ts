@@ -1598,8 +1598,8 @@ export function useChat(
           );
         };
 
-        // Drawn in the same tick the outbox stopped drawing its card, so it is in exactly one place.
-        showOptimistically();
+        // The outbox card is the only place the message is shown until the session confirms delivery
+        // This prevents awkward order where transcript shows message before it's actually sent
 
         // A turn is two calls: ensure a session, then send. `send` carries no settings and cannot change them.
         void (async () => {
@@ -1645,6 +1645,8 @@ export function useChat(
               return;
             }
             sendAccepted = true;
+            // Now that it's accepted, move from outbox to transcript in same tick
+            showOptimistically();
             if (idleSnapshotSeen) finishTurn();
             settleDelivery("accepted");
           } catch (caught) {
