@@ -29,9 +29,13 @@ from langmesh.runtime.tools.arguments import with_shared_fields
 from langmeshd.daemon.machine_environment import _shell_command_usage
 from langmeshd.commons.configuration_locations import observation_database
 from langmeshd.daemon.workflow_catalogue import FilesystemWorkflowCatalogue
+from langmeshd.daemon.browser import browser_endpoint, save_browser_download
+from langmeshd.daemon.scratch import FilesystemScratchSpaces
+from langmeshd.commons.paths import runtime_directory
 
 
 _WORKFLOWS = FilesystemWorkflowCatalogue()
+_SCRATCH_SPACES = FilesystemScratchSpaces(runtime_directory() / "scratch")
 
 
 def _compaction_preparation(global_configuration: Any, runtime_directory: str) -> Any:
@@ -112,6 +116,9 @@ def compose_plugins(
         "goal_review_journal": goal_review_journal,
         "compaction_preparation": preparation,
         "workflows": _WORKFLOWS,
+        "scratch_spaces": _SCRATCH_SPACES,
+        "browser_endpoint": browser_endpoint,
+        "browser_download": save_browser_download,
     }
     if locations:
         services["locations"] = locations

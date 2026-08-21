@@ -70,6 +70,13 @@ def session_artifacts_directory(session_id: str) -> Path:
     return data_directory() / "artifacts" / session_id
 
 
+def browser_downloads_directory() -> Path:
+    """Where browser downloads retained by the daemon are placed."""
+    path = data_directory() / "downloads"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def session_toolboxes_directory() -> Path:
     """Where every session's own tools live, named in its own right so the sweep for gone sessions can read it."""
     return state_directory() / "sessions"

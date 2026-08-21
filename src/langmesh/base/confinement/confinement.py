@@ -8,7 +8,6 @@ import resource
 import shutil
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Iterable, Literal, Optional, cast
@@ -958,50 +957,6 @@ def spawn_recipe(
             posix(profile)
 
     return Spawn(prefix=prefix, preexec=setup, environment=environment, confined=bool(backend))
-
-
-def temporary_directory(profile: Optional[Profile], *, workspace: str = "") -> str:
-    """Somewhere this profile permits scratch, preferring outside the workspace so no log lands in the tree."""
-    if profile is None or profile.enforce == ENFORCE_OFF:
-        return tempfile.gettempdir()
-
-    def usable(entry: str) -> str:
-        resolved = expand(entry, workspace=workspace)
-        return (
-            resolved
-            if resolved and os.path.isdir(resolved) and os.access(resolved, os.W_OK)
-            else ""
-        )
-
-    worktree_root = os.path.realpath(workspace) if workspace else ""
-
-    def inside_workspace(path: str) -> bool:
-        if not worktree_root:
-            return False
-        real = os.path.realpath(path)
-        return real == worktree_root or real.startswith(worktree_root + os.sep)
-
-    candidates = [usable(entry) for entry in profile.filesystem.writable]
-    outside = [path for path in candidates if path and not inside_workspace(path)]
-    return outside[0] if outside else next((path for path in candidates if path), "")
-
-
-def private_scratch(
-    profile: Optional[Profile], *, workspace: str = "", prefix: str = "langmesh-"
-) -> str:
-    """A fresh directory of a child's own, refusing the workspace outright, or ``""`` when nowhere qualifies."""
-    base = temporary_directory(profile, workspace=workspace)
-    if not base:
-        return ""
-    worktree_root = os.path.realpath(workspace) if workspace else ""
-    if worktree_root:
-        real = os.path.realpath(base)
-        if real == worktree_root or real.startswith(worktree_root + os.sep):
-            return ""
-    try:
-        return tempfile.mkdtemp(prefix=prefix, dir=base)
-    except OSError:
-        return ""
 
 
 def resolve_command(command: str, spawn: Spawn) -> list[str]:
