@@ -66,9 +66,14 @@ def active_cache_lane() -> str:
     return _CACHE_LANE.get()
 
 
-def provider_cache_key(session_id: str) -> str:
-    """The stable provider key shared by the main conversation and every branch from it."""
-    return session_id
+def provider_cache_key(*stable_prefix: str) -> str:
+    """Route byte-identical static prefixes to the same provider cache across sessions."""
+    digest = hashlib.blake2b(digest_size=16)
+    for part in stable_prefix:
+        encoded = part.encode()
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)

@@ -255,15 +255,23 @@ class ChatCodexModel(BaseChatModel):
         tools = kwargs.get("tools")
         if tools:
             payload["tools"] = [self._to_responses_tool(tool) for tool in tools]
-        if self.session_id:
-            # Which cache to look in, since the endpoint routes a lookup by hashing the prefix together with this key.
-            payload["prompt_cache_key"] = provider_cache_key(self.session_id)
         # Both unconditional, as in the Codex client: asking for the encrypted reasoning is what makes `store: false` workable.
         payload["reasoning"] = {
             "effort": self.reasoning_effort or None,
             "summary": "auto",
         }
         payload["include"] = ["reasoning.encrypted_content"]
+        payload["prompt_cache_key"] = provider_cache_key(
+            str(payload.get("model") or ""),
+            str(payload.get("instructions") or ""),
+            compact(payload.get("tools") or []),
+            compact(
+                {
+                    "reasoning": payload.get("reasoning"),
+                    "tool_choice": payload.get("tool_choice"),
+                }
+            ),
+        )
         return payload
 
     async def _headers(self) -> dict[str, str]:

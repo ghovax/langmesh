@@ -403,9 +403,6 @@ class ChatLiteLLMModel(BaseChatModel):
             params["timeout"] = self.timeout
         if self.default_headers:
             params["extra_headers"] = self.default_headers
-        if self.session_id:
-            # Which cache to look in: a provider routes the lookup by this key, so requests sharing one land on the same prefix.
-            params["prompt_cache_key"] = provider_cache_key(self.session_id)
         if self._route() == self._GATEWAY_ROUTE:
             # A gateway rewrites the request for whichever provider it routes to, so it is the only thing that can place breakpoints.
             params["extra_body"] = {**params.get("extra_body", {}), "gateway": {"caching": "auto"}}
@@ -449,6 +446,22 @@ class ChatLiteLLMModel(BaseChatModel):
             )
         return trace(pieces)
 
+    def _provider_cache_key(
+        self, params: dict[str, Any], sent: list[dict[str, Any]]
+    ) -> str:
+        instructions = compact(sent[0]) if sent and sent[0].get("role") == "system" else ""
+        return provider_cache_key(
+            str(params.get("model") or ""),
+            compact(params.get("tools") or []),
+            instructions,
+            compact(
+                {
+                    "reasoning_effort": params.get("reasoning_effort"),
+                    "tool_choice": params.get("tool_choice"),
+                }
+            ),
+        )
+
     def _cache_diagnosis(self, current: RequestTrace) -> dict[str, object]:
         """What this request kept from the previous request in its cache lane."""
         lane = active_cache_lane()
@@ -480,6 +493,7 @@ class ChatLiteLLMModel(BaseChatModel):
         translated = self._messages_to_dicts(messages)
         # Taken before cache-control metadata is added, because marker placement is not model-visible prompt content.
         current_trace = self._trace_request(params, translated)
+        params["prompt_cache_key"] = self._provider_cache_key(params, translated)
         sent, cache_candidate = self._apply_cache_breakpoints(translated)
         self._remember_cache_candidate(cache_candidate)
         # The baseline advances when the request is sent, so a usage-less or interrupted response still leaves the next request a true comparison.
@@ -641,6 +655,7 @@ class ChatLiteLLMModel(BaseChatModel):
         params = self._completion_kwargs(stop=stop, **kwargs)
         translated = self._messages_to_dicts(messages)
         current_trace = self._trace_request(params, translated)
+        params["prompt_cache_key"] = self._provider_cache_key(params, translated)
         sent, cache_candidate = self._apply_cache_breakpoints(translated)
         self._remember_cache_candidate(cache_candidate)
         # Same outgoing-boundary advance as the streaming path: the comparison chain moves with the request.
@@ -670,6 +685,7 @@ class ChatLiteLLMModel(BaseChatModel):
         params = self._completion_kwargs(stop=stop, **kwargs)
         translated = self._messages_to_dicts(messages)
         current_trace = self._trace_request(params, translated)
+        params["prompt_cache_key"] = self._provider_cache_key(params, translated)
         sent, cache_candidate = self._apply_cache_breakpoints(translated)
         self._remember_cache_candidate(cache_candidate)
         diagnosis = self._cache_diagnosis(current_trace)

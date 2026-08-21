@@ -11,7 +11,6 @@ import uuid
 from abc import ABC, abstractmethod
 from contextlib import ExitStack, suppress
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Optional, cast
 
 from langchain_core.messages import (
@@ -42,7 +41,7 @@ from langmesh.base.primitives import telemetry as _telemetry
 from langmesh.base.primitives.errors import MaintenanceBlockedError
 from langmesh.base.primitives.identifiers import new_id
 from langmesh.base.primitives.limits import current_limits
-from langmesh.base.primitives.serialization import compact, lines
+from langmesh.base.primitives.serialization import compact, content_address, lines
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.session_control import PendingInput, RenderedPrompt
@@ -50,7 +49,6 @@ from langmesh.runtime.internals import (
     _CONTINUE,
     _STOP,
     _STREAM_EXHAUSTED,
-    _detect_workspace,
     _maybe_json,
     _ModelCallOutcome,
     _PreflightGate,
@@ -186,46 +184,8 @@ class _RunsTurns(_DispatchesTools, ABC):
             all_skills = enabled_skills(list(self._catalogue.skills()))
             agent_skills = skills_for_agent(all_skills, self._agent_configuration.skills)
             memories = list(self._catalogue.memories())
-            worktree_root, is_git_repo = _detect_workspace(self._working_directory)
-            context = TurnContext(
-                now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-                pwd=self._working_directory or str(Path.cwd()),
-                locations=self._locations_summary(),
-                confinement=self._confinement_summary(),
-            ).model_dump(exclude_defaults=True)
-            # The features contribute what only they know — their context, the running jobs.
-            self._features.compose_context(context)
-            context["background"] = {
-                "recent_events": self._execution_history[-20:],
-                **dict(context.get("background") or {}),
-            }
-            context.update(
-                {
-                    "session": self._session_id,
-                    **({"parent_session": self._parent_session} if self._parent_session else {}),
-                    "working_directory": self._working_directory,
-                    "project_directory": self._project_directory,
-                    "worktree_root": worktree_root,
-                    "is_git_repo": is_git_repo,
-                    "session_worktree_strategy": self._global_configuration.workspace.strategy,
-                    "platform": platform.system(),
-                    "today_date": datetime.now().strftime("%Y-%m-%d"),
-                    "machine": _maybe_json(cast(Any, self._machine_snapshot())),
-                }
-            )
-            if self._user_context_enabled():
-                user_context = _maybe_json(cast(Any, self._user_context_snapshot()))
-                if isinstance(user_context, dict) and user_context:
-                    context["user_context"] = user_context
-            context_json = compact(context)
-            # Conditional, since it asserts "you are running as a session", which a library runtime is not.
-            parent_report = (
-                self._prompt_loader.load("parent_report", {"parent": self._parent_session})
-                if self._parent_session
-                else ""
-            )
             agent_context = (
-                self._prompt_loader.load("agent_context", {"parent_report": parent_report})
+                self._prompt_loader.load("agent_context", {"parent_report": ""})
                 if "message_session" in {tool.name for tool in self._tools}
                 else ""
             )
@@ -271,7 +231,7 @@ class _RunsTurns(_DispatchesTools, ABC):
             )
             variables = {
                 "agent_prompt": self._system_prompt,
-                "context": context_json,
+                "context": "",
                 "user_environment": user_environment,
                 "instructions": instructions,
                 "skills": lines(skills_payload(agent_skills)),
@@ -295,11 +255,63 @@ class _RunsTurns(_DispatchesTools, ABC):
                     raise TypeError("prompt_composer.compose() must return a string")
             self._cached_system_prompt = prompt.strip()
             self._rendered_prompt = RenderedPrompt(
-                content=self._cached_system_prompt,
+                instructions=self._cached_system_prompt,
                 revision=self._system_prompt_revision(),
             )
             self._note_session_changed()
         return self._cached_system_prompt
+
+    def _session_context_content(self) -> str:
+        context = TurnContext(
+            pwd=self._working_directory,
+            locations=self._locations_summary(),
+            confinement=self._confinement_summary(),
+        ).model_dump(exclude_defaults=True)
+        self._features.compose_context(context)
+        context["background"] = {
+            "recent_events": self._execution_history[-20:],
+            **dict(context.get("background") or {}),
+        }
+        context.update(
+            {
+                "session": self._session_id,
+                **({"parent_session": self._parent_session} if self._parent_session else {}),
+                "working_directory": self._working_directory,
+                "project_directory": self._project_directory,
+                "session_worktree_strategy": self._global_configuration.workspace.strategy,
+                "platform": platform.system(),
+                "machine": _maybe_json(cast(Any, self._machine_snapshot())),
+            }
+        )
+        if self._user_context_enabled():
+            user_context = _maybe_json(cast(Any, self._user_context_snapshot()))
+            if isinstance(user_context, dict) and user_context:
+                context["user_context"] = user_context
+        parent_report = (
+            self._prompt_loader.load("parent_report", {"parent": self._parent_session}).strip()
+            if self._parent_session
+            else ""
+        )
+        rendered = f"## Session context\n\n```json\n{compact(context)}\n```"
+        return f"{rendered}\n\n{parent_report}" if parent_report else rendered
+
+    def _refresh_session_context(self) -> None:
+        content = self._session_context_content()
+        digest = content_address(content)
+        previous = next(
+            (
+                message.additional_kwargs.get("langmesh_context")
+                for message in reversed(self._conversation)
+                if message.additional_kwargs.get("langmesh_context")
+            ),
+            None,
+        )
+        if previous == digest:
+            return
+        self._conversation.append(
+            SystemMessage(content=content, additional_kwargs={"langmesh_context": digest})
+        )
+        self._note_session_changed()
 
     @abstractmethod
     def _system_prompt_revision(self) -> str:
@@ -491,6 +503,7 @@ class _RunsTurns(_DispatchesTools, ABC):
         if self._pending_input is not None:
             previous = messages_from_dict([dict(self._pending_input.message)])[0]
             self._conversation.append(previous)
+        self._refresh_session_context()
         message = (
             self._reminder_message(
                 user_message, marks={"opens_exchange": True} if opens_exchange else None
@@ -686,6 +699,7 @@ class _RunsTurns(_DispatchesTools, ABC):
                     yield steering_event
 
             self._features.prepare_request()
+            self._refresh_session_context()
             messages = self._build_turn_messages()
             yield Checkpoint()
             self._features.acknowledge_checkpoint()
