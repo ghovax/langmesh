@@ -2,8 +2,8 @@
 
 The goal belongs to this plugin, never to the runtime core the other plugins attach to: the
 runtime only delegates `goal`, `write`, the review, and the allowance bookkeeping here. The
-reviewer is an isolated session with its own visible transcript and only its verdict tool; its
-prompts and the verdict schema's descriptions live beside this module so they are configurable.
+reviewer is an isolated session with its own visible transcript, an explicit investigative
+tool allowlist, and its verdict tool; its prompts and schema descriptions live beside this module.
 """
 
 from __future__ import annotations
@@ -75,18 +75,19 @@ class GoalReviewState:
 #: A goal's schema descriptions and its instructions, both configurable beside this plugin.
 _DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 
-#: Where a goal stands after one reading of the work, which is not the same as what the session says about it.
-_REVIEWER_DISABLED_TOOLS = frozenset(
+#: The investigative tools a reviewer may inherit from its parent session.
+_REVIEWER_TOOLS = frozenset(
     {
-        "ask_user",
-        "control_screen",
-        "create_session",
-        "download_file",
-        "message_remote_agent",
-        "message_session",
-        "set_tasks",
-        "update_goal",
-        "update_tasks",
+        "bash",
+        "fetch_url",
+        "list_mcp_resources",
+        "list_mcp_tools",
+        "list_sessions",
+        "load_skill",
+        "read_mcp_resource",
+        "read_session",
+        "read_turn",
+        "search_web",
     }
 )
 
@@ -249,11 +250,11 @@ class GoalReviewFeature(Feature):
                 tools=[submit_goal_review],
                 tool_gate=self._host.tools.tool_gate,
                 permissions=reviewer_permissions,
-                # What the parent's model sees, minus the tools a reviewer must never use.
+                # A reviewer inherits only the investigative tools this plugin names explicitly.
                 toolset=tuple(
                     tool
                     for tool in self._host.tools.model_tools
-                    if tool.name not in _REVIEWER_DISABLED_TOOLS
+                    if tool.name in _REVIEWER_TOOLS
                 ),
                 related_turns=self._host.tools.turn_reader,
                 features=[
