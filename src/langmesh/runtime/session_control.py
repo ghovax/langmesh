@@ -113,6 +113,14 @@ class RenderedPrompt:
 
 
 @dataclass(frozen=True)
+class PendingInput:
+    """One accepted model-facing input not yet appended to the conversation."""
+
+    message: Mapping[str, Any]
+    recorded_text: str
+
+
+@dataclass(frozen=True)
 class SessionSnapshot:
     """The runtime state that is durable independently of its conversation."""
 
@@ -121,6 +129,7 @@ class SessionSnapshot:
     turn_failure_root: str | None = None
     model_cache: object | None = None
     system_prompt: RenderedPrompt | None = None
+    pending_input: PendingInput | None = None
 
     def feature(self, name: str) -> object | None:
         """Return one plugin's state by its stable name."""
@@ -136,6 +145,7 @@ class SessionSnapshot:
             "turn_failure_root": self.turn_failure_root,
             "model_cache": _plain(self.model_cache),
             "system_prompt": _plain(self.system_prompt),
+            "pending_input": _plain(self.pending_input),
         }
 
     @classmethod
@@ -148,6 +158,7 @@ class SessionSnapshot:
             recovery = "none"
         raw_features = data.get("features", ())
         raw_prompt = data.get("system_prompt")
+        raw_pending_input = data.get("pending_input")
         features = tuple(
             FeatureState(name=str(item["name"]), value=item.get("value"))
             for item in raw_features
@@ -167,6 +178,13 @@ class SessionSnapshot:
             if isinstance(raw_prompt, Mapping)
             and str(raw_prompt.get("content") or "")
             and str(raw_prompt.get("revision") or "")
+            else None,
+            pending_input=PendingInput(
+                message=dict(raw_pending_input.get("message") or {}),
+                recorded_text=str(raw_pending_input.get("recorded_text") or ""),
+            )
+            if isinstance(raw_pending_input, Mapping)
+            and isinstance(raw_pending_input.get("message"), Mapping)
             else None,
         )
 
@@ -207,6 +225,7 @@ class SessionCheckpoint:
 
 __all__ = [
     "FeatureState",
+    "PendingInput",
     "PendingTurn",
     "RenderedPrompt",
     "SessionCheckpoint",

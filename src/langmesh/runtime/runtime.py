@@ -54,7 +54,7 @@ from langmesh.runtime.models.codex import ChatCodexModel
 from langmesh.runtime.models.cursor import ChatCursorModel
 from langmesh.runtime.models.litellm import ChatLiteLLMModel
 from langmesh.runtime.pipeline import ToolPipeline
-from langmesh.runtime.session_control import RenderedPrompt, SessionSnapshot
+from langmesh.runtime.session_control import PendingInput, RenderedPrompt, SessionSnapshot
 from langmesh.runtime.tools import registry as tools_registry
 from langmesh.runtime.tools.arguments import with_shared_fields
 from langmesh.runtime.tools.context import ToolContext
@@ -370,6 +370,7 @@ class AgentRuntime(_RunsTurns):
         # Creation-time grants are described from the first turn: their messages sit at the head of the conversation, before any user message, and are stable for the session's life.
         self._cached_system_prompt: str | None = None
         self._rendered_prompt: RenderedPrompt | None = None
+        self._pending_input: PendingInput | None = None
         self._session_revision = 0
         self._persisted_session_revision = 0
         self._execution_history: list[dict] = []
@@ -865,6 +866,7 @@ class AgentRuntime(_RunsTurns):
             turn_failure_root=self._turn_failure_root,
             model_cache=cache_snapshot() if callable(cache_snapshot) else None,
             system_prompt=self._rendered_prompt,
+            pending_input=self._pending_input,
         )
 
     def restore_session(self, snapshot: SessionSnapshot) -> None:
@@ -882,6 +884,7 @@ class AgentRuntime(_RunsTurns):
         else:
             self._cached_system_prompt = None
             self._rendered_prompt = None
+        self._pending_input = snapshot.pending_input
         self._turn_recovery = snapshot.turn_recovery
         self._turn_failure_root = snapshot.turn_failure_root
         if self._turn_recovery != "retryable":

@@ -89,13 +89,16 @@ class BackgroundJobs:
         session_id: str = "",
         agent_name: str = "",
         store: JobStore | None = None,
+        note_state_changed: Callable[[], None] | None = None,
     ) -> None:
         self._jobs: dict[str, _BackgroundJobRecord] = {}
+        self._pending_deliveries: set[str] = set()
         # Identity for the durable mirror; without a context, durability is simply skipped.
         self._session_id = session_id
         self._agent_name = agent_name
         # Where durability goes, supplied rather than found, so a library session writes no database of its own.
         self._store: JobStore = store if store is not None else MemoryJobStore()
+        self._note_state_changed = note_state_changed or (lambda: None)
         _active_job_runners.add(self)
 
     @property
@@ -118,6 +121,21 @@ class BackgroundJobs:
         """Start `coroutine` as a background job and return its identifier."""
         if identifier is None:
             identifier = new_id(_KIND_IDENTIFIER_PREFIX.get(kind, kind))
+        if self._session_id:
+            try:
+                recorded = self._store.record_started(
+                    job_id=identifier,
+                    session_id=self._session_id,
+                    agent_name=self._agent_name,
+                    kind=kind,
+                    arguments=arguments or {},
+                    tool_call_id=tool_call_identifier,
+                )
+                if not recorded:
+                    raise ValueError(f"Background job {identifier!r} already exists.")
+            except Exception:
+                coroutine.close()
+                raise
         task = asyncio.create_task(coroutine)
         self._jobs[identifier] = _BackgroundJobRecord(
             identifier=identifier,
@@ -129,15 +147,6 @@ class BackgroundJobs:
             arguments=arguments or {},
             detached=detached,
         )
-        if self._session_id:
-            self._store.record_started(
-                job_id=identifier,
-                session_id=self._session_id,
-                agent_name=self._agent_name,
-                kind=kind,
-                arguments=arguments or {},
-                tool_call_id=tool_call_identifier,
-            )
         # Persist the finished result the moment the task completes, so a restart sees it undelivered.
         task.add_done_callback(
             lambda _task, job_identifier=identifier: self._persist_finished(job_identifier)
@@ -254,8 +263,7 @@ class BackgroundJobs:
         if not record.task.done():
             return None
         self._jobs.pop(identifier, None)
-        if self._session_id:
-            self._store.mark_delivered(identifier)
+        self._stage_delivery(identifier)
         return self._build_completion(record)
 
     def drain_completed(self) -> list[BackgroundCompletion]:
@@ -265,10 +273,33 @@ class BackgroundJobs:
             if not record.task.done():
                 continue
             self._jobs.pop(identifier, None)
-            if self._session_id:
-                self._store.mark_delivered(identifier)
+            self._stage_delivery(identifier)
             completions.append(self._build_completion(record))
         return completions
+
+    @property
+    def pending_deliveries(self) -> tuple[str, ...]:
+        """The results represented in memory but not yet acknowledged in their durable store."""
+        return tuple(sorted(self._pending_deliveries))
+
+    def stage_delivery(self, identifier: str) -> None:
+        """Defer a restored result's acknowledgement until its conversation checkpoint commits."""
+        self._stage_delivery(identifier)
+
+    def _stage_delivery(self, identifier: str) -> None:
+        if identifier not in self._pending_deliveries:
+            self._pending_deliveries.add(identifier)
+            self._note_state_changed()
+
+    def acknowledge_deliveries(self) -> None:
+        """Mark only results whose model-visible conversation checkpoint has committed."""
+        acknowledged = bool(self._pending_deliveries)
+        for identifier in tuple(self._pending_deliveries):
+            if self._session_id:
+                self._store.mark_delivered(identifier)
+            self._pending_deliveries.discard(identifier)
+        if acknowledged:
+            self._note_state_changed()
 
     def cancel_all(self) -> None:
         for record in list(self._jobs.values()):

@@ -209,6 +209,7 @@ class _TurnEventSink:
             case ToolResult():
                 self.tool_results += 1
                 await self.flush()
+                await self._save_conversation()
                 await self._emit(
                     _tool_result_part(event.name, event.id, event.result, event.status)
                 )
@@ -321,6 +322,7 @@ class _TurnEventSink:
                     )
             case Error():
                 await self.flush()
+                await self._save_conversation()
                 code: TurnErrorCode = (
                     cast(TurnErrorCode, event.code)
                     if event.code in {"tool_failed", "tool_interrupted"}

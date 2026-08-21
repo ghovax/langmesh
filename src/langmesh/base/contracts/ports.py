@@ -197,7 +197,7 @@ class JobStore(Protocol):
         kind: str,
         arguments: Mapping[str, Any],
         tool_call_id: str = "",
-    ) -> None: ...
+    ) -> bool: ...
 
     def record_process_group(self, job_id: str, process_group: int) -> None: ...
 
@@ -233,8 +233,9 @@ class MemoryJobStore:
         kind: str,
         arguments: Mapping[str, Any],
         tool_call_id: str = "",
-    ) -> None:
-        # The same keys the SQLite store writes, so a reader cannot tell the two apart.
+    ) -> bool:
+        if job_id in self._jobs:
+            return False
         self._jobs[job_id] = {
             "job_id": job_id,
             "session_id": session_id,
@@ -246,13 +247,14 @@ class MemoryJobStore:
             "result": "",
             "process_group": 0,
         }
+        return True
 
     def record_process_group(self, job_id: str, process_group: int) -> None:
         if job_id in self._jobs:
             self._jobs[job_id]["process_group"] = process_group
 
     def record_finished(self, job_id: str, result: str, *, status: str = "completed") -> None:
-        if job_id in self._jobs:
+        if job_id in self._jobs and self._jobs[job_id]["status"] == "running":
             self._jobs[job_id].update(result=result, status=status)
 
     def mark_delivered(self, job_id: str) -> None:
@@ -260,7 +262,7 @@ class MemoryJobStore:
             self._jobs[job_id]["status"] = "delivered"
 
     def mark_abandoned(self, job_id: str, result: str) -> None:
-        if job_id in self._jobs:
+        if job_id in self._jobs and self._jobs[job_id]["status"] == "running":
             self._jobs[job_id].update(result=result, status="abandoned")
 
     def running_jobs(self, agent_name: str | None = None) -> Sequence[Mapping[str, Any]]:
@@ -456,13 +458,6 @@ class ContinuationPolicy(Protocol):
 
 
 @runtime_checkable
-class BeforeModelHook(Protocol):
-    """May transform the request assembled for one model call."""
-
-    async def before_model(self, messages: list) -> list: ...
-
-
-@runtime_checkable
 class BeforeToolsHook(Protocol):
     """May narrow the already-approved tool batch before execution."""
 
@@ -476,7 +471,7 @@ class AfterTurnHook(Protocol):
     async def after_turn(self, summary: TurnSummary) -> None: ...
 
 
-TurnHook = BeforeModelHook | BeforeToolsHook | AfterTurnHook
+TurnHook = BeforeToolsHook | AfterTurnHook
 
 
 @dataclass
@@ -638,7 +633,6 @@ __all__ = [
     "Approvals",
     "Attachments",
     "AfterTurnHook",
-    "BeforeModelHook",
     "BeforeToolsHook",
     "CatalogueLike",
     "Checkpoints",

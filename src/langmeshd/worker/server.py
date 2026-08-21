@@ -99,7 +99,7 @@ async def _cancel(session, params: dict) -> dict:
     if tool_call_id:
         # The facade method rather than the context-keyed one, since a worker is one session and its id is implicit.
         return {"cancelled": session.abort_tool_call(tool_call_id)}
-    return {"cancelled": session.abort()}
+    return {"cancelled": await session.abort()}
 
 
 async def _status(session, _params: dict) -> dict:

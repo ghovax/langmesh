@@ -70,7 +70,10 @@ class BackgroundJobStore:
         connection = sqlite3.connect(self.database_path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=30000")
+        connection.execute("PRAGMA wal_autocheckpoint=1000")
         return connection
 
     def _initialize(self) -> None:
@@ -104,6 +107,11 @@ class BackgroundJobStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_background_jobs_status ON background_jobs(status)"
             )
+            integrity = str(connection.execute("PRAGMA quick_check").fetchone()[0])
+            if integrity.lower() != "ok":
+                raise RuntimeError(
+                    f"The background-job database failed its integrity check: {integrity}"
+                )
 
     def record_started(
         self,
@@ -114,14 +122,15 @@ class BackgroundJobStore:
         kind: str,
         arguments: dict[str, Any],
         tool_call_id: str = "",
-    ) -> None:
+    ) -> bool:
         with self._connect() as connection:
-            connection.execute(
+            result = connection.execute(
                 """
-                INSERT OR REPLACE INTO background_jobs (
+                INSERT INTO background_jobs (
                     job_id, session_id, agent_name, kind, arguments_json, tool_call_id,
                     status, result_json, created_at, completed_at, delivered_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL)
+                ON CONFLICT(job_id) DO NOTHING
                 """,
                 (
                     job_id,
@@ -134,35 +143,36 @@ class BackgroundJobStore:
                     _now(),
                 ),
             )
+        return bool(result.rowcount)
 
     def record_process_group(self, job_id: str, process_group: int) -> None:
         """Record a job's process group once its shell subtree has started, so a reaper can kill it after a crash."""
         with self._connect() as connection:
             connection.execute(
-                "UPDATE background_jobs SET process_group = ? WHERE job_id = ?",
-                (process_group, job_id),
+                "UPDATE background_jobs SET process_group = ? WHERE job_id = ? AND status = ?",
+                (process_group, job_id, STATUS_RUNNING),
             )
 
     def record_finished(self, job_id: str, result: str, *, status: str = STATUS_COMPLETED) -> None:
         """Mark a job completed (or failed — both carry a result payload the model reads)."""
         with self._connect() as connection:
             connection.execute(
-                "UPDATE background_jobs SET status = ?, result_json = ?, completed_at = ? WHERE job_id = ?",
-                (status, result, _now(), job_id),
+                "UPDATE background_jobs SET status = ?, result_json = ?, completed_at = ? WHERE job_id = ? AND status = ?",
+                (status, result, _now(), job_id, STATUS_RUNNING),
             )
 
     def mark_delivered(self, job_id: str) -> None:
         with self._connect() as connection:
             connection.execute(
-                "UPDATE background_jobs SET status = ?, delivered_at = ? WHERE job_id = ?",
-                (STATUS_DELIVERED, _now(), job_id),
+                "UPDATE background_jobs SET status = ?, delivered_at = ? WHERE job_id = ? AND status IN (?, ?)",
+                (STATUS_DELIVERED, _now(), job_id, STATUS_COMPLETED, STATUS_ABANDONED),
             )
 
     def mark_abandoned(self, job_id: str, result: str) -> None:
         with self._connect() as connection:
             connection.execute(
-                "UPDATE background_jobs SET status = ?, result_json = ?, completed_at = ? WHERE job_id = ?",
-                (STATUS_ABANDONED, result, _now(), job_id),
+                "UPDATE background_jobs SET status = ?, result_json = ?, completed_at = ? WHERE job_id = ? AND status = ?",
+                (STATUS_ABANDONED, result, _now(), job_id, STATUS_RUNNING),
             )
 
     def running_jobs(self, agent_name: str | None = None) -> list[dict[str, Any]]:

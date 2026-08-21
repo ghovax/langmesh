@@ -11,7 +11,10 @@ from langchain_core.tools import BaseTool
 from langmesh.base.configuration import AgentConfiguration, Configuration
 from langmesh.base.contracts.ports import (
     Approvals,
+    Attachments,
     CatalogueLike,
+    Checkpoints,
+    CredentialStore,
     FileLeases,
     JobStore,
     MCPServers,
@@ -119,6 +122,20 @@ class SessionComponents(RuntimeComponents):
     attachments: Any = None
     credential_store: Any = None
     tracer_provider: Any = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        for name, port in {
+            "attachments": Attachments,
+            "checkpoints": Checkpoints,
+            "credential_store": CredentialStore,
+        }.items():
+            candidate = getattr(self, name)
+            if candidate is None:
+                continue
+            unmet = describe_unmet(port, candidate)
+            if unmet:
+                raise TypeError(f"{name}: {unmet}")
 
     def for_runtime(self, **updates: Any) -> RuntimeComponents:
         """Project session ownership out, leaving exactly what an ``AgentRuntime`` consumes."""

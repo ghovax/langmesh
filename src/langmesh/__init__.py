@@ -36,7 +36,6 @@ from langmesh.base.contracts.ports import (
     Approval,
     Approvals,
     Attachments,
-    BeforeModelHook,
     BeforeToolsHook,
     CatalogueLike,
     Checkpoints,
@@ -69,6 +68,7 @@ from langmesh.base.persistence.schedules import (
     is_due,
     next_firing,
 )
+from langmesh.base.persistence.checkpoints import SQLiteCheckpoints
 from langmesh.base.persistence.schedules import (
     validate as validate_schedule,
 )
@@ -77,6 +77,7 @@ from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.hooks import MaximumToolCalls
 from langmesh.runtime.session_control import (
     FeatureState,
+    PendingInput,
     PendingTurn,
     RenderedPrompt,
     SessionCheckpoint,
@@ -145,7 +146,6 @@ __all__ = [
     "AttachmentComposer",
     "Attachments",
     "BashToolConfiguration",
-    "BeforeModelHook",
     "BeforeToolsHook",
     "Catalogue",
     "CatalogueLike",
@@ -186,6 +186,7 @@ __all__ = [
     "ObservationSnapshot",
     "Observer",
     "PendingTurn",
+    "PendingInput",
     "PermissionMode",
     "PermissionPolicy",
     "PermissionReviewing",
@@ -208,6 +209,7 @@ __all__ = [
     "SessionPhase",
     "SessionSnapshot",
     "SessionState",
+    "SQLiteCheckpoints",
     "Skill",
     "SshExecutor",
     "Status",
