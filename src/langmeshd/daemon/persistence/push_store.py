@@ -5,19 +5,18 @@ from __future__ import annotations
 import json
 import logging
 import os
-from langmesh.base.confinement import environment_variables
 from typing import Optional
 
+import httpx
 from sqlalchemy import Column, MetaData, String, Table, Text, delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
-
-import httpx
 
 from a2a.server.tasks import BasePushNotificationSender
 from a2a.server.tasks.push_notification_config_store import PushNotificationConfigStore
 from a2a.types import PushNotificationConfig, Task
 
+from langmesh.base.confinement import environment_variables
 from langmesh.base.confinement.outbound import (
     UntrustedHostError,
     assert_public_url,
@@ -59,21 +58,26 @@ class PersistentPushNotificationConfigurationStore(PushNotificationConfigStore):
         if not self._initialized:
             await self.initialize()
 
-    async def set_info(self, turn_id: str, notification_config: PushNotificationConfig) -> None:
+    async def set_info(
+        self, turn_id: str, notification_configuration: PushNotificationConfig
+    ) -> None:
         await self._ensure_initialized()
         # Refuse a webhook before it is persisted or POSTed: the anti-SSRF guard on inbound-influenced targets.
         try:
-            assert_public_url(notification_config.url, allow_private=self._allow_private_webhooks)
+            assert_public_url(
+                notification_configuration.url,
+                allow_private=self._allow_private_webhooks,
+            )
         except UntrustedHostError as exception:
             raise ValueError(f"push notification webhook refused: {exception}") from exception
         # The SDK defaults an unset configuration id to the task id.
-        if notification_config.id is None:
-            notification_config.id = turn_id
-        serialized = json.dumps(notification_config.model_dump(mode="json"))
+        if notification_configuration.id is None:
+            notification_configuration.id = turn_id
+        serialized = json.dumps(notification_configuration.model_dump(mode="json"))
         async with self._engine.begin() as connection:
             statement = sqlite_insert(self._table).values(
                 turn_id=turn_id,
-                configuration_id=notification_config.id,
+                configuration_id=notification_configuration.id,
                 configuration=serialized,
             )
             await connection.execute(
@@ -117,11 +121,11 @@ class PinnedPushNotificationSender(BasePushNotificationSender):
     def __init__(
         self,
         httpx_client: httpx.AsyncClient,
-        config_store: PushNotificationConfigStore,
+        configuration_store: PushNotificationConfigStore,
         *,
         allow_private: bool = False,
     ) -> None:
-        super().__init__(httpx_client, config_store)
+        super().__init__(httpx_client, configuration_store)
         self._allow_private = allow_private
 
     async def _dispatch_notification(self, task: Task, push_info: PushNotificationConfig) -> bool:
