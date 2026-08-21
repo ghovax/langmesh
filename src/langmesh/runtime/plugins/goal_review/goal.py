@@ -37,6 +37,9 @@ class Goal(BaseModel):
     review_id: NonBlankText | None = None
     #: How many turns have been opened since a person last spoke, and deliberately not shown to the model.
     continuations: int = 0
+    #: The non-active status the agent just marked for itself, awaiting the secondary review
+    #: that either confirms it or reverts it. Empty once the review has decided.
+    pending_review: str | None = None
 
     #: Being worked, so the session keeps going on its own.
     ACTIVE: ClassVar[str] = "active"
@@ -88,4 +91,5 @@ class Goal(BaseModel):
             "status": self.status,
             "blocker": self.blocker,
             "evidence": self.evidence,
+            "pending_review": self.pending_review,
         }

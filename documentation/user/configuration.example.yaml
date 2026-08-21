@@ -126,12 +126,9 @@ compaction:
   # How many times the hidden summarizer may be asked again after reviewing but not submitting.
   summary_attempts: 3
 
-# How an open goal is driven after a turn leaves it open.
+# How a marked goal is settled: the agent owns its goal's status, and a "satisfied" or
+# "blocked" mark is confirmed (or overridden) by an independent secondary review.
 goal_review:
-  # Which strategy drives an open goal: "review" runs an independent reviewer session, while
-  # "self_managed" skips the reviewer and simply re-prompts the agent, which owns the goal
-  # through the update_goal tool.
-  mode: review
   # How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset.
   maximum_attempts: 3
 
@@ -277,7 +274,6 @@ tuning:
     model_silence_give_up: 180.0
 
     # Autonomous continuation budgets, in turns.
-    goal_continuation_turns: 16
     task_continuation_turns: 16
 
     # Surface settling, in seconds and reads.

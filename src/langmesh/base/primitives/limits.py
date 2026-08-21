@@ -54,7 +54,6 @@ class Limits:
     model_silence_give_up: float = 180.0
 
     # Autonomous continuation budgets, in turns
-    goal_continuation_turns: int = 16
     task_continuation_turns: int = 16
 
     # Surface settling, in seconds and reads

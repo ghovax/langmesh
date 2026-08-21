@@ -38,6 +38,12 @@ If the formal goal is too weak to express the full intended outcome, set `goal_c
 {{ goal_contract }}
 ```
 
+## The status the session claimed
+
+{{ claimed_status }}
+
+Where that is empty, no status was marked and this is an ordinary reading of the work. Where it is not, the session marked its own status before ending its turn and this review is the secondary check that settles it: the mark is a claim, not a verdict. Verify it for yourself and confirm it only when the evidence holds; otherwise override it. A `satisfied` you cannot support is `unmet` (send it back to keep working), a `blocked` that is really a route you can see is `unmet`, and a goal the session under-claimed but that is genuinely met may be `satisfied`. The review, not the session's mark, is what is final.
+
 ## What you last told it
 
 {{ previous_review_message }}

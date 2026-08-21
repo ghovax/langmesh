@@ -808,20 +808,31 @@ function SubmitGoalReviewCallView({ args }: { args: Record<string, unknown> }) {
   );
 }
 
-/** The goal that is now set: setting one is the only outcome this tool has. */
+/** The goal that is now set, or whose status the agent marked. */
 function UpdateGoalResultView({ data }: { data: Record<string, unknown> }) {
   const translation = useTranslations("ToolViews");
   const goal = asString(data.goal).trim();
   const purpose = asString(data.purpose).trim();
   const requirements = asArray(data.requirements).map(asString).filter(Boolean);
-  if (asString(data.code) !== "goal_active") {
+  const code = asString(data.code);
+  const status = asString(data.status).trim();
+  const pendingReview = asString(data.pending_review).trim();
+  if (code !== "goal_active" && code !== "goal_status") {
     return <ErrorView message={asString(data.message) || asString(data.code)} />;
   }
+  const marked = code === "goal_status" && status;
   return (
     <FieldList>
-      <InlineField label={translation("fieldOutcome")}>
-        <Pill colorPalette="blue">{translation("goalActive")}</Pill>
+      <InlineField label={translation(marked ? "fieldStatus" : "fieldOutcome")}>
+        <Pill colorPalette={marked ? (status === "blocked" ? "red" : "green") : "blue"}>
+          {marked ? status : translation("goalActive")}
+        </Pill>
       </InlineField>
+      {pendingReview ? (
+        <Field label={translation("goalReviewPending")}>
+          <Pill colorPalette="yellow">{pendingReview}</Pill>
+        </Field>
+      ) : null}
       {goal ? (
         <Field label={translation("goal")}>
           <MarkdownContent content={goal} fontSize="xs" />
@@ -1176,7 +1187,7 @@ export function ToolResultView({
   // Discovery results are internal noise, since the call card already conveys that discovery happened.
   if (name === "list_mcp_tools" || name === "list_mcp_resources") return null;
 
-  // The task tools confirm with raw ids the call card already shows as numbers, so the confirmation is dropped.
+  // Tasks are rendered solely via TasksChip's single compounding badge — no separate result view
   if (name === "set_tasks" || name === "update_tasks") return null;
 
   // The verdict tools confirm with internal codes; the call card already shows the full verdict,

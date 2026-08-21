@@ -205,9 +205,9 @@ When a conversation reaches its recommended preparation threshold, LangMesh appe
 - `recent_working_set_fraction` is how much stays verbatim, measured in tokens rather than turns.
 - `summary_attempts` is how many times the hidden summarizer may be asked again after reviewing but not submitting; once exhausted, the compaction stops and the conversation is left unchanged until it is retried.
 
-`goal_review.mode` chooses how an open goal keeps being worked after a turn ends. `review` (the default) runs an independent reviewer session that inspects the work and returns a verdict; `self_managed` skips the reviewer and simply re-prompts the agent on the goal itself, which the agent owns through the `update_goal` tool. In both modes the goal stops automatically once its continuation allowance is spent.
+`goal_review` governs the secondary review that settles a goal the agent marked. The agent owns its goal's `status` through the `update_goal` tool (`active`, `satisfied`, `blocked`, `parked`, `cleared`). A `satisfied` or `blocked` mark is not final by itself: after the working turn ends, an independent reviewer inspects the work and either confirms the mark or overrides it (an unsupported `satisfied` becomes `unmet`, sending the goal back to work). `parked` and `cleared` are administrative and apply directly. A goal left `active` and unmarked is simply re-opened with a light continuation reminder, and the goal stops automatically once its continuation allowance is spent.
 
-`goal_review.maximum_attempts` is the bound for the goal reviewer in `review` mode: after a reviewer that investigated but never submitted, it is asked again on a narrowed toolset up to this many times, then the goal parks and waits for a person.
+`goal_review.maximum_attempts` is the bound for the reviewer: after a reviewer that investigated but never submitted, it is asked again on a narrowed toolset up to this many times, then the goal parks and waits for a person.
 
 Observations are workspace-owned current state and explicit. Agents retrieve and maintain them through Bash using the `observational-memory` skill. The daemon watches each active location's registry through native filesystem notifications and shares one watcher across its sessions. A committed revision broadcasts a complete validated snapshot to the memory panel. The append-only session context receives only progressive-disclosure metadata, never observation rows. A registry that is missing or no longer matches its schema is itself reported as metadata (`status: missing|broken` with a problem message), so an agent hears about the state and repairs it rather than silently working without memory; the pre-columnar JSON-schema format is never read or migrated.
 
@@ -360,7 +360,6 @@ How an open goal is assessed and continued.
 
 | Setting                                | Type    | Default  | What it is for |
 | -------------------------------------- | ------- | -------- | -------------- |
-| `goal_review.mode`                     | choice  | `review` | Which strategy drives an open goal: `review` runs an independent reviewer session, `self_managed` re-prompts the agent on the goal itself. |
 | `goal_review.maximum_attempts`         | integer | `3`      | How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset before the goal parks and waits for a person. |
 
 ### Attachments
@@ -496,7 +495,6 @@ How large, how many, and how patient the tools are: the fields of `langmesh.base
 | `surface_guard_margin`                      | `30.0`    | How far above the script's own limit the machinery waiting on it sits. |
 | `open_url`                                  | `5.0`     | How long handing a URL to the system browser waits. |
 | `model_silence_give_up`                     | `180.0`   | How long a model stream may make no meaningful progress before the turn fails. |
-| `goal_continuation_turns`                   | `16`      | How many turns in a row a session may open for its own goal before it stops and waits for the person. |
 | `task_continuation_turns`                   | `16`      | How many turns in a row unfinished tracked tasks may reopen automatically before the session waits for the person. |
 | `settle_poll_seconds`                       | `0.05`    | How often a surface is re-checked until it stops changing. |
 | `settle_give_up_seconds`                    | `1.5`     | The longest to wait before reading it anyway. |
