@@ -12,13 +12,39 @@ Consulting and maintaining this ledger is a core task, not an optional step. Bef
 
 ## Retrieve
 
-For an exact id, ledger, or category, query SQLite directly. For semantic discovery, create a temporary directory with `mktemp -d`, export current rows as minified JSONL, configure `.sembleignore` in that directory to include the JSONL file, set `SEMBLE_CACHE_LOCATION` to a cache path inside the same temporary directory, and use either `semble search "query" "$temporary_directory" --content all --top-k 10` or Python's `SembleIndex.from_path(..., content=ContentType.ALL).search(...)`. Remove the temporary directory when finished. Build a fresh index for every lookup and never save or commit an index. Semble is deliberately cheap enough to use repeatedly and is unusually effective at locating related concepts, structures, and mechanisms: make aggressive assumptions about joined searches, reformulate and repeat queries freely, and combine semantic results with exact searches appropriate to the workspace to narrow and verify. Retrieve only relevant rows and verify consequential claims against the workspace when practical.
+| Need | Method |
+| --- | --- |
+| Exact id, ledger, or category | Query SQLite directly. |
+| Semantic discovery | Export rows as minified JSONL into a fresh disposable Semble index, search it, then remove it. |
 
-Each exported line should be a minified object containing `ledger`, `id`, `updated_at`, and the entry's own columns. Example export logic is `SELECT entry_id, category, claim, detail, evidence, standing, files, updated_at FROM observations` and the same column list against `directives`; rows are plain named columns, so select them directly, omit `NULL` optionals, and serialize with `json.dumps(value, ensure_ascii=False, separators=(",", ":"))`.
+For semantic discovery:
+
+1. Create a temporary directory with `mktemp -d`.
+2. Export current rows as minified JSONL (format below).
+3. Configure `.sembleignore` in that directory to include the JSONL file.
+4. Set `SEMBLE_CACHE_LOCATION` to a cache path inside the same temporary directory.
+5. Search with `semble search "query" "$temporary_directory" --content all --top-k 10` or Python's `SembleIndex.from_path(..., content=ContentType.ALL).search(...)`.
+6. Remove the temporary directory when finished.
+
+Build a fresh index for every lookup and never save or commit an index. Semble is deliberately cheap enough to use repeatedly and is unusually effective at locating related concepts, structures, and mechanisms: make aggressive assumptions about joined searches, reformulate and repeat queries freely, and combine semantic results with exact searches appropriate to the workspace to narrow and verify. Retrieve only relevant rows and verify consequential claims against the workspace when practical.
+
+Each exported line is a minified object containing `ledger`, `id`, `updated_at`, and the entry's own columns:
+
+- Observations export: `SELECT entry_id, category, claim, detail, evidence, standing, updated_at FROM observations`.
+- Directives export: the same column list against `directives`, with `kind`, `summary`, `detail`, `occasion` in place of the observation fields.
+- Cited paths come from `entry_files`; join or fetch them separately when an entry's references matter.
+- Rows are plain named columns, so select them directly, omit `NULL` optionals, and serialize with `json.dumps(value, ensure_ascii=False, separators=(",", ":"))`.
 
 ## Schema
 
-The registry has `registry_meta(id INTEGER NOT NULL PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL CHECK(revision>=0))` with exactly one row `(1, 0)` before its first mutation, and two separate ledger tables, each a table of one row per entry with explicit columns and no JSON:
+The registry has one meta row and two separate ledger tables, each one row per entry with explicit columns and no JSON payload blob:
+
+| Table | Holds | Keyed by |
+| --- | --- | --- |
+| `registry_meta` | Exactly one row `(1, 0)` before its first mutation | `id = 1` |
+| `observations` | One row per observation entry | `entry_id` |
+| `directives` | One row per directive entry | `entry_id` |
+| `entry_files` | One row per cited path, shared by both ledgers | (`ledger`, `entry_id`, `position`) |
 
 ```
 CREATE TABLE observations(
@@ -28,7 +54,6 @@ CREATE TABLE observations(
   detail TEXT NOT NULL CHECK(length(trim(detail))>0),
   evidence TEXT CHECK(evidence IS NULL OR length(trim(evidence))>0),
   standing TEXT NOT NULL CHECK(standing IN ('verified','reported','inferred')),
-  files TEXT CHECK(files IS NULL OR length(trim(files))>0),
   updated_at TEXT NOT NULL
 ) WITHOUT ROWID;
 CREATE TABLE directives(
@@ -37,23 +62,89 @@ CREATE TABLE directives(
   summary TEXT NOT NULL CHECK(length(trim(summary))>0),
   detail TEXT CHECK(detail IS NULL OR length(trim(detail))>0),
   occasion TEXT CHECK(occasion IS NULL OR length(trim(occasion))>0),
-  files TEXT CHECK(files IS NULL OR length(trim(files))>0),
   updated_at TEXT NOT NULL
 ) WITHOUT ROWID;
+CREATE TABLE entry_files(
+  ledger TEXT NOT NULL CHECK(ledger IN ('observations','directives')),
+  entry_id TEXT NOT NULL,
+  position INTEGER NOT NULL CHECK(position>=0),
+  path TEXT NOT NULL CHECK(length(trim(path))>0),
+  PRIMARY KEY(ledger, entry_id, position)
+) WITHOUT ROWID;
+CREATE INDEX idx_entry_files_path ON entry_files(path);
 CREATE INDEX idx_observations_updated_at ON observations(updated_at);
 CREATE INDEX idx_directives_updated_at ON directives(updated_at);
 ```
 
-Runtime reads run through an SQLAlchemy Core view that opens the database read-only (`mode=ro`) and re-validates this exact schema before trusting any row. A registry that is missing (no file) or no longer matches this schema is detected there and reported to you as metadata — `status: missing` or `status: broken` with a `problem` message — rather than read as empty, so you are told the state is broken and can repair it instead of silently working without memory. The reader never creates, reads, or migrates any other format: a file from before this columnar layout (a JSON `payload` blob) fails validation and is rebuilt with this protocol. An up-to-date registry reports `status: ok`.
+### Columns
 
-Keep the ledgers in their own tables so the two kinds can never be confused. The columns themselves, not a payload, hold the entry: an observation row carries `category` (`fact`, `decision`, `constraint`, `failure`, `artifact`, or `open`), non-empty `claim`, non-empty `detail`, optional non-empty `evidence`, `standing` (`verified`, `reported`, or `inferred`). A directive row carries `kind` (`requirement` or `preference`), non-empty `summary`, optional non-empty `detail`, optional non-empty `occasion`. A `files` column, when present, is the entry's file paths or references joined by newlines, each line a non-empty path; keep file references there rather than folding them into prose fields. Every required column above must be written and non-empty; omitting one is a schema error, not a silent gap — that is the point of columnar rows. The row owns `entry_id` and `updated_at`; they are their own columns, never buried in a value. Create the parent directory and schema only when a write is needed. Use `PRAGMA journal_mode=DELETE` and `PRAGMA synchronous=FULL` so the tracked database is self-contained and durable. Every publication is copy-on-write: construct a complete database at a uniquely named temporary path inside `.agents`, validate it, close its SQLite connection, then publish it with `os.replace(temporary_path, registry_path)`. Never mutate or initialize the final path in place, because filesystem subscribers must see only a complete committed replacement. Every `entry_id` is a stable identifier, unique within its ledger, written in readable kebab-case like `observational-memory-schema`. Never suffix an id with a version or generation marker such as `-v2`, `-2`, or a date: a label like that signals that the entry supersedes another, which is exactly the kind of chain the registry forbids. When a concept evolves, replace the existing row in place under its original id; only delete a row when the concept or directive no longer applies, and reuse a freed id only for the same concept.
+| Ledger | Required | Optional | Allowed values |
+| --- | --- | --- | --- |
+| `observations` | `category`, `claim`, `detail`, `standing` | `evidence` | `category`: `fact`, `decision`, `constraint`, `failure`, `artifact`, `open` · `standing`: `verified`, `reported`, `inferred` |
+| `directives` | `kind`, `summary` | `detail`, `occasion` | `kind`: `requirement`, `preference` |
+
+Every required column must be written and non-empty; omitting one is a schema error, not a silent gap — that is the point of columnar rows. The row owns `entry_id` and `updated_at`; they are their own columns, never buried in a value. Cited file paths live in `entry_files`, one row per path with consecutive `position` values from 0 and indexed by `path`, so the same path is queryable across every entry that cites it; keep file references there rather than folding them into prose fields.
+
+### Reader behavior
+
+- Runtime reads run through an SQLAlchemy Core view that opens the database read-only (`mode=ro`) and re-validates this exact schema before trusting any row.
+- A registry that is missing (no file) reports `status: missing`; one that no longer matches this schema reports `status: broken` with a `problem` message — never read as empty, so you are told the state is broken and can repair it instead of silently working without memory.
+- An up-to-date registry reports `status: ok`.
+- The reader never creates, reads, or migrates any other format: a file from before this columnar layout (a JSON `payload` blob) fails validation and is rebuilt with this protocol.
+
+### Identifiers
+
+- Every `entry_id` is a stable identifier, unique within its ledger, written in readable kebab-case like `observational-memory-schema`.
+- Never suffix an id with a version or generation marker such as `-v2`, `-2`, or a date: a label like that signals that the entry supersedes another, which is exactly the kind of chain the registry forbids.
+- When a concept evolves, replace the existing row in place under its original id; only delete a row when the concept or directive no longer applies, and reuse a freed id only for the same concept.
+
+### Publication protocol
+
+- Create the parent directory and schema only when a write is needed.
+- Use `PRAGMA journal_mode=DELETE` and `PRAGMA synchronous=FULL` so the tracked database is self-contained and durable.
+- Every publication is copy-on-write: construct a complete database at a uniquely named temporary path inside `.agents`, validate it, close its SQLite connection, then publish it with `os.replace(temporary_path, registry_path)`.
+- Never mutate or initialize the final path in place, because filesystem subscribers must see only a complete committed replacement.
 
 ## Mutate
 
-Use Python's standard `sqlite3` module from Bash for non-trivial changes. Read the current registry and remember its revision, create a unique sibling temporary path, copy a valid database into it with SQLite's backup API or construct a corrected database there from salvageable validated rows, and mutate only that temporary database. Start `BEGIN IMMEDIATE`, verify that the copied revision is still the one reviewed, perform parameterized upserts and deletes against the correct ledger table (`observations` or `directives`), and increment the revision exactly once in the same transaction. An upsert writes every required column by name — `INSERT INTO observations(entry_id, category, claim, detail, evidence, standing, files, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(entry_id) DO UPDATE SET ...` with each value bound as a parameter: `entry_id` and `updated_at` as their own columns, `files` as the newline-joined string when the entry cites files, and `NULL` for an absent optional field such as `evidence`. Set `updated_at` to an ISO 8601 UTC timestamp with an offset for each upsert. Validate every write before committing: every required column non-empty, `category`/`standing`/`kind` within their allowed sets, `files` a non-empty newline-separated series when present. Commit, run integrity and schema validation, close every connection, confirm that the final path still has the reviewed revision, and publish with `os.replace`. If the final revision changed concurrently, discard the temporary file and reconsider instead of overwriting it. A no-change acknowledgement still follows this copy-on-write protocol and increments only the revision. Never use replacement chains, tombstones, supersession fields, or per-entry revision histories.
+Use Python's standard `sqlite3` module from Bash for non-trivial changes:
+
+1. Read the current registry and remember its revision.
+2. Create a unique sibling temporary path; copy a valid database into it with SQLite's backup API, or construct a corrected database there from salvageable validated rows.
+3. Start `BEGIN IMMEDIATE` and verify that the copied revision is still the one reviewed.
+4. Perform parameterized upserts and deletes against the correct ledger table (`observations` or `directives`).
+5. Write cited paths in the same transaction: delete the entry's `entry_files` rows, then insert one row per path with consecutive `position` values from 0.
+6. Increment the revision exactly once in the same transaction.
+7. Validate every write before committing: every required column non-empty, `category`/`standing`/`kind` within their allowed sets, every cited path non-empty.
+8. Commit, run integrity and schema validation, close every connection, confirm that the final path still has the reviewed revision, and publish with `os.replace`.
+
+An upsert writes every required column by name — `INSERT INTO observations(entry_id, category, claim, detail, evidence, standing, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(entry_id) DO UPDATE SET ...` — with each value bound as a parameter: `entry_id` and `updated_at` as their own columns, and `NULL` for an absent optional field such as `evidence`. Set `updated_at` to an ISO 8601 UTC timestamp with an offset for each upsert.
+
+If the final revision changed concurrently, discard the temporary file and reconsider instead of overwriting it. A no-change acknowledgement still follows this copy-on-write protocol and increments only the revision. Never use replacement chains, tombstones, supersession fields, or per-entry revision histories.
 
 ## Judgment
 
-Use future decision value as the subject-agnostic test. Keep knowledge when it is likely to change how a future agent understands the continuing goal, selects an approach, avoids a known failure, evaluates what remains, locates a consequential source of truth, or honors a still-binding directive. Preserve enough rationale and evidence to make that knowledge usable and checkable without preserving the whole episode that produced it.
+Use future decision value as the subject-agnostic test, applied identically to every subject and medium.
 
-Omit information when its value ends with the action that produced it, the current workspace reveals it cheaply without interpretation, it merely narrates execution or verification, it duplicates a stronger current entry, or it no longer changes any plausible future decision. Prefer replacement over accumulation: when new knowledge supersedes or absorbs an existing entry, replace that entry in place and delete what it supersedes instead of adding a near-duplicate. Keep the registry to a sensible current set; if the ledger is crowding with redundant or stale rows, consolidate rather than accumulate, because an overgrown ledger buries the signal a future agent needs. Abstract away incidental task wording while retaining the durable state, principle, consequence, or unresolved question. A directive belongs only when the user intended it to continue beyond the immediate request. Apply these tests identically to every subject and medium. Refer to this material as observations, observational memory, concepts, data, or the ledger in ordinary conversation; do not volunteer its SQLite or JSONL representation unless the user is working on the mechanism itself.
+**Keep** knowledge when it is likely to change how a future agent:
+
+- Understands the continuing goal,
+- Selects an approach,
+- Avoids a known failure,
+- Evaluates what remains,
+- Locates a consequential source of truth, or
+- Honors a still-binding directive.
+
+Preserve enough rationale and evidence to make that knowledge usable and checkable without preserving the whole episode that produced it.
+
+**Omit** information when it:
+
+- Ends with the action that produced it,
+- Is revealed cheaply by the current workspace without interpretation,
+- Merely narrates execution or verification,
+- Duplicates a stronger current entry, or
+- No longer changes any plausible future decision.
+
+Prefer replacement over accumulation: when new knowledge supersedes or absorbs an existing entry, replace that entry in place and delete what it supersedes instead of adding a near-duplicate. Keep the registry to a sensible current set; if the ledger is crowding with redundant or stale rows, consolidate rather than accumulate, because an overgrown ledger buries the signal a future agent needs. Abstract away incidental task wording while retaining the durable state, principle, consequence, or unresolved question. A directive belongs only when the user intended it to continue beyond the immediate request.
+
+Refer to this material as observations, observational memory, concepts, data, or the ledger in ordinary conversation; do not volunteer its SQLite or JSONL representation unless the user is working on the mechanism itself.
