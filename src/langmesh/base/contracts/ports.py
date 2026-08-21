@@ -222,7 +222,7 @@ class _MemoryArtifactWriter:
         if not self._closed:
             self._closed = True
             content = bytes(self._content)
-            self._store._values[self._reference.identifier] = content
+            self._store._commit(self._reference.identifier, content)
             self._reference = replace(self._reference, size=len(content))
         return self._reference
 
@@ -232,6 +232,7 @@ class MemoryArtifacts:
 
     def __init__(self) -> None:
         self._values: dict[str, bytes] = {}
+        self._active: set[str] = set()
 
     async def create(self, name: str, media_type: str, *, identifier: str = "") -> ArtifactWriter:
         reference = ArtifactReference(
@@ -239,7 +240,14 @@ class MemoryArtifacts:
             name=name,
             media_type=media_type,
         )
+        if reference.identifier in self._values or reference.identifier in self._active:
+            raise FileExistsError(f"Artifact already exists: {reference.identifier}")
+        self._active.add(reference.identifier)
         return _MemoryArtifactWriter(self, reference)
+
+    def _commit(self, identifier: str, content: bytes) -> None:
+        self._values[identifier] = content
+        self._active.discard(identifier)
 
     async def read(self, identifier: str) -> bytes | None:
         return self._values.get(identifier)

@@ -50,9 +50,11 @@ class _FileArtifactWriter:
             self._size += len(data)
 
     def _commit(self) -> None:
-        self._handle.flush()
-        os.fsync(self._handle.fileno())
-        self._handle.close()
+        try:
+            self._handle.flush()
+            os.fsync(self._handle.fileno())
+        finally:
+            self._handle.close()
         os.replace(self._incoming_path, self._target_path)
         directory = os.open(self._target_path.parent, os.O_RDONLY)
         try:
