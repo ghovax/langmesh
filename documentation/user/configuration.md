@@ -1,8 +1,8 @@
 # Configuration
 
-Runtime configuration lives in **`$XDG_CONFIG_HOME/langmesh/configuration.yaml`** (`~/.config/langmesh/configuration.yaml` unless you set `XDG_CONFIG_HOME`). The daemon creates it on first run from a built-in template (`langmeshd/commons/configuration.yaml`) and owns the file thereafter; the library never writes it. It is the source of truth for credentials, permissions, and feature toggles. The repository never contains a filled-in copy.
+Runtime configuration lives in **`$XDG_CONFIG_HOME/langmesh/configuration.yaml`** (`~/.config/langmesh/configuration.yaml` unless you set `XDG_CONFIG_HOME`). The daemon creates it on first run from a built-in template (`langmeshd/commons/configuration.yaml`) and owns the file thereafter; the library never writes it. Every daemon write is validated, synced, and atomically replaced at mode `0600`, so a stopped process cannot leave a partial YAML document. It is the source of truth for credentials, permissions, and feature toggles. The repository never contains a filled-in copy.
 
-Three ways to change it, all writing the same file:
+Two ways to change it, both writing the same file:
 
 - **Settings** in the desktop app.
 - **Editing the file directly**, which the daemon watches and the next session build reads.
@@ -12,7 +12,7 @@ Three ways to change it, all writing the same file:
 
 A change applies to whatever starts **next**. A running session keeps the configuration it was built with, with a few exceptions the daemon pushes out: configuration, sandbox, computer control, and the user-context snapshot each ask live sessions to rebuild.
 
-Three places say something about a setting, and each says a different thing. **This document** is the narrative, for the settings worth explaining at length. The **settings panel** reads the running schema, so it can tell you what _this machine_ is set to. A name the schema does not define inside a section is **refused**, not ignored; unknown top-level sections are tolerated so the app can own `dictation` and `composio` in the same file without the library modelling them.
+Three places say something about a setting, and each says a different thing. **This document** is the narrative, for the settings worth explaining at length. The **settings panel** reads the running schema, so it can tell you what _this machine_ is set to. A name the schema does not define is **refused**, not ignored. The daemon validates its `daemon`, `dictation`, and `composio` sections separately and passes only library-owned sections to `langmesh.Configuration`.
 
 ## Where everything lives
 
@@ -209,7 +209,7 @@ When a conversation reaches its recommended preparation threshold, LangMesh appe
 
 `goal_review.maximum_attempts` is the bound for the goal reviewer in `review` mode: after a reviewer that investigated but never submitted, it is asked again on a narrowed toolset up to this many times, then the goal parks and waits for a person.
 
-Observations are workspace-owned current state and explicit. Agents retrieve and maintain them through Bash using the `observational-memory` skill. The daemon watches each active location's registry through native filesystem notifications and shares one watcher across its sessions. A committed revision broadcasts a complete validated snapshot to the memory panel. The system prompt receives only progressive-disclosure metadata, never observation rows. A registry that is missing or no longer matches its schema is itself reported as metadata (`status: missing|broken` with a problem message), so an agent hears about the state and repairs it rather than silently working without memory; the pre-columnar JSON-schema format is never read or migrated.
+Observations are workspace-owned current state and explicit. Agents retrieve and maintain them through Bash using the `observational-memory` skill. The daemon watches each active location's registry through native filesystem notifications and shares one watcher across its sessions. A committed revision broadcasts a complete validated snapshot to the memory panel. The append-only session context receives only progressive-disclosure metadata, never observation rows. A registry that is missing or no longer matches its schema is itself reported as metadata (`status: missing|broken` with a problem message), so an agent hears about the state and repairs it rather than silently working without memory; the pre-columnar JSON-schema format is never read or migrated.
 
 ## Attachments
 
@@ -222,29 +222,18 @@ attachments:
 
 ## Tool limits
 
-How much of a model's context tool output may occupy, and how patient the tools are. Every limit ships as a plain value under `tuning.defaults`; nothing scales with the live window, so what you set is what runs. The `tuning` section is three things:
+How much output tools may return and how patient they are. Every limit is a plain value under `tuning.limits`; nothing is scaled or inferred, so what you set is what runs:
 
 ```yaml
 tuning:
-  context_share:
-    text: 0.25
-    results: 0.15
-  timeout_multiplier: 1.0
-  defaults:
+  limits:
     output_tokens: 16384
     web_search_maximum: 16
 ```
 
-| Setting              | What it does                                                                 |
-| -------------------- | ---------------------------------------------------------------------------- |
-| `context_share.text` | The share the headline text budgets assume: output, fetched pages, at the default scale. |
-| `context_share.results` | The share the headline result budgets assume: matches, lines, records, at the default scale. |
-| `timeout_multiplier` | `2.0` doubles every wait, for a slow machine. `1.0` is neutral.              |
-| `defaults`           | Override one limit by its own name; every duration is in seconds.            |
+The keys are the fields of `langmesh.base.primitives.limits.Limits`. An unknown name is an error at load, and the settings panel lists each with its shipped value. See [the reference below](#the-tuneables).
 
-`defaults` is the escape hatch for a single value. Its keys are the fields of `langmesh.base.primitives.limits.Limits`. An unknown name is an error at load, and the settings panel lists each with its shipped value. An explicit `defaults` value wins over the percentage shares. See [the reference below](#the-tuneables).
-
-The settings panel lists every setting with what it ships at and what this machine runs on; what each one is _for_ is in the reference below. The shipped template (`langmeshd/commons/configuration.yaml`) is the same surface at its default values; read it, do not copy it over your own configuration, because everything in it is already the default.
+The settings panel lists every library setting with what it ships at and what this machine runs on; app-owned settings use their dedicated panels, and daemon lifecycle settings remain file-only. What each setting is _for_ is in the reference below. The shipped template (`langmeshd/commons/configuration.yaml`) is the minimal first-run document; the schema supplies every omitted default.
 
 ## Screen control
 
@@ -258,7 +247,7 @@ computer_control:
     lexical_gate_long_words: 7
 ```
 
-`enabled` drives native macOS apps and your own Chrome, and it is opt-in. After an action, the harness **polls** a surface until it stops changing; it does not sleep for a fixed guess. The polling cadence and the retrieval tuning live with the other numbers under `tuning.defaults` (`settle_poll_seconds`, `settle_give_up_seconds`, `settle_stable_reads`, and the `find_*` family).
+`enabled` drives native macOS apps and your own Chrome, and it is opt-in. After an action, the harness **polls** a surface until it stops changing; it does not sleep for a fixed guess. The polling cadence and the retrieval tuning live with the other numbers under `tuning.limits` (`settle_poll_seconds`, `settle_give_up_seconds`, `settle_stable_reads`, and the `find_*` family).
 
 ### How a screen is ranked
 
@@ -275,7 +264,7 @@ The two models are added, not chosen between: used alone the English one is wors
 
 The gate keeps the character similarity from doing harm. A short query is a label read off the screen, so its spelling is the strongest evidence available. A long query shares no spelling with anything, and a character similarity is never silent, so past `lexical_gate_long_words` it is dropped.
 
-`find_one`'s willingness to answer at all is separate, under `tuning.defaults.find_one_margin`, and it is fitted against this ranking, so change one and re-fit the other.
+`find_one`'s willingness to answer at all is separate, under `tuning.limits.find_one_margin`, and it is fitted against this ranking, so change one and re-fit the other.
 
 ## MCP servers
 
@@ -305,13 +294,13 @@ telemetry:
 
 ## Configuration reference
 
-Every setting LangMesh has, in the order the settings panel presents them: what you decide first at the top, the numbers underneath everything at the bottom.
+Every setting LangMesh has, with library settings in the order the settings panel presents them and app-owned settings named separately.
 
 A setting is addressed by its dotted path, and the same path works everywhere: in `~/.config/langmesh/configuration.yaml`, and as the key the interface writes. Nothing is written to that file until you change it; a setting you never touched follows the default.
 
 To read or change a setting, edit `~/.config/langmesh/configuration.yaml` (a setting you never touched may be absent; omit it and the default applies) or use the interface's settings panel, which walks the same schema. To unset a setting, remove its line from the file rather than writing the default into it.
 
-The settings panel shows the same set, with the name and explanation in the interface language. The words there and the words here are the same: they live in `shared/messages/`, keyed by these paths.
+For library settings, the panel's names and explanations live in `shared/messages/`, keyed by these exact paths.
 
 ### Agent defaults
 
@@ -364,8 +353,15 @@ How conversation history is compacted as it grows.
 | `compaction.output_reserve_fraction`     | number  | `0.1` | Share held back as safety space for the preparation segment and the answer. |
 | `compaction.recent_working_set_fraction` | number  | `0.15` | Share of the usable window kept verbatim after older history is discarded. Sized in tokens rather than turns. |
 | `compaction.summary_attempts`            | integer | `3` | How many times the hidden summarizer may be asked again after reviewing but not submitting; once exhausted, the compaction stops and the conversation is left unchanged until it is retried. |
-| `goal_review.mode`                        | choice  | `review` | Which strategy drives an open goal: `review` runs an independent reviewer session, `self_managed` re-prompts the agent on the goal itself. |
-| `goal_review.maximum_attempts`           | integer | `3` | How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset before the goal parks and waits for a person. |
+
+### Goal review
+
+How an open goal is assessed and continued.
+
+| Setting                                | Type    | Default  | What it is for |
+| -------------------------------------- | ------- | -------- | -------------- |
+| `goal_review.mode`                     | choice  | `review` | Which strategy drives an open goal: `review` runs an independent reviewer session, `self_managed` re-prompts the agent on the goal itself. |
+| `goal_review.maximum_attempts`         | integer | `3`      | How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset before the goal parks and waits for a person. |
 
 ### Attachments
 
@@ -377,11 +373,11 @@ How the files a person attaches may cost the conversation.
 
 ### User snapshot
 
-Whether the system prompt describes how you work on this machine.
+Whether the model-facing session context describes how you work on this machine.
 
 | Setting                      | Type    | Default | What it is for |
 | ---------------------------- | ------- | ------- | -------------- |
-| `user_context.enabled`       | boolean | `false` | Include a snapshot of how you work, your editor, habits, machine, in the system prompt. |
+| `user_context.enabled`       | boolean | `false` | Include a snapshot of how you work, your editor, habits, and machine in session context. |
 | `user_context.refresh_hours` | number  | `6`     | How old that snapshot may get before it is rebuilt. The rebuild runs in the background. |
 
 ### Screen control
@@ -408,6 +404,17 @@ Speaking to the composer instead of typing. An app-owned section in the same fil
 | `dictation.timing.transcription_timeout_realtime_multiplier` | number  | `0.5` | Added to the floor, per second of audio. |
 | `dictation.timing.maximum_attempts`                          | integer | `2` | How many workers one recording may be given. |
 | `dictation.timing.worker_shutdown_seconds`                   | number  | `2.0` | How long a worker is given to exit on its own before it is killed. |
+
+### Daemon lifecycle
+
+Process-level timings owned by the daemon and read only from the configuration file.
+
+| Setting                              | Type   | Default   | What it is for |
+| ------------------------------------ | ------ | --------- | -------------- |
+| `daemon.startup_seconds`             | number | `45.0`    | How long a client waits for a daemon it started to become reachable. |
+| `daemon.probe_interval_seconds`      | number | `0.05`    | How often a client checks whether a daemon is listening or has exited. |
+| `daemon.probe_connect_seconds`       | number | `0.5`     | How long one daemon connection probe may wait. |
+| `daemon.session_idle_sleep_seconds`  | number | `18000.0` | How long an idle hosted session retains its worker before sleeping. |
 
 ### Model providers
 
@@ -462,9 +469,9 @@ Speaking to the composer instead of typing. An app-owned section in the same fil
 
 ### The tuneables
 
-How large, how many, and how patient the tools are: the fields of `langmesh.base.primitives.limits.Limits`, each addressable under `tuning.defaults`. Every duration is in seconds. The shipped defaults:
+How large, how many, and how patient the tools are: the fields of `langmesh.base.primitives.limits.Limits`, each addressable under `tuning.limits`. Every duration is in seconds. The shipped values:
 
-| `tuning.defaults.<name>`                    | Default   | What it is for |
+| Name under `tuning.limits`                  | Shipped value | What it is for |
 | ------------------------------------------- | --------- | -------------- |
 | `output_tokens`                             | `16384`   | Tokens of inline output one tool may return before the rest overflows to a file. |
 | `fetch_tokens`                              | `32768`   | Tokens of a fetched web page's text kept inline. |

@@ -37,7 +37,7 @@
       members: true
       show_root_heading: false
 
-`PromptComposer` receives `PromptLayer` values, while `BeforeModelHook` receives the final provider message list.
+`PromptComposer` receives `PromptLayer` values only when the static prompt is constructed. The public hook surface cannot rewrite the final provider message list.
 
 ## The plugin seam
 
@@ -53,17 +53,17 @@
 
 ::: langmesh.base.content.attachments.ComposedAttachments
 
-::: langmesh.base.content.attachments.PathAttachments
+::: langmesh.base.content.attachments.AttachmentComposer
 
-::: langmesh.base.persistence.resources.WorkspaceResources
-    options:
-      members: true
+::: langmesh.base.contracts.ports.ArtifactReference
 
-::: langmesh.base.persistence.resources.OverlayResources
-    options:
-      members: true
+::: langmesh.base.contracts.ports.ArtifactWriter
 
-::: langmesh.base.persistence.observations.ObservationRegistry
+::: langmesh.base.contracts.ports.Artifacts
+
+::: langmesh.base.contracts.ports.MemoryArtifacts
+
+::: langmesh.base.persistence.checkpoints.SQLiteCheckpoints
     options:
       members: true
 

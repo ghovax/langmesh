@@ -241,22 +241,11 @@ telemetry:
 
 
 # Tool budgets and timing
-# Every limit ships as a plain value; nothing scales with the live window, so what you set is
-# what runs. `context_share` sizes the headline text and result budgets as percentages;
-# `timeout_multiplier` — `2.0` doubles every wait, for a slow machine or link.
+# Every limit ships as a plain value; nothing scales with the live window, so what you set is what runs.
 
 tuning:
-  context_share:
-    # The share the headline text budgets assume: output, fetched pages.
-    text: 0.25
-    # The share the headline result budgets assume: matches, lines, records.
-    results: 0.15
-  timeout_multiplier: 1.0
-
-  # `defaults` overrides one limit by its own name, in its own unit. The names are the fields of
-  # langmesh.base.primitives.limits.Limits; an unknown one is an error at load rather than a line that
-  # looks applied and is not. An explicit value here wins over the percentage shares above.
-  defaults:
+  # `limits` sets one field of langmesh.base.primitives.limits.Limits by its own name and unit; an unknown name is an error.
+  limits:
 
     # Text budgets, in tokens (powers of two).
     output_tokens: 16384

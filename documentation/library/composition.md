@@ -6,7 +6,7 @@ LangMesh separates three concerns:
 | --- | --- | --- |
 | `RuntimeProfile` | Agent, global configuration, identity, directories, confinement, parent | No |
 | `RuntimeComponents` | Model, replaceable ports, hooks, middleware, supplied tools, features, host services | No; replace the value before construction |
-| `SessionComponents` | `RuntimeComponents` plus checkpoints, attachments, credentials, workspace, and tracing | No; `Session` owns their lifetime |
+| `SessionComponents` | `RuntimeComponents` plus checkpoints, attachments, credentials, and tracing | No; `Session` owns their lifetime |
 
 The daemon uses the same `RuntimeProfile` and `RuntimeComponents` API as an embedder. The core never imports daemon state: product persistence connects through the ports (a `GoalReviewJournal`, a `JobStore`, a transcript), and the library's own plugins receive only the internal `PluginHost`.
 
@@ -30,7 +30,6 @@ profile = RuntimeProfile(
 components = RuntimeComponents(
     jobs=MemoryJobStore(),
     transcript=MemoryTranscript(),
-    file_leases=FileLeaseManager(),
 )
 runtime = AgentRuntime(profile, components)
 
@@ -50,7 +49,6 @@ from langmesh import Session, SessionComponents
 components = SessionComponents(
     jobs=MemoryJobStore(),
     transcript=MemoryTranscript(),
-    workspace=SessionWorktreeManager(),
 )
 session = Session(
     agent,
@@ -67,29 +65,28 @@ The constructor keeps run facts (directory, identity, permission mode, confineme
 | Component | Port or adopted interface | Default |
 | --- | --- | --- |
 | `model` | LangChain `BaseChatModel` | Built from the agent and configuration |
-| `catalogue` | `CatalogueLike` | Packaged prompts and project instructions; no home-directory lookup |
+| `catalogue` | `CatalogueLike` | Packaged prompts and caller-supplied values; no machine lookup |
 | `jobs` | `JobStore` | `MemoryJobStore` in `Session` |
 | `observer` | `Observer` | Audit observations dropped |
 | `approvals` | `Approvals` | Interactive gates suspend |
 | `transcript` | `Transcript` | `MemoryTranscript` in `Session` |
 | `sessions` | `SessionAccess` | Peer-session tools absent |
-| `mcp_servers` | `MCPServers` | Session starts servers declared by its explicit workspace |
+| `mcp_servers` | `MCPServers` | MCP tools absent |
 | `file_leases` | `FileLeases` | No cross-session mutation coordination |
 | `permissions` | `PermissionPolicy` | The per-agent `PermissionEvaluator` |
 | `prompt_composer` | `PromptComposer` | Catalogue `system_prompt` template |
-| `tools` | `BaseTool` sequence | No supplied tools |
-| `toolset` | Complete `BaseTool` sequence | No tools |
+| `application_tools` | Caller-supplied `BaseTool` sequence that may replace names in the complete roster | No supplied tools |
+| `available_tools` | Complete `BaseTool` sequence | No tools |
 | `tool_gate` | `"ask"` / `"none"` | `"ask"` |
-| `hooks` | Any combination of the three hook protocols | None |
+| `hooks` | Any combination of the two hook protocols | None |
 | `middleware` | `ToolMiddleware` sequence | None |
-| `synchronize_resources` | Async callable | No synchronization |
 | `related_turns` | Async turn reader | `read_turn` unavailable |
 | `features` | Sequence of `Feature` instances | No features — a plain model turn |
 | `services` | Opaque plugin bundle the host supplies | `None` |
 | `machine_snapshot` | Probe of the machine by the host | Minimal platform-only snapshot |
 | `user_context` | Snapshot of how you work, probed by the host | None |
 
-`SessionComponents` additionally owns `checkpoints`, `attachments`, `credentials`, `workspace`, and `tracer_provider`.
+`SessionComponents` additionally owns `checkpoints`, `artifacts`, `attachments`, `credential_store`, and `tracer_provider`.
 
 A feature instance belongs to one session because attachment gives it session-specific context and state. Construct fresh feature instances when composing another session; attempting to share one now fails during runtime construction instead of silently redirecting its state to the last session that attached it.
 
@@ -105,13 +102,13 @@ components = SessionComponents(
 )
 ```
 
-The `tools` field accepts ordinary LangChain `BaseTool` values. Tools supplied before the runtime is built join its initial provider schema; `Session.grant_tool()` changes that schema deliberately when a live session genuinely gains a new callable capability.
+The `application_tools` field accepts ordinary LangChain `BaseTool` values. Tools supplied before the runtime is built join its initial provider schema; `Session.grant_tool()` changes that schema deliberately when a live session genuinely gains a new callable capability.
 
 ## Cache stability
 
 Components are fixed for a runtime because the model-visible tool schemas and static instructions form the provider-cache prefix. Runtime controls such as steering, permission-mode changes, and goal state are append-only or applied at execution boundaries; none rewrites an earlier model message. Interaction with the cache is measured and reported on each `Usage` event (`cache_prefix_reusable`, `reusable_prefix_tokens`, `segments`, `divergence`), so a custom model adapter can be verified rather than inferred.
 
-`BeforeModelHook` can intentionally alter an individual request, while `PromptComposer` runs only when the cached prompt is built and an explicit `Session.refresh_prompt()` invalidates that cache. Ordinary turns, steering, tool results, and background results append to the conversation without changing the prompt or tool schema.
+`PromptComposer` runs only when the cached prompt is built, and `Session.refresh_prompt()` is the explicit invalidation boundary. No hook may rewrite a provider request or its system-message prefix. Ordinary turns, steering, tool results, and background results append to durable conversation state without changing the prompt or tool schema.
 
 ## Tools, hooks, and policy
 
@@ -125,7 +122,7 @@ Every tool a session runs, yours and the harness's alike, carries two shared arg
 
 Three ways to compose a session's tools:
 
-- **The whole roster.** Pass `SessionComponents(toolset=[...])` to run exactly those tools, or `toolset=()` to run with no tools at all.
+- **The whole roster.** Pass `SessionComponents(available_tools=[...])` to run exactly those tools, or `available_tools=()` to run with no tools at all.
 - **Supplied tools.** Pass `tools=[...]` before the first call for a stable initial schema, or call `session.grant_tool(...)` later when the session truly gains a new capability. A tool whose name the session already runs replaces its implementation and schema.
 - **Plugin tools.** Compose a feature that contributes tools — `Bash()`, `Web()`, `ComputerUse()`, `Interaction()`, `Continuation()`, `GoalReviewFeature()`, `Compaction()`, `PermissionReviewer()` — each gated by the agent's `tools_enabled`.
 
@@ -141,7 +138,7 @@ async def incident_lookup(service: str) -> list[dict]:
 # The whole roster, and nothing else:
 session = Session(
     agent, directory="/srv/checkout",
-    components=SessionComponents(toolset=(incident_lookup,)),
+    components=SessionComponents(available_tools=(incident_lookup,)),
 )
 
 # One addition on top of nothing, gated by default:
@@ -150,7 +147,7 @@ session = Session(agent, directory="/srv/checkout", tools=[incident_lookup])
 # Nothing at all:
 session = Session(
     agent, directory="/srv/checkout",
-    components=SessionComponents(toolset=()),
+    components=SessionComponents(available_tools=()),
 )
 ```
 
@@ -169,7 +166,7 @@ def current_incident() -> dict:
 session.grant_tool(current_incident)
 ```
 
-`grant_tool` works at any moment, including after turns have run. Because providers only emit structured calls for tools in the request schema, a mid-session grant rebinds the real schema instead of pretending prose can declare a function. That next call is an intentional cache divergence at the `tools` segment; subsequent calls reuse the new prefix. Supply predictable tools at construction when cache continuity matters.
+`grant_tool` works at any moment, including after turns have run. Because providers only emit structured calls for tools in the request schema, a mid-session grant rebinds the real schema instead of pretending prose can declare a function. That next call is an intentional cache divergence at the `tools` segment; subsequent calls reuse the new prefix. The `Session` retains the caller-owned tool object when it releases and rebuilds its runtime. A new process must reconstruct code capabilities at composition, while the data checkpoint restores conversation and runtime state. Supply predictable tools at construction when cache continuity matters.
 
 The same binding mechanism powers the internal reviewers. The goal reviewer receives `submit_goal_review`, the compaction summarizer receives `submit_compaction_summary`, and the automatic permission reviewer receives `permission_decision`; the working session never carries any of them, so no tool is ever a no-op that exists only to be inert.
 
@@ -187,9 +184,8 @@ components = SessionComponents(permissions=ServicePolicy())
 
 ### Hooks
 
-Hooks implement any one of three structural protocols:
+Hooks implement either of two structural protocols:
 
-- `BeforeModelHook.before_model(messages)` may return a changed request list.
 - `BeforeToolsHook.before_tools(calls)` may return only calls already present in the approved batch.
 - `AfterTurnHook.after_turn(summary)` observes the terminal summary.
 
@@ -229,10 +225,9 @@ The prompt lives in its own file, `prompts/system_prompt.md`, and each `{{ name 
 
 | Layer placeholder (in order) | What it provides |
 | --- | --- |
-| `{{ context }}` | The session context, inside a fenced JSON block in the file. |
-| `{{ agent_context }}` | The agent's own context (its role, tools, and the working directory). |
+| `{{ agent_context }}` | Stable guidance for an agent whose session can be messaged by peers. |
 | `{{ instructions }}` | The person's recorded instructions. |
-| `{{ user_environment }}` | The machine snapshot and how you work. |
+| `{{ user_environment }}` | Stable guidance for interpreting the opt-in user snapshot carried in session context. |
 | `{{ skills }}` | The vault of skills the agent may load. |
 | `{{ memories }}` | The recorded memories. |
 | `{{ agent_prompt }}` | The agent profile's own system prompt. |
@@ -242,20 +237,20 @@ The prompt lives in its own file, `prompts/system_prompt.md`, and each `{{ name 
 The `{{ toolbox }}` layer is the last one: the session's own package-profile instructions (install a missing command with `nix profile add nixpkgs#<name>` from `prompts/toolbox.md`), rendered only when `toolbox.enabled` is set and the machine has Nix, and dropped like any other empty layer otherwise. Headings and other markdown belong in that file, never generated in code.
 
 ```python
-from langmesh.base.configuration import PromptLoader
+from langmesh import PromptTemplates
 
 class ApplicationPrompt:
-    def __init__(self, prompts_directory):
-        self._prompts = PromptLoader(prompts_directory)
+    def __init__(self, template: str):
+        self._prompts = PromptTemplates({"system_prompt": template})
 
     def compose(self, layers):
         available = {layer.name: layer.content for layer in layers}
         return self._prompts.load("system_prompt", available)
 
-components = SessionComponents(prompt_composer=ApplicationPrompt("prompts"))
+components = SessionComponents(prompt_composer=ApplicationPrompt("{{ instructions }}\n\n{{ agent_prompt }}"))
 ```
 
-The default composer already renders the catalogue's `system_prompt` template over the same layers; this composer only changes what reaches it. `BeforeModelHook` remains the final seam for changing one provider request's exact message list. Rewriting the first system message with it intentionally invalidates that request's provider-cache prefix.
+The default composer renders the catalogue's `system_prompt` template over the same layers. Session identity, directories, confinement, machine details, user context, feature state, and background events are deliberately absent from these layers: the runtime appends them as one marked conversation message and appends a new version only when its digest changes. A custom composer changes the static prompt construction and therefore its revision; the resulting bytes are persisted and restored exactly until an explicit refresh or a construction input changes.
 
 ### Attachments
 
@@ -266,17 +261,20 @@ from langmesh import ComposedAttachments, SessionComponents
 
 class MetadataOnlyAttachments:
     def compose(self, message, attachments, model_identifier, inline_image_bytes):
-        paths = tuple(str(path.resolve(strict=True)) for path in attachments)
-        attached_paths = "\n".join(f"- {path}" for path in paths)
+        paths = tuple(attachment.path for attachment in attachments if attachment.path)
+        descriptions = "\n".join(
+            f"- {attachment.name}: {attachment.path or 'inline data'}"
+            for attachment in attachments
+        )
         return ComposedAttachments(
-            content=f"{message}\n\nAttached paths:\n{attached_paths}",
+            content=f"{message}\n\nAttachments:\n{descriptions}",
             granted_paths=paths,
         )
 
 components = SessionComponents(attachments=MetadataOnlyAttachments())
 ```
 
-The default `PathAttachments` includes structured metadata and inlines bounded image data only when the selected model advertises vision support. A custom composer must list only the paths the application intends the runtime to grant; mentioning a path in `content` grants nothing by itself. The inline ceiling is configurable (`attachments.inline_image_megabytes`).
+The default `AttachmentComposer` includes structured metadata and inlines bounded image data only when the selected model advertises vision support. A custom composer must list only the paths the application intends the runtime to grant; mentioning a path in `content` grants nothing by itself. The inline ceiling is configurable (`attachments.inline_image_megabytes`).
 
 ### Execution locations
 
@@ -320,7 +318,7 @@ await manager.start()
 components = SessionComponents(mcp_servers=manager)
 ```
 
-When no manager is supplied, `async with Session(...)` starts only the servers declared in the explicit workspace's `.agents/mcp.json` and closes those connections with the session.
+The caller initializes and closes the manager it supplies. A bare library session does not discover `.agents/mcp.json`, start servers, or take ownership of another component's lifecycle; the daemon performs those application-specific steps at its composition root.
 
 ## Features and plugins
 
@@ -348,14 +346,15 @@ The hooks are the points in the turn where a feature can act. The full set a `Fe
 | `required_capabilities()` | structural feature contracts that composition must satisfy |
 | `compose_prompt(variables)` | building the system prompt's named sections |
 | `assign_title(first_message)` | suggesting a session title |
-| `prepare_request(messages)` | the exact request about to leave |
+| `prepare_request()` | append validated request-boundary state through the feature's conversation capability |
+| `acknowledge_checkpoint()` | acknowledge only external state represented by the checkpoint that just committed |
 | `should_maintain` / `begin_maintenance` / `advance_maintenance` / `run_maintenance` / `maintenance_ready` / `valid_during_maintenance` / `maintenance_tool_schemas` / `maintenance_violation_message` / `fail_maintenance` / `record_maintenance_handoff` / `maintenance_describe` | holding the loop to reclaim context |
 | `plan_tool_calls` / `resolve_gates` / `review_automatic_gate` | gating a batch of tool calls |
 | `drain()` | turn-driven events (e.g. finished background jobs) |
 | `blocks_input()` | why new input must be refused (a failed fold, an unrepaired registry) |
 | `snapshot()` / `restore(snapshot)` | durable session state beside the checkpoint |
 
-`compose_prompt` is the home for stable model guidance because it runs when the cached system prompt is built. `prepare_request` is a deliberately sharper seam: a feature that changes the outgoing list must append the exact addition to durable conversation state so the following request retains it in the same position. A transient per-call reminder will move behind the next assistant response and destroy prefix reuse even when its text never changes. Use `prepare_request` for validated request-local recovery only, not recurring policy or feature instructions.
+`compose_prompt` is the home for stable model guidance because it runs when the cached system prompt is built. `prepare_request` cannot receive or replace the outgoing list; it may only append through the conversation capability, after which the runtime checkpoints before calling the provider. This makes a transient prefix rewrite impossible by construction.
 
 ### Composing a session's features
 
@@ -378,7 +377,7 @@ session = Session(
 )
 ```
 
-The shipped classes are ordinary classes: construct them with the ports they declare (a journal, a strategy, a store) and hand the instances over. Structural dependencies are validated when the runtime is built, so a `Bash` or `Web` feature without the `BackgroundCapability` it uses fails immediately with a composition error. `features=()` runs a plain session with no features at all.
+The shipped classes are ordinary classes: construct them with the ports they declare and hand the instances over. Structural dependencies are validated when the runtime is built, so a `Bash` or `Web` feature without the `BackgroundCapability` it uses fails immediately with a composition error. A plugin contributes a positive tool allowlist through `contribute_tools()` and handlers only for those tools; it never removes names from an unknown global roster. `features=()` runs a plain session with no features at all.
 
 What the product runs for a hosted session is the daemon's business, not the library's. `langmeshd.features.compose_plugins` builds the full set — goal review, compaction, permissions, the automatic reviewer, continuation, observational memory, background jobs, work habits, titling, locations, bash, web, interaction, and computer use — and hands it to each executor.
 
@@ -400,6 +399,22 @@ class CustomFeature(Feature):
         variables["project"] = f"Work in the {self._project} repository."
 ```
 
+A tool plugin names only the tools it provides:
+
+```python
+from langchain_core.tools import StructuredTool
+from langmesh.runtime.features import Feature
+
+async def lookup_ticket(identifier: str) -> str:
+    return await ticket_service.read(identifier)
+
+class Tickets(Feature):
+    def contribute_tools(self) -> list:
+        return [StructuredTool.from_function(coroutine=lookup_ticket, name="lookup_ticket", description="Read one ticket by identifier.")]
+```
+
+Composing `Tickets()` makes exactly `lookup_ticket` available. The plugin neither knows nor filters the tools contributed by another plugin.
+
 A feature that wants to hear what others publish subscribes in `attach`:
 
 ```python
@@ -411,4 +426,4 @@ The library's own plugins additionally receive the internal `PluginHost` — gro
 
 ### Prompts are configurable
 
-Each shipped plugin keeps its own prompt templates in its `prompts/` directory beside its code — shipping them is an arbitrary choice, not a hardcoded part of the core. A template resolves from the catalogue's overrides first, then the plugin's own directory, then the shared set. Supply a `Catalogue(prompts={...})` (or any catalogue whose `prompt_override` answers a name) to override any plugin template from code; edit the plugin's `prompts/` files to change the shipped ones.
+Each shipped plugin deliberately keeps its package-owned prompt templates in a `prompts/` directory beside its code. These are shipped assets and remain filesystem package resources rather than embedded Python strings. A template resolves from the catalogue's caller-supplied override first, then the plugin's package directory, then the shared package set. Supply a `Catalogue(prompts={...})`, or any catalogue whose `prompt_override` answers a name, to override a template from code.
