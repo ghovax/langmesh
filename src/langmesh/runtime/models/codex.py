@@ -92,7 +92,7 @@ class ChatCodexModel(BaseChatModel):
     reasoning_effort: Optional[str] = None
     temperature: float = 0.0
     context_length: int = 0
-    #: The conversation this model serves, sent as `prompt_cache_key`.
+    #: The conversation identity used for request metadata and retained trace baselines.
     session_id: str = ""
     # A generous bound so a dead connection cannot hang a turn forever, since aborts are only checked between chunks.
     timeout: Optional[float] = 300.0

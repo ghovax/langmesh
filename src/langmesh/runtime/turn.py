@@ -231,7 +231,6 @@ class _RunsTurns(_DispatchesTools, ABC):
             )
             variables = {
                 "agent_prompt": self._system_prompt,
-                "context": "",
                 "user_environment": user_environment,
                 "instructions": instructions,
                 "skills": lines(skills_payload(agent_skills)),

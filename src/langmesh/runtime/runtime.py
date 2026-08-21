@@ -561,9 +561,7 @@ class AgentRuntime(_RunsTurns):
                 "catalogue": self._catalogue.prompt_revision(),
                 "components": self._components.prompt_revision,
                 "features": self._features.prompt_revision(),
-                "profile": {
-                    "user_context_enabled": bool(user_context and user_context.enabled),
-                },
+                "user_context_enabled": bool(user_context and user_context.enabled),
                 "prompt_composer": (
                     f"{type(self._prompt_composer).__module__}.{type(self._prompt_composer).__qualname__}"
                     if self._prompt_composer is not None
