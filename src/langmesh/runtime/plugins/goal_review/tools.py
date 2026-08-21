@@ -8,7 +8,7 @@ from typing import Any
 from langchain.tools import tool
 from langchain_core.tools import StructuredTool
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.features import GoalCapability
 from langmesh.runtime.plugins.goal_review.models import GoalReview
@@ -17,7 +17,7 @@ from langmesh.runtime.tools.execution import current_tool_services
 from langmesh.runtime.values import ToolStatus
 
 #: The tools' model-facing descriptions, read from this plugin's own prompts directory.
-_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
+_DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 
 
 async def _submit_goal_review(**arguments: Any) -> str:

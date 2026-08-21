@@ -25,7 +25,8 @@ from langmesh.base.content.attachments import (
     compose_attachment_content,
 )
 from langmesh.base.primitives import telemetry as _telemetry
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
+from langmesh.base.contracts.catalogue import packaged_prompts_directory
 from langmesh.base.primitives.serialization import compact, conversation_snapshot_id
 from langmesh.protocol.errors import _safe_turn_error
 from langmesh.protocol.events import ErrorEvent, InboundMessageEvent, RetryEvent, StatusEvent
@@ -68,7 +69,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Harness-authored, model-facing notes live as markdown in prompts/, not as string literals.
-_PROMPTS = PromptLoader(Path(__file__).resolve().parent.parent / "runtime" / "prompts")
+_PROMPTS = PackagePromptLoader(packaged_prompts_directory())
 
 
 @dataclass(frozen=True)

@@ -11,13 +11,13 @@ from pathlib import Path
 
 from langchain.tools import tool
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.features import Feature, PluginContext
 from langmesh.runtime.tools.execution import current_tool_decision, current_tool_services
 
 #: The tool's model-facing description, read from this plugin's own prompts directory.
-_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
+_DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 
 
 @tool

@@ -11,7 +11,7 @@ from typing import Any
 from langchain.tools import tool
 
 from langmesh.base import confinement as _confinement
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.primitives.limits import current_limits, clip_to_tokens
 from langmesh.runtime.background import (
@@ -22,7 +22,7 @@ from langmesh.runtime.background import (
 from langmesh.runtime.tools import context as tool_context
 
 #: The tool's model-facing description, read from this plugin's own prompts directory.
-_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
+_DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 
 
 @tool

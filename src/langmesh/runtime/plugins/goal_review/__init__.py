@@ -19,7 +19,8 @@ from typing import Any, Awaitable, Callable, Literal, Optional
 
 from pydantic import ValidationError
 
-from langmesh.base.configuration import PermissionEvaluator, PromptLoader
+from langmesh.base.configuration import PermissionEvaluator
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.contracts.ports import GoalReviewContext, GoalReviewOutcome
 from langmesh.base.primitives.identifiers import new_id
 from langmesh.base.primitives.serialization import compact
@@ -55,7 +56,7 @@ class GoalReviewState:
 
 
 #: A goal's schema descriptions and its instructions, both configurable beside this plugin.
-_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
+_DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 
 #: Where a goal stands after one reading of the work, which is not the same as what the session says about it.
 _REVIEWER_DISABLED_TOOLS = frozenset(

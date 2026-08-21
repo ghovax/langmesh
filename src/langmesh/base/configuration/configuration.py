@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 import logging
 import os
 from langmesh.base.confinement import environment_variables
 import re
 from fnmatch import fnmatch
-from pathlib import Path
-from typing import Any, Callable, ClassVar, Literal, Optional
+from typing import ClassVar, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
 from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base import confinement
-from langmesh.base.persistence.file_cache import parsed_file
 
 
 logger = logging.getLogger(__name__)
@@ -583,89 +581,3 @@ class PermissionEvaluator:
 
 class PermissionDenied(RuntimeError):
     """A tool call refused by policy rather than by the operating system, and named apart from the builtin."""
-
-
-class PromptLoader:
-    def __init__(
-        self,
-        prompts_directory: str | Path,
-        extension: str = "md",
-        *,
-        overrides: Optional[Callable[[str], Optional[str]]] = None,
-        fallback: Optional[Any] = None,
-    ):
-        """A shipped template directory, an override hook, and an optional fallback loader.
-
-        The override hook answers a template name with a template already in hand, so a caller's
-        catalogue can supply one directly. The fallback lets a plugin chain
-        its own templates behind the shared ones when a name is not its own.
-        """
-        self._directory = Path(prompts_directory)
-        self._extension = extension
-        self._overrides = overrides
-        self._fallback = fallback
-
-    def load(self, template_name: str, variables: Mapping[str, object]) -> str:
-        """Render a shipped template, re-reading it only when the package file changes."""
-        if self._overrides is not None:
-            override = self._overrides(template_name)
-            if override is not None:
-                return self._replace_variables(override, variables, template_name)
-        path = self._directory / f"{template_name}.{self._extension}"
-        content = parsed_file(path, lambda each: each.read_text())
-        if content is None:
-            return (
-                self._fallback.load(template_name, variables) if self._fallback is not None else ""
-            )
-        return self._replace_variables(content, variables, template_name)
-
-    @classmethod
-    def render(cls, template: str, variables: Mapping[str, object], template_name: str = "") -> str:
-        """Render a template already in hand, for a catalogue that carries its prompts in memory."""
-        return cls._replace_variables(template, variables, template_name)
-
-    @staticmethod
-    def _replace_variables(
-        template: str, variables: Mapping[str, object], template_name: str = ""
-    ) -> str:
-        """Substitute ``{{ name }}`` placeholders strictly: a missing variable or a malformed brace raises."""
-        where = f" in prompt '{template_name}'" if template_name else ""
-        placeholder = re.compile(r"\{\{\s*(\w+)\s*\}\}")
-        unsupported_directive = re.search(r"\{[%#]|[%#]\}", template)
-        if unsupported_directive is not None:
-            raise ValueError(
-                f"Unsupported template directive {unsupported_directive.group(0)!r}{where}; prompts support only '{{{{ name }}}}' placeholders."
-            )
-
-        def drop_if_empty(match: re.Match[str]) -> str:
-            name = match.group(1)
-            supplied = variables.get(name)
-            return "" if supplied is not None and not str(supplied).strip() else match.group(0)
-
-        # The placeholder's own line, plus one blank line after it if there is one.
-        own_line = r"^[ \t]*\{\{\s*(\w+)\s*\}\}[ \t]*"
-        template = re.sub(own_line + r"\n(?:[ \t]*\n)?", drop_if_empty, template, flags=re.M)
-
-        # A placeholder alone on a line contributes its content only, since the template's newline already ends it.
-        sections = set(re.findall(own_line + r"$", template, flags=re.M))
-        variables = {
-            name: str(value).strip() if name in sections else value
-            for name, value in variables.items()
-        }
-
-        # A malformed brace is a template bug, caught before substitution so it is not read as stray output.
-        malformed = re.search(r"\{\{.*?\}\}", placeholder.sub("", template), re.DOTALL)
-        if malformed is not None:
-            raise ValueError(f"Malformed placeholder {malformed.group(0)!r}{where}.")
-
-        def replacer(match: re.Match[str]) -> str:
-            variable_name = match.group(1)
-            if variable_name not in variables:
-                raise ValueError(
-                    f"Unresolved placeholder '{{{{ {variable_name} }}}}'{where}: no value was provided (given: {sorted(variables)})."
-                )
-            # Rendered rather than required to be a string, so an `int` does not raise out of `re.sub`.
-            return str(variables[variable_name])
-
-        # Accept both the spaced ({{ name }}) and unspaced ({{name}}) forms.
-        return placeholder.sub(replacer, template)

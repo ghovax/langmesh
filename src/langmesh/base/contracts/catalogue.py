@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Optional
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader, PromptTemplates
 from langmesh.base.content.instructions import Instruction, as_instructions
 
 
@@ -47,8 +47,8 @@ class Catalogue:
     def prompt(self, name: str, variables: Mapping[str, str]) -> str:
         template = self._prompts.get(name)
         if template is not None:
-            return PromptLoader.render(template, variables, name)
-        return PromptLoader(self._fallback_prompts).load(name, variables)
+            return PromptTemplates.render(template, variables, name)
+        return PackagePromptLoader(self._fallback_prompts).load(name, variables)
 
     def prompt_override(self, name: str) -> Optional[str]:
         """Return the caller-supplied template named ``name`` when present."""

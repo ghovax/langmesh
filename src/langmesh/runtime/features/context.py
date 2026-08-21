@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Callable
 
-from langmesh.base.configuration import AgentConfiguration, Configuration, PromptLoader
+from langmesh.base.configuration import AgentConfiguration, Configuration
+from langmesh.base.content.prompts import PromptTemplates
 from langmesh.base.contracts.ports import CatalogueLike
 from langmesh.runtime.features.bus import PluginBus
 
@@ -27,7 +28,7 @@ class PluginContext:
         agent_configuration: AgentConfiguration,
         global_configuration: Configuration,
         catalogue: CatalogueLike,
-        prompts: Callable[[str], PromptLoader],
+        prompts: Callable[[str], PromptTemplates],
         bus: PluginBus,
     ) -> None:
         self.session_id = session_id

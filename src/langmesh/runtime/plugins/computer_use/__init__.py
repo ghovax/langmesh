@@ -17,7 +17,7 @@ from typing import Any
 
 from langchain.tools import tool
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.limits import current_limits
 from langmesh.base.primitives.serialization import compact
 from langmesh.computer import (
@@ -39,7 +39,7 @@ from langmesh.runtime.tools.execution import current_tool_decision, current_tool
 logger = logging.getLogger(__name__)
 
 #: The tool's model-facing description, read from this plugin's own prompts directory.
-_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
+_DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 
 # The queries this plugin has already asked the screen, so it can tell a rephrasing from a fresh
 # question. The plugin owns its own history; the core never carries a screen-control concept.

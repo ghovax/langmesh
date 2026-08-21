@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, AsyncIterator, Sequence, TypeVar, cast
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader, PromptTemplates
 from langmesh.runtime.features.context import PluginContext
 from langmesh.runtime.features.host import PluginHost
 from langmesh.runtime.session_control import FeatureState
@@ -366,12 +366,12 @@ class Features:
         return None
 
 
-def feature_prompts(name: str, catalogue: Any) -> PromptLoader:
+def feature_prompts(name: str, catalogue: Any) -> PromptTemplates:
     """A plugin's own templates, behind the catalogue's overrides and in front of the shared set."""
     # Anchored on the plugins package itself, so a plugin's templates follow the plugin, not this module.
     directory = Path(plugins_package_root) / name / "prompts"
     overrides = getattr(catalogue, "prompt_override", None)
-    return PromptLoader(
+    return PackagePromptLoader(
         directory,
         overrides=overrides if overrides is not None else None,
         fallback=_CataloguePromptLoader(catalogue),

@@ -11,11 +11,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.runtime.plugins.goal_review.goal import NonBlankText
 
 #: The goal-review plugin's schema descriptions, configurable beside this plugin.
-_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
+_DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 
 #: Where a goal stands after one reading of the work, which is not the same as what the session says about it.
 GOAL_STANDING = Literal["unmet", "satisfied", "blocked"]
