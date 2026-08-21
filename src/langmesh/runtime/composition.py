@@ -67,8 +67,8 @@ class RuntimeComponents:
     prompt_composer: Any = None
     prompt_revision: str = ""
     toolbox: Any = None
-    tools: Sequence[BaseTool] = field(default_factory=tuple)
-    toolset: Sequence[BaseTool] | None = None
+    application_tools: Sequence[BaseTool] = field(default_factory=tuple)
+    available_tools: Sequence[BaseTool] | None = None
     tool_gate: str = "ask"
     hooks: Sequence[Any] = field(default_factory=tuple)
     middleware: Sequence[Any] = field(default_factory=tuple)
@@ -87,10 +87,10 @@ class RuntimeComponents:
     def __post_init__(self) -> None:
         if self.tool_gate not in {"ask", "none"}:
             raise ValueError("tool_gate must be 'ask' or 'none'")
-        for name in ("tools", "hooks", "middleware"):
+        for name in ("application_tools", "hooks", "middleware"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
-        if self.toolset is not None:
-            object.__setattr__(self, "toolset", tuple(self.toolset))
+        if self.available_tools is not None:
+            object.__setattr__(self, "available_tools", tuple(self.available_tools))
         if self.features is not None:
             object.__setattr__(self, "features", tuple(self.features))
 

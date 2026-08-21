@@ -292,11 +292,13 @@ class AgentRuntime(_RunsTurns):
 
         self._file_lease_manager = components.file_leases
         # Caller-supplied tools join the initial provider schema, while a later grant deliberately changes that schema once.
-        supplied_tools = tuple(components.tools)
+        supplied_tools = tuple(components.application_tools)
         # What a caller's tool is gated at: asking by default, so adding one cannot silently widen a session.
         self._tool_gate = components.tool_gate
-        # The session's tools are composed by the caller, never forced: the complete roster comes from `toolset`, additions from `tools`/`grant_tool`, and nothing is injected by default.
-        configured_tools = list(components.toolset) if components.toolset is not None else []
+        # The caller supplies the complete roster and any application replacements, while later grants change it explicitly.
+        configured_tools = (
+            list(components.available_tools) if components.available_tools is not None else []
+        )
         # Every tool a session runs carries the shared `explanation` field, added here once.
         configured_tools = [with_shared_fields(tool) for tool in configured_tools]
         # The dispatchable units: every tool the session runs, assembled from the configured set and caller-supplied replacements.
@@ -668,7 +670,7 @@ class AgentRuntime(_RunsTurns):
         """One tool of a given name from the executable set, for a sub-session being bound down to its verdict tool."""
         return [tool for tool in self._tools if tool.name == tool_name]
 
-    def constrain_toolset(self, only: Sequence[BaseTool]) -> None:
+    def retain_tools(self, only: Sequence[BaseTool]) -> None:
         """Bind the session down to exactly the given tools, as a reviewer or summarizer's one verdict tool."""
         self._tools = list(only)
         self._tool_schemas = {tool.name: tool.args_schema for tool in only}

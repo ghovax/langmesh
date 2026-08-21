@@ -755,7 +755,7 @@ class Compaction(Feature):
         summary_tool = next(
             tool for tool in summarizer.constrained_tool_named("submit_compaction_summary")
         )
-        summarizer.constrain_toolset([summary_tool])
+        summarizer.retain_tools([summary_tool])
 
     def _compaction_summarizer_runtime(self):
         """The hidden session that produces the compaction summary, mirroring the goal reviewer."""
@@ -809,7 +809,7 @@ class Compaction(Feature):
                 sessions=None,
                 mcp_servers=self._host.tools.tool_context.mcp_server_manager,
                 # The hidden summarizer is one summary call: only its verdict tool is bound.
-                toolset=(submit_compaction_summary_tool,),
+                available_tools=(submit_compaction_summary_tool,),
                 tool_gate=self._host.tools.tool_gate,
                 permissions=summarizer_permissions,
                 features=[

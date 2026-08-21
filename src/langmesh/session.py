@@ -128,7 +128,7 @@ class Session:
         if tools:
             components = dataclasses.replace(
                 components,
-                tools=[*components.tools, *tools],
+                application_tools=[*components.application_tools, *tools],
             )
         self._components = components
         # Tools handed to `grant_tool` before the runtime exists join its initial stable schema.

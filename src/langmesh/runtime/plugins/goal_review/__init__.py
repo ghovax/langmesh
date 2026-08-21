@@ -247,11 +247,11 @@ class GoalReviewFeature(Feature):
                 sessions=None,
                 mcp_servers=self._host.tools.tool_context.mcp_server_manager,
                 # The verdict tool is injected here and only here: the main session never carries it.
-                tools=[submit_goal_review],
+                application_tools=[submit_goal_review],
                 tool_gate=self._host.tools.tool_gate,
                 permissions=reviewer_permissions,
                 # A reviewer inherits only the investigative tools this plugin names explicitly.
-                toolset=tuple(
+                available_tools=tuple(
                     tool
                     for tool in self._host.tools.model_tools
                     if tool.name in _REVIEWER_TOOLS
@@ -335,7 +335,7 @@ class GoalReviewFeature(Feature):
     def _require_review_submission(reviewer) -> None:
         """Constrain a reviewer that already investigated to its one accepted verdict tool, including what the model is bound to."""
         review_tool = next(tool for tool in reviewer.constrained_tool_named("submit_goal_review"))
-        reviewer.constrain_toolset([review_tool])
+        reviewer.retain_tools([review_tool])
 
     async def review(
         self, publish: Callable[[TurnEvent], Awaitable[None]] | None = None

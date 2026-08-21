@@ -979,7 +979,7 @@ class SessionExecutor(AgentExecutor):
                 mcp_servers=self._mcp_server_manager,
                 jobs=self._job_store,
                 artifacts=self._artifact_store(session_id),
-                toolset=composed,
+                available_tools=composed,
                 related_turns=self._build_turn_reader(),
                 features=(bundle.get("features") or []),
                 services=bundle.get("services"),
