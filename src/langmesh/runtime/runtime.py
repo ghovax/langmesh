@@ -562,12 +562,6 @@ class AgentRuntime(_RunsTurns):
                 "components": self._components.prompt_revision,
                 "features": self._features.prompt_revision(),
                 "profile": {
-                    "session": self._session_id,
-                    "parent": self._parent_session,
-                    "working_directory": self._working_directory,
-                    "project_directory": self._project_directory,
-                    "workspace_strategy": self._global_configuration.workspace.strategy,
-                    "sandbox_enforcement": self._global_configuration.sandbox.enforce,
                     "user_context_enabled": bool(user_context and user_context.enabled),
                 },
                 "prompt_composer": (
@@ -884,7 +878,7 @@ class AgentRuntime(_RunsTurns):
             restore_model_cache(snapshot.model_cache)
         prompt = snapshot.system_prompt
         if prompt is not None and prompt.revision == self._system_prompt_revision():
-            self._cached_system_prompt = prompt.content
+            self._cached_system_prompt = prompt.instructions
             self._rendered_prompt = prompt
         else:
             self._cached_system_prompt = None

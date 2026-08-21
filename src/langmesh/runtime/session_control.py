@@ -106,9 +106,9 @@ class FeatureState:
 
 @dataclass(frozen=True)
 class RenderedPrompt:
-    """The exact system prompt sent upstream and the construction revision that produced it."""
+    """The exact stable instructions sent upstream and their construction revision."""
 
-    content: str
+    instructions: str
     revision: str
 
 
@@ -172,7 +172,7 @@ class SessionSnapshot:
             else None,
             model_cache=data.get("model_cache"),
             system_prompt=RenderedPrompt(
-                content=str(raw_prompt.get("content") or ""),
+                instructions=str(raw_prompt.get("instructions") or ""),
                 revision=str(raw_prompt.get("revision") or ""),
             )
             if isinstance(raw_prompt, Mapping)

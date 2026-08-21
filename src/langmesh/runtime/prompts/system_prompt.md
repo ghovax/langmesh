@@ -1,9 +1,3 @@
-## Session context
-
-```json
-{{ context }}
-```
-
 {{ agent_context }}
 
 {{ instructions }}

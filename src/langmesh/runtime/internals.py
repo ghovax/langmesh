@@ -18,7 +18,6 @@ from langmesh.base.content.models import find_model
 from langmesh.runtime.boundary import Escape
 from langmesh.base.primitives.limits import current_limits, clip_to_tokens, count_tokens
 from langchain_core.messages import AIMessageChunk
-from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 from langmesh.base.primitives.serialization import compact
 
@@ -214,23 +213,6 @@ def _model_result_status(content: str, *, ok: bool, backgrounded: bool) -> tuple
     if backgrounded:
         return ToolStatus.RUNNING.value, code
     return tool_status_from_result(parsed).value, code
-
-
-def _detect_workspace(working_directory: str) -> tuple[str, bool]:
-    """``(worktree_root, is_git_repo)``, walking up for a ``.git`` marker and falling back to the directory."""
-    base = (
-        Path(working_directory).expanduser().resolve()
-        if working_directory
-        else Path.cwd().resolve()
-    )
-    current = base
-    while True:
-        if (current / ".git").exists():
-            return str(current), True
-        if current == current.parent:
-            break
-        current = current.parent
-    return str(base), False
 
 
 def _container_origins(annotation: Any) -> set:
