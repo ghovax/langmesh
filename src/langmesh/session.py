@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import dataclasses
 import logging
 from pathlib import Path
@@ -588,14 +587,19 @@ class Session:
         return tuple(self.runtime.conversation)
 
     async def aclose(self) -> None:
-        """Release resources owned by this session without disturbing another session in the process."""
-        if self._runtime is not None:
-            with contextlib.suppress(Exception):
-                self._runtime.abort()
-        self._runtime = None
-        self._restored = False
-        self._phase = SessionPhase.IDLE
-        self._pending = None
+        """Checkpoint this session and release its in-process runtime."""
+        runtime = self._runtime
+        if runtime is None:
+            return
+        runtime.interrupt_for_restart()
+        async with self._turn_lock:
+            if not self._restored:
+                await self._restore()
+            await self._save()
+            self._runtime = None
+            self._restored = False
+            self._phase = SessionPhase.IDLE
+            self._pending = None
 
     async def __aenter__(self) -> "Session":
         return self
