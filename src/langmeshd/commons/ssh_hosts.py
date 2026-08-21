@@ -1,4 +1,4 @@
-"""The SSH host registry, sourced from the user's own configuration through the system `ssh`."""
+"""Discover SSH hosts from the daemon user's own OpenSSH configuration."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _PATTERN_CHARACTERS = set("*?!")
 
 @dataclass(frozen=True)
 class SshHost:
-    """A connectable host from the configuration: its alias, plus the coordinates `ssh -G` resolved."""
+    """A connectable host and the coordinates resolved by OpenSSH."""
 
     alias: str
     hostname: str
@@ -23,13 +23,13 @@ class SshHost:
     identity_files: tuple[str, ...] = field(default_factory=tuple)
 
 
-def _configuration_paths(configuration_path: Path, _seen: set[Path] | None = None) -> list[Path]:
-    """The configuration file and every include, glob-expanded and resolved from its includer."""
-    seen = _seen if _seen is not None else set()
+def _configuration_paths(configuration_path: Path, seen: set[Path] | None = None) -> list[Path]:
+    """Return the configuration file and every recursively included file."""
+    visited = seen if seen is not None else set()
     resolved = configuration_path.expanduser()
-    if resolved in seen or not resolved.is_file():
+    if resolved in visited or not resolved.is_file():
         return []
-    seen.add(resolved)
+    visited.add(resolved)
     paths = [resolved]
     try:
         lines = resolved.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -49,7 +49,7 @@ def _configuration_paths(configuration_path: Path, _seen: set[Path] | None = Non
                 bases.append(DEFAULT_SSH_CONFIGURATION_PATH.parent)
             for base in bases:
                 for match in sorted(glob.glob(str((base / token).expanduser()))):
-                    paths.extend(_configuration_paths(Path(match), seen))
+                    paths.extend(_configuration_paths(Path(match), visited))
     return paths
 
 
@@ -76,7 +76,7 @@ def _literal_aliases(configuration_path: Path) -> list[str]:
 
 
 def resolve_host(alias: str, *, timeout: float = 5.0) -> SshHost | None:
-    """Resolve one alias with `ssh -G`, which prints effective configuration without connecting."""
+    """Resolve one alias through OpenSSH without making a connection."""
     try:
         completed = subprocess.run(
             ["ssh", "-G", alias],
@@ -110,11 +110,20 @@ def resolve_host(alias: str, *, timeout: float = 5.0) -> SshHost | None:
     )
 
 
-def list_ssh_hosts(configuration_path: Path = DEFAULT_SSH_CONFIGURATION_PATH) -> list[SshHost]:
-    """Every connectable host in the SSH configuration, resolved; a missing file gives []."""
-    hosts: list[SshHost] = []
-    for alias in _literal_aliases(configuration_path):
-        host = resolve_host(alias)
-        if host is not None:
-            hosts.append(host)
-    return hosts
+def list_ssh_hosts(
+    configuration_path: Path = DEFAULT_SSH_CONFIGURATION_PATH,
+) -> list[SshHost]:
+    """Return every literal and connectable host from an OpenSSH configuration."""
+    return [
+        host
+        for alias in _literal_aliases(configuration_path)
+        if (host := resolve_host(alias)) is not None
+    ]
+
+
+def host_is_defined(alias: str) -> bool:
+    """Return whether an alias is declared and resolvable in the daemon user's configuration."""
+    return any(host.alias == alias for host in list_ssh_hosts())
+
+
+__all__ = ["SshHost", "host_is_defined", "list_ssh_hosts", "resolve_host"]

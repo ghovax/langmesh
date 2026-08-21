@@ -66,6 +66,8 @@ class ToolServices:
     pipeline: Any = None
     tools: Any = None
     project_directory: str = ""
+    plugin_services: Any = None
+    artifacts: Any = None
 
 
 # The services bound around the current dispatch, so a schema tool invoked directly (`.ainvoke`) resolves the same handler the runtime's generic dispatch uses.

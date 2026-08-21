@@ -26,7 +26,7 @@ from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base.confinement import Grant, Profile
 from langmesh.base.content.models import find_model, resolve_litellm
 from langmesh.base.contracts.catalogue import project_catalogue
-from langmesh.base.contracts.ports import Observation
+from langmesh.base.contracts.ports import Artifacts, MemoryArtifacts, Observation, describe_unmet
 from langmesh.base.primitives.serialization import content_address
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.environment import RuntimeEnvironment
@@ -264,7 +264,7 @@ class AgentRuntime(_RunsTurns):
         self._sandbox = _as_profile(profile.sandbox)
         self._agent_configuration = profile.agent
         self._global_configuration = profile.configuration
-        self._working_directory = profile.working_directory or str(Path.home())
+        self._working_directory = profile.working_directory
         self._project_directory = profile.project_directory or self._working_directory
         # The host already resolved the session mode; a direct library caller falls back to the profile.
         self._permission_mode = PermissionMode.resolve(
@@ -378,6 +378,9 @@ class AgentRuntime(_RunsTurns):
         self._a2a_turn_id: str = ""
         # Reads another task by id from the shared store, so context-aware agents can coordinate.
         self._turn_reader: Optional[Callable] = components.related_turns
+        self._artifacts = components.artifacts or MemoryArtifacts()
+        if unmet := describe_unmet(Artifacts, self._artifacts):
+            raise TypeError(f"artifacts: {unmet}")
         # Steering is a plain FIFO drained at the model boundary, never a queue raced against the stream.
         self._pending_steering: list[tuple[str, str, str, asyncio.Future[bool]]] = []
         self._active_tool_tasks: dict[str, asyncio.Task] = {}
@@ -516,6 +519,8 @@ class AgentRuntime(_RunsTurns):
             pipeline=self._pipeline,
             tools=lambda: self._tools,
             project_directory=self._project_directory or "",
+            plugin_services=components.services,
+            artifacts=self._artifacts,
         )
 
     def note_attachments(self, paths: Sequence[str]) -> None:
@@ -613,7 +618,7 @@ class AgentRuntime(_RunsTurns):
 
     def _canonical_working_directory(self, working_directory: str | None = None) -> str:
         return str(
-            Path(working_directory or self._working_directory or Path.home())
+            Path(working_directory or self._working_directory)
             .expanduser()
             .resolve(strict=False)
         )

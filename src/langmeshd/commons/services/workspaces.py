@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from langmesh.runtime.plugins.locations import ssh_hosts as _ssh_hosts
 from langmesh.protocol.dtos import LocationInput, WorkspaceCreateRequest
 from pathlib import Path
 from typing import Any
 import subprocess
 from langmesh.base.primitives.identifiers import new_id
 from langmeshd.commons import state
+from langmeshd.commons import ssh_hosts as _ssh_hosts
 from langmeshd.commons.database import LocationRecord, WorkspaceRecord, SessionRecord
 from langmeshd.commons.services.locations import (
     _add_location_row,

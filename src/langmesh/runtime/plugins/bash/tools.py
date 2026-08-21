@@ -12,6 +12,7 @@ from langchain.tools import tool
 
 from langmesh.base import confinement as _confinement
 from langmesh.base.content.prompts import PackagePromptLoader
+from langmesh.base.primitives.identifiers import new_id
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.primitives.limits import current_limits, clip_to_tokens
 from langmesh.runtime.background import (
@@ -20,6 +21,7 @@ from langmesh.runtime.background import (
     record_child_group,
 )
 from langmesh.runtime.tools import context as tool_context
+from langmesh.runtime.tools.execution import current_tool_services
 
 #: The tool's model-facing description, read from this plugin's own prompts directory.
 _DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
@@ -36,7 +38,9 @@ async def bash(
     """Run a shell command inside the session's confinement; described in descriptions/bash.md."""
     active = tool_context.current()
     profile, workspace = active.sandbox, active.workspace
-    output_path = active.spill_path("bash")
+    job_id = new_id("bg")
+    artifacts = current_tool_services().artifacts
+    artifact_identifier = f"{job_id}-output"
     process_holder: dict[str, Any] = {}
 
     def cancel_process() -> None:
@@ -73,6 +77,22 @@ async def bash(
             start_new_session=True,
         )
         process_holder["process"] = process
+        writer = await artifacts.create(
+            f"{job_id}.log", "text/plain", identifier=artifact_identifier
+        )
+        artifact = None
+
+        async def finish_output():
+            nonlocal artifact
+            if artifact is None:
+                artifact = await writer.close()
+            return artifact
+
+        async def read_output() -> str:
+            reference = await finish_output()
+            content = await artifacts.read(reference.identifier) or b""
+            return content.decode(errors="replace")
+
         process_id = process.pid
         # Persist the group id, so a subtree orphaned by a crash is reaped on the next startup.
         try:
@@ -83,21 +103,15 @@ async def bash(
         except (ProcessLookupError, OSError):
             pass
 
-        async def write_stream(stream, handle):
+        async def write_stream(stream):
             while True:
                 line = await stream.readline()
                 if not line:
                     break
-                handle.write(line.decode())
-                handle.flush()
+                await writer.write(line)
 
         try:
-            with output_path.open("w") as file_handle:
-                await asyncio.gather(
-                    write_stream(process.stdout, file_handle),
-                    write_stream(process.stderr, file_handle),
-                )
-
+            await asyncio.gather(write_stream(process.stdout), write_stream(process.stderr))
             await process.wait()
         except asyncio.CancelledError:
             cancel_process()
@@ -114,26 +128,23 @@ async def bash(
                     except ProcessLookupError:
                         pass
                 await process.wait()
-            # Read off the loop: a large log would otherwise block every session sharing it.
-            output = (
-                await asyncio.to_thread(output_path.read_text, errors="replace")
-                if output_path.exists()
-                else ""
-            )
+            output = await read_output()
             inline_output, output_truncated = clip_to_tokens(output, current_limits().output_tokens)
             payload = {
                 "code": "bash_cancelled",
                 "status": "error",
                 "output": inline_output,
-                "output_file": str(output_path),
+                "output_artifact": artifact_identifier,
                 "truncated": output_truncated,
                 "pid": process_id,
                 "size": len(output),
                 "returncode": process.returncode,
             }
             return compact(payload)
-        # Off the loop, for the same reason: a multi-megabyte output must not stall it.
-        output = await asyncio.to_thread(output_path.read_text)
+        except BaseException:
+            await finish_output()
+            raise
+        output = await read_output()
         # A non-zero exit is a failure the model must see, or `exit 7` reads as success.
         return_code = process.returncode or 0
         result_code = "bash_completed" if return_code == 0 else "bash_failed"
@@ -144,7 +155,7 @@ async def bash(
                     "code": result_code,
                     "status": result_status,
                     "output": "",
-                    "output_file": str(output_path),
+                    "output_artifact": artifact_identifier,
                     "truncated": False,
                     "pid": process_id,
                     "size": 0,
@@ -156,7 +167,7 @@ async def bash(
             "code": result_code,
             "status": result_status,
             "output": inline_output,
-            "output_file": str(output_path),
+            "output_artifact": artifact_identifier,
             "truncated": truncated,
             "pid": process_id,
             "size": len(output),
@@ -165,10 +176,10 @@ async def bash(
         return compact(result)
 
     jobs = current_background_jobs()
-    job_id = jobs.spawn(
+    jobs.spawn(
         "bash",
         run(),
-        output_path=output_path,
+        identifier=job_id,
         cancel_callback=cancel_process,
         arguments={
             "command": command,
@@ -191,7 +202,7 @@ async def bash(
             "code": "bash_started",
             "status": "running",
             "job_id": job_id,
-            "output_file": str(output_path),
+            "output_artifact": artifact_identifier,
         }
     )
 

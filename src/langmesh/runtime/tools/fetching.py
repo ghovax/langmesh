@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import minify_html
@@ -15,6 +13,9 @@ from markdownify import markdownify as _markdownify
 from langmesh.base.primitives.limits import current_limits, clip_to_tokens
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools import context as tool_context
+
+if TYPE_CHECKING:
+    from langmesh.base.contracts.ports import Artifacts
 
 #: The formats a caller may ask for, the first being what an unrecognised one falls back to.
 _FORMATS = ("markdown", "text", "html")
@@ -61,7 +62,12 @@ def _http_url(url: str) -> str:
     return url
 
 
-async def fetch_url(url: str, output_format: str = "markdown", timeout_seconds: int = 30) -> str:
+async def fetch_url(
+    url: str,
+    output_format: str = "markdown",
+    timeout_seconds: int = 30,
+    artifacts: Artifacts | None = None,
+) -> str:
     """Fetch a URL in the requested format, through a cascade of engines each better at defeating a wall than the last."""
     output_format = (output_format or "").lower()
     if output_format not in _FORMATS:
@@ -76,11 +82,16 @@ async def fetch_url(url: str, output_format: str = "markdown", timeout_seconds: 
         "truncated": truncated,
     }
     if truncated:
-        # The whole page goes to scratch, since what was clipped is what the reader most likely wants next.
-        output_path = tool_context.current().spill_path("fetch")
-        output_path.write_text(content)
-        fields["output_file"] = str(output_path)
+        if artifacts is None:
+            inline_content = content
+            truncated = False
+        else:
+            writer = await artifacts.create("fetched-page", f"text/{output_format}")
+            await writer.write(content.encode())
+            reference = await writer.close()
+            fields["content_artifact"] = reference.identifier
         fields["size"] = len(content)
+        fields["truncated"] = truncated
     fields["content"] = inline_content
     return _payload("fetch_completed", **fields)
 
@@ -166,28 +177,27 @@ async def _fetch_direct(url: str, output_format: str, timeout_seconds: int) -> s
     return _markdownify(body)
 
 
-async def download_file(
+async def download(
     url: str,
-    resolved_path: str,
+    artifacts: Artifacts,
     timeout_seconds: int = 120,
 ) -> str:
-    """Download a URL's bytes and write them to ``resolved_path``."""
+    """Download a URL's bytes into the caller-supplied artifact store."""
     response = await _impersonated_get(_http_url(url), timeout_seconds)
     data = response.content
-    content_type = response.headers.get("content-type", "")
-    await asyncio.to_thread(_write_local, resolved_path, data)
+    content_type = response.headers.get("content-type", "application/octet-stream")
+    name = urlparse(url).path.rsplit("/", 1)[-1] or "download"
+    writer = await artifacts.create(name, content_type)
+    await writer.write(data)
+    reference = await writer.close()
     return _payload(
         "download_completed",
         url=url,
-        path=resolved_path,
+        artifact=reference.identifier,
+        name=reference.name,
         bytes=len(data),
         content_type=content_type,
     )
-
-
-def _write_local(path: str, data: bytes) -> None:
-    Path(path).expanduser().parent.mkdir(parents=True, exist_ok=True)
-    Path(path).expanduser().write_bytes(data)
 
 
 def _minified(html: str) -> str:
@@ -211,4 +221,4 @@ def _text_from_html(html: str) -> str:
     return re.sub(r"[ \t]+", " ", re.sub(r"\n{3,}", "\n\n", page.get_text())).strip()
 
 
-__all__ = ["fetch_url", "download_file"]
+__all__ = ["download", "fetch_url"]
