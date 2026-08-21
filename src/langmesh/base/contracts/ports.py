@@ -18,9 +18,7 @@ from typing import (
 
 if TYPE_CHECKING:  # pragma: no cover - import only for typing; `base` stays free of langchain
     from langchain_core.language_models.chat_models import BaseChatModel
-    from pathlib import Path
-
-    from langmesh.base.content.attachments import ComposedAttachments
+    from langmesh.base.content.attachments import Attachment, ComposedAttachments
     from langmesh.runtime.session_control import SessionCheckpoint
 
     # The model seam as a type: every provider and every mock in that ecosystem already implements it.
@@ -158,12 +156,12 @@ class Checkpoints(Protocol):
 
 @runtime_checkable
 class Attachments(Protocol):
-    """Composes application-owned paths into one model-facing turn input."""
+    """Composes application-owned attachment values into one model-facing turn input."""
 
     def compose(
         self,
         message: str,
-        attachments: Sequence[Path],
+        attachments: Sequence[Attachment],
         model_identifier: str,
         inline_image_bytes: int,
     ) -> ComposedAttachments: ...
@@ -512,18 +510,6 @@ class FileLeases(Protocol):
 
 
 @runtime_checkable
-class WorkspaceManager(Protocol):
-    """Prepares the directory in which a session's tools execute."""
-
-    async def prepare(
-        self,
-        session_id: str,
-        source_working_directory: str,
-        strategy: str,
-    ) -> Any: ...
-
-
-@runtime_checkable
 class SessionAccess(Protocol):
     """Creates and addresses peer sessions without coupling the core to a host transport."""
 
@@ -656,6 +642,5 @@ __all__ = [
     "TurnHook",
     "Transcript",
     "TurnSummary",
-    "WorkspaceManager",
     "describe_unmet",
 ]

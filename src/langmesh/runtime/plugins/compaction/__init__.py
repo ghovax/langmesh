@@ -13,7 +13,6 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from itertools import accumulate, takewhile
-from tempfile import TemporaryDirectory
 from typing import Any, AsyncIterator, Literal, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -665,93 +664,89 @@ class Compaction(Feature):
                 return None
             return str(summary or "").strip() or None
         instruction = self._prompts.load("compaction_summary", {})
-        with TemporaryDirectory(prefix="langmesh-compaction-summary-") as scratch_directory:
-            summarizer = self._compaction_summarizer_runtime(scratch_directory)
-            try:
-                from langmesh.runtime.verdict import drive_verdict_session
+        summarizer = self._compaction_summarizer_runtime()
+        try:
+            from langmesh.runtime.verdict import drive_verdict_session
 
-                summary_attempts = self._context.global_configuration.compaction.summary_attempts
-                last_text = ""
+            summary_attempts = self._context.global_configuration.compaction.summary_attempts
+            last_text = ""
 
-                async def _run_turn(current_instruction: str) -> bool:
-                    nonlocal last_text
-                    streamed: dict[str, Any] = {"last_text": "", "last_usage": None}
+            async def _run_turn(current_instruction: str) -> bool:
+                nonlocal last_text
+                streamed: dict[str, Any] = {"last_text": "", "last_usage": None}
 
-                    async def _consume() -> None:
-                        with cache_lane("compaction-summary"):
-                            async for _event in summarizer.stream(
-                                current_instruction, as_system_note=False, opens_exchange=True
-                            ):
-                                # The hidden session is private: nothing here is published.
-                                if isinstance(_event, Done):
-                                    streamed["last_text"] = _event.text
-                                if isinstance(_event, Usage):
-                                    streamed["last_usage"] = _event
+                async def _consume() -> None:
+                    with cache_lane("compaction-summary"):
+                        async for _event in summarizer.stream(
+                            current_instruction, as_system_note=False, opens_exchange=True
+                        ):
+                            if isinstance(_event, Done):
+                                streamed["last_text"] = _event.text
+                            if isinstance(_event, Usage):
+                                streamed["last_usage"] = _event
 
-                    stream_task = asyncio.create_task(_consume())
-                    if await race_interrupt(stream_task, self._host.turn.abort_event):
-                        summarizer.abort()
-                    await stream_task
-                    last_text = streamed["last_text"] or last_text
-                    last_usage = streamed["last_usage"]
-                    if last_usage is not None:
-                        logger.info(
-                            "compaction summary cache lane=compaction-summary cache_prefix_reusable=%s cache_read_tokens=%d cache_write_tokens=%d reusable_prefix_tokens=%d shared_segments=%d segments=%d input_tokens=%d output_tokens=%d",
-                            cache_prefix_label(last_usage.cache_prefix_reusable),
-                            last_usage.cache_read_tokens,
-                            last_usage.cache_write_tokens,
-                            last_usage.reusable_prefix_tokens,
-                            last_usage.shared_segments,
-                            last_usage.segments,
-                            last_usage.input_tokens,
-                            last_usage.output_tokens,
-                        )
-                    return not self._host.turn.abort_event.is_set()
-
-                def _submitted():
-                    feature = summarizer._features.by_type(Compaction)
-                    return feature.submitted_summary if feature is not None else None
-
-                def _on_empty(attempt: int, maximum: int) -> None:
-                    logger.warning(
-                        "the compaction summarizer stopped without submitting its summary (attempt %d/%d); continuing it",
-                        attempt,
-                        maximum,
+                stream_task = asyncio.create_task(_consume())
+                if await race_interrupt(stream_task, self._host.turn.abort_event):
+                    summarizer.abort()
+                await stream_task
+                last_text = streamed["last_text"] or last_text
+                last_usage = streamed["last_usage"]
+                if last_usage is not None:
+                    logger.info(
+                        "compaction summary cache lane=compaction-summary cache_prefix_reusable=%s cache_read_tokens=%d cache_write_tokens=%d reusable_prefix_tokens=%d shared_segments=%d segments=%d input_tokens=%d output_tokens=%d",
+                        cache_prefix_label(last_usage.cache_prefix_reusable),
+                        last_usage.cache_read_tokens,
+                        last_usage.cache_write_tokens,
+                        last_usage.reusable_prefix_tokens,
+                        last_usage.shared_segments,
+                        last_usage.segments,
+                        last_usage.input_tokens,
+                        last_usage.output_tokens,
                     )
+                return not self._host.turn.abort_event.is_set()
 
-                def _on_exhausted():
-                    logger.error(
-                        "compaction summarizer did not submit after %d attempts; last text: %r",
-                        summary_attempts,
-                        last_text,
-                    )
-                    raise CompactionSummaryExhausted(
-                        f"The compaction summarizer did not submit a summary after {summary_attempts} attempts, so the conversation was not compacted."
-                    )
+            def _submitted():
+                feature = summarizer._features.by_type(Compaction)
+                return feature.submitted_summary if feature is not None else None
 
-                submitted = await drive_verdict_session(
-                    attempts=summary_attempts,
-                    reason="compaction summary",
-                    run_turn=_run_turn,
-                    submitted=_submitted,
-                    require_submission=lambda: self._require_summary_submission(summarizer),
-                    missing_instruction=lambda: self._prompts.load(
-                        "compaction_summary_missing", {}
-                    ),
-                    aborted=lambda: self._host.turn.abort_event.is_set(),
-                    initial_instruction=instruction,
-                    on_empty=_on_empty,
-                    on_exhausted=_on_exhausted,
+            def _on_empty(attempt: int, maximum: int) -> None:
+                logger.warning(
+                    "the compaction summarizer stopped without submitting its summary (attempt %d/%d); continuing it",
+                    attempt,
+                    maximum,
                 )
-                if submitted is not None:
-                    return str(submitted.summary or "").strip() or None
-            except CompactionSummaryExhausted:
-                raise
-            except Exception as error:  # noqa: BLE001 — a failed summary never blocks the compaction
-                logger.exception("compaction summary failed; compacting without one: %s", error)
-                return None
-            finally:
-                summarizer.abort()
+
+            def _on_exhausted():
+                logger.error(
+                    "compaction summarizer did not submit after %d attempts; last text: %r",
+                    summary_attempts,
+                    last_text,
+                )
+                raise CompactionSummaryExhausted(
+                    f"The compaction summarizer did not submit a summary after {summary_attempts} attempts, so the conversation was not compacted."
+                )
+
+            submitted = await drive_verdict_session(
+                attempts=summary_attempts,
+                reason="compaction summary",
+                run_turn=_run_turn,
+                submitted=_submitted,
+                require_submission=lambda: self._require_summary_submission(summarizer),
+                missing_instruction=lambda: self._prompts.load("compaction_summary_missing", {}),
+                aborted=lambda: self._host.turn.abort_event.is_set(),
+                initial_instruction=instruction,
+                on_empty=_on_empty,
+                on_exhausted=_on_exhausted,
+            )
+            if submitted is not None:
+                return str(submitted.summary or "").strip() or None
+        except CompactionSummaryExhausted:
+            raise
+        except Exception as error:  # noqa: BLE001 — a failed summary never blocks the compaction
+            logger.exception("compaction summary failed; compacting without one: %s", error)
+            return None
+        finally:
+            summarizer.abort()
         return None
 
     @staticmethod
@@ -762,7 +757,7 @@ class Compaction(Feature):
         )
         summarizer.constrain_toolset([summary_tool])
 
-    def _compaction_summarizer_runtime(self, scratch_directory: str):
+    def _compaction_summarizer_runtime(self):
         """The hidden session that produces the compaction summary, mirroring the goal reviewer."""
         summarizer_configuration = self._context.agent_configuration.model_copy(
             update={"permission_mode": "automatic"}
@@ -793,17 +788,9 @@ class Compaction(Feature):
         )
         granted_sandbox = self._host.boundary.granted_profile()
         summarizer_sandbox = granted_sandbox.narrowed(
-            writable=(scratch_directory,),
+            writable=(),
             network=granted_sandbox.network,
             workspace=self._context.working_directory,
-        )
-        summarizer_sandbox = replace(
-            summarizer_sandbox,
-            environment={
-                **summarizer_sandbox.environment,
-                "TMPDIR": scratch_directory,
-                "XDG_CACHE_HOME": scratch_directory,
-            },
         )
         summarizer = AgentRuntime(
             RuntimeProfile(

@@ -116,7 +116,6 @@ class SessionComponents(RuntimeComponents):
     checkpoints: Any = None
     attachments: Any = None
     credentials: Any = None
-    workspace: Any = None
     tracer_provider: Any = None
 
     def for_runtime(self, **updates: Any) -> RuntimeComponents:

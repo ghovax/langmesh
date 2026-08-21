@@ -18,7 +18,6 @@ import jwt
 
 from a2a.types import FilePart, FileWithBytes, FileWithUri
 
-from langmesh.base.content.attachments import attachment_from_path
 from langmesh.base.confinement.outbound import UntrustedHostError, pin_to_ip, resolve_public_ips
 from langmesh.base.persistence.secrets import ensure_private_value
 
@@ -35,6 +34,23 @@ DEFAULT_MAXIMUM_FILE_BYTES = 50 * 1024 * 1024
 
 # A small file is emitted inline as bytes, so it reaches the peer even if it cannot fetch back.
 DEFAULT_INLINE_MAXIMUM_BYTES = 256 * 1024
+
+
+def attachment_from_path(path: Path | str) -> dict[str, Any]:
+    """Describe a local file for the daemon protocol without copying it."""
+    resolved = Path(path).expanduser().resolve(strict=True)
+    if not resolved.is_file():
+        raise FileNotFoundError(f"{resolved} is not a regular file.")
+    name = resolved.name
+    return {
+        "upload_id": f"ref-{time.strftime('%Y%m%d%H%M%S', time.gmtime())}-{os.urandom(4).hex()}",
+        "title": name,
+        "filename": name,
+        "path": str(resolved),
+        "mime_type": mimetypes.guess_type(name)[0] or "application/octet-stream",
+        "size": resolved.stat().st_size,
+        "sha256": "",
+    }
 
 
 @asynccontextmanager

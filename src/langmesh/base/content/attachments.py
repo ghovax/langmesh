@@ -1,14 +1,10 @@
-"""Model-facing composition for paths an application attaches to a turn."""
+"""Model-facing attachment composition over caller-supplied values."""
 
 from __future__ import annotations
 
 import base64
-import mimetypes
-import os
-import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from langmesh.base.content.models import find_model
 from langmesh.base.primitives.serialization import compact
@@ -26,21 +22,33 @@ class ComposedAttachments:
     omitted_image_count: int = 0
 
 
-def attachment_from_path(path: Path | str) -> dict[str, Any]:
-    """Describe a regular local file in place without copying it."""
-    resolved = Path(path).expanduser().resolve(strict=True)
-    if not resolved.is_file():
-        raise FileNotFoundError(f"{resolved} is not a regular file.")
-    name = resolved.name
-    return {
-        "upload_id": f"ref-{time.strftime('%Y%m%d%H%M%S', time.gmtime())}-{os.urandom(4).hex()}",
-        "title": name,
-        "filename": name,
-        "path": str(resolved),
-        "mime_type": mimetypes.guess_type(name)[0] or "application/octet-stream",
-        "size": resolved.stat().st_size,
-        "sha256": "",
-    }
+@dataclass(frozen=True)
+class Attachment:
+    """Attachment metadata and optional inline bytes supplied by the caller."""
+
+    identifier: str
+    name: str
+    media_type: str = "application/octet-stream"
+    data: bytes | None = None
+    path: str = ""
+    digest: str = ""
+
+    @property
+    def size(self) -> int:
+        """The byte size available to the composer."""
+        return len(self.data) if self.data is not None else 0
+
+    def record(self) -> dict[str, Any]:
+        """Return the transport metadata without embedding the bytes twice."""
+        return {
+            "upload_id": self.identifier,
+            "title": self.name,
+            "filename": self.name,
+            "path": self.path,
+            "mime_type": self.media_type,
+            "size": self.size,
+            "sha256": self.digest,
+        }
 
 
 def attachments_payload(attachments: Sequence[dict[str, Any]]) -> dict[str, Any]:
@@ -83,18 +91,18 @@ def _model_supports_vision(model_identifier: str) -> bool:
     return model is None or model.vision
 
 
-def _image_content_block(attachment: dict[str, Any], inline_image_bytes: int) -> dict | None:
-    path = str(attachment.get("path") or "")
-    if not path:
-        return None
+def _image_content_block(
+    attachment: dict[str, Any],
+    inline_image_bytes: int,
+    content: Callable[[dict[str, Any]], bytes | None] | None,
+) -> dict | None:
     mime_type = str(attachment.get("mime_type") or "application/octet-stream")
     # The recorded size answers the budget without reading the file, so an oversized attachment costs no memory just to be dropped.
     size = attachment.get("size")
     if isinstance(size, int) and size > inline_image_bytes:
         return None
-    try:
-        raw = Path(path).read_bytes()
-    except OSError:
+    raw = content(attachment) if content is not None else None
+    if raw is None:
         return None
     if len(raw) > inline_image_bytes:
         return None
@@ -107,6 +115,7 @@ def compose_attachment_content(
     structured_payloads: Sequence[dict[str, Any]],
     model_identifier: str,
     inline_image_bytes: int,
+    content: Callable[[dict[str, Any]], bytes | None] | None = None,
 ) -> tuple[str | list[dict[str, Any]], int]:
     """Compose text, attachment metadata, and eligible image blocks for one provider request."""
     text_payload = compact({"text": user_text, "data_parts": list(structured_payloads)})
@@ -118,7 +127,7 @@ def compose_attachment_content(
     blocks = [
         block
         for image in images
-        if (block := _image_content_block(image, inline_image_bytes)) is not None
+        if (block := _image_content_block(image, inline_image_bytes, content)) is not None
     ]
     # Every image the model does not actually receive is one the caller must be told about: a wrong zero here silently drops the attachment with no warning.
     omitted_image_count = len(images) - len(blocks)
@@ -127,22 +136,28 @@ def compose_attachment_content(
     return [{"type": "text", "text": text_payload}, *blocks], omitted_image_count
 
 
-class PathAttachments:
-    """Compose local file paths with metadata and bounded vision-model image blocks."""
+class AttachmentComposer:
+    """Compose attachment values without reading or writing their storage."""
 
     def compose(
         self,
         message: str,
-        attachments: Sequence[Path],
+        attachments: Sequence[Attachment],
         model_identifier: str,
         inline_image_bytes: int,
     ) -> ComposedAttachments:
-        records = [attachment_from_path(path) for path in attachments]
+        records = [attachment.record() for attachment in attachments]
+        by_identifier = {attachment.identifier: attachment for attachment in attachments}
         content, omitted_image_count = compose_attachment_content(
             message,
             [attachments_payload(records)],
             model_identifier,
             inline_image_bytes,
+            content=lambda record: (
+                by_identifier[str(record.get("upload_id") or "")].data
+                if str(record.get("upload_id") or "") in by_identifier
+                else None
+            ),
         )
         return ComposedAttachments(
             content=content,
@@ -152,6 +167,7 @@ class PathAttachments:
 
 
 __all__ = [
+    "Attachment",
+    "AttachmentComposer",
     "ComposedAttachments",
-    "PathAttachments",
 ]

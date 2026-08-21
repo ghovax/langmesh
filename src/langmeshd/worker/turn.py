@@ -49,6 +49,18 @@ from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import CompactionDone, SuspensionGate, TurnEventUnion
 from langmeshd.worker.sink import _TurnEventSink
 
+
+def _attachment_content(record: dict[str, Any]) -> bytes | None:
+    """Read attachment bytes at the daemon boundary that owns local paths."""
+    path = str(record.get("path") or "")
+    if not path:
+        return None
+    try:
+        return Path(path).read_bytes()
+    except OSError:
+        return None
+
+
 if TYPE_CHECKING:
     # For the annotation only: `session` imports this module, so a real import would close the cycle.
     from langmeshd.worker.session import SessionExecutor
@@ -671,6 +683,7 @@ class _TurnRunner:
                 self._structured_payloads,
                 model_identifier,
                 runtime.inline_image_bytes if runtime is not None else 0,
+                content=_attachment_content,
             )
             self._turn_has_images = isinstance(self._turn_input, list)
             if omitted_image_count:

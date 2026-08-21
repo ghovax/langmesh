@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import dataclasses
 import logging
-from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator, Mapping, Sequence
 
@@ -18,7 +17,7 @@ from langmesh.base.configuration import (
 )
 from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base.confinement import Profile
-from langmesh.base.content.attachments import PathAttachments
+from langmesh.base.content.attachments import Attachment, AttachmentComposer
 from langmesh.base.contracts.ports import (
     Approval,
     Approvals,
@@ -36,20 +35,9 @@ from langmesh.base.contracts.ports import (
     PermissionPolicy,
     SessionAccess,
     Transcript,
-    WorkspaceManager,
     describe_unmet,
 )
 from langmesh.base.contracts.tools import ToolLike
-from langmesh.base.persistence.observations import ObservationRegistry
-from langmesh.base.persistence.resources import (
-    MaterializedResources,
-    WorkspaceResources,
-    WorkspaceResourcesLike,
-    resource_path,
-)
-from langmesh.base.persistence.worktrees import (
-    WorktreeStrategy,
-)
 from langmesh.runtime.composition import RuntimeProfile, SessionComponents
 from langmesh.runtime.features import PermissionsCapability
 from langmesh.runtime.session_control import (
@@ -105,7 +93,7 @@ class Session:
         self,
         agent: AgentConfiguration,
         *,
-        directory: str | Path | None = None,
+        directory: str | Path,
         session_id: str = "",
         permission_mode: str = "",
         sandbox: Profile | SandboxConfiguration | Mapping[str, object] | None = None,
@@ -115,8 +103,6 @@ class Session:
         model_identifier: str = "",
         tools: Sequence[ToolLike] = (),
         components: SessionComponents | None = None,
-        # Any fsspec-backed workspace. Non-local sources are materialized for Bash and SQLite, then synchronized at tool boundaries and close.
-        resources: WorkspaceResourcesLike | None = None,
     ) -> None:
         from langmesh.base.primitives.identifiers import new_id
 
@@ -125,21 +111,10 @@ class Session:
                 "agent must be an AgentConfiguration, not a name. A name would mean this library goes looking for a profile on your machine. Build one in code, or load your own catalogue."
             )
         self._agent = agent
-        if directory is None and resources is None:
-            raise TypeError("directory or resources is required")
-        if directory is not None and resources is not None:
-            raise TypeError("directory and resources describe the same workspace; pass exactly one")
         # Absolute, and not resolved against the process's directory: where tools run is a property of the run.
-        if directory is not None and not Path(directory).is_absolute():
+        if not Path(directory).is_absolute():
             raise ValueError(f"directory must be absolute, got {directory!r}.")
-        supplied_resources = _require(WorkspaceResourcesLike, resources, "resources")
-        self._resources = (
-            supplied_resources
-            if supplied_resources is not None
-            else WorkspaceResources.local(str(directory))
-        )
-        local_resource_path = self._resources.local_path
-        self._directory = str(local_resource_path) if local_resource_path is not None else ""
+        self._directory = str(directory)
         self._session_id = session_id or new_id("session")
         self._permission_mode = permission_mode
         self._sandbox = sandbox
@@ -156,7 +131,6 @@ class Session:
         # Tools handed to `grant_tool` before the runtime exists join its initial stable schema.
         self._pending_tools: list[ToolLike] = []
         self._mcp_server_manager = components.mcp_servers
-        self._lifecycle = AsyncExitStack()
         # Reading configuration must not leave a file in the caller's home directory.
         if configuration is not None and not isinstance(configuration, Configuration):
             raise TypeError("configuration must be a Configuration value")
@@ -175,7 +149,7 @@ class Session:
         )
         self._attachments = (
             _require(Attachments, components.attachments, "components.attachments")
-            or PathAttachments()
+            or AttachmentComposer()
         )
         self._jobs = _require(JobStore, components.jobs, "components.jobs") or MemoryJobStore()
         self._observer = _require(Observer, components.observer, "components.observer")
@@ -187,13 +161,9 @@ class Session:
         self._credentials = _require(Credentials, components.credentials, "components.credentials")
         _require(PermissionPolicy, components.permissions, "components.permissions")
         _require(FileLeases, components.file_leases, "components.file_leases")
-        _require(WorkspaceManager, components.workspace, "components.workspace")
         _require(SessionAccess, components.sessions, "components.sessions")
         _require(MCPServers, components.mcp_servers, "components.mcp_servers")
-        self._workspace = components.workspace
         self._tracer_provider = components.tracer_provider
-        self._observations = ObservationRegistry(self._resources, configuration=self._configuration)
-        self._materialized_resources: MaterializedResources | None = None
         # Where tools actually run. Equal to `directory` unless a workspace repointed it.
         self._runtime_directory = self._directory
         self._runtime: AgentRuntime | None = None
@@ -208,24 +178,9 @@ class Session:
         return self._session_id
 
     @property
-    def resources(self) -> WorkspaceResourcesLike:
-        """The configured workspace resources this session materializes for path-native tools."""
-        return self._resources
-
-    @property
-    def observations(self) -> ObservationRegistry:
-        """A configured observational-memory reader over this session's workspace resources."""
-        return self._observations
-
-    @property
     def runtime(self) -> AgentRuntime:
         """The underlying `AgentRuntime`, built on first use and exposed so no non-obvious use needs a fork."""
         if self._runtime is None:
-            if self._materialized_resources is None and self._resources is not None:
-                if self._resources.local_path is None:
-                    raise RuntimeError(
-                        "non-local resources require `async with Session(...)` so LangMesh can hold their materialized POSIX view"
-                    )
             from langmesh.base.primitives.limits import limits_from_configuration
             from langmesh.runtime.environment import RuntimeEnvironment
             from langmesh.runtime.runtime import AgentRuntime
@@ -274,11 +229,7 @@ class Session:
                         approvals=self._approvals,
                         transcript=self._transcript,
                         mcp_servers=self._mcp_server_manager,
-                        synchronize_resources=(
-                            self._materialized_resources.sync
-                            if self._materialized_resources is not None
-                            else None
-                        ),
+                        synchronize_resources=None,
                         features=self._components.features or [],
                         environment=environment,
                     ),
@@ -295,48 +246,10 @@ class Session:
         else:
             self._runtime.grant_tool(tool)
 
-    async def prepare_worktree(self, strategy: WorktreeStrategy = "worktree") -> str:
-        """Give this session its own git worktree and run its tools there; opt-in, because it writes to disk."""
-        async with self._turn_lock:
-            if self._runtime is not None:
-                raise RuntimeError(
-                    "prepare_worktree must run before the session builds its runtime"
-                )
-            if not self._directory:
-                raise RuntimeError("prepare_worktree requires a local directory-backed session")
-            manager = self._workspace
-            if manager is None:
-                from langmesh.base.persistence.worktrees import SessionWorktreeManager
-
-                manager = SessionWorktreeManager()
-            prepared = await manager.prepare(self._session_id, self._directory, strategy)
-            self._runtime_directory = prepared.runtime_working_directory or self._directory
-            return self._runtime_directory
-
     def refresh_prompt(self) -> None:
         """Rebuild catalogue-derived static instructions at the next model boundary."""
         if self._runtime is not None:
             self._runtime.refresh_system_prompt()
-
-    async def sync_resources(self) -> None:
-        """Publish path-native changes to the configured fsspec workspace now."""
-        async with self._turn_lock:
-            if self._materialized_resources is None:
-                raise RuntimeError(
-                    "resources are materialized only inside `async with Session(...)`"
-                )
-            await self._materialized_resources.sync()
-
-    async def refresh_resources(self) -> None:
-        """Refresh the materialized view from its source at a caller-chosen idle boundary."""
-        async with self._turn_lock:
-            if self._materialized_resources is None:
-                raise RuntimeError(
-                    "resources are materialized only inside `async with Session(...)`"
-                )
-            await self._materialized_resources.refresh()
-            if self._runtime is not None:
-                self._runtime.refresh_system_prompt()
 
     @property
     def transcript(self) -> Transcript:
@@ -483,21 +396,15 @@ class Session:
         )
 
     def _compose(
-        self, message: str, attachments: Sequence[str | Path]
+        self, message: str, attachments: Sequence[Attachment]
     ) -> str | list[dict[str, Any]]:
         """The model-facing input for a turn, including attachments, through the same composition the host uses."""
         if not attachments:
             return message
-        resolved = []
-        for attachment in attachments:
-            path = Path(attachment)
-            if not path.is_absolute():
-                path = Path(self._runtime_directory) / resource_path(str(path))
-            resolved.append(path)
         runtime = self.runtime
         composed = self._attachments.compose(
             message,
-            tuple(resolved),
+            tuple(attachments),
             runtime.model_identifier,
             runtime.inline_image_bytes,
         )
@@ -514,7 +421,7 @@ class Session:
         self,
         message: str,
         *,
-        attachments: Sequence[str | Path] = (),
+        attachments: Sequence[Attachment] = (),
     ) -> AsyncIterator[TurnEventUnion]:
         """Drive a turn, yielding each event."""
         async with self._turn_lock:
@@ -620,7 +527,7 @@ class Session:
                 if self._pending is None:
                     self._phase = SessionPhase.IDLE
 
-    async def ask(self, message: str, *, attachments: Sequence[str | Path] = ()) -> str:
+    async def ask(self, message: str, *, attachments: Sequence[Attachment] = ()) -> str:
         """Drive a turn, or a goal to its end, and answer with the agent's prose."""
         from langmesh.runtime.turn_events import Done, Suspended
 
@@ -668,49 +575,13 @@ class Session:
         if self._runtime is not None:
             with contextlib.suppress(Exception):
                 self._runtime.abort()
-        await self._lifecycle.aclose()
-        self._materialized_resources = None
         self._runtime = None
         self._restored = False
         self._phase = SessionPhase.IDLE
         self._pending = None
-        local_resource_path = self._resources.local_path
-        self._directory = str(local_resource_path) if local_resource_path is not None else ""
         self._runtime_directory = self._directory
 
     async def __aenter__(self) -> "Session":
-        if self._materialized_resources is None:
-            self._lifecycle = AsyncExitStack()
-            try:
-                materialized = await self._lifecycle.enter_async_context(
-                    self._resources.materialize()
-                )
-                self._materialized_resources = materialized
-                self._directory = str(materialized.path)
-                self._runtime_directory = self._directory
-                if self._mcp_server_manager is None:
-                    from langmesh.base.configuration import MCPConfiguration
-
-                    servers = MCPConfiguration.from_dotagents_roots(
-                        [Path(self._directory) / ".agents"]
-                    ).enabled_servers()
-                    if servers:
-                        from langmesh.base.contracts.mcp_client import MCPServerManager
-
-                        manager = MCPServerManager(servers)
-                        await manager.start()
-                        self._mcp_server_manager = manager
-
-                        async def close_manager() -> None:
-                            await manager.aclose()
-                            if self._mcp_server_manager is manager:
-                                self._mcp_server_manager = None
-
-                        self._lifecycle.push_async_callback(close_manager)
-            except BaseException:
-                await self._lifecycle.aclose()
-                self._materialized_resources = None
-                raise
         return self
 
     async def __aexit__(self, *_exception: object) -> None:
