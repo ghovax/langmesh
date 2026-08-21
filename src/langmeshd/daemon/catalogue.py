@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Protocol, Sequence
 
 from langmesh.base.content.prompts import PackagePromptLoader, PromptTemplates
-from langmesh.base.content.instructions import Instruction
-from langmesh.base.content.memories import parse_memory
-from langmesh.base.content.skills import parse_skill
+from langmesh.base.content.instructions import Instruction, instructions_payload
+from langmesh.base.content.memories import memories_payload, parse_memory
+from langmesh.base.content.skills import enabled_skills, parse_skill, skills_payload
 from langmesh.base.persistence.file_cache import parsed_file
+from langmesh.base.primitives.serialization import content_address
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,30 @@ class FileCatalogue:
             if content is not None:
                 return content
         return None
+
+    def prompt_revision(self) -> str:
+        """Return the content identity of every filesystem value exposed to prompt construction."""
+        overrides: dict[str, str] = {}
+        for root in self._roots.agents:
+            directory = root.parent / "prompts"
+            if not directory.is_dir():
+                continue
+            for path in sorted(directory.glob("*.md")):
+                overrides[path.stem] = parsed_file(path, lambda each: each.read_text()) or ""
+        fallback = (
+            PackagePromptLoader(self._fallback_prompts).revision()
+            if self._fallback_prompts is not None
+            else ""
+        )
+        return content_address(
+            {
+                "skills": skills_payload(enabled_skills(list(self.skills()))),
+                "memories": memories_payload(list(self.memories())),
+                "instructions": instructions_payload(self.instructions()),
+                "prompts": overrides,
+                "fallback": fallback,
+            }
+        )
 
 
 __all__ = ["AgentLoader", "CatalogueRoots", "FileCatalogue", "load_memories", "load_skills"]

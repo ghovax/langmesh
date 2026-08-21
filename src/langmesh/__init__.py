@@ -78,6 +78,7 @@ from langmesh.runtime.hooks import MaximumToolCalls
 from langmesh.runtime.session_control import (
     FeatureState,
     PendingTurn,
+    RenderedPrompt,
     SessionCheckpoint,
     SessionPhase,
     SessionSnapshot,
@@ -194,6 +195,7 @@ __all__ = [
     "RegistryCounts",
     "RegistryMetadata",
     "RegistryTimestamps",
+    "RenderedPrompt",
     "RuntimeComponents",
     "RuntimeEnvironment",
     "RuntimeProfile",

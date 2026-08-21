@@ -77,6 +77,11 @@ class Feature:
     def compose_prompt(self, variables: dict[str, str]) -> None:
         """Contribute named prompt sections, merging into ``variables`` in place."""
 
+    def prompt_revision(self) -> str:
+        """Identify the prompt templates this feature owns, or its stable absence of them."""
+        revision = getattr(getattr(self, "_prompts", None), "revision", None)
+        return str(revision()) if callable(revision) else ""
+
     async def assign_title(self, first_message: str) -> str | None:
         """A suggested title from this feature's own naming call, or ``None`` to leave it unnamed."""
         return None
@@ -237,6 +242,13 @@ class Features:
         for feature in self._instances:
             feature.compose_prompt(variables)
 
+    def prompt_revision(self) -> list[dict[str, str]]:
+        """Return the ordered identities of installed features and their prompt material."""
+        return [
+            {"feature": feature.state_name, "prompts": feature.prompt_revision()}
+            for feature in self._instances
+        ]
+
     def prepare_request(self, messages: list) -> list:
         for feature in self._instances:
             messages = feature.prepare_request(messages)
@@ -386,6 +398,9 @@ class _CataloguePromptLoader:
 
     def load(self, template_name: str, variables: dict) -> str:
         return self._catalogue.prompt(template_name, dict(variables))
+
+    def revision(self) -> str:
+        return self._catalogue.prompt_revision()
 
 
 def build_features(

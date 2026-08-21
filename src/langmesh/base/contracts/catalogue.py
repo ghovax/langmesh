@@ -8,6 +8,10 @@ from typing import Any, Optional
 
 from langmesh.base.content.prompts import PackagePromptLoader, PromptTemplates
 from langmesh.base.content.instructions import Instruction, as_instructions
+from langmesh.base.content.instructions import instructions_payload
+from langmesh.base.content.memories import memories_payload
+from langmesh.base.content.skills import enabled_skills, skills_payload
+from langmesh.base.primitives.serialization import content_address
 
 
 class Catalogue:
@@ -53,6 +57,18 @@ class Catalogue:
     def prompt_override(self, name: str) -> Optional[str]:
         """Return the caller-supplied template named ``name`` when present."""
         return self._prompts.get(name)
+
+    def prompt_revision(self) -> str:
+        """Return the content identity of every value that can shape a rendered prompt."""
+        return content_address(
+            {
+                "skills": skills_payload(enabled_skills(list(self._skills))),
+                "memories": memories_payload(list(self._memories)),
+                "instructions": instructions_payload(self._instructions),
+                "prompts": self._prompts,
+                "fallback": PackagePromptLoader(self._fallback_prompts).revision(),
+            }
+        )
 
 
 def project_catalogue() -> Catalogue:
