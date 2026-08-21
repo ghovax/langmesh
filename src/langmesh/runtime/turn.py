@@ -127,7 +127,6 @@ class _RunsTurns(_DispatchesTools, ABC):
     _transcript: Any
     _bound_model: Any
     _context_window_estimated: bool
-    _resource_sync: Any
     _tools: list[Any]
     model_identifier: str
     # The concrete runtime exposes the permission feature's gate factory under this name.
@@ -607,8 +606,6 @@ class _RunsTurns(_DispatchesTools, ABC):
                     raise AssertionError("a resolved suspension cannot request another retry")
                 yield event
             self._append_tool_results(response, resume_outcomes)
-            if self._resource_sync is not None:
-                await self._resource_sync()
             yield Checkpoint()
             self._features.acknowledge_checkpoint()
         else:
@@ -1243,8 +1240,6 @@ class _RunsTurns(_DispatchesTools, ABC):
                 ):
                     yield event
         self._append_tool_results(response, outcomes)
-        if self._resource_sync is not None:
-            await self._resource_sync()
         yield Checkpoint()
         self._features.acknowledge_checkpoint()
 
