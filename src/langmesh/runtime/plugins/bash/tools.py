@@ -77,9 +77,21 @@ async def bash(
             start_new_session=True,
         )
         process_holder["process"] = process
-        writer = await artifacts.create(
-            f"{job_id}.log", "text/plain", identifier=artifact_identifier
-        )
+        try:
+            writer = await artifacts.create(
+                f"{job_id}.log", "text/plain", identifier=artifact_identifier
+            )
+        except BaseException:
+            cancel_process()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=current_limits().sigterm_grace)
+            except asyncio.TimeoutError:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                await process.wait()
+            raise
         artifact = None
 
         async def finish_output():
