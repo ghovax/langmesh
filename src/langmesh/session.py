@@ -173,6 +173,7 @@ class Session:
         self._tracer_provider = components.tracer_provider
         self._runtime: AgentRuntime | None = None
         self._restored = False
+        self._refresh_prompt_on_restore = False
         self._turn_lock = asyncio.Lock()
         self._phase = SessionPhase.IDLE
         self._pending: PendingTurn | None = None
@@ -253,6 +254,8 @@ class Session:
 
     def refresh_prompt(self) -> None:
         """Rebuild catalogue-derived static instructions at the next model boundary."""
+        if not self._restored:
+            self._refresh_prompt_on_restore = True
         if self._runtime is not None:
             self._runtime.refresh_system_prompt()
 
@@ -321,6 +324,8 @@ class Session:
     async def cancel_pending(self) -> None:
         """Abandon a suspended batch without executing any of its calls."""
         async with self._turn_lock:
+            if not self._restored:
+                await self._restore()
             if self._pending is None:
                 raise RuntimeError("This session has no suspended turn.")
             self.runtime.abandon_suspension()
@@ -368,6 +373,9 @@ class Session:
         checkpoint = await self._checkpoints.load(self._session_id)
         if checkpoint is None:
             self._restored = True
+            if self._refresh_prompt_on_restore:
+                self.runtime.refresh_system_prompt()
+                self._refresh_prompt_on_restore = False
             return False
         if not isinstance(checkpoint, SessionCheckpoint):
             raise TypeError("checkpoint adapters must return a SessionCheckpoint value")
@@ -386,11 +394,16 @@ class Session:
             self._pending = checkpoint.pending
             self._phase = SessionPhase.SUSPENDED
         self._restored = True
+        if self._refresh_prompt_on_restore:
+            self.runtime.refresh_system_prompt()
+            self._refresh_prompt_on_restore = False
         return True
 
     async def save(self) -> None:
         """Write this session's conversation to its checkpoint store through LangChain's message codec."""
         async with self._turn_lock:
+            if not self._restored:
+                await self._restore()
             await self._save()
 
     async def _save(self) -> None:
