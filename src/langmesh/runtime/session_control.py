@@ -168,9 +168,10 @@ class SessionSnapshot:
         recovery = str(data.get("turn_recovery") or "none")
         if recovery not in {"none", "retryable"}:
             raise ValueError(f"invalid turn recovery state: {recovery!r}")
-        permission_mode = data.get("permission_mode")
-        if permission_mode not in {"ask", "automatic", "allow"}:
-            raise ValueError(f"invalid permission mode: {permission_mode!r}")
+        # An absent mode means the executor keeps its own resolved mode; any other non-mode is corruption.
+        permission_mode = data.get("permission_mode") or ""
+        if permission_mode and permission_mode not in {"ask", "automatic", "allow"}:
+            raise ValueError(f"invalid permission mode: {data.get('permission_mode')!r}")
         raw_features = data.get("features", ())
         raw_prompt = data.get("system_prompt")
         raw_pending_input = data.get("pending_input")
