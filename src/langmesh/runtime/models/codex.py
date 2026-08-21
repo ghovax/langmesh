@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Optional, Sequence, cast
 
 import httpx
@@ -48,7 +50,6 @@ from langmesh.runtime.cache_trace import (
     provider_cache_key,
     remember_cache_lane,
     reconcile,
-    request_traces_snapshot,
     restore_request_traces,
     trace,
 )
@@ -62,6 +63,14 @@ from langmesh.base.identity.subscription import (
 
 # What the endpoint serves before its catalogue is fetched, deliberately the conservative figure.
 COLD_START_WINDOW = 272_000
+
+
+@dataclass(frozen=True)
+class CodexCacheState:
+    """The request baselines retained for one Codex model route."""
+
+    model: str
+    traces: Mapping[str, RequestTrace]
 
 
 def _error_code(body: str) -> str:
@@ -111,21 +120,17 @@ class ChatCodexModel(BaseChatModel):
     def _identifying_params(self) -> dict[str, Any]:
         return {"model": self.model, "reasoning_effort": self.reasoning_effort}
 
-    def model_cache_snapshot(self) -> dict[str, object]:
-        """Serialize this session's bounded request-diagnostic baselines."""
-        return {
-            "version": 1,
-            "model": self.model,
-            "traces": request_traces_snapshot(self._previous_traces),
-        }
+    def model_cache_snapshot(self) -> CodexCacheState:
+        """Return this session's bounded request-diagnostic baselines."""
+        return CodexCacheState(self.model, dict(self._previous_traces))
 
     def restore_model_cache(self, snapshot: object) -> None:
         """Restore validated request-diagnostic baselines from durable session state."""
-        if (
-            isinstance(snapshot, dict)
-            and snapshot.get("version") == 1
-            and snapshot.get("model") == self.model
-        ):
+        if isinstance(snapshot, CodexCacheState):
+            if snapshot.model == self.model:
+                self._previous_traces = dict(snapshot.traces)
+            return
+        if isinstance(snapshot, Mapping) and snapshot.get("model") == self.model:
             self._previous_traces = restore_request_traces(snapshot.get("traces"))
 
     # The same tool-binding surface as the LiteLLM client; the Responses-shaped flattening happens at payload-build time.

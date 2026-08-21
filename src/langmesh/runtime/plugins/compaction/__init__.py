@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from itertools import accumulate, takewhile
 from tempfile import TemporaryDirectory
@@ -128,19 +129,10 @@ class CompactionControl:
         self.failure = None
         self.started = False
 
-    def snapshot(self) -> dict:
-        return {
-            "phase": self.phase,
-            "reason": self.reason,
-            "resume_after": self.resume_after,
-            "preparation_token": self.preparation_token,
-            "failure": self.failure,
-            "started": self.started,
-        }
-
     @classmethod
-    def restore(cls, value: object) -> "CompactionControl":
-        if not isinstance(value, dict):
+    def from_data(cls, value: object) -> "CompactionControl":
+        """Decode this state from a storage adapter's plain representation."""
+        if not isinstance(value, Mapping):
             return cls()
         phase = value.get("phase")
         reason = value.get("reason")
@@ -196,8 +188,18 @@ class Compaction(Feature):
     def control(self) -> CompactionControl:
         return self._control
 
+    def snapshot(self) -> CompactionControl:
+        return replace(self._control)
+
+    def restore(self, state: object) -> None:
+        self._control = (
+            replace(state)
+            if isinstance(state, CompactionControl)
+            else CompactionControl.from_data(state)
+        )
+
     def restore_control(self, value: object) -> None:
-        self._control = CompactionControl.restore(value)
+        self.restore(value)
 
     def fail_compaction(self, message: str) -> None:
         """Make a failed fold durable and visible, and release the senders it held outside the conversation."""

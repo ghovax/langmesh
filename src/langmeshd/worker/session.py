@@ -48,6 +48,7 @@ from langmesh.protocol.turn_record import PendingInteraction, ToolGate, TurnReco
 from langmesh.runtime.plugins.goal_review.goal import Goal, GoalReviewPhase
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.runtime import AgentRuntime
+from langmesh.runtime.session_control import SessionSnapshot
 from langmesh.runtime.features import LocationsCapability
 from langmesh.runtime.turn_events import SuspensionGate
 from langmesh.runtime.values import PermissionAnswer
@@ -1057,7 +1058,7 @@ class SessionExecutor(AgentExecutor):
         state = self._context(session_id)
         runtime = state.runtime
         if runtime is None:
-            session_state = {}
+            session_state = SessionSnapshot()
             # Restore a persisted conversation the first time a context is seen, so the agent resumes with its history.
             if session_id not in self._conversations:
                 # The two independent rows are read together, so a cold turn pays one database round trip.
@@ -1081,7 +1082,7 @@ class SessionExecutor(AgentExecutor):
                 conversation=conversation,
             )
             # Restore the durable objective alongside the conversation, so a marathon run never loses what it was for.
-            if session_state:
+            if session_state != SessionSnapshot():
                 runtime.restore_session(session_state)
                 # Announce the restored goal here: `restore_session` deliberately does not, being the write that changes nothing.
                 self._notify_goal_state(session_id, _features.goal(runtime))
@@ -1372,7 +1373,7 @@ class SessionExecutor(AgentExecutor):
         if state is not None and state.runtime is not None:
             return _features.compaction_failure(state.runtime)
         snapshot = await self._turn_store.load_session_state(self._session_id)
-        compaction = (snapshot or {}).get("compaction")
+        compaction = snapshot.feature("langmesh.runtime.plugins.compaction.Compaction")
         if not isinstance(compaction, dict) or not compaction.get("failure"):
             return None
         return str(compaction["failure"])

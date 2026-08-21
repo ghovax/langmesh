@@ -14,6 +14,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from langmesh.base.confinement import Grant, Profile
 from langmesh.runtime.locations import CallExecutionPolicy
+from langmesh.runtime.session_control import SessionSnapshot
 from langmesh.runtime.tools.context import ToolContext
 
 
@@ -89,8 +90,10 @@ class BookkeepingView:
 
     note_state_changed: Callable[[], None]  #: Advances the durable-state revision after a mutation.
     record_event: Callable[[str, dict], None]  #: Appends to the audit trail.
-    session_snapshot: Callable[[], dict]  #: The durable state to persist beside the checkpoint.
-    restore_session: Callable[[dict], None]  #: Rehydrates the durable state.
+    session_snapshot: Callable[
+        [], SessionSnapshot
+    ]  #: The durable state to persist beside the checkpoint.
+    restore_session: Callable[[SessionSnapshot], None]  #: Rehydrates the durable state.
 
 
 @dataclass(frozen=True)

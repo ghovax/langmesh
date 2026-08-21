@@ -54,6 +54,7 @@ from langmesh.runtime.models.codex import ChatCodexModel
 from langmesh.runtime.models.cursor import ChatCursorModel
 from langmesh.runtime.models.litellm import ChatLiteLLMModel
 from langmesh.runtime.pipeline import ToolPipeline
+from langmesh.runtime.session_control import SessionSnapshot
 from langmesh.runtime.tools import registry as tools_registry
 from langmesh.runtime.tools.arguments import with_shared_fields
 from langmesh.runtime.tools.context import ToolContext
@@ -248,21 +249,6 @@ class AgentRuntime(_RunsTurns):
     ):
         if components is None:
             components = RuntimeComponents()
-        agent_configuration = profile.agent
-        global_configuration = profile.configuration
-        session_id = profile.session_id
-        working_directory = profile.working_directory
-        project_directory = profile.project_directory
-        session_access = components.sessions
-        mcp_server_manager = components.mcp_servers
-        model = components.model
-        observer = components.observer
-        approvals = components.approvals
-        catalogue = components.catalogue
-        transcript = components.transcript
-        tools = components.tools
-        permissions = components.permissions
-        toolset = components.toolset
 
         self._components = components
         self._environment = components.environment or RuntimeEnvironment()
@@ -270,49 +256,49 @@ class AgentRuntime(_RunsTurns):
         self._hooks = HookRunner(components.hooks)
         self._pipeline = ToolPipeline(components.middleware)
         self._resource_sync = components.synchronize_resources
-        self._session_id = session_id
+        self._session_id = profile.session_id
         # The session that created this one, empty when a person did. Reporting back needs its id.
         self._parent_session = profile.parent_session
         # What every child is confined to, held so a configuration edit cannot widen a live session.
 
         # Normalised once, because callers hand this three different shapes.
         self._sandbox = _as_profile(profile.sandbox)
-        self._agent_configuration = agent_configuration
-        self._global_configuration = global_configuration
-        self._working_directory = working_directory or str(Path.home())
-        self._project_directory = project_directory or self._working_directory
+        self._agent_configuration = profile.agent
+        self._global_configuration = profile.configuration
+        self._working_directory = profile.working_directory or str(Path.home())
+        self._project_directory = profile.project_directory or self._working_directory
         # The host already resolved the session mode; a direct library caller falls back to the profile.
         self._permission_mode = PermissionMode.resolve(
-            profile.permission_mode, agent_configuration.permission_default
+            profile.permission_mode, profile.agent.permission_default
         )
 
-        model_identifier = agent_configuration.model_identifier
+        model_identifier = profile.agent.model_identifier
         # Only a runtime that must build a client needs to be told which one.
-        if not model_identifier and model is None:
+        if not model_identifier and components.model is None:
             raise ValueError(
-                f"Agent '{agent_configuration.identifier}' names no model. Set `provider` and `model` in its profile, pass `model_identifier=\"provider/model\"` to `langmesh.Session`, or hand the runtime a `model=` of your own."
+                f"Agent '{profile.agent.identifier}' names no model. Set `provider` and `model` in its profile, pass `model_identifier=\"provider/model\"` to `langmesh.Session`, or hand the runtime a `model=` of your own."
             )
 
         # A caller's own model wins, since accepting `BaseChatModel` is the whole of the model seam.
         self._model = (
-            model
-            if model is not None
+            components.model
+            if components.model is not None
             else build_chat_model(
                 model_identifier or "",
-                global_configuration,
-                agent_configuration,
+                profile.configuration,
+                profile.agent,
                 self._working_directory,
-                session_id,
+                profile.session_id,
             )
         )
 
         self._file_lease_manager = components.file_leases
         # Caller-supplied tools join the initial provider schema, while a later grant deliberately changes that schema once.
-        supplied_tools = tuple(tools)
+        supplied_tools = tuple(components.tools)
         # What a caller's tool is gated at: asking by default, so adding one cannot silently widen a session.
         self._tool_gate = components.tool_gate
         # The session's tools are composed by the caller, never forced: the complete roster comes from `toolset`, additions from `tools`/`grant_tool`, and nothing is injected by default.
-        configured_tools = list(toolset) if toolset is not None else []
+        configured_tools = list(components.toolset) if components.toolset is not None else []
         # Every tool a session runs carries the shared `explanation` field, added here once.
         configured_tools = [with_shared_fields(tool) for tool in configured_tools]
         # The dispatchable units: every tool the session runs, assembled from the configured set and caller-supplied replacements.
@@ -349,16 +335,18 @@ class AgentRuntime(_RunsTurns):
         self._bound_model = self._bind_model_tools(self._model_tools)
         # The evaluator's own `tools_enabled` gate refuses what the profile did not declare.
         self._permissions = (
-            permissions if permissions is not None else PermissionEvaluator(agent_configuration)
+            components.permissions
+            if components.permissions is not None
+            else PermissionEvaluator(profile.agent)
         )
         # Where the audit trail goes, and who answers a gate. Both absent by default.
-        self._observer = observer
-        self._approvals = approvals
-        self._transcript = transcript
+        self._observer = components.observer
+        self._approvals = components.approvals
+        self._transcript = components.transcript
         # The conversation and the prompt this runtime runs with.
 
         self._conversation: list = conversation if conversation is not None else []
-        self._system_prompt = agent_configuration.system_prompt
+        self._system_prompt = profile.agent.system_prompt
         # Files read this session, by location and path with their hash, so a stale edit is rejected.
         self._abort_event = asyncio.Event()
         # A stop is owed until a genuinely fresh turn clears it; steering must not erase it.
@@ -378,10 +366,8 @@ class AgentRuntime(_RunsTurns):
 
         # Where the prompt's material comes from, supplied rather than found by walking hardcoded paths.
         # The library default discovers no skills or instruction files on disk: they are voluntary, injected by the caller.
-        if catalogue is None:
-            catalogue = project_catalogue()
-        self._catalogue = catalogue
-        self._prompt_loader = _CataloguePrompts(catalogue)
+        self._catalogue = components.catalogue or project_catalogue()
+        self._prompt_loader = _CataloguePrompts(self._catalogue)
         # Creation-time grants are described from the first turn: their messages sit at the head of the conversation, before any user message, and are stable for the session's life.
         self._cached_system_prompt: str | None = None
         self._session_revision = 0
@@ -409,13 +395,13 @@ class AgentRuntime(_RunsTurns):
         self._turn_failure_root: str | None = None
         # What the module-level tools read at call time, built from this runtime's own configuration and conversation.
         self._tool_context = _build_tool_context(
-            global_configuration,
+            profile.configuration,
             sandbox=self._sandbox,
             workspace=self._working_directory,
             session_id=self._session_id,
-            session_access=session_access,
+            session_access=components.sessions,
             conversation_snapshot=self._peer_conversation_snapshot,
-            mcp_server_manager=mcp_server_manager,
+            mcp_server_manager=components.mcp_servers,
         )
         # What was approved beyond the configured profile. The boundary is the core's; only the permission plugin adds to it, so other plugins never need to know that plugin exists.
         self._access_grants: list[Grant] = []
@@ -823,30 +809,26 @@ class AgentRuntime(_RunsTurns):
         """Install the reader `read_turn` uses to fetch related turns from the store."""
         self._turn_reader = task_reader
 
-    def session_snapshot(self) -> dict:
+    def session_snapshot(self) -> SessionSnapshot:
         """The durable non-conversation state the features own, plus the core's own recovery flag."""
-        snapshot = {
-            **self._features.snapshot(),
-            "turn_recovery": self._turn_recovery,
-            "turn_failure_root": self._turn_failure_root,
-        }
         cache_snapshot = getattr(self._model, "model_cache_snapshot", None)
-        if callable(cache_snapshot):
-            snapshot["model_cache"] = cache_snapshot()
-        return snapshot
+        return SessionSnapshot(
+            features=self._features.snapshot(),
+            turn_recovery="retryable" if self._turn_recovery != "none" else "none",
+            turn_failure_root=self._turn_failure_root,
+            model_cache=cache_snapshot() if callable(cache_snapshot) else None,
+        )
 
-    def restore_session(self, snapshot: dict) -> None:
+    def restore_session(self, snapshot: SessionSnapshot) -> None:
         """Rehydrate the features' durable state and the core's recovery flag."""
-        self._features.restore(snapshot)
+        if not isinstance(snapshot, SessionSnapshot):
+            raise TypeError("snapshot must be a SessionSnapshot value")
+        self._features.restore(snapshot.features)
         restore_model_cache = getattr(self._model, "restore_model_cache", None)
         if callable(restore_model_cache):
-            restore_model_cache(snapshot.get("model_cache"))
-        recovery = str(snapshot.get("turn_recovery") or "none")
-        # A process that died after claiming the retry still owes that retry after restart.
-        self._turn_recovery = "retryable" if recovery == "retrying" else recovery
-        if self._turn_recovery not in {"none", "retryable"}:
-            self._turn_recovery = "none"
-        self._turn_failure_root = snapshot.get("turn_failure_root") or None
+            restore_model_cache(snapshot.model_cache)
+        self._turn_recovery = snapshot.turn_recovery
+        self._turn_failure_root = snapshot.turn_failure_root
         if self._turn_recovery != "retryable":
             self._turn_failure_root = None
 
@@ -901,7 +883,7 @@ class AgentRuntime(_RunsTurns):
     def _record_grant(self, grant: Grant) -> None:
         self._access_grants.append(grant)
 
-    def dirty_session_snapshot(self) -> Optional[dict]:
+    def dirty_session_snapshot(self) -> Optional[SessionSnapshot]:
         """Return state newer than the last persisted revision without acknowledging it."""
         return (
             self.session_snapshot()

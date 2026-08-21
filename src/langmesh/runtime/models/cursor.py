@@ -10,6 +10,7 @@ import json
 import os
 import platform
 import shlex
+from collections.abc import Mapping
 
 from langmesh.base.primitives.identifiers import new_id
 import time
@@ -188,6 +189,29 @@ class _Channel:
             raise ChatCursorModel._auth_error(response.status_code, response.text)
 
 
+@dataclass(frozen=True)
+class CursorResumptionState:
+    """One server checkpoint and the blobs required to resume it."""
+
+    key: str
+    prefix_length: int
+    prefix_digest: str
+    checkpoint: str
+    blobs: tuple[tuple[str, str], ...]
+    conversation_id: str
+    age_seconds: float
+
+
+@dataclass(frozen=True)
+class CursorCacheState:
+    """The resumable server state retained for one Cursor account and model."""
+
+    model: str
+    account: str
+    saved_at: float
+    resumptions: tuple[CursorResumptionState, ...]
+
+
 class ChatCursorModel(BaseChatModel):
     """A `BaseChatModel` backed by a Cursor subscription, reading its token from the shared store on every call."""
 
@@ -222,52 +246,68 @@ class ChatCursorModel(BaseChatModel):
             return ""
         return hashlib.sha256(tokens.account.encode()).hexdigest()
 
-    def model_cache_snapshot(self) -> dict[str, object]:
-        """Serialize this session's bounded server checkpoints and their referenced blobs."""
+    def model_cache_snapshot(self) -> CursorCacheState:
+        """Return this session's bounded server checkpoints and their referenced blobs."""
         self._prune_resumptions()
-        return {
-            "version": 1,
-            "model": self.model,
-            "account": self._account_key(),
-            "saved_at": time.time(),
-            "resumptions": [
-                {
-                    "key": key,
-                    "prefix_length": entry.prefix_length,
-                    "prefix_digest": entry.prefix_digest,
-                    "checkpoint": base64.b64encode(entry.checkpoint).decode(),
-                    "blobs": [
-                        [base64.b64encode(blob_id).decode(), base64.b64encode(blob).decode()]
+        return CursorCacheState(
+            model=self.model,
+            account=self._account_key(),
+            saved_at=time.time(),
+            resumptions=tuple(
+                CursorResumptionState(
+                    key=key,
+                    prefix_length=entry.prefix_length,
+                    prefix_digest=entry.prefix_digest,
+                    checkpoint=base64.b64encode(entry.checkpoint).decode(),
+                    blobs=tuple(
+                        (base64.b64encode(blob_id).decode(), base64.b64encode(blob).decode())
                         for blob_id, blob in entry.blobs.items()
-                    ],
-                    "conversation_id": entry.conversation_id,
-                    "age_seconds": max(0.0, time.monotonic() - entry.touched_at),
-                }
+                    ),
+                    conversation_id=entry.conversation_id,
+                    age_seconds=max(0.0, time.monotonic() - entry.touched_at),
+                )
                 for key, entry in self._resumptions.items()
-            ],
-        }
+            ),
+        )
 
     def restore_model_cache(self, snapshot: object) -> None:
         """Restore server checkpoints only when they belong to the currently signed-in account."""
         self._resumptions = {}
         account_key = self._account_key()
-        if (
-            not isinstance(snapshot, dict)
-            or snapshot.get("version") != 1
-            or snapshot.get("model") != self.model
-            or not account_key
-            or snapshot.get("account") != account_key
-        ):
+        if isinstance(snapshot, CursorCacheState):
+            if snapshot.model != self.model or not account_key or snapshot.account != account_key:
+                return
+            saved_at = snapshot.saved_at
+            raw_resumptions: object = snapshot.resumptions
+        elif isinstance(snapshot, Mapping):
+            if (
+                snapshot.get("model") != self.model
+                or not account_key
+                or snapshot.get("account") != account_key
+            ):
+                return
+            saved_at = snapshot.get("saved_at")
+            raw_resumptions = snapshot.get("resumptions")
+        else:
             return
-        raw_resumptions = snapshot.get("resumptions")
-        if not isinstance(raw_resumptions, list):
+        if not isinstance(raw_resumptions, (list, tuple)):
             return
         try:
-            downtime = max(0.0, time.time() - float(snapshot.get("saved_at") or time.time()))
+            downtime = max(0.0, time.time() - float(saved_at or time.time()))
         except (TypeError, ValueError):
             downtime = current_limits().subscription_resume_ttl
         for raw in raw_resumptions[-16:]:
-            if not isinstance(raw, dict):
+            if isinstance(raw, CursorResumptionState):
+                raw = {
+                    "key": raw.key,
+                    "prefix_length": raw.prefix_length,
+                    "prefix_digest": raw.prefix_digest,
+                    "checkpoint": raw.checkpoint,
+                    "blobs": raw.blobs,
+                    "conversation_id": raw.conversation_id,
+                    "age_seconds": raw.age_seconds,
+                }
+            if not isinstance(raw, Mapping):
                 continue
             try:
                 key = str(raw["key"]).strip()
@@ -280,7 +320,7 @@ class ChatCursorModel(BaseChatModel):
                         str(pair[1]), validate=True
                     )
                     for pair in raw_blobs
-                    if isinstance(pair, list) and len(pair) == 2
+                    if isinstance(pair, (list, tuple)) and len(pair) == 2
                 }
                 self._resumptions[key] = _Resumption(
                     prefix_length=max(0, int(raw["prefix_length"])),
