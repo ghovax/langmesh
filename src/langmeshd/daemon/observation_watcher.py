@@ -62,10 +62,20 @@ class ObservationRegistryWatcher:
         except Exception as error:  # noqa: BLE001 — reported as registry feedback below
             message = str(error) or type(error).__name__
         else:
-            return {**snapshot, "metadata": metadata, "error": ""}
+            return {
+                "entries": {
+                    "observations": [
+                        entry.model_dump(mode="json") for entry in snapshot.observations
+                    ],
+                    "directives": [entry.model_dump(mode="json") for entry in snapshot.directives],
+                },
+                "revision": snapshot.revision,
+                "metadata": metadata.model_dump(mode="json"),
+                "error": "",
+            }
         # A registry that refused to validate is itself reported: describe() never raises and carries `status: broken|missing` plus the problem.
         try:
-            metadata = await store.describe()
+            metadata = (await store.describe()).model_dump(mode="json")
         except Exception:  # noqa: BLE001 — a descriptor is best-effort around a broken file
             metadata = {}
         previous = self._snapshots.get(path) or {

@@ -20,6 +20,14 @@ from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base.confinement.file_leases import FileLeaseManager
 from langmesh.base.content.attachments import ComposedAttachments, PathAttachments
 from langmesh.base.content.instructions import Instruction
+from langmesh.base.content.observations import (
+    DirectiveEntry,
+    ObservationEntry,
+    ObservationSnapshot,
+    RegistryCounts,
+    RegistryMetadata,
+    RegistryTimestamps,
+)
 from langmesh.base.content.skills import Skill
 from langmesh.base.contracts.catalogue import Catalogue
 from langmesh.base.contracts.mcp_client import MCPServerManager
@@ -163,6 +171,7 @@ __all__ = [
     "Configuration",
     "Credentials",
     "DurableModelCache",
+    "DirectiveEntry",
     "DeniedInjection",
     "Done",
     "Error",
@@ -188,7 +197,9 @@ __all__ = [
     "MemoryJobStore",
     "MemoryTranscript",
     "Observation",
+    "ObservationEntry",
     "ObservationRegistry",
+    "ObservationSnapshot",
     "Observer",
     "OverlayResources",
     "PathAttachments",
@@ -201,6 +212,9 @@ __all__ = [
     "ResourceChange",
     "ResourceChangeSource",
     "ResourceWatchUnsupported",
+    "RegistryCounts",
+    "RegistryMetadata",
+    "RegistryTimestamps",
     "RuntimeComponents",
     "RuntimeEnvironment",
     "RuntimeProfile",

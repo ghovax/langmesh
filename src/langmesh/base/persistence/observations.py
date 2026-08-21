@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import AsyncIterator
 
 from langmesh.base.configuration import Configuration
+from langmesh.base.content.observations import ObservationSnapshot, RegistryMetadata
 from langmesh.base.persistence.observation_store import (
     OBSERVATIONS_FILENAME,
     SQLiteObservationStore,
@@ -53,36 +54,29 @@ class ObservationRegistry:
         except ValueError:
             return str(path)
 
-    def _describe_path(self, descriptor: dict[str, Any], path: Path, root: Path) -> dict[str, Any]:
-        return {**descriptor, "path": self._logical_path(path, root)}
-
-    async def load(self) -> dict[str, Any]:
+    async def load(self) -> ObservationSnapshot:
         """Read the validated current state without creating or changing it."""
         async with self._resources.materialize() as materialized:
             return await SQLiteObservationStore(self._path(materialized)).snapshot()
 
-    async def describe(self) -> dict[str, Any]:
+    async def describe(self) -> RegistryMetadata:
         """Read path and summary metadata without loading observation payloads."""
         async with self._resources.materialize() as materialized:
             path = self._path(materialized)
             descriptor = await SQLiteObservationStore(path).describe()
-            return self._describe_path(descriptor, path, materialized.path)
+            return descriptor.model_copy(
+                update={"path": self._logical_path(path, materialized.path)}
+            )
 
-    async def watch(self) -> AsyncIterator[dict[str, Any]]:
+    async def watch(self) -> AsyncIterator[ObservationSnapshot]:
         """Yield the initial state and each distinct state after a committed resource event."""
         subscription = self._resources.subscribe(self._subscription_path())
         try:
-            previous: dict[str, Any] | None = None
+            previous: ObservationSnapshot | None = None
             while True:
                 async with self._resources.materialize() as materialized:
                     path = self._path(materialized)
-                    snapshot, descriptor = await SQLiteObservationStore(
-                        path
-                    ).snapshot_with_metadata()
-                    current = {
-                        **snapshot,
-                        "metadata": self._describe_path(descriptor, path, materialized.path),
-                    }
+                    current = await SQLiteObservationStore(path).snapshot()
                 if current != previous:
                     previous = current
                     yield current
