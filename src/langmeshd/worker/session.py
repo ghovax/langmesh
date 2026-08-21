@@ -978,6 +978,7 @@ class SessionExecutor(AgentExecutor):
                 sessions=self._peers,
                 mcp_servers=self._mcp_server_manager,
                 jobs=self._job_store,
+                artifacts=self._artifact_store(session_id),
                 toolset=composed,
                 related_turns=self._build_turn_reader(),
                 features=(bundle.get("features") or []),
@@ -997,6 +998,13 @@ class SessionExecutor(AgentExecutor):
                 self._observation_registry_error,
             )
         return runtime
+
+    @staticmethod
+    def _artifact_store(session_id: str):
+        from langmeshd.commons.paths import session_artifacts_directory
+        from langmeshd.daemon.artifacts import FileArtifacts
+
+        return FileArtifacts(session_artifacts_directory(session_id))
 
     def _machine_snapshot(self) -> dict:
         """The machine snapshot for this session, probed by the host and passed into the runtime."""

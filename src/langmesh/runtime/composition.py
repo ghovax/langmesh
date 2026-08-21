@@ -11,6 +11,7 @@ from langchain_core.tools import BaseTool
 from langmesh.base.configuration import AgentConfiguration, Configuration
 from langmesh.base.contracts.ports import (
     Approvals,
+    Artifacts,
     Attachments,
     CatalogueLike,
     Checkpoints,
@@ -57,6 +58,7 @@ class RuntimeComponents:
     jobs: Any = None
     observer: Any = None
     approvals: Any = None
+    artifacts: Any = None
     transcript: Any = None
     sessions: Any = None
     mcp_servers: Any = None
@@ -95,6 +97,7 @@ class RuntimeComponents:
 
         ports = {
             "approvals": Approvals,
+            "artifacts": Artifacts,
             "catalogue": CatalogueLike,
             "file_leases": FileLeases,
             "jobs": JobStore,

@@ -28,6 +28,10 @@ from langmesh.runtime.plugins.work_habits import WorkHabits
 from langmesh.runtime.tools.arguments import with_shared_fields
 from langmeshd.daemon.machine_environment import _shell_command_usage
 from langmeshd.commons.configuration_locations import observation_database
+from langmeshd.daemon.workflow_catalogue import FilesystemWorkflowCatalogue
+
+
+_WORKFLOWS = FilesystemWorkflowCatalogue()
 
 
 def _compaction_preparation(global_configuration: Any, runtime_directory: str) -> Any:
@@ -107,6 +111,7 @@ def compose_plugins(
     services: dict[str, Any] = {
         "goal_review_journal": goal_review_journal,
         "compaction_preparation": preparation,
+        "workflows": _WORKFLOWS,
     }
     if locations:
         services["locations"] = locations

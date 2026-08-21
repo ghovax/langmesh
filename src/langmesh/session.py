@@ -21,6 +21,7 @@ from langmesh.base.content.attachments import Attachment, AttachmentComposer
 from langmesh.base.contracts.ports import (
     Approval,
     Approvals,
+    Artifacts,
     Attachments,
     CatalogueLike,
     Checkpoints,
@@ -29,6 +30,7 @@ from langmesh.base.contracts.ports import (
     JobStore,
     MCPServers,
     MemoryCheckpoints,
+    MemoryArtifacts,
     MemoryJobStore,
     MemoryTranscript,
     Observer,
@@ -155,6 +157,9 @@ class Session:
         self._jobs = _require(JobStore, components.jobs, "components.jobs") or MemoryJobStore()
         self._observer = _require(Observer, components.observer, "components.observer")
         self._approvals = _require(Approvals, components.approvals, "components.approvals")
+        self._artifacts = (
+            _require(Artifacts, components.artifacts, "components.artifacts") or MemoryArtifacts()
+        )
         self._transcript = (
             _require(Transcript, components.transcript, "components.transcript")
             or MemoryTranscript()
@@ -230,6 +235,7 @@ class Session:
                         jobs=self._jobs,
                         observer=self._observer,
                         approvals=self._approvals,
+                        artifacts=self._artifacts,
                         transcript=self._transcript,
                         mcp_servers=self._mcp_server_manager,
                         synchronize_resources=None,
@@ -258,6 +264,11 @@ class Session:
     def transcript(self) -> Transcript:
         """The record of this session's turns."""
         return self._transcript
+
+    @property
+    def artifacts(self) -> Artifacts:
+        """The complete tool outputs stored for this session."""
+        return self._artifacts
 
     @property
     def state(self) -> SessionState:

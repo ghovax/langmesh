@@ -27,7 +27,6 @@ from langmesh.computer import (
     surface as surface_module,
     targets as target_registry,
     web as web_surface,
-    workflows as workflow_registry,
 )
 from langmesh.computer.retrieval import retrieval_policy_from, set_retrieval_policy
 from langmesh.computer.surface import message_loader
@@ -47,6 +46,11 @@ _asked_queries: list[tuple[Any, str]] = []
 
 # What an element id looks like on both surfaces, so one can be told from a description of an element.
 _ELEMENT_ID = re.compile(r"(?:f\d+)?e\d+|req\d+|ws\d+|\d+(?:\.\d+)+")
+
+
+def _workflow_catalogue(services: Any) -> Any:
+    bundle = services.plugin_services
+    return bundle.get("workflows") if isinstance(bundle, dict) else None
 
 
 def _surface_for(surface_name: str):
@@ -398,6 +402,8 @@ async def control_screen(
         return outcome
 
     active = tool_context.current()
+    workflows = _workflow_catalogue(services)
+    project_directory = services.project_directory or active.workspace or ""
     targets_before = target_registry.list_targets()
     result = await control.run_control_script(
         script,
@@ -406,14 +412,12 @@ async def control_screen(
         workspace=active.workspace,
         primitives=tuple(sorted(permitted_primitives)),
         target=target_id,
-        import_roots=workflow_registry.import_roots(
-            services.project_directory or active.workspace or ""
+        import_roots=workflows.import_roots(project_directory) if workflows is not None else None,
+        dependency_roots=(
+            workflows.dependency_roots(project_directory) if workflows is not None else None
         ),
-        dependency_roots=workflow_registry.dependency_roots(
-            services.project_directory or active.workspace or ""
-        ),
-        library_roots=workflow_registry.library_roots(
-            services.project_directory or active.workspace or ""
+        library_roots=(
+            workflows.library_roots(project_directory) if workflows is not None else None
         ),
     )
     if isinstance(result, dict):
@@ -438,6 +442,8 @@ class ComputerUse(Feature):
     def attach(self, context, host) -> None:
         self._context = context
         self._host = host
+        bundle = getattr(host, "services", None) or {}
+        self._workflows = bundle.get("workflows") if isinstance(bundle, dict) else None
         self._prompts = context.prompts("computer_use")
         # Bind which models rank a screen, from the loaded configuration.
         screen = getattr(context.global_configuration, "computer_control", None)
@@ -474,7 +480,11 @@ class ComputerUse(Feature):
                 context["screen"] = {"reading": message_loader("computer")("screen_warming")}
                 return
             block = target_registry.context_block()
-            saved = workflow_registry.available(self._context.working_directory or "")
+            saved = (
+                self._workflows.available(self._context.working_directory or "")
+                if self._workflows is not None
+                else []
+            )
             if saved:
                 block["workflows"] = saved
             context["screen"] = block

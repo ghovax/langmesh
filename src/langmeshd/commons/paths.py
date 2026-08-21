@@ -65,6 +65,11 @@ def uploads_directory() -> Path:
     return path
 
 
+def session_artifacts_directory(session_id: str) -> Path:
+    """Where the daemon persists complete tool output for one session."""
+    return data_directory() / "artifacts" / session_id
+
+
 def session_toolboxes_directory() -> Path:
     """Where every session's own tools live, named in its own right so the sweep for gone sessions can read it."""
     return state_directory() / "sessions"

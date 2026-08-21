@@ -7,7 +7,6 @@ from pathlib import Path
 
 from .executor import LocalExecutor, LocationExecutor, SshExecutor
 from .location_uri import format_local, format_remote
-from .ssh_hosts import list_ssh_hosts, resolve_host
 
 
 @dataclass(frozen=True)
@@ -20,22 +19,14 @@ class LocationAddress:
 
 
 def location_uri_for(address: LocationAddress) -> str:
-    """The URI the agent passes as ``location``, derived for a remote from the resolved host."""
+    """The URI the agent passes as ``location``, derived only from caller-supplied values."""
     if address.kind == "local":
         return format_local(address.base_directory)
     if address.kind == "remote":
         if not address.host_alias:
             raise ValueError("A remote location requires an ssh host alias.")
-        host = resolve_host(address.host_alias)
-        if host is None:
-            return format_remote(address.host_alias, address.base_directory)
-        return format_remote(host.hostname, address.base_directory, user=host.user, port=host.port)
+        return format_remote(address.host_alias, address.base_directory)
     raise ValueError(f"Unknown location kind: {address.kind!r}")
-
-
-def host_is_defined(alias: str) -> bool:
-    """Whether an ssh alias is declared in ~/.ssh/config, so a location naming a dead host can be flagged."""
-    return any(host.alias == alias for host in list_ssh_hosts())
 
 
 def executor_for(address: LocationAddress, *, control_directory: Path | None = None) -> LocationExecutor:

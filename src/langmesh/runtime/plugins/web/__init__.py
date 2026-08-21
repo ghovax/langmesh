@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from langmesh.runtime.features import BackgroundCapability, Feature, PluginContext
-from langmesh.runtime.plugins.web.tools import download_file, fetch_url, search_web
+from langmesh.runtime.plugins.web.tools import download, fetch_url, search_web
 
 
 class Web(Feature):
@@ -26,17 +26,16 @@ class Web(Feature):
         unattached plugin still offers its tools."""
         context = getattr(self, "_context", None)
         if context is None:
-            return [search_web, fetch_url, download_file]
+            return [search_web, fetch_url, download]
         declared = getattr(context, "agent_configuration", None)
         enabled = getattr(declared, "tools_enabled", None) or []
-        return [tool for tool in (search_web, fetch_url, download_file) if tool.name in enabled]
+        return [tool for tool in (search_web, fetch_url, download) if tool.name in enabled]
 
     def contribute_tool_handlers(self) -> dict[str, Any]:
         """Provide the event-rich handlers beside their schemas."""
-        from langmesh.runtime.plugins.web.handlers import handle_download_file, handle_search_web
+        from langmesh.runtime.plugins.web.handlers import handle_search_web
 
         return {
-            "download_file": handle_download_file,
             "search_web": handle_search_web,
         }
 

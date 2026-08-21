@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import copy
+from dataclasses import dataclass, field, replace
 from datetime import datetime
+import uuid
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -167,6 +169,84 @@ class Attachments(Protocol):
     ) -> ComposedAttachments: ...
 
 
+@dataclass(frozen=True)
+class ArtifactReference:
+    """The stable public identity and metadata of application-accessible tool output."""
+
+    identifier: str
+    name: str
+    media_type: str
+    size: int = 0
+
+
+@runtime_checkable
+class ArtifactWriter(Protocol):
+    """Incrementally accepts one artifact without prescribing its storage medium."""
+
+    @property
+    def reference(self) -> ArtifactReference: ...
+
+    async def write(self, data: bytes) -> None: ...
+
+    async def close(self) -> ArtifactReference: ...
+
+
+@runtime_checkable
+class Artifacts(Protocol):
+    """Stores complete tool outputs and lets the embedding retrieve their bytes."""
+
+    async def create(
+        self, name: str, media_type: str, *, identifier: str = ""
+    ) -> ArtifactWriter: ...
+
+    async def read(self, identifier: str) -> bytes | None: ...
+
+
+class _MemoryArtifactWriter:
+    def __init__(self, store: "MemoryArtifacts", reference: ArtifactReference) -> None:
+        self._store = store
+        self._reference = reference
+        self._content = bytearray()
+        self._closed = False
+
+    @property
+    def reference(self) -> ArtifactReference:
+        return self._reference
+
+    async def write(self, data: bytes) -> None:
+        if self._closed:
+            raise RuntimeError("artifact writer is closed")
+        self._content.extend(data)
+
+    async def close(self) -> ArtifactReference:
+        if not self._closed:
+            self._closed = True
+            content = bytes(self._content)
+            self._store._values[self._reference.identifier] = content
+            self._reference = replace(self._reference, size=len(content))
+        return self._reference
+
+
+class MemoryArtifacts:
+    """Complete tool outputs held in memory and exposed through the artifact port."""
+
+    def __init__(self) -> None:
+        self._values: dict[str, bytes] = {}
+
+    async def create(
+        self, name: str, media_type: str, *, identifier: str = ""
+    ) -> ArtifactWriter:
+        reference = ArtifactReference(
+            identifier=identifier or f"artifact-{uuid.uuid4()}",
+            name=name,
+            media_type=media_type,
+        )
+        return _MemoryArtifactWriter(self, reference)
+
+    async def read(self, identifier: str) -> bytes | None:
+        return self._values.get(identifier)
+
+
 class MemoryCheckpoints:
     """Checkpoints in a dictionary: the default, so a library session can resume without a store."""
 
@@ -174,10 +254,11 @@ class MemoryCheckpoints:
         self._states: dict[str, SessionCheckpoint] = {}
 
     async def save(self, session_id: str, checkpoint: SessionCheckpoint) -> None:
-        self._states[session_id] = checkpoint
+        self._states[session_id] = SessionCheckpoint.from_data(checkpoint.to_data())
 
     async def load(self, session_id: str) -> Optional[SessionCheckpoint]:
-        return self._states.get(session_id)
+        checkpoint = self._states.get(session_id)
+        return SessionCheckpoint.from_data(checkpoint.to_data()) if checkpoint is not None else None
 
 
 # Where background jobs are recorded so one survives a restart.
@@ -258,7 +339,10 @@ class MemoryJobStore:
             self._jobs[job_id].update(result=result, status=status)
 
     def mark_delivered(self, job_id: str) -> None:
-        if job_id in self._jobs:
+        if job_id in self._jobs and self._jobs[job_id]["status"] in {
+            "completed",
+            "abandoned",
+        }:
             self._jobs[job_id]["status"] = "delivered"
 
     def mark_abandoned(self, job_id: str, result: str) -> None:
@@ -267,7 +351,7 @@ class MemoryJobStore:
 
     def running_jobs(self, agent_name: str | None = None) -> Sequence[Mapping[str, Any]]:
         return [
-            job
+            copy.deepcopy(job)
             for job in self._jobs.values()
             if job["status"] == "running"
             and (agent_name is None or job["agent_name"] == agent_name)
@@ -279,7 +363,7 @@ class MemoryJobStore:
 
     def undelivered_jobs(self, session_id: str, agent_name: str) -> Sequence[Mapping[str, Any]]:
         return [
-            job
+            copy.deepcopy(job)
             for job in self._jobs.values()
             if job["status"] in {"completed", "abandoned"}
             and job["session_id"] == session_id
@@ -367,10 +451,10 @@ class MemoryCredentialStore:
         self._tokens: dict[str, Any] = {}
 
     def load(self, provider_identifier: str) -> Any:
-        return self._tokens.get(provider_identifier)
+        return copy.deepcopy(self._tokens.get(provider_identifier))
 
     def save(self, provider_identifier: str, tokens: Any) -> None:
-        self._tokens[provider_identifier] = tokens
+        self._tokens[provider_identifier] = copy.deepcopy(tokens)
 
     def clear(self, provider_identifier: str) -> None:
         self._tokens.pop(provider_identifier, None)
@@ -631,6 +715,9 @@ def describe_unmet(port: type, candidate: Any) -> str:
 __all__ = [
     "Approval",
     "Approvals",
+    "ArtifactReference",
+    "ArtifactWriter",
+    "Artifacts",
     "Attachments",
     "AfterTurnHook",
     "BeforeToolsHook",
@@ -645,6 +732,7 @@ __all__ = [
     "FileLeaseConflict",
     "JobStore",
     "MemoryCheckpoints",
+    "MemoryArtifacts",
     "MemoryCredentialStore",
     "MemoryJobStore",
     "MemoryTranscript",

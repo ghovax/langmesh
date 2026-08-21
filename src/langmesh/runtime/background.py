@@ -8,7 +8,6 @@ import weakref
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from langmesh.base.primitives.identifiers import new_id
@@ -53,7 +52,6 @@ class _BackgroundJobRecord:
     identifier: str
     kind: str
     task: asyncio.Task
-    output_path: Path | None = None
     cancel_callback: Callable[[], None] | None = None
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     tool_call_identifier: str = ""
@@ -74,7 +72,6 @@ class BackgroundCompletion:
     started_at: datetime
     completed_at: datetime
     tool_call_identifier: str
-    output_path: Path | None
 
 
 # Weak references to every live runner, so exit handlers can cancel outstanding work without owning the tasks.
@@ -112,7 +109,6 @@ class BackgroundJobs:
         coroutine: Coroutine[Any, Any, str],
         *,
         identifier: str | None = None,
-        output_path: Path | None = None,
         cancel_callback: Callable[[], None] | None = None,
         arguments: dict[str, Any] | None = None,
         tool_call_identifier: str = "",
@@ -141,7 +137,6 @@ class BackgroundJobs:
             identifier=identifier,
             kind=kind,
             task=task,
-            output_path=output_path,
             cancel_callback=cancel_callback,
             tool_call_identifier=tool_call_identifier,
             arguments=arguments or {},
@@ -401,7 +396,6 @@ class BackgroundJobs:
             started_at=record.started_at,
             completed_at=datetime.now(timezone.utc),
             tool_call_identifier=record.tool_call_identifier,
-            output_path=record.output_path,
         )
 
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from langmesh.runtime.plugins.locations.executor import SshExecutor
-from langmesh.runtime.plugins.locations.resolver import host_is_defined
 from pathlib import Path
 import asyncio
 from langmesh.protocol.dtos import (
@@ -12,6 +11,7 @@ from langmesh.protocol.dtos import (
     WorkspaceLastSessionRequest,
 )
 from langmeshd.commons import state
+from langmeshd.commons.ssh_hosts import host_is_defined
 from langmeshd.commons.services import workspaces as _workspaces
 from langmeshd.commons.services.broadcast import _publish_broadcast
 from langmeshd.commons.services.locations import _workspace_id_for_location
