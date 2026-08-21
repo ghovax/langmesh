@@ -18,6 +18,11 @@ from langmeshd.commons import state
 router = APIRouter()
 
 
+def _resolved_regular_file(file_path: str) -> Path | None:
+    path = Path("/" + file_path.lstrip("/")).resolve()
+    return path if path.is_file() else None
+
+
 @router.get("/a2a/files/{token}")
 async def serve_a2a_file(token: str):
     """Stream a file authorized by a signed URL that binds path, audience and expiry, and resolves once."""
@@ -25,7 +30,7 @@ async def serve_a2a_file(token: str):
     if signer is None:
         raise HTTPException(status_code=404, detail="File serving is unavailable.")
     file_path = signer.verify(token, consume=True)
-    if not file_path or not Path(file_path).exists():
+    if not file_path or not await asyncio.to_thread(Path(file_path).exists):
         raise HTTPException(
             status_code=404, detail="File not found, link expired, or already used."
         )
@@ -93,7 +98,7 @@ async def reference_attachment(reference: AttachmentReference):
 @router.get("/files/{file_path:path}")
 async def serve_local_file(file_path: str):
     """Serve a file from local disk for the interface to display: the bytes, a guessed type, and nothing else."""
-    path = Path("/" + file_path.lstrip("/")).resolve()
-    if not path.is_file():
+    path = await asyncio.to_thread(_resolved_regular_file, file_path)
+    if path is None:
         raise HTTPException(status_code=404, detail="File not found.")
     return FileResponse(path, headers={"Cache-Control": "no-store"})

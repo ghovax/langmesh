@@ -237,8 +237,8 @@ async def _watch_ssh_hosts() -> None:
     """Broadcast when the SSH host registry changes, filtered to the configuration file alone."""
     from watchfiles import awatch
 
-    ssh_configuration = Path("~/.ssh/config").expanduser()
-    if not ssh_configuration.parent.exists():
+    ssh_configuration = await asyncio.to_thread(_available_ssh_configuration)
+    if ssh_configuration is None:
         return
     try:
         async for _changes in awatch(
@@ -252,6 +252,11 @@ async def _watch_ssh_hosts() -> None:
         pass
     except Exception:  # noqa: BLE001
         logger.exception("the SSH host watcher stopped")
+
+
+def _available_ssh_configuration() -> Path | None:
+    path = Path("~/.ssh/config").expanduser()
+    return path if path.parent.exists() else None
 
 
 def known_agent_names() -> list[str]:
