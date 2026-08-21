@@ -336,6 +336,10 @@ class Session:
     async def set_permission_mode(self, mode: str | PermissionMode) -> SessionState:
         """Change live permission policy and re-evaluate any unanswered parked gates."""
         resolved = mode if isinstance(mode, PermissionMode) else PermissionMode.resolve(mode)
+        if not self._restored:
+            async with self._turn_lock:
+                if not self._restored:
+                    await self._restore()
         self._permission_mode = str(resolved)
         runtime = self.runtime
         runtime.set_permission_mode(resolved)
