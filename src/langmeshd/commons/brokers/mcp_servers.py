@@ -5,6 +5,7 @@ from __future__ import annotations
 from langmesh.base.contracts.mcp_client import MCPServerManager
 from langmeshd.commons import state
 from langmeshd.commons.configuration_io import load_configuration
+from langmeshd.commons.configuration_locations import mcp_configuration
 
 
 async def _reload_mcp() -> None:
@@ -32,7 +33,7 @@ async def _ensure_mcp_servers_for(working_directory: str) -> None:
         return
     # Serialized with every other mutator, so concurrent reconciles never clobber the shared manager.
     async with state.configuration_lock:
-        folder_servers = state.global_configuration.mcp_configuration_for(working_directory).servers
+        folder_servers = mcp_configuration(working_directory).servers
         new_servers = {
             name: configuration
             for name, configuration in folder_servers.items()

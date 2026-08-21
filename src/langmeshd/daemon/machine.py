@@ -6,10 +6,15 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from langmesh.base.configuration import Configuration
-from langmesh.base.contracts.catalogue import AgentLoader, CatalogueRoots, FileCatalogue
 from langmesh.base.contracts.catalogue import packaged_prompts_directory
 from langmeshd.commons.configuration_io import load_configuration  # noqa: F401 — re-exported for callers of machine.load_configuration
 from langmeshd.commons.agent_files import AgentFileLoader
+from langmeshd.commons.configuration_locations import (
+    agent_directories,
+    memory_directories,
+    skill_directories,
+)
+from langmeshd.daemon.catalogue import AgentLoader, CatalogueRoots, FileCatalogue
 
 # Instruction files a project may carry, in preference order, with the first match winning.
 PROJECT_INSTRUCTION_NAMES = ("AGENTS.md", "CLAUDE.md", "CONTEXT.md")
@@ -75,15 +80,15 @@ def machine_catalogue(
     """
     return FileCatalogue(
         CatalogueRoots(
-            agents=_as_paths(configuration.agent_directories_for(working_directory)),
-            skills=_as_paths(configuration.skill_directories_for(working_directory)),
-            memories=_as_paths(configuration.memory_directories_for(working_directory)),
-            prompts=packaged_prompts_directory(),
+            agents=_as_paths(agent_directories(working_directory)),
+            skills=_as_paths(skill_directories(working_directory)),
+            memories=_as_paths(memory_directories(working_directory)),
             instruction_files=_instruction_files_for(
                 Path(working_directory).expanduser() if working_directory else None
             ),
         ),
         agent_loader=agent_loader or AgentFileLoader(),
+        fallback_prompts=packaged_prompts_directory(),
     )
 
 

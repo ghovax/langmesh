@@ -3,7 +3,8 @@
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from langmeshd.commons.agent_files import list_agents, write_agent_markdown
-from langmesh.base.content.skills import load_skills
+from langmeshd.daemon.catalogue import load_skills
+from langmeshd.commons.configuration_locations import agent_directories, skill_directories
 import asyncio
 from langmesh.protocol.dtos import (
     AgentConfigurationUpdateRequest,
@@ -30,10 +31,7 @@ router = APIRouter()
 async def agents(working_directory: str = ""):
     """List agent profiles for the selector, scoped to the selected folder rather than the launch directory."""
     assert state.global_configuration is not None
-    if working_directory:
-        directories = state.global_configuration.agent_directories_for(working_directory)
-    else:
-        directories = state.global_configuration.agent_directories()
+    directories = agent_directories(working_directory)
     # The bundled agents are always present, and none of them is singled out as a default.
     agent_data = list_agents(directories)
     return AgentsList(
@@ -90,11 +88,7 @@ async def update_agent_configuration(
 async def agent_cards(working_directory: str = ""):
     """The full card for every served agent, including the skills the selected folder scopes."""
     assert state.global_configuration is not None
-    skill_roots = (
-        state.global_configuration.skill_directories_for(working_directory)
-        if working_directory
-        else state.global_configuration.skill_directories()
-    )
+    skill_roots = skill_directories(working_directory)
     all_skills = load_skills(skill_roots)
     skill_titles = {skill.identifier: skill.display_title for skill in all_skills}
     skill_enabled = {skill.identifier: skill.enabled for skill in all_skills}
@@ -104,7 +98,7 @@ async def agent_cards(working_directory: str = ""):
         allowed_agents = {
             agent["id"]
             for agent in list_agents(
-                state.global_configuration.agent_directories_for(working_directory)
+                agent_directories(working_directory)
             )
         }
     cards: list[dict] = []
@@ -131,13 +125,11 @@ async def agent_cards(working_directory: str = ""):
 async def skills(working_directory: str = ""):
     """List the skills available in the selected folder, independent of any agent."""
     assert state.global_configuration is not None
-    roots = (
-        state.global_configuration.skill_directories_for(working_directory)
-        if working_directory
-        else state.global_configuration.skill_directories()
-    )
+    roots = skill_directories(working_directory)
     all_skills = load_skills(roots)
-    home_root = state.global_configuration.home_agents_root().resolve()
+    from langmeshd.commons.configuration_locations import home_agents_root
+
+    home_root = home_agents_root().resolve()
     return {
         "skills": [
             {

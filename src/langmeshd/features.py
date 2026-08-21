@@ -27,12 +27,13 @@ from langmesh.runtime.plugins.web import Web
 from langmesh.runtime.plugins.work_habits import WorkHabits
 from langmesh.runtime.tools.arguments import with_shared_fields
 from langmeshd.daemon.machine_environment import _shell_command_usage
+from langmeshd.commons.configuration_locations import observation_database
 
 
 def _compaction_preparation(global_configuration: Any, runtime_directory: str) -> Any:
     """The compaction preparation the daemon owns, from the observation store."""
     return ObservationCompactionPreparation(
-        SQLiteObservationStore(global_configuration.observation_database_for(runtime_directory))
+        SQLiteObservationStore(observation_database(runtime_directory))
     )
 
 

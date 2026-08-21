@@ -11,6 +11,7 @@ from langmeshd.daemon.persistence.observation_registry import (
     SQLiteObservationStore,
     NativeFileSubscription,
 )
+from langmeshd.commons.configuration_locations import observation_database
 
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,6 @@ class ObservationRegistryWatcher:
         self._registry = registry
         self._host = host
         self._broadcaster = broadcaster
-        self._configuration = configuration
         self._tasks: dict[Path, asyncio.Task] = {}
         self._subscriptions: dict[Path, NativeFileSubscription] = {}
         self._snapshots: dict[Path, dict[str, Any]] = {}
@@ -52,7 +52,7 @@ class ObservationRegistryWatcher:
             return snapshot
 
     def _path_for(self, working_directory: str) -> Path:
-        return self._configuration.observation_database_for(working_directory).resolve(strict=False)
+        return observation_database(working_directory).resolve(strict=False)
 
     async def _read(self, path: Path) -> dict[str, Any]:
         """Read once after the native watcher reports a settled event."""

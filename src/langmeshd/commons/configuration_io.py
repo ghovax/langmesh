@@ -10,8 +10,14 @@ import shutil
 from pathlib import Path
 
 from langmeshd.commons.paths import configuration_file_path
-from langmesh.base.configuration import Configuration, MCPConfiguration, RemoteAgentsConfiguration
+from langmesh.base.configuration import Configuration
 from langmeshd.commons import configuration_file
+from langmeshd.commons.configuration_locations import (
+    bundled_agents_root,
+    home_agents_root,
+    mcp_configuration,
+    remote_agents_configuration,
+)
 
 
 PACKAGED_CONFIGURATION_PATH = Path(__file__).resolve().parent / "configuration.yaml"
@@ -24,12 +30,10 @@ def packaged_configuration_yaml() -> str:
 
 def seed_home_agents() -> list[str]:
     """Seed ``~/.agents`` with editable copies, filling only what is missing so a person's edits survive."""
-    from langmesh.base.configuration.configuration import BUNDLED_DOTAGENTS_ROOT
-
-    home_root = Path(Configuration.HOME_AGENTS_ROOT_DIRECTORY).expanduser()
+    home_root = home_agents_root()
     seeded: list[str] = []
     for kind in ("agents", "skills"):
-        source_root = BUNDLED_DOTAGENTS_ROOT / kind
+        source_root = bundled_agents_root() / kind
         if not source_root.is_dir():
             continue
         target_root = home_root / kind
@@ -66,12 +70,8 @@ def load_configuration(*, seed: bool = True) -> Configuration:
         path.write_text(packaged_configuration_yaml())
     data = configuration_file.load()
     configuration = Configuration(**(data or {}))
-    configuration.mcp = MCPConfiguration.from_dotagents_roots(
-        configuration.agents_root_directories()
-    )
-    configuration.remote_agents = RemoteAgentsConfiguration.from_dotagents_roots(
-        configuration.agents_root_directories()
-    )
+    configuration.mcp = mcp_configuration("")
+    configuration.remote_agents = remote_agents_configuration("")
     return configuration
 
 

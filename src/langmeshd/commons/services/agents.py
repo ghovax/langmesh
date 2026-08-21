@@ -16,7 +16,9 @@ from langmeshd.commons.agent_files import (
     load_agent_configuration,
 )
 from langmesh.base.content.models import find_model, split_model_identifier
-from langmesh.base.content.skills import load_skills, skills_for_agent
+from langmesh.base.content.skills import skills_for_agent
+from langmeshd.daemon.catalogue import load_skills
+from langmeshd.commons.configuration_locations import agent_directories, skill_directories
 from pathlib import Path
 import langmesh.base.configuration as _configuration
 from langmeshd.commons import state
@@ -99,13 +101,9 @@ def _card_for(agent_name: str, working_directory: str = ""):
     """Build an agent's card from its configuration and the skills scoped to the given working directory."""
     assert state.global_configuration is not None
     configuration = load_agent_configuration(
-        agent_name, state.global_configuration.agent_directories()
+        agent_name, agent_directories()
     )
-    skill_roots = (
-        state.global_configuration.skill_directories_for(working_directory)
-        if working_directory
-        else state.global_configuration.skill_directories()
-    )
+    skill_roots = skill_directories(working_directory)
     all_skills = load_skills(skill_roots)
     agent_skills = skills_for_agent(all_skills, configuration.skills)
     return configuration, build_agent_card(
@@ -117,11 +115,7 @@ def _card_for(agent_name: str, working_directory: str = ""):
 
 def _agent_directories_for_request(working_directory: str) -> list[Path]:
     assert state.global_configuration is not None
-    return (
-        state.global_configuration.agent_directories_for(working_directory)
-        if working_directory
-        else state.global_configuration.agent_directories()
-    )
+    return agent_directories(working_directory)
 
 
 #: Profiles as last read from disk, emptied by the same watcher that rebuilds the cards.
@@ -224,7 +218,7 @@ def _reload_agent_cards() -> None:
     assert state.global_configuration is not None
     forget_resolved_profiles()
     catalogue = {}
-    for agent_name in list_agent_route_names(state.global_configuration.agent_directories()):
+    for agent_name in list_agent_route_names(agent_directories()):
         try:
             _configuration, card = _card_for(agent_name)
         except Exception:  # noqa: BLE001 — one unreadable profile must not empty the catalogue

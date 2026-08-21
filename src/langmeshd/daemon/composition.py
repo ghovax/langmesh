@@ -13,6 +13,11 @@ from langmeshd.commons.configuration_io import seed_home_agents
 from langmeshd.commons.agent_files import list_agent_route_names
 from langmeshd.commons import toolboxes
 from langmeshd.commons.paths import data_directory
+from langmeshd.commons.configuration_locations import (
+    agent_directories,
+    agents_roots,
+    skill_directories,
+)
 from langmeshd.daemon.persistence.file_leases import FileLeaseManager
 from langmeshd.daemon.persistence.worktrees import SessionWorktreeManager
 from langmeshd.daemon import state
@@ -159,9 +164,9 @@ def _watched_agent_paths() -> list[str]:
     """Every directory whose contents define what agents and skills exist, watched recursively."""
     assert commons_state.global_configuration is not None
     candidates = [
-        *commons_state.global_configuration.agents_root_directories(),
-        *commons_state.global_configuration.agent_directories(),
-        *commons_state.global_configuration.skill_directories(),
+        *agents_roots(),
+        *agent_directories(),
+        *skill_directories(),
     ]
     watched: list[str] = []
     seen: set[Path] = set()
@@ -252,7 +257,7 @@ async def _watch_ssh_hosts() -> None:
 def known_agent_names() -> list[str]:
     """Every agent profile a session could be created with, from the configured roots."""
     assert commons_state.global_configuration is not None
-    return list_agent_route_names(commons_state.global_configuration.agent_directories())
+    return list_agent_route_names(agent_directories())
 
 
 __all__ = [
