@@ -254,11 +254,11 @@ class MemoryCheckpoints:
         self._states: dict[str, SessionCheckpoint] = {}
 
     async def save(self, session_id: str, checkpoint: SessionCheckpoint) -> None:
-        self._states[session_id] = SessionCheckpoint.from_data(checkpoint.to_data())
+        self._states[session_id] = type(checkpoint).from_data(checkpoint.to_data())
 
     async def load(self, session_id: str) -> Optional[SessionCheckpoint]:
         checkpoint = self._states.get(session_id)
-        return SessionCheckpoint.from_data(checkpoint.to_data()) if checkpoint is not None else None
+        return type(checkpoint).from_data(checkpoint.to_data()) if checkpoint is not None else None
 
 
 # Where background jobs are recorded so one survives a restart.
@@ -501,7 +501,7 @@ class CompactionSummaryState:
     """The older turns being replaced, oldest first."""
 
     system_prompt: str
-    """The cache-stable system prompt the session runs with, so the summary matches its voice."""
+    """The cache-stable instructions the session runs with, so the summary matches its voice."""
 
 
 @runtime_checkable
