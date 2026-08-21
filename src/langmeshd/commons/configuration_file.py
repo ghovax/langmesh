@@ -11,6 +11,7 @@ from typing import Any
 
 import yaml
 
+from langmeshd.commons.atomic_file import write_text
 from langmeshd.commons.paths import configuration_file_path
 from langmesh.base.configuration import Configuration
 
@@ -39,10 +40,13 @@ def load() -> dict:
 
 
 def save(data: dict) -> None:
-    """Write the document back in the order it holds, so a person meets their settings as they wrote them."""
-    path = configuration_file_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(data, sort_keys=False))
+    """Atomically persist the document in the order it holds."""
+    write_text(configuration_file_path(), yaml.safe_dump(data, sort_keys=False))
+
+
+def seed(text: str) -> None:
+    """Atomically persist the packaged first-run document without discarding its comments."""
+    write_text(configuration_file_path(), text)
 
 
 def flatten(data: Any, prefix: str = "") -> list[tuple[str, Any]]:
@@ -150,5 +154,6 @@ __all__ = [
     "rejects",
     "remove",
     "save",
+    "seed",
     "write",
 ]

@@ -555,11 +555,6 @@
     "computer_control": {
       "_": "画面操作",
       "enabled": "画面操作を許可",
-      "settle": {
-        "_": "安定待ち",
-        "poll_seconds": "再確認の間隔（秒）",
-        "give_up_seconds": "諦めるまで（秒）"
-      },
       "retrieval": {
         "_": "画面の順位付け",
         "multilingual_rank_model": "多言語の順位付けモデル",
@@ -636,13 +631,8 @@
     },
     "tuning": {
       "_": "チューニング",
-      "context_share": {
-        "_": "コンテキスト配分",
-        "text": "テキスト予算（ウィンドウ比）",
-        "results": "結果件数（ウィンドウ比）"
-      },
-      "timeout_multiplier": "タイムアウト倍率",
-      "defaults": {
+      "limits": {
+        "_": "制限値",
         "accessibility_messaging": "アクセシビリティ通信のタイムアウト",
         "accessibility_prewarm_interval": "アクセシビリティ事前読み込みの間隔",
         "accessibility_ready_backoff": "アクセシビリティ準備確認の待機上限",
@@ -752,11 +742,6 @@
     "computer_control": {
       "_": "画面の操作。",
       "enabled": "エージェントがネイティブアプリとブラウザを操作できるようにします。システム設定でアクセシビリティの許可も必要です。",
-      "settle": {
-        "_": "操作後に画面が落ち着くのを待つ時間。",
-        "poll_seconds": "画面が落ち着いたかを確認する間隔。",
-        "give_up_seconds": "落ち着かなくても読み取るまでの最長待ち時間。"
-      },
       "retrieval": {
         "_": "画面上の要素の順位付け。",
         "multilingual_rank_model": "言語をまたいで意味で順位付けする埋め込みモデル。関連度の基準にも使われます。",
@@ -831,14 +816,8 @@
     },
     "tuning": {
       "_": "大きさ・回数・待ち時間。",
-      "context_share": {
-        "_": "コンテキストの配分。",
-        "text": "モデルのウィンドウのうち、テキスト予算に充てる割合。上げるとすべてのテキスト上限が比例して広がります。",
-        "results": "モデルのウィンドウのうち、件数の上限に充てる割合。"
-      },
-      "timeout_multiplier": "すべての待ち時間にかかる倍率。遅いマシンや遠いホストで一律に延ばせます。",
-      "defaults": {
-        "_": "個々の既定値を名前で上書きします（設定パネルを参照）。時間はすべて秒です。上書きは出荷時の値を置き換え、context_share と timeout_multiplier はその上に適用されます。",
+      "limits": {
+        "_": "各調整値を名前で設定します。時間はすべて秒で、値は記述どおりに使われます。",
         "accessibility_messaging": "アプリへのアクセシビリティ通信 1 回の待ち時間。応答しないアプリで操作全体が止まらないようにします。",
         "accessibility_prewarm_interval": "最前面アプリのアクセシビリティツリーを事前に読み込む間隔。",
         "accessibility_ready_backoff": "準備確認の待ち時間を延ばしていくときの上限。",
@@ -849,13 +828,8 @@
         "browser_authorization": "Chrome の承認ダイアログにユーザーが応じるのを待つ時間。",
         "card_resolve": "リモートエージェントのカード取得の待ち時間。",
         "click_interval": "連続したクリックの間隔。",
-        "connect_timeout": "ブラウザへの接続を待つ時間。",
-        "control_plane_call": "デーモンへの 1 回の呼び出しの待ち時間。",
         "control_script": "画面操作スクリプト 1 本の実行時間の上限。",
         "credential_refresh_leeway": "アクセストークンを失効の何秒前に更新するか。",
-        "daemon_probe_connect": "デーモンのソケットへの接続を、応答なしと見なすまで待つ時間。",
-        "daemon_probe_interval": "他プロセスのデーモンが応答するか、置き換え対象が終了したかを確認する間隔。",
-        "daemon_startup": "起動したばかりのデーモンに接続できるようになるまで待つ時間。",
         "drag_step_interval": "ドラッグを分割した各段の間隔。",
         "drag_steps": "ドラッグを分割する段数。人の手の動きに見えるようにします。",
         "drag_timeout": "2 つの要素間のドラッグを待つ時間。",
@@ -870,12 +844,8 @@
         "find_rephrasing_similarity": "2 つの画面クエリが同じ問い直しと見なされる類似度（検索モデル上のコサイン）。",
         "focus_settle": "入力欄にフォーカスしてから入力を始めるまでの待ち。",
         "frame_resolve_timeout": "フレーム参照の解決を待つ時間。操作のタイムアウトより意図的に短くしています。消えたフレームがあっても列挙が止まらないようにするためです。",
-        "glob_results": "1 回の glob が返すパス数。",
         "goal_continuation_turns": "セッションが人を待たずに自らの目標のために連続して開けるターン数。目標レビューはこれより早く実行を終えられますが、これを超えて続けることはできません。",
         "task_continuation_turns": "未完了の追跡タスクが人を待たずに自動で再開できる連続ターン数。新しいユーザーメッセージで上限はリセットされます。",
-        "grep_per_file": "1 つのファイルから返す一致数。",
-        "grep_results": "1 回の検索が返す一致数の合計。",
-        "maximum_line_chars": "長すぎる 1 行から残す文字数。圧縮された 1 行が結果全体を埋めないようにします。",
         "mcp_connect": "MCP サーバー 1 台への接続を待つ時間。",
         "model_catalogue_ttl": "利用可能なモデル一覧をキャッシュする時間。",
         "model_silence_give_up": "モデルが何も返さないままストリームを保持できる時間。難問を考えている間は無言なので長めです。",
@@ -886,17 +856,8 @@
         "open_url": "URL をシステムのブラウザに渡す処理の待ち時間。",
         "output_tokens": "1 つのツールがそのまま返せる出力量。超えた分はファイルに退避されます。",
         "permission_reviewer_attempts": "権限のレビューを何回まで求めるか。これを超えた無応答は拒否として扱われます。",
-        "read_lines": "行数の指定がないときにファイル読み取りが返す行数。",
         "read_text_timeout": "ページ本文の取得を待つ時間。",
-        "remote_command": "他マシン上のコマンドの実行時間の上限。",
-        "remote_connect": "SSH 接続の確立を待つ時間。",
-        "remote_control_persist": "共有した SSH 接続を最後の利用後どれだけ保つか。次のコマンドで再利用されます。",
-        "remote_listing": "リモートで列挙してからローカルで glob を適用する、そのパス数。",
-        "ripgrep": "内容検索 1 回の実行時間の上限。",
-        "screencapture": "画面のキャプチャを待つ時間。",
-        "screenshot_timeout": "ページのスクリーンショット取得を待つ時間。",
         "scroll_amount_pixels": "ネイティブウィンドウを 1 段スクロールする量。",
-        "session_idle_sleep": "最後のターンのあと、セッションがプロセスを保つ時間。",
         "session_title_attempts": "セッション名の生成をモデルに何回求めるか。",
         "settle_stable_reads": "画面が変化しなくなったと見なすための、同じ内容が連続する回数。",
         "sigterm_grace": "SIGTERM のあと SIGKILL までに与える猶予。",
@@ -904,7 +865,6 @@
         "settle_give_up_seconds": "落ち着かなくても読み取るまでの最長待ち時間。",
         "slow_tool_sync_window": "URL の取得やファイルのダウンロードを同期実行する時間。",
         "snapshot_timeout": "ページのアクセシビリティ情報の取得を待つ時間。",
-        "stamped_image_side": "要素ラベルを重ねたスクリーンショットの長辺（ピクセル）。",
         "subscription_resume_ttl": "サブスクリプション提供元に残る会話状態を再利用できる期間。過ぎると会話全体を送り直します。",
         "surface_guard_margin": "スクリプト自身の上限に対して、待つ側が持つ余裕。上限を上げたときに監視側が先に発火して画面を中途半端にしないためです。",
         "type_chunk_interval": "入力を分割したチャンクの間隔。",

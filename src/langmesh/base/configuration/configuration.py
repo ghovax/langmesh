@@ -204,29 +204,20 @@ class AttachmentsConfiguration(Section):
         return max(0, int(self.inline_image_megabytes * 1024 * 1024))
 
 
-class ContextShareConfiguration(Section):
-    """What proportion of a budget the configured defaults assume, read as plain percentages."""
-
-    text: float = Field(default=0.25)
-    results: float = Field(default=0.15)
-
-
 class TuningConfiguration(Section):
-    """How large, how many and how patient the tools are, as plain values with no scaling."""
+    """Explicit size, count, and timing limits for tools."""
 
-    context_share: ContextShareConfiguration = Field(default_factory=ContextShareConfiguration)
-    timeout_multiplier: float = Field(default=1.0)
-    defaults: dict[str, float] = Field(default_factory=dict)
+    limits: dict[str, int | float] = Field(default_factory=dict)
 
-    @field_validator("defaults")
+    @field_validator("limits")
     @classmethod
-    def _known_defaults(cls, value: dict[str, float]) -> dict[str, float]:
+    def _known_limits(cls, value: dict[str, int | float]) -> dict[str, int | float]:
         from langmesh.base.primitives.limits import Limits
 
         unknown = sorted(name for name in value if not hasattr(Limits, name))
         if unknown:
             raise ValueError(
-                f"unknown limits default(s): {', '.join(unknown)}. The names that exist are the fields of `langmesh.base.primitives.limits.Limits`; the settings panel lists them with their defaults."
+                f"unknown limit(s): {', '.join(unknown)}. The names that exist are the fields of `langmesh.base.primitives.limits.Limits`; the settings panel lists them with their shipped values."
             )
         return value
 

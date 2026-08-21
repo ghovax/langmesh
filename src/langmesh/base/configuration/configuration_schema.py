@@ -130,12 +130,12 @@ def _kind_of(annotation: Any, default: Any) -> tuple[str, tuple[str, ...], bool]
     return KIND_STRING, (), optional
 
 
-# The one map whose keys are neither fixed by a model nor invented by the user.
-TUNING_DEFAULTS = "tuning.defaults"
+# The one map whose keys come from a dataclass rather than a model or the user.
+TUNING_LIMITS = "tuning.limits"
 
 
-def _tuning_defaults(prefix: str) -> list[Setting]:
-    """The individual limits, expanded under `tuning.defaults`, whose keys come from `Limits`."""
+def _tuning_limits(prefix: str) -> list[Setting]:
+    """Expand the individual limits whose keys come from `Limits`."""
     from langmesh.base.primitives.limits import Limits
 
     fields = Limits().__dataclass_fields__
@@ -157,9 +157,9 @@ def _walk(model: type[BaseModel], prefix: str) -> list[Setting]:
     for name, field in model.model_fields.items():
         path = f"{prefix}.{name}" if prefix else name
         annotation = field.annotation
-        if path == TUNING_DEFAULTS:
+        if path == TUNING_LIMITS:
             settings.append(Setting(path=path, default={}, open_ended=True, kind=KIND_SECTION))
-            settings.extend(_tuning_defaults(path))
+            settings.extend(_tuning_limits(path))
             continue
         if _is_open_ended_map(annotation):
             settings.append(
@@ -241,7 +241,7 @@ def setting_for(path: str) -> Optional[Setting]:
     for setting in settings():
         if setting.path == path:
             return setting
-    if path.startswith(TUNING_DEFAULTS + "."):
+    if path.startswith(TUNING_LIMITS + "."):
         # Every valid name under it was in the list just searched, so this one is a typo.
         return None
     from langmesh.base.configuration import Configuration

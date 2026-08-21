@@ -336,7 +336,7 @@
     "removeLocation": "Remove environment",
     "host": "Host",
     "noHosts": "No hosts in ~/.ssh/config. Add one there.",
-    "baseDirectory": "Compactioner path",
+    "baseDirectory": "Base path",
     "addLocation": "Add environment",
     "loadingLocations": "Loading workspace environments",
     "conflictSameDirectory": "Two entries use the same folder {directory}. Remove one or choose a different folder.",
@@ -555,11 +555,6 @@
     "computer_control": {
       "_": "Screen control",
       "enabled": "Let the agent drive the screen",
-      "settle": {
-        "_": "Settling",
-        "poll_seconds": "Re-check interval (seconds)",
-        "give_up_seconds": "Give up after (seconds)"
-      },
       "retrieval": {
         "_": "Ranking the screen",
         "multilingual_rank_model": "Multilingual ranking model",
@@ -636,13 +631,8 @@
     },
     "tuning": {
       "_": "Tuning",
-      "context_share": {
-        "_": "Context share",
-        "text": "Text budgets (percentages)",
-        "results": "Result budgets (percentages)"
-      },
-      "timeout_multiplier": "Timeout multiplier",
-      "defaults": {
+      "limits": {
+        "_": "Limits",
         "accessibility_messaging": "Accessibility message timeout",
         "accessibility_prewarm_interval": "Accessibility prewarm interval",
         "accessibility_ready_backoff": "Accessibility readiness backoff",
@@ -752,11 +742,6 @@
     "computer_control": {
       "_": "Driving the screen.",
       "enabled": "Let the agent drive native applications and your browser. It also needs Accessibility granted in System Settings.",
-      "settle": {
-        "_": "How long a screen surface is given to stop changing after an action.",
-        "poll_seconds": "How often to re-check whether the surface has settled.",
-        "give_up_seconds": "The longest to wait before reading it anyway."
-      },
       "retrieval": {
         "_": "Which models rank a screen, and when a query's spelling stops being evidence.",
         "multilingual_rank_model": "The static embedding that ranks by meaning across languages. Also the model whose plain cosine backs the relevance floor, so clearing it disables that floor. Empty turns it off.",
@@ -831,14 +816,8 @@
     },
     "tuning": {
       "_": "How large, how many, and how patient the tools are.",
-      "context_share": {
-        "_": "What proportion of the live context window one result may fill.",
-        "text": "Share one result's text may fill — output, fetched pages.",
-        "results": "Share a set of results may fill — matches, lines, records."
-      },
-      "timeout_multiplier": "Multiplier on every wait. 2.0 doubles them for a slow machine; 1.0 is neutral.",
-      "defaults": {
-        "_": "Override one tunable by its own name — see the settings panel. Every duration is in seconds. An override replaces the shipped default, so context_share and timeout_multiplier still apply on top.",
+      "limits": {
+        "_": "Set any tunable by its own name. Every duration is in seconds and every value is used exactly as written.",
         "accessibility_messaging": "How long one accessibility message to an application waits, so a hung application costs a moment rather than the whole action.",
         "accessibility_prewarm_interval": "Pause between pre-warming the frontmost application's accessibility tree.",
         "accessibility_ready_backoff": "Ceiling on the widening pause between accessibility readiness probes.",
@@ -849,13 +828,8 @@
         "browser_authorization": "How long attaching waits for the user to approve Chrome's prompt.",
         "card_resolve": "How long fetching a remote agent's card waits.",
         "click_interval": "Pause between successive synthesized clicks.",
-        "connect_timeout": "How long attaching to a browser waits.",
-        "control_plane_call": "How long one call to the daemon waits.",
         "control_script": "How long one screen-control script may run.",
         "credential_refresh_leeway": "How far ahead of its expiry an access token is refreshed.",
-        "daemon_probe_connect": "How long one connect to a daemon socket waits before it counts as unanswered.",
-        "daemon_probe_interval": "Pause between asks of whether another process's daemon socket answers yet, or whether a daemon being replaced has finally exited.",
-        "daemon_startup": "How long a command waits for a daemon it just started to become reachable.",
         "drag_step_interval": "Pause between the interpolated steps of a drag.",
         "drag_steps": "Segments a drag is split into, so it looks like a hand moved it.",
         "drag_timeout": "How long a drag between two elements waits.",
@@ -870,12 +844,8 @@
         "find_rephrasing_similarity": "How alike two screen queries must be, as a cosine in the retrieval model's own space, before a second one landing on the same element counts as the first asked again.",
         "focus_settle": "Pause after focusing a field, before typing into it.",
         "frame_resolve_timeout": "How long resolving a frame reference waits. Deliberately well below the action timeout: a frame that has gone waits out its budget rather than erroring, and listing every frame would otherwise stall on the one that left.",
-        "glob_results": "Paths one glob returns.",
         "goal_continuation_turns": "How many turns in a row a session may open for its own goal before it stops and waits for the person. The goal review can end a run earlier than this; nothing can carry one past it.",
         "task_continuation_turns": "How many turns in a row unfinished tracked tasks may reopen automatically before the session waits for the person. A new user message restores the allowance.",
-        "grep_per_file": "Matches one search returns from any single file.",
-        "grep_results": "Total matches one search returns.",
-        "maximum_line_chars": "Characters of a single over-long line kept before it is clipped, so one minified blob cannot fill a result on its own.",
         "mcp_connect": "How long connecting to one MCP server waits.",
         "model_catalogue_ttl": "How long the list of available models is cached.",
         "model_silence_give_up": "How long a model may hold a stream open saying nothing at all before the turn is ended. Long, because a model weighing a hard problem is silent and still working.",
@@ -886,17 +856,8 @@
         "open_url": "How long handing a URL to the system browser waits.",
         "output_tokens": "Tokens of inline output one tool may return before the rest overflows to a file.",
         "permission_reviewer_attempts": "How many times the permission reviewer is asked before its silence counts as a refusal.",
-        "read_lines": "Lines a file read returns when no explicit limit is given.",
         "read_text_timeout": "How long reading a page's text waits.",
-        "remote_command": "How long a command on another machine may run.",
-        "remote_connect": "How long opening an SSH connection waits.",
-        "remote_control_persist": "How long a shared SSH connection lingers after its last use, so the next command reuses it.",
-        "remote_listing": "Paths listed on a remote machine before glob matching is applied locally.",
-        "ripgrep": "How long one content search may run.",
-        "screencapture": "How long capturing the screen waits.",
-        "screenshot_timeout": "How long capturing a page screenshot waits.",
         "scroll_amount_pixels": "Pixels one scroll step moves a native window.",
-        "session_idle_sleep": "How long a session keeps its process after its last turn before it sleeps.",
         "session_title_attempts": "How many times a session asks the model to name itself before giving up.",
         "settle_stable_reads": "Identical consecutive reads that count a surface as having stopped changing.",
         "settle_poll_seconds": "How often to re-check whether a screen surface has settled after an action.",
@@ -904,7 +865,6 @@
         "sigterm_grace": "How long a cancelled command or a reaped session has after SIGTERM before SIGKILL.",
         "slow_tool_sync_window": "The same inline window for fetching a URL or downloading a file.",
         "snapshot_timeout": "How long an accessibility snapshot of a page waits.",
-        "stamped_image_side": "Longest side, in pixels, of a screenshot annotated with element labels.",
         "subscription_resume_ttl": "How long a subscription provider's server-side conversation state stays worth resuming from before the whole conversation is resent instead.",
         "surface_guard_margin": "How far above the script's own limit the machinery waiting on it sits, so raising that limit can never make the guard fire first and leave the surface half-dead.",
         "type_chunk_interval": "Pause between typed chunks.",
