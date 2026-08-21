@@ -1,4 +1,4 @@
-"""File interchange over LangMesh's own HTTP: ingesting an inbound file part, and signing a URL for an outbound one."""
+"""Daemon-owned file interchange for HTTP uploads and signed downloads."""
 
 from __future__ import annotations
 
@@ -19,9 +19,8 @@ import jwt
 from a2a.types import FilePart, FileWithBytes, FileWithUri
 
 from langmesh.base.confinement.outbound import UntrustedHostError, pin_to_ip, resolve_public_ips
-from langmesh.base.persistence.secrets import ensure_private_value
-
 from langmesh.base.primitives.limits import current_limits
+from langmeshd.commons.paths import uploads_directory
 
 
 __all__ = ["attachment_from_path"]
@@ -151,6 +150,18 @@ async def ingest_file_part(
     return None
 
 
+async def ingest_incoming_file_parts(message) -> list[dict]:
+    """Materialize every inbound file part into the daemon upload store."""
+    attachments: list[dict] = []
+    for part in message.parts or []:
+        root = getattr(part, "root", part)
+        if isinstance(root, FilePart):
+            attachment = await ingest_file_part(part, uploads_directory().parent)
+            if attachment is not None:
+                attachments.append(attachment)
+    return attachments
+
+
 class PathNotServableError(Exception):
     """A path outside the servable root was handed to the signer."""
 
@@ -226,7 +237,3 @@ class FileUrlSigner:
             self._redeemed[jti] = expiry
         return path
 
-
-def ensure_signing_secret(home_directory: Path) -> bytes:
-    """A stable per-install signing secret, persisted so signed links survive a restart."""
-    return ensure_private_value(home_directory / "a2a_file_secret", lambda: os.urandom(32))

@@ -13,8 +13,10 @@ from typing import Any
 
 from langmesh.base.primitives.identifiers import new_id
 from langmesh.base.primitives.serialization import compact
-from langmesh.base.persistence.background_store import STATUS_COMPLETED, STATUS_DELIVERED
 from langmesh.base.contracts.ports import JobStore, MemoryJobStore
+
+STATUS_COMPLETED = "completed"
+STATUS_DELIVERED = "delivered"
 
 
 # Per-kind presentation: how a completed job is announced and how in-flight ones are grouped in the turn context.

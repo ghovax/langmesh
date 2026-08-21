@@ -6,7 +6,7 @@ import yaml as _yaml
 
 from langmeshd.commons.brokers.composio import composio_mcp_servers
 from langmeshd.commons.configuration_io import load_configuration, save_api_keys
-from langmesh.base.confinement.paths import configuration_file_path
+from langmeshd.commons.paths import configuration_file_path
 from langmesh.base.contracts.mcp_client import MCPServerManager
 from langmesh.base.primitives.serialization import compact
 from typing import Optional

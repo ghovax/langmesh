@@ -12,8 +12,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Iterator, Optional
 
 from langmesh.base.primitives.identifiers import new_id
-from langmesh.base.confinement.paths import session_master_key_path
-from langmesh.base.persistence.secrets import ensure_private_value
+from langmeshd.commons.paths import session_master_key_path
+from langmeshd.daemon.persistence.secrets import ensure_private_value
 
 # Does this session still exist? Durable, and the registry's own answer.
 LIVE = "live"

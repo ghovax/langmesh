@@ -3,7 +3,7 @@
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 import langmesh.base.confinement as _confinement
-import langmesh.base.content.toolbox as _toolbox
+import langmeshd.commons.toolboxes as _toolbox
 import langmesh.base.configuration as _configuration
 from langmesh.base.identity import cursor_subscription
 from langmesh.base.content.models import available_models, list_models, ModelDefinition

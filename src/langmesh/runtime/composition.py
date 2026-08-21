@@ -60,6 +60,7 @@ class RuntimeComponents:
     file_leases: Any = None
     permissions: Any = None
     prompt_composer: Any = None
+    toolbox: Any = None
     tools: Sequence[BaseTool] = field(default_factory=tuple)
     toolset: Sequence[BaseTool] | None = None
     tool_gate: str = "ask"
@@ -115,7 +116,7 @@ class SessionComponents(RuntimeComponents):
 
     checkpoints: Any = None
     attachments: Any = None
-    credentials: Any = None
+    credential_store: Any = None
     tracer_provider: Any = None
 
     def for_runtime(self, **updates: Any) -> RuntimeComponents:

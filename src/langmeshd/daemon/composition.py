@@ -5,17 +5,16 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from pathlib import Path
 
-from langmesh.base.configuration import (
-    configuration_file_path,
-)
+from langmeshd.commons.paths import configuration_file_path
 from langmeshd.commons.configuration_io import seed_home_agents
 from langmeshd.commons.agent_files import list_agent_route_names
-from langmesh.base.content import toolbox
-from langmesh.base.confinement.file_leases import FileLeaseManager
-from langmesh.base.confinement.paths import data_directory
-from langmesh.base.persistence.worktrees import SessionWorktreeManager
+from langmeshd.commons import toolboxes
+from langmeshd.commons.paths import data_directory
+from langmeshd.daemon.persistence.file_leases import FileLeaseManager
+from langmeshd.daemon.persistence.worktrees import SessionWorktreeManager
 from langmeshd.daemon import state
 from langmeshd.commons import state as commons_state
 from langmeshd.commons.services.agents import _reload_agent_cards
@@ -39,7 +38,8 @@ async def open_shared_resources() -> None:
         PersistentPushNotificationConfigurationStore,
         PinnedPushNotificationSender,
     )
-    from langmesh.protocol.files import FileUrlSigner, ensure_signing_secret
+    from langmeshd.daemon.attachments import FileUrlSigner
+    from langmeshd.daemon.persistence.secrets import ensure_private_value
     from langmeshd.commons.brokers.terminals import TerminalSessionManager
 
     assert commons_state.global_configuration is not None
@@ -64,7 +64,7 @@ async def open_shared_resources() -> None:
     live_sessions = (
         [record.id for record in state.registry.live()] if state.registry is not None else []
     )
-    swept = await asyncio.to_thread(toolbox.sweep, live_sessions)
+    swept = await asyncio.to_thread(toolboxes.sweep, live_sessions)
     if swept:
         logger.info("swept %d toolbox(es) belonging to sessions that are gone", len(swept))
 
@@ -81,7 +81,7 @@ async def open_shared_resources() -> None:
 
     signing_root = data_directory()
     commons_state.file_url_signer = FileUrlSigner(
-        ensure_signing_secret(signing_root),
+        ensure_private_value(signing_root / "a2a_file_secret", lambda: os.urandom(32)),
         f"http://127.0.0.1:{commons_state.daemon_port}",
         allowed_root=signing_root / "uploads",
     )

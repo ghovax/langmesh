@@ -11,7 +11,7 @@ from typing import Any
 
 import yaml
 
-from langmesh.base.confinement.paths import configuration_file_path
+from langmeshd.commons.paths import configuration_file_path
 from langmesh.base.configuration import Configuration
 
 

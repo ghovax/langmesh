@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from langmesh.base.confinement.paths import (
+from langmeshd.commons.paths import (
     SOCKET_PATH_MAXIMUM_BYTES,
     runtime_directory,
     state_directory,

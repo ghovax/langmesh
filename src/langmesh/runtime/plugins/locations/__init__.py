@@ -66,7 +66,9 @@ class Locations(Feature):
                 uri = str(entry.get("uri") or location_uri_for(address))
             except Exception:
                 uri = f"{kind}:{base_directory}"
-            executor = entry.get("executor") or executor_for(address)
+            executor = entry.get("executor")
+            if executor is None:
+                executor = executor_for(address)
             resolved = {
                 "uri": uri,
                 "name": name,

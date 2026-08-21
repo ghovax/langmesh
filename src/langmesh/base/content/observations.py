@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+OBSERVATIONS_FILENAME = "observations.sqlite"
+
 
 class ObservationEntry(BaseModel, frozen=True):
     """One validated factual entry in observational memory."""
@@ -71,6 +73,7 @@ __all__ = [
     "DirectiveEntry",
     "ObservationEntry",
     "ObservationSnapshot",
+    "OBSERVATIONS_FILENAME",
     "RegistryCounts",
     "RegistryMetadata",
     "RegistryTimestamps",

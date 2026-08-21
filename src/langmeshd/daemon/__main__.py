@@ -296,7 +296,7 @@ async def _serve() -> int:
     import uvicorn
 
     from langmesh.base import confinement
-    from langmesh.base.persistence.background_store import reap_orphaned_process_groups
+    from langmeshd.daemon.persistence.background_jobs import reap_orphaned_process_groups
     from langmeshd.commons.configuration_io import load_configuration
     from langmeshd.daemon import state
     from langmeshd.commons import state as commons_state
@@ -335,7 +335,7 @@ async def _serve() -> int:
     )
     if commons_state.global_configuration.user_context.enabled:
         # Built here, in the background, so the first message of a conversation never waits on it.
-        from langmesh.runtime.prompt_environment import warm_user_context
+        from langmeshd.daemon.machine_environment import warm_user_context
 
         warm_user_context(commons_state.global_configuration.user_context.refresh_hours)
     # Ask once at boot whether this machine can enforce a profile, on macOS by running one rather than by looking for the binary.
@@ -482,7 +482,7 @@ async def _serve() -> int:
     )
 
     async def resume_pending_sessions() -> None:
-        from langmesh.base.persistence.background_store import get_background_job_store
+        from langmeshd.daemon.persistence.background_jobs import get_background_job_store
 
         assert state.registry is not None
         assert state.lifecycle is not None
@@ -519,7 +519,7 @@ async def _open_stores() -> None:
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy.orm import sessionmaker
 
-    from langmesh.base.confinement.paths import database_file_path
+    from langmeshd.commons.paths import database_file_path
     from langmeshd.commons import state as commons_state
     from langmeshd.commons.database import create_history_schema
     from langmeshd.daemon.persistence.turn_store import AppendOnlyTaskStore

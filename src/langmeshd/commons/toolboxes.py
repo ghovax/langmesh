@@ -1,4 +1,4 @@
-"""The tools a session installs for itself, kept apart from what the machine happens to have."""
+"""Daemon-owned toolboxes kept apart from what the machine happens to have."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from langmesh.base.confinement import environment_variables
-from langmesh.base.confinement.paths import session_toolbox_directory, session_toolboxes_directory
+from langmeshd.commons.paths import session_toolbox_directory, session_toolboxes_directory
 
 # What the environment has to say for the ordinary command to mean this session's own.
 _XDG_STATE = environment_variables.XDG_STATE_HOME

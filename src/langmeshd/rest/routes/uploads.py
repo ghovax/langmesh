@@ -3,7 +3,7 @@
 from __future__ import annotations
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from datetime import datetime, timezone
-from langmesh.base.confinement.paths import uploads_directory
+from langmeshd.commons.paths import uploads_directory
 from pathlib import Path
 import asyncio
 import hashlib
@@ -11,7 +11,7 @@ from typing import Annotated
 from langmesh.protocol.dtos import (
     AttachmentReference,
 )
-from langmesh.protocol.files import attachment_from_path
+from langmeshd.daemon.attachments import attachment_from_path
 from fastapi.responses import FileResponse
 from langmeshd.commons import state
 

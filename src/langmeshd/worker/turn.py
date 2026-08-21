@@ -38,11 +38,11 @@ from langmesh.protocol.metadata import (
 from langmesh.protocol.parts import (
     _attachment_warning_event,
     _event_part,
-    _ingest_incoming_file_parts,
     _input_response_payload,
     _structured_data_payloads,
     _text_part,
 )
+from langmeshd.daemon.attachments import ingest_incoming_file_parts
 from langmesh.protocol.turn_record import TurnKind, TurnRecord
 from langmesh.runtime.plugins.goal_review.goal import GoalReviewPhase
 from langmesh.runtime.runtime import AgentRuntime
@@ -376,7 +376,7 @@ class _TurnRunner:
         self._user_text = self._request.get_user_input()
         # Structured input arrives as DataParts beside the prose — today, attachments.
         self._structured_payloads = _structured_data_payloads(message)
-        ingested_attachments = await _ingest_incoming_file_parts(message)
+        ingested_attachments = await ingest_incoming_file_parts(message)
         if ingested_attachments:
             self._structured_payloads.append(attachments_payload(ingested_attachments))
         self._metadata = turn_metadata(message)

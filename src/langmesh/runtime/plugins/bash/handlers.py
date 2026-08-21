@@ -14,7 +14,7 @@ from typing import Any, AsyncIterator
 
 from langmesh.base import confinement as _confinement
 from langmesh.base.confinement import parse_access_request
-from langmesh.base.confinement.file_leases import FileLeaseConflict
+from langmesh.base.contracts.ports import FileLeaseConflict
 from langmesh.base.configuration import PermissionDenied
 from langmesh.runtime.background import (
     bind_background_jobs,

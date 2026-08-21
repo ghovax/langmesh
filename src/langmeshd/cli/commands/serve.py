@@ -64,8 +64,8 @@ _REPLAYABLE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "DELETE"})
 
 def reach_token() -> str:
     """The door's durable pairing token, minted once and kept beside the daemon's own state."""
-    from langmesh.base.confinement.paths import reach_token_path
-    from langmesh.base.persistence.secrets import ensure_private_value
+    from langmeshd.commons.paths import reach_token_path
+    from langmeshd.daemon.persistence.secrets import ensure_private_value
 
     return ensure_private_value(
         reach_token_path(), lambda: secrets.token_urlsafe(48).encode()

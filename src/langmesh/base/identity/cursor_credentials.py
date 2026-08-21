@@ -6,13 +6,11 @@ import asyncio
 import base64
 import hashlib
 import json
-import os
 import secrets
 import time
 import urllib.parse
 import uuid as uuid_module
-from dataclasses import asdict, dataclass
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Optional
 
 import httpx
@@ -24,8 +22,8 @@ from tenacity import (
     wait_exponential,
 )
 
-from langmesh.base.confinement.paths import oauth_token_path
-
+from langmesh.base.contracts.ports import CredentialStore
+from langmesh.base.identity.credential_store import credential_store
 from langmesh.base.primitives.limits import current_limits
 
 
@@ -65,30 +63,19 @@ class CursorTokens:
         return time.time() >= (self.expires_at - leeway_seconds)
 
 
-def auth_file_path() -> Path:
-    return oauth_token_path(PROVIDER)
+def load_tokens(store: CredentialStore | None = None) -> Optional[CursorTokens]:
+    """Load tokens from the caller-owned store, or return ``None`` when signed out."""
+    tokens = (store or credential_store()).load(PROVIDER)
+    return tokens if isinstance(tokens, CursorTokens) else None
 
 
-def load_tokens() -> Optional[CursorTokens]:
-    """Load the stored tokens, or `None` when signed out; synchronous file IO."""
-    path = auth_file_path()
-    if not path.exists():
-        return None
-    try:
-        return CursorTokens(**json.loads(path.read_text()))
-    except (OSError, ValueError, TypeError):
-        return None
+def save_tokens(tokens: CursorTokens, store: CredentialStore | None = None) -> None:
+    """Place tokens in the caller-owned credential store."""
+    (store or credential_store()).save(PROVIDER, tokens)
 
 
-def save_tokens(tokens: CursorTokens) -> None:
-    """Persist tokens with owner-only permissions (they are password-equivalent)."""
-    path = auth_file_path()
-    path.write_text(json.dumps(asdict(tokens), separators=(",", ":")))
-    os.chmod(path, 0o600)
-
-
-def clear_tokens() -> None:
-    auth_file_path().unlink(missing_ok=True)
+def clear_tokens(store: CredentialStore | None = None) -> None:
+    (store or credential_store()).clear(PROVIDER)
 
 
 def is_signed_in() -> bool:
@@ -207,7 +194,8 @@ async def valid_tokens() -> CursorTokens:
 class CursorLoginFlow:
     """One browser sign-in, polled rather than redirected because Cursor's flow has no callback."""
 
-    def __init__(self) -> None:
+    def __init__(self, store: CredentialStore | None = None) -> None:
+        self._store = store or credential_store()
         self._verifier = _generate_verifier()
         self._uuid = str(uuid_module.uuid4())
         self._cancelled = False
@@ -235,7 +223,7 @@ class CursorLoginFlow:
         if not response.is_success:
             raise CursorAuthError(f"Cursor refused the sign-in poll (HTTP {response.status_code}).")
         tokens = _tokens_from_payload(response.json())
-        await asyncio.to_thread(save_tokens, tokens)
+        await asyncio.to_thread(save_tokens, tokens, self._store)
         return tokens
 
     async def wait(self) -> CursorTokens:
