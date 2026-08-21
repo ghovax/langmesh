@@ -65,9 +65,7 @@ def attach_location_executors(
             base_directory=str(location.get("base_directory") or ""),
             host_alias=str(location.get("host_alias") or ""),
         )
-        location["executor"] = executor_for(
-            address, control_directory=ssh_control_directory()
-        )
+        location["executor"] = executor_for(address, control_directory=ssh_control_directory())
     return locations
 
 

@@ -243,9 +243,9 @@ class TerminalSession:
             # A remote terminal: ssh to the host and start a login shell in the location's base directory.
             from langmeshd.commons.paths import ssh_control_directory
 
-            command = SshExecutor(
-                self.remote_host_alias, ssh_control_directory()
-            ).terminal_argv(str(self.directory))
+            command = SshExecutor(self.remote_host_alias, ssh_control_directory()).terminal_argv(
+                str(self.directory)
+            )
         else:
             command = _shell_command()
         pid, master_fd = pty.fork()

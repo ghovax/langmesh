@@ -236,4 +236,3 @@ class FileUrlSigner:
                 return None
             self._redeemed[jti] = expiry
         return path
-

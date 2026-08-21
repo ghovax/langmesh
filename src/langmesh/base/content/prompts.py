@@ -46,9 +46,7 @@ class PromptTemplates:
         )
 
     @classmethod
-    def render(
-        cls, template: str, variables: Mapping[str, object], template_name: str = ""
-    ) -> str:
+    def render(cls, template: str, variables: Mapping[str, object], template_name: str = "") -> str:
         """Render one template with strict ``{{ name }}`` substitution."""
         where = f" in prompt '{template_name}'" if template_name else ""
         placeholder = re.compile(r"\{\{\s*(\w+)\s*\}\}")
@@ -101,7 +99,9 @@ class PackagePromptLoader(PromptTemplates):
         try:
             self._directory.resolve().relative_to(package_root)
         except ValueError as error:
-            raise ValueError("PackagePromptLoader accepts only shipped LangMesh resources.") from error
+            raise ValueError(
+                "PackagePromptLoader accepts only shipped LangMesh resources."
+            ) from error
         self._extension = extension
         super().__init__({}, overrides=overrides, fallback=fallback)
 

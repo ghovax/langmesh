@@ -36,9 +36,7 @@ def parse_skill(content: str, *, source: str = "", default_name: str = "") -> Sk
         frontmatter = yaml.safe_load(match.group(1)) or {}
         body = match.group(2).strip()
         inferred_name = (
-            source_path.parent.name
-            if source_path.name.upper() == "SKILL.MD"
-            else source_path.stem
+            source_path.parent.name if source_path.name.upper() == "SKILL.MD" else source_path.stem
         )
         default_identifier = default_name or inferred_name
         identifier = str(frontmatter.get("name") or default_identifier)
@@ -47,9 +45,7 @@ def parse_skill(content: str, *, source: str = "", default_name: str = "") -> Sk
         enabled = bool(frontmatter.get("enabled", True))
     else:
         inferred_name = (
-            source_path.parent.name
-            if source_path.name.upper() == "SKILL.MD"
-            else source_path.stem
+            source_path.parent.name if source_path.name.upper() == "SKILL.MD" else source_path.stem
         )
         identifier = default_name or inferred_name
         title = identifier

@@ -94,7 +94,7 @@ class SandboxUpdateRequest(BaseModel):
 
 
 class UserContextUpdateRequest(BaseModel):
-    """Opt-in/out of the personal user-context snapshot in the system prompt."""
+    """Opt-in/out of the personal snapshot appended as session context."""
 
     enabled: bool
 

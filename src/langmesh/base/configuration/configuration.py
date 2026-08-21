@@ -232,7 +232,7 @@ class TuningConfiguration(Section):
 
 
 class UserContextConfiguration(Section):
-    """Opt-in snapshot of how the user works on this machine, compacted into the system prompt."""
+    """Opt-in snapshot of how the user works on this machine, appended as session context."""
 
     enabled: bool = Field(default=False)
     refresh_hours: float = Field(default=6.0, gt=0)
@@ -283,6 +283,7 @@ class MCPConfiguration(Section):
     def enabled_servers(self) -> dict[str, MCPServerConfiguration]:
         return {name: server for name, server in self.servers.items() if server.enabled}
 
+
 class RemoteAgentAuthConfiguration(BaseModel):
     """How to authenticate to one external agent. ``${VAR}`` expands at load, so tokens stay out of the file."""
 
@@ -320,6 +321,7 @@ class RemoteAgentsConfiguration(Section):
         return {
             name: agent for name, agent in self.agents.items() if agent.enabled and agent.card_url
         }
+
 
 class TelemetryExporterConfiguration(Section):
     """Where traces are sent."""
@@ -392,6 +394,7 @@ class Configuration(Section, extra="allow"):
             for identifier, credential in self.providers.items()
             if credential.base_url
         }
+
 
 class NamedToolPermissions(BaseModel):
     """Per-call permission rules for a tool whose calls have a name."""

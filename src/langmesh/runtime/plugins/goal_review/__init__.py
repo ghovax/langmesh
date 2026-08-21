@@ -140,9 +140,7 @@ class GoalReviewFeature(Feature):
 
     def restore(self, state: object) -> None:
         restored = GoalReviewState.from_data(state)
-        self._goal = (
-            restored.goal.model_copy(deep=True) if restored.goal is not None else None
-        )
+        self._goal = restored.goal.model_copy(deep=True) if restored.goal is not None else None
 
     def write(self, goal: Optional[Goal]) -> None:
         """Set, replace or drop the goal, and announce it. The single writer, so no path changes it silently."""
@@ -252,9 +250,7 @@ class GoalReviewFeature(Feature):
                 permissions=reviewer_permissions,
                 # A reviewer inherits only the investigative tools this plugin names explicitly.
                 available_tools=tuple(
-                    tool
-                    for tool in self._host.tools.model_tools
-                    if tool.name in _REVIEWER_TOOLS
+                    tool for tool in self._host.tools.model_tools if tool.name in _REVIEWER_TOOLS
                 ),
                 related_turns=self._host.tools.turn_reader,
                 features=[

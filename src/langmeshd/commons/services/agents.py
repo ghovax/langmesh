@@ -100,9 +100,7 @@ def _recent_models(limit: int = 8) -> list[dict[str, str]]:
 def _card_for(agent_name: str, working_directory: str = ""):
     """Build an agent's card from its configuration and the skills scoped to the given working directory."""
     assert state.global_configuration is not None
-    configuration = load_agent_configuration(
-        agent_name, agent_directories()
-    )
+    configuration = load_agent_configuration(agent_name, agent_directories())
     skill_roots = skill_directories(working_directory)
     all_skills = load_skills(skill_roots)
     agent_skills = skills_for_agent(all_skills, configuration.skills)

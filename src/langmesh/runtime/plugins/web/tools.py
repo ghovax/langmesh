@@ -42,6 +42,7 @@ async def search_web(
 
     # Mint the id up front, so a delivered result can be matched to the search that started it.
     job_id = new_id("search")
+
     async def run() -> str:
         try:
             results = await asyncio.to_thread(

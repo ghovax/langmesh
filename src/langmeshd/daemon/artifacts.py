@@ -86,9 +86,7 @@ class FileArtifacts:
     def __init__(self, directory: Path) -> None:
         self._directory = directory
 
-    async def create(
-        self, name: str, media_type: str, *, identifier: str = ""
-    ) -> ArtifactWriter:
+    async def create(self, name: str, media_type: str, *, identifier: str = "") -> ArtifactWriter:
         from langmesh.base.primitives.identifiers import new_id
 
         resolved_identifier = _valid_identifier(identifier or new_id("artifact"))

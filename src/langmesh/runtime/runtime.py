@@ -611,9 +611,7 @@ class AgentRuntime(_RunsTurns):
 
     def _canonical_working_directory(self, working_directory: str | None = None) -> str:
         return str(
-            Path(working_directory or self._working_directory)
-            .expanduser()
-            .resolve(strict=False)
+            Path(working_directory or self._working_directory).expanduser().resolve(strict=False)
         )
 
     async def _acquire_filesystem_lease(

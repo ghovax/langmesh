@@ -96,10 +96,7 @@ async def agent_cards(working_directory: str = ""):
     allowed_agents: set[str] | None = None
     if working_directory:
         allowed_agents = {
-            agent["id"]
-            for agent in list_agents(
-                agent_directories(working_directory)
-            )
+            agent["id"] for agent in list_agents(agent_directories(working_directory))
         }
     cards: list[dict] = []
     for agent_name, existing in sorted(state.agent_cards.items()):

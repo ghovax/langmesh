@@ -90,8 +90,7 @@ class PendingTurn:
             interactions=tuple(SuspensionGate(**gate) for gate in interactions),
             plans=cast(Mapping[str, dict[str, Any]], _plain(plans)),
             decisions={
-                str(request_id): Approval(**decision)
-                for request_id, decision in decisions.items()
+                str(request_id): Approval(**decision) for request_id, decision in decisions.items()
             },
         )
 

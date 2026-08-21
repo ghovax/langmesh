@@ -233,9 +233,7 @@ class MemoryArtifacts:
     def __init__(self) -> None:
         self._values: dict[str, bytes] = {}
 
-    async def create(
-        self, name: str, media_type: str, *, identifier: str = ""
-    ) -> ArtifactWriter:
+    async def create(self, name: str, media_type: str, *, identifier: str = "") -> ArtifactWriter:
         reference = ArtifactReference(
             identifier=identifier or f"artifact-{uuid.uuid4()}",
             name=name,
