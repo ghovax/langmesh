@@ -686,7 +686,7 @@ export function SettingsDialog({
     onOpenChange(false);
   }
 
-  function discardChangesAndClose() {
+  function cancelEditing() {
     setExaApiKey(savedExaApiKey);
     setComposioApiKey(savedComposioApiKey);
     setJinaApiKey(savedJinaApiKey);
@@ -1301,7 +1301,7 @@ export function SettingsDialog({
         confirmLabel={translation("discard")}
         danger
         maxW="420px"
-        onConfirm={discardChangesAndClose}
+        onConfirm={cancelEditing}
       >
         {translation("discardBody")}
       </ConfirmDialog>
