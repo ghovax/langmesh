@@ -57,16 +57,11 @@ def _free_port() -> int:
 
 def _write_handshake(token: str, port: int) -> None:
     """Publish where the daemon is and what proves you may talk to it, both 0600 so file permissions are the access control."""
-    token_path = daemon_token_path()
-    token_path.write_text(token)
-    token_path.chmod(0o600)
-    port_path = daemon_port_path()
-    port_path.write_text(str(port))
-    port_path.chmod(0o600)
-    # The pid is how a stop signal reaches a daemon that has stopped answering.
-    pidfile = daemon_pid_path()
-    pidfile.write_text(str(os.getpid()))
-    pidfile.chmod(0o600)
+    from langmeshd.commons.atomic_file import write_text
+
+    write_text(daemon_token_path(), token)
+    write_text(daemon_port_path(), str(port))
+    write_text(daemon_pid_path(), str(os.getpid()))
 
 
 def _clear_handshake() -> None:

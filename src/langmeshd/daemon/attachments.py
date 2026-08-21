@@ -21,6 +21,7 @@ from a2a.types import FilePart, FileWithBytes, FileWithUri
 from langmesh.base.confinement.outbound import UntrustedHostError, pin_to_ip, resolve_public_ips
 from langmesh.base.primitives.limits import current_limits
 from langmeshd.commons.paths import uploads_directory
+from langmeshd.commons.atomic_file import write_bytes
 
 
 __all__ = ["attachment_from_path"]
@@ -72,7 +73,7 @@ def _store_bytes(raw: bytes, suffix: str, home_directory: Path) -> Path:
     """Content-address ``raw`` into the upload store (dedup by sha256), returning its path."""
     target = _uploads_root(home_directory) / f"{hashlib.sha256(raw).hexdigest()}{suffix}"
     if not target.exists():
-        target.write_bytes(raw)
+        write_bytes(target, raw)
     return target
 
 

@@ -13,6 +13,7 @@ from typing import Iterable, Sequence
 import yaml
 
 from langmesh.base.configuration.configuration import AgentConfiguration, ToolsConfiguration
+from langmeshd.commons.atomic_file import write_text
 
 
 class AgentFileLoader:
@@ -70,8 +71,10 @@ def write_agent_markdown(path: str | Path, configuration: AgentConfiguration) ->
     rendered = yaml.safe_dump(
         front, sort_keys=False, allow_unicode=True, default_flow_style=False
     ).strip()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\n{rendered}\n---\n\n{body}\n" if body else f"---\n{rendered}\n---\n")
+    write_text(
+        path,
+        f"---\n{rendered}\n---\n\n{body}\n" if body else f"---\n{rendered}\n---\n",
+    )
 
 
 def _as_directories(directories: str | Path | Iterable[str | Path]) -> list[Path]:

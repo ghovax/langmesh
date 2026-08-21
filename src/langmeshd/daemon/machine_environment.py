@@ -1312,9 +1312,12 @@ def _refresh_user_context_later() -> None:
     def rebuild() -> None:
         try:
             payload = _build_user_context()
-            path = _user_context_cache_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(compact({"built_at": time.time(), "payload": payload}))
+            from langmeshd.commons.atomic_file import write_text
+
+            write_text(
+                _user_context_cache_path(),
+                compact({"built_at": time.time(), "payload": payload}),
+            )
         except Exception:  # noqa: BLE001 — a snapshot that cannot be built is not worth a failed turn
             logger.debug("could not refresh the user-context snapshot", exc_info=True)
         finally:
