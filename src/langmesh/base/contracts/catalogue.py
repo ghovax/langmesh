@@ -24,14 +24,13 @@ class Catalogue:
         memories: Optional[Iterable[Any]] = None,
         instructions: str | Iterable[Instruction] | None = None,
         prompts: Optional[Mapping[str, str]] = None,
-        fallback_prompts: Optional[Path] = None,
     ) -> None:
         self._agents = dict(agents or {})
         self._skills = list(skills or ())
         self._memories = list(memories or ())
         self._instructions = as_instructions(instructions)
         self._prompts = dict(prompts or {})
-        self._fallback_prompts = fallback_prompts or packaged_prompts_directory()
+        self._fallback_prompts = packaged_prompts_directory()
 
     def agent(self, name: str) -> Any:
         return self._agents.get(name)
