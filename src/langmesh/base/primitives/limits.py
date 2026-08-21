@@ -126,25 +126,12 @@ def current_limits() -> Limits:
 
 def limits_from_configuration(policy: object) -> Limits:
     """The limits a configuration section asks for, with plain overrides by field name."""
-    values: dict[str, object] = {}
-    overrides = getattr(policy, "defaults", None)
-    if isinstance(overrides, dict):
-        values.update({key: value for key, value in overrides.items() if hasattr(Limits, key)})
-    # The percentages size the headline budgets only when the configuration names no explicit value.
-    context_share = getattr(policy, "context_share", None)
-    if context_share is not None:
-        text = getattr(context_share, "text", None)
-        if isinstance(text, (int, float)) and "output_tokens" not in values:
-            values["output_tokens"] = int(16_384 * float(text) / 0.25)
-        results = getattr(context_share, "results", None)
-        if isinstance(results, (int, float)) and "web_search_maximum" not in values:
-            values["web_search_maximum"] = int(16 * float(results) / 0.15)
-    timeout_multiplier = getattr(policy, "timeout_multiplier", None)
-    if isinstance(timeout_multiplier, (int, float)):
-        base = Limits()
-        for name in base.__dataclass_fields__:
-            if name.endswith("_timeout") or name.endswith("_window") or name == "sigterm_grace":
-                values.setdefault(name, float(getattr(base, name)) * float(timeout_multiplier))
+    configured = getattr(policy, "limits", None)
+    values = (
+        {key: value for key, value in configured.items() if hasattr(Limits, key)}
+        if isinstance(configured, dict)
+        else {}
+    )
     return Limits(**cast(dict[str, Any], values))
 
 

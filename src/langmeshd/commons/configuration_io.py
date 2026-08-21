@@ -66,8 +66,7 @@ def load_configuration(*, seed: bool = True) -> Configuration:
     if not path.exists():
         if not seed:
             return Configuration()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(packaged_configuration_yaml())
+        configuration_file.seed(packaged_configuration_yaml())
     data = configuration_file.load()
     invalid = configuration_file.rejects(data)
     if invalid:
@@ -78,7 +77,7 @@ def load_configuration(*, seed: bool = True) -> Configuration:
     return configuration
 
 
-def save_api_keys(
+def save_configuration_changes(
     *,
     exa_api_key: str | None = None,
     jina_api_key: str | None = None,
@@ -87,11 +86,12 @@ def save_api_keys(
     permission_mode: str | None = None,
     sandbox: dict | None = None,
     worktree_strategy: str | None = None,
+    attachments: dict | None = None,
     compaction: dict | None = None,
     user_context_enabled: bool | None = None,
     computer_control_enabled: bool | None = None,
     toolbox_enabled: bool | None = None,
-    tuning: dict | None = None,
+    tuning_limits: dict | None = None,
     provider_keys: dict[str, str] | None = None,
     provider_base_urls: dict[str, str] | None = None,
 ) -> None:
@@ -110,10 +110,12 @@ def save_api_keys(
         data.setdefault("sandbox", {}).update(sandbox)
     if worktree_strategy is not None:
         data.setdefault("workspace", {})["strategy"] = worktree_strategy
+    if attachments is not None:
+        data.setdefault("attachments", {}).update(attachments)
     if compaction is not None:
         data.setdefault("compaction", {}).update(compaction)
-    if tuning is not None:
-        data.setdefault("tuning", {}).update(tuning)
+    if tuning_limits is not None:
+        data.setdefault("tuning", {})["limits"] = tuning_limits
     if user_context_enabled is not None:
         data.setdefault("user_context", {})["enabled"] = user_context_enabled
     if computer_control_enabled is not None:
@@ -132,7 +134,15 @@ def save_api_keys(
             providers_section[provider_id] = entry
     if permission_mode is not None:
         data.setdefault("agent", {})["permission_mode"] = permission_mode
+    invalid = configuration_file.rejects(data)
+    if invalid:
+        raise ValueError(f"invalid configuration change: {invalid}")
     configuration_file.save(data)
 
 
-__all__ = ["load_configuration", "packaged_configuration_yaml", "save_api_keys", "seed_home_agents"]
+__all__ = [
+    "load_configuration",
+    "packaged_configuration_yaml",
+    "save_configuration_changes",
+    "seed_home_agents",
+]
