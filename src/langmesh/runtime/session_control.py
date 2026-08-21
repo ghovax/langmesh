@@ -137,6 +137,7 @@ class SessionSnapshot:
     """The runtime state that is durable independently of its conversation."""
 
     features: tuple[FeatureState, ...] = ()
+    permission_mode: str = ""
     turn_recovery: Literal["none", "retryable"] = "none"
     turn_failure_root: str | None = None
     model_cache: object | None = None
@@ -153,6 +154,7 @@ class SessionSnapshot:
             "features": [
                 {"name": feature.name, "value": _plain(feature.value)} for feature in self.features
             ],
+            "permission_mode": self.permission_mode,
             "turn_recovery": self.turn_recovery,
             "turn_failure_root": self.turn_failure_root,
             "model_cache": _plain(self.model_cache),
@@ -166,6 +168,9 @@ class SessionSnapshot:
         recovery = str(data.get("turn_recovery") or "none")
         if recovery not in {"none", "retryable"}:
             raise ValueError(f"invalid turn recovery state: {recovery!r}")
+        permission_mode = data.get("permission_mode")
+        if permission_mode not in {"ask", "automatic", "allow"}:
+            raise ValueError(f"invalid permission mode: {permission_mode!r}")
         raw_features = data.get("features", ())
         raw_prompt = data.get("system_prompt")
         raw_pending_input = data.get("pending_input")
@@ -194,6 +199,7 @@ class SessionSnapshot:
         )
         return cls(
             features=features,
+            permission_mode=str(permission_mode),
             turn_recovery=cast(Literal["none", "retryable"], recovery),
             turn_failure_root=str(data["turn_failure_root"])
             if data.get("turn_failure_root")
