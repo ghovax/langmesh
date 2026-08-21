@@ -163,9 +163,7 @@ class MCPServerManager:
     async def _close_connection(connection: Any) -> None:
         try:
             await connection.aclose()
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except BaseException:
+        except Exception:
             pass
 
     async def list_resources(self, server: str = "") -> dict[str, Any]:
