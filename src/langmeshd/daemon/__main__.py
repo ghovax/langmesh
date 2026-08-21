@@ -527,16 +527,30 @@ async def _open_stores() -> None:
     database_path = database_file_path()
     sync_engine = create_engine(f"sqlite:///{database_path}")
 
-    @event.listens_for(sync_engine, "connect")
-    def _pragmas(dbapi_connection, _record):  # noqa: ANN001
+    def _configure_sqlite(dbapi_connection) -> None:  # noqa: ANN001
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA synchronous=FULL")
+        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA wal_autocheckpoint=1000")
         cursor.close()
+
+    @event.listens_for(sync_engine, "connect")
+    def _pragmas(dbapi_connection, _record):  # noqa: ANN001
+        _configure_sqlite(dbapi_connection)
 
     def _initialize() -> None:
         create_history_schema(sync_engine)
+        with sync_engine.connect() as connection:
+            integrity = str(connection.exec_driver_sql("PRAGMA quick_check").scalar() or "")
+            if integrity.lower() != "ok":
+                raise RuntimeError(f"The session database failed its integrity check: {integrity}")
+            foreign_key_errors = connection.exec_driver_sql("PRAGMA foreign_key_check").all()
+            if foreign_key_errors:
+                raise RuntimeError(
+                    f"The session database has {len(foreign_key_errors)} foreign-key violation(s)."
+                )
 
     await asyncio.to_thread(_initialize)
     commons_state.session_factory = sessionmaker(bind=sync_engine)
@@ -546,11 +560,7 @@ async def _open_stores() -> None:
 
     @event.listens_for(commons_state.async_engine.sync_engine, "connect")
     def _async_pragmas(dbapi_connection, _record):  # noqa: ANN001
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA busy_timeout=30000")
-        cursor.close()
+        _configure_sqlite(dbapi_connection)
 
     commons_state.turn_store = AppendOnlyTaskStore(commons_state.async_engine)
     await commons_state.turn_store.initialize()

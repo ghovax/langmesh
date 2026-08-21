@@ -20,6 +20,8 @@ from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
     ToolMessage,
+    message_to_dict,
+    messages_from_dict,
 )
 from langchain_core.messages.ai import add_ai_message_chunks
 from langchain_core.utils.json import parse_partial_json
@@ -43,7 +45,7 @@ from langmesh.base.primitives.limits import current_limits
 from langmesh.base.primitives.serialization import compact, lines
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.environment import RuntimeEnvironment
-from langmesh.runtime.session_control import RenderedPrompt
+from langmesh.runtime.session_control import PendingInput, RenderedPrompt
 from langmesh.runtime.internals import (
     _CONTINUE,
     _STOP,
@@ -478,8 +480,32 @@ class _RunsTurns(_DispatchesTools, ABC):
         async for event in self.stream("", resume_plans=plans, resume_answers=answers):
             yield event
 
+    def stage_input(
+        self,
+        user_message: str | list,
+        *,
+        as_system_note: bool = False,
+        opens_exchange: bool = False,
+    ) -> None:
+        """Stage accepted input in durable session state before any work begins."""
+        if self._pending_input is not None:
+            previous = messages_from_dict([dict(self._pending_input.message)])[0]
+            self._conversation.append(previous)
+        message = (
+            self._reminder_message(
+                user_message, marks={"opens_exchange": True} if opens_exchange else None
+            )
+            if as_system_note and isinstance(user_message, str)
+            else HumanMessage(content=user_message)
+        )
+        self._pending_input = PendingInput(
+            message=message_to_dict(message),
+            recorded_text=message_text(message),
+        )
+        self._note_session_changed()
+
     async def continue_stream(self) -> AsyncIterator[TurnEventUnion]:
-        """Continue an already-recorded user turn after a failed maintenance was retried successfully."""
+        """Continue the accepted input or durable conversation tail without adding another message."""
         async for event in self.stream("", continue_existing=True):
             yield event
 
@@ -538,7 +564,10 @@ class _RunsTurns(_DispatchesTools, ABC):
         # Every request leaves from valid history: a resume protects its pending batch, every other path closes unanswered tool calls.
         self._repair_dangling_tool_calls(protect_tail_batch=resume_plans is not None)
 
-        if continue_existing:
+        if continue_existing and self._pending_input is not None:
+            pending_user_message = messages_from_dict([dict(self._pending_input.message)])[0]
+            recorded_user_message = self._pending_input.recorded_text
+        elif continue_existing:
             recorded_user_message = ""
         elif resume_plans is not None:
             # Resume: the checkpoint is already at the tail, so run its batch and fall into the loop.
@@ -569,25 +598,37 @@ class _RunsTurns(_DispatchesTools, ABC):
             if self._resource_sync is not None:
                 await self._resource_sync()
             yield Checkpoint()
+            self._features.acknowledge_checkpoint()
         else:
-            # Usually prose, but an attachment turn carries a content list so a vision model sees the pixels.
-            turn_message = (
-                self._reminder_message(
-                    user_message, marks={"opens_exchange": True} if opens_exchange else None
-                )
-                if as_system_note and isinstance(user_message, str)
-                else HumanMessage(content=user_message)
+            self.stage_input(
+                user_message,
+                as_system_note=as_system_note,
+                opens_exchange=opens_exchange,
             )
-            # The event-log recorder only wants prose from LangChain's standard blocks.
-            recorded_user_message = message_text(turn_message)
-            # Held until maintenance has had a chance to reclaim the existing conversation.
-            pending_user_message = turn_message
+            staged_input = self._pending_input
+            if staged_input is None:
+                raise AssertionError("staging input must create a pending value")
+            pending_user_message = messages_from_dict([dict(staged_input.message)])[0]
+            recorded_user_message = staged_input.recorded_text
         turn_started_at = datetime.now(timezone.utc)
+
+        if pending_user_message is not None:
+            yield Checkpoint()
+            self._features.acknowledge_checkpoint()
 
         while True:
             if self._abort_event.is_set() or self._stop_requested:
-                # A stop supersedes steering: drop it and tell its sender no.
                 self.discard_pending_steering()
+                if pending_user_message is not None:
+                    self._conversation.append(pending_user_message)
+                    pending_user_message = None
+                    self._pending_input = None
+                    self._conversation.append(
+                        AIMessage(content="", additional_kwargs={"langmesh_cancelled": True})
+                    )
+                    self._note_session_changed()
+                    yield Checkpoint()
+                    self._features.acknowledge_checkpoint()
                 yield Done(text="", stop_reason="cancelled")
                 return
 
@@ -595,6 +636,8 @@ class _RunsTurns(_DispatchesTools, ABC):
             if background_events:
                 for background_event in background_events:
                     yield background_event
+                yield Checkpoint()
+                self._features.acknowledge_checkpoint()
                 continue
 
             # The loop may hold while a feature reclaims context. The threshold is a preparation boundary, not a hard cut: the reserved window gives the agent room for one private recording batch before the fold happens.
@@ -623,6 +666,8 @@ class _RunsTurns(_DispatchesTools, ABC):
                     if pending_user_message is not None:
                         self._conversation.append(pending_user_message)
                         pending_user_message = None
+                        self._pending_input = None
+                        self._note_session_changed()
                     return
                 if stop_after_maintenance:
                     return
@@ -632,13 +677,18 @@ class _RunsTurns(_DispatchesTools, ABC):
             if pending_user_message is not None and not self._features.active_maintenance():
                 self._conversation.append(pending_user_message)
                 pending_user_message = None
+                self._pending_input = None
+                self._note_session_changed()
 
             # Steering accepted while a new message was waiting belongs after that message. During the hold it remains queued until the private segment has compacted away.
             if not self._features.active_maintenance():
                 for steering_event in await self._drain_steering_messages():
                     yield steering_event
 
-            messages = self._features.prepare_request(self._build_turn_messages())
+            self._features.prepare_request()
+            messages = self._build_turn_messages()
+            yield Checkpoint()
+            self._features.acknowledge_checkpoint()
 
             # The model call: yields the stream and hands back the assembled response, or a terminal condition.
             call = _ModelCallOutcome()
@@ -728,6 +778,8 @@ class _RunsTurns(_DispatchesTools, ABC):
                     if pending_user_message is not None:
                         self._conversation.append(pending_user_message)
                         pending_user_message = None
+                        self._pending_input = None
+                        self._note_session_changed()
                     return
                 if step.directive == _STOP:
                     return
@@ -754,6 +806,8 @@ class _RunsTurns(_DispatchesTools, ABC):
                     yield event
                 if pending_user_message is not None:
                     self._conversation.append(pending_user_message)
+                    self._pending_input = None
+                    self._note_session_changed()
                 return
             step = _StepOutcome()
             async for event in self._run_tool_batch(
@@ -768,6 +822,8 @@ class _RunsTurns(_DispatchesTools, ABC):
                 if pending_user_message is not None:
                     self._conversation.append(pending_user_message)
                     pending_user_message = None
+                    self._pending_input = None
+                    self._note_session_changed()
                 return
             if self._features.maintenance_ready():
                 # The successful recording call is the terminal action of this model segment. The next loop iteration folds and resumes the already-accepted work.
@@ -824,9 +880,6 @@ class _RunsTurns(_DispatchesTools, ABC):
         generation_span = _telemetry.start_span(
             "gen_ai.generation", {"gen_ai.request.model": self.model_identifier}
         )
-        # A hook may read the conversation about to leave the process, and may change it.
-        if not self._hooks.empty:
-            messages = await self._hooks.before_model(messages)
         self._refuse_if_over_window(messages)
         # This is the truthful phase boundary: hooks and local validation have completed, and the next awaited operation starts the provider stream. The client opens its Thinking row from this status, so no optimistic or timer-driven model activity is fabricated.
         thinking_started_at = time.monotonic()
@@ -1085,6 +1138,8 @@ class _RunsTurns(_DispatchesTools, ABC):
     ) -> AsyncIterator[TurnEventUnion]:
         """Run the tool batch behind a durable checkpoint, with every permission resolved before any tool runs."""
         self._conversation.append(response)
+        yield Checkpoint()
+        self._features.acknowledge_checkpoint()
         tool_calls = cast(list[dict], response.tool_calls)
         outcomes: dict[str, dict] = {}
         if not self._abort_event.is_set() and not self._stop_requested:
@@ -1178,6 +1233,7 @@ class _RunsTurns(_DispatchesTools, ABC):
         if self._resource_sync is not None:
             await self._resource_sync()
         yield Checkpoint()
+        self._features.acknowledge_checkpoint()
 
         if self._abort_event.is_set() or self._stop_requested:
             self._record_turn(recorded_user_message, turn_tool_calls_log, turn_tool_results_log, "")

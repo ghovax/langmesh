@@ -74,13 +74,13 @@ class ObservationMemory(Feature):
                 "observational_memory", {"metadata": compact(self._metadata)}
             ).strip()
 
-    def prepare_request(self, messages: list) -> list:
+    def prepare_request(self) -> None:
         """Append a changed registry failure durably at the request boundary where the model first sees it."""
         if self._host.turn.maintenance_active():
-            return messages
+            return
         feedback = self.take_feedback()
         if not feedback:
-            return messages
+            return
         note = self._prompts.load(
             "observation_registry_error"
             if self._has_shell()
@@ -90,4 +90,3 @@ class ObservationMemory(Feature):
         reminder = self._host.turn.reminder_message(note.strip())
         self._host.conversation.messages.append(reminder)
         self._host.bookkeeping.note_state_changed()
-        return [*messages, reminder]

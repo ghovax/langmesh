@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from langmesh.runtime.runtime import AgentRuntime
 
 from langmesh.runtime.turn_events import (
+    Checkpoint,
     Done,
     Suspended,
     TurnEventUnion,
@@ -440,6 +441,8 @@ class Session:
             cancelled = False
             try:
                 async for event in self.runtime.stream(self._compose(message, attachments)):
+                    if isinstance(event, Checkpoint):
+                        await self._save()
                     if isinstance(event, Done) and event.stop_reason == "cancelled":
                         cancelled = True
                     if isinstance(event, Suspended):
@@ -507,6 +510,8 @@ class Session:
             cancelled = False
             try:
                 async for event in self.runtime.resume_stream(dict(pending.plans), answers):
+                    if isinstance(event, Checkpoint):
+                        await self._save()
                     if isinstance(event, Done) and event.stop_reason == "cancelled":
                         cancelled = True
                     if isinstance(event, Suspended):
@@ -558,6 +563,8 @@ class Session:
                 raise RuntimeError("This session has no failed turn to retry.")
             try:
                 async for event in self.runtime.continue_stream():
+                    if isinstance(event, Checkpoint):
+                        await self._save()
                     yield event
                 self.runtime.mark_turn_succeeded()
             except Exception:

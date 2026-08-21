@@ -293,9 +293,9 @@ class _TurnRunner:
             self._on_turn_state(resolved.task.context_id, True, resolved.task.id)
         try:
             await self._acquire_serialization_lock(resolved)
-            self._executor._begin_live_turn(resolved.task.context_id, resolved.task.id)
             # Runtime setup runs inside the try, so a missing credential is a clean `failed` rather than a torn stream.
-            self._open_turn_span(resolved)
+            await self._open_turn_span(resolved)
+            self._executor._begin_live_turn(resolved.task.context_id, resolved.task.id)
             prepared = await self._prepare_runtime(resolved)
             if prepared is self._DONE:
                 return
@@ -314,8 +314,10 @@ class _TurnRunner:
     # Collaborators shared across the phases below.
 
     async def _emit(self, part: Part, *, publish_stream_event: bool = True) -> None:
-        await self._updater.update_status(
-            TaskState.working, self._updater.new_agent_message([part])
+        await self._executor._turn_store.commit_status(
+            self._updater,
+            TaskState.working,
+            self._updater.new_agent_message([part]),
         )
         if self._executor._on_stream_event is not None and publish_stream_event:
             self._executor._on_stream_event(self._task.context_id, part)
@@ -412,7 +414,10 @@ class _TurnRunner:
         task = self._request.current_task
         if task is None:
             task = new_task(message)
+            await self._executor._turn_store.save(task)
             await self._event_queue.enqueue_event(task)
+        else:
+            await self._executor._turn_store.save(task)
         self._task = task
         self._updater = TaskUpdater(self._event_queue, task.id, task.context_id)
 
@@ -423,7 +428,9 @@ class _TurnRunner:
         self._resume_answers = {}
         if input_response is not None:
             if TurnRecord.from_metadata(task.metadata).pending is None:
-                await self._updater.complete()
+                await self._executor._turn_store.commit_status(
+                    self._updater, TaskState.completed, final=True
+                )
                 return self._DONE
             ready = self._executor._record_pending_answer(task, input_response)
             await self._executor._turn_store.save(task)
@@ -431,7 +438,8 @@ class _TurnRunner:
                 # Still awaiting while gates remain; cleared once this answer resumes.
                 self._executor._on_permission_state(task.context_id, ready is None)
             if ready is None:
-                await self._updater.update_status(
+                await self._executor._turn_store.commit_status(
+                    self._updater,
                     TaskState.input_required,
                     self._updater.new_agent_message(
                         [_event_part(StatusEvent(code="input_required"))]
@@ -462,7 +470,7 @@ class _TurnRunner:
         # Serialize the session's turns, so a message and a background wake never drive the runtime at once.
         await self._lifecycle.enter_async_context(self._context_state.lock)
 
-    def _open_turn_span(self, resolved: _Resolved) -> None:
+    async def _open_turn_span(self, resolved: _Resolved) -> None:
         # One trace per turn, grouped by session, nesting under the peer that sent it when there is one.
         task, ingested = resolved.task, resolved.ingested
         self._turn_kind = (
@@ -493,6 +501,7 @@ class _TurnRunner:
         stamped.peer_sender = ingested.peer_sender
         stamped.goal_review_id = ingested.goal_review_id
         task.metadata = stamped.apply_to(task.metadata)
+        await self._executor._turn_store.save(task)
         parent_context = _telemetry.context_from_traceparent(
             (ingested.message.metadata or {}).get("traceparent", "")
         )
@@ -525,7 +534,9 @@ class _TurnRunner:
                 task.context_id, self._executor._agent_name
             )
             if not has_live_result and not has_stored_result:
-                await self._updater.complete()
+                await self._executor._turn_store.commit_status(
+                    self._updater, TaskState.completed, final=True
+                )
                 return self._DONE
 
         self._track_steerable_turn = (
@@ -543,8 +554,6 @@ class _TurnRunner:
             self._executor._context(task.context_id).aborted = False
         if self._track_steerable_turn:
             self._executor._context(task.context_id).running = True
-
-        await self._updater.start_work()
 
         workspace = self._executor._workspace(self._requested_working_directory)
 
@@ -567,10 +576,16 @@ class _TurnRunner:
             save_conversation=self._save_runtime_conversation,
             suspend=self._suspend_turn,
             telemetry_span=self._turn_span,
-            model_identifier=lambda: self._runtime.model_identifier
-            if self._runtime is not None
-            else "",
+            model_identifier=lambda: (
+                self._runtime.model_identifier if self._runtime is not None else ""
+            ),
         )
+        return _Prepared(resolved=resolved, runtime=runtime, sink=self._sink)
+
+    async def _announce_persisted_work(self, prepared: _Prepared) -> None:
+        """Publish working state only after the accepted runtime state is durable."""
+        resolved = prepared.resolved
+        await self._executor._turn_store.commit_status(self._updater, TaskState.working)
         if resolved.ingested.mode is _TurnMode.RETRY:
             await self._emit(_event_part(RetryEvent(status="started")))
         if (
@@ -588,7 +603,6 @@ class _TurnRunner:
                     )
                 )
             )
-        return _Prepared(resolved=resolved, runtime=runtime, sink=self._sink)
 
     async def _reconcile_goal(self, prepared: _Prepared) -> object | None:
         """Settle the goal against what opened this turn, now the runtime is built and the goal restored."""
@@ -597,13 +611,17 @@ class _TurnRunner:
             goal = _features.goal(runtime)
             if goal is None or not goal.is_open:
                 if not prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
-                    await self._updater.complete()
+                    await self._executor._turn_store.commit_status(
+                        self._updater, TaskState.completed, final=True
+                    )
                     return self._DONE
             else:
                 _features.note_goal_continuation(runtime)
         if prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
             if not _features.has_actionable_tasks(runtime):
-                await self._updater.complete()
+                await self._executor._turn_store.commit_status(
+                    self._updater, TaskState.completed, final=True
+                )
                 return self._DONE
             _features.note_task_continuation(runtime)
         if prepared.resolved.ingested.from_outside:
@@ -615,6 +633,7 @@ class _TurnRunner:
         """A manual maintenance runs no model turn: it folds the older history and emits the maintenance parts."""
         if prepared.resolved.ingested.mode is not _TurnMode.COMPACTION:
             return None
+        await self._executor._turn_store.commit_status(self._updater, TaskState.working)
         try:
             async for compaction_event in _features.compact(
                 prepared.runtime, reason=_features.pending_compaction_reason(prepared.runtime)
@@ -631,7 +650,9 @@ class _TurnRunner:
             )
             raise
         await self._save_runtime_conversation()
-        await self._updater.complete()
+        await self._executor._turn_store.commit_status(
+            self._updater, TaskState.completed, final=True
+        )
         return self._DONE
 
     async def _compose_turn_input(self, prepared: _Prepared) -> _ComposedTurn:
@@ -693,14 +714,25 @@ class _TurnRunner:
                 )
         else:
             self._turn_input = self._user_text
-        # Attachments reach the model through `_structured_payloads`, which is where the image blocks are built.
-        return _ComposedTurn(
+        composed = _ComposedTurn(
             prepared=prepared,
             turn_input=self._turn_input,
             as_system_note=self._as_system_note,
-            # A goal continuation is a real exchange even though its opening note came from review.
             opens_exchange=mode is _TurnMode.GOAL_CONTINUATION,
         )
+        if not prepared.resolved.is_resume and mode not in {
+            _TurnMode.COMPACTION_RESUME,
+            _TurnMode.COMPACTION_PREPARE,
+            _TurnMode.RETRY,
+        }:
+            runtime.stage_input(
+                composed.turn_input,
+                as_system_note=composed.as_system_note,
+                opens_exchange=composed.opens_exchange,
+            )
+            await self._save_runtime_conversation()
+        await self._announce_persisted_work(prepared)
+        return composed
 
     @staticmethod
     def _task_continuation_note(runtime: AgentRuntime) -> str:
@@ -732,11 +764,7 @@ class _TurnRunner:
             if resolved.ingested.mode is _TurnMode.COMPACTION_PREPARE
             else composed.prepared.runtime.continue_stream()
             if resolved.ingested.mode is _TurnMode.RETRY
-            else composed.prepared.runtime.stream(
-                composed.turn_input,
-                as_system_note=composed.as_system_note,
-                opens_exchange=composed.opens_exchange,
-            )
+            else composed.prepared.runtime.continue_stream()
         )
         async for event in event_source:
             # Every concrete event the runtime emits is a member of the closed union; the stream annotation is the base class.
@@ -746,19 +774,25 @@ class _TurnRunner:
         await sink.flush()
 
         if sink.final_text.strip():
-            await self._updater.add_artifact(
+            await self._executor._turn_store.commit_artifact(
+                self._updater,
                 [_text_part(sink.final_text, f"artifact-result:{self._task.id}")],
+                artifact_id=f"result:{self._task.id}",
                 name="result",
                 last_chunk=True,
             )
         await self._save_runtime_conversation()
         if sink.stop_reason == "cancelled":
             # Stop ends the task as canceled, so the transcript reads it honestly as a stopped turn.
-            await self._updater.cancel()
+            await self._executor._turn_store.commit_status(
+                self._updater, TaskState.canceled, final=True
+            )
         else:
             if resolved.ingested.mode is _TurnMode.RETRY:
                 await self._emit(_event_part(RetryEvent(status="done", ok=True)))
-            await self._updater.complete()
+            await self._executor._turn_store.commit_status(
+                self._updater, TaskState.completed, final=True
+            )
             if resolved.ingested.mode is _TurnMode.RETRY and self._runtime is not None:
                 self._runtime.mark_turn_succeeded()
             self._completed = True
@@ -794,7 +828,9 @@ class _TurnRunner:
         # Publish the error on the live lane as well as persisting it in the failed status. Without the publish, the chat's error panel only appears after a reload re-reads the history, because the turn-end activity alone carries no error part.
         if self._executor._on_stream_event is not None:
             self._executor._on_stream_event(self._task.context_id, error_part)
-        await self._updater.failed(message)
+        await self._executor._turn_store.commit_status(
+            self._updater, TaskState.failed, message, final=True
+        )
 
     async def _teardown(self) -> None:
         task = self._task

@@ -86,9 +86,8 @@ class Feature:
         """A suggested title from this feature's own naming call, or ``None`` to leave it unnamed."""
         return None
 
-    def prepare_request(self, messages: list) -> list:
-        """Adjust the exact request about to leave; return the list to send."""
-        return messages
+    def prepare_request(self) -> None:
+        """Append any request-boundary state through the feature's conversation capability."""
 
     def should_maintain(self, request_tokens: int) -> bool:
         """Whether the loop should hold for this feature before admitting new input."""
@@ -171,6 +170,9 @@ class Feature:
     def restore(self, state: object) -> None:
         """Rehydrate the durable value previously returned by :meth:`snapshot`."""
 
+    def acknowledge_checkpoint(self) -> None:
+        """Acknowledge side records only after their matching conversation snapshot commits."""
+
 
 class Features:
     """The installed features of one runtime, and the dispatch the core calls at each point.
@@ -249,10 +251,13 @@ class Features:
             for feature in self._instances
         ]
 
-    def prepare_request(self, messages: list) -> list:
+    def prepare_request(self) -> None:
         for feature in self._instances:
-            messages = feature.prepare_request(messages)
-        return messages
+            feature.prepare_request()
+
+    def acknowledge_checkpoint(self) -> None:
+        for feature in self._instances:
+            feature.acknowledge_checkpoint()
 
     async def assign_title(self, first_message: str) -> str | None:
         """The first feature that names the session, or ``None`` when none does."""

@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import logging
+import asyncio
+from datetime import datetime, timezone
 from typing import Any, Optional
 
+from a2a.server.tasks import TaskUpdater
 from a2a.server.tasks import TaskStore
-from a2a.types import Task
+from a2a.types import Message, Part, Task, TaskState
 from langmesh.protocol.turn_record import TurnRecord
 from langmesh.runtime.session_control import SessionSnapshot
 from langmeshd.worker.host import HostServices, NullHostServices
-
-logger = logging.getLogger(__name__)
 
 
 class HostTurnStore(TaskStore):
@@ -20,20 +20,86 @@ class HostTurnStore(TaskStore):
     def __init__(self, session_id: str, host: Any = None) -> None:
         self._session_id = session_id
         self._host: HostServices = host if host is not None else NullHostServices()
+        self._persistence_changed = asyncio.Condition()
+        self._persisted_statuses: set[tuple[str, str]] = set()
+        self._persisted_artifacts: set[tuple[str, str]] = set()
 
     async def _call(self, method: str, **params: Any) -> Any:
         """Run one ingest verb directly: the host that would have answered over a socket is this process."""
-        try:
-            return await self._host.ingest_call(self._session_id, method, params)
-        except Exception:  # noqa: BLE001 — losing durability must not lose the turn
-            logger.warning("persistence call %s failed", method, exc_info=True)
-            return None
+        return await self._host.ingest_call(self._session_id, method, params)
 
     # The TaskStore interface a2a expects.
 
     # Part of the interface the A2A handler calls through, and unused here.
     async def save(self, task: Task, context: Any = None) -> None:
         await self._call("turn.save", task=task)
+        status_timestamp = str(task.status.timestamp or "")
+        artifacts = tuple(task.artifacts or ())
+        async with self._persistence_changed:
+            if status_timestamp:
+                self._persisted_statuses.add((task.id, status_timestamp))
+            self._persisted_artifacts.update(
+                (task.id, artifact.artifact_id) for artifact in artifacts
+            )
+            self._persistence_changed.notify_all()
+
+    async def commit_status(
+        self,
+        updater: TaskUpdater,
+        state: TaskState,
+        message: Message | None = None,
+        *,
+        final: bool = False,
+    ) -> None:
+        """Publish a status only after the task store acknowledges its exact timestamp."""
+        timestamp = datetime.now(timezone.utc).isoformat()
+        await updater.update_status(
+            state,
+            message,
+            final=final,
+            timestamp=timestamp,
+        )
+        key = (updater.task_id, timestamp)
+        try:
+            async with asyncio.timeout(30):
+                async with self._persistence_changed:
+                    await self._persistence_changed.wait_for(
+                        lambda: key in self._persisted_statuses
+                    )
+                    self._persisted_statuses.discard(key)
+        except TimeoutError as error:
+            raise RuntimeError(
+                f"The {state.value} state for turn {updater.task_id} was not committed."
+            ) from error
+
+    async def commit_artifact(
+        self,
+        updater: TaskUpdater,
+        parts: list[Part],
+        *,
+        artifact_id: str,
+        name: str,
+        last_chunk: bool,
+    ) -> None:
+        """Publish an artifact only after the task store acknowledges its stable identity."""
+        await updater.add_artifact(
+            parts,
+            artifact_id=artifact_id,
+            name=name,
+            last_chunk=last_chunk,
+        )
+        key = (updater.task_id, artifact_id)
+        try:
+            async with asyncio.timeout(30):
+                async with self._persistence_changed:
+                    await self._persistence_changed.wait_for(
+                        lambda: key in self._persisted_artifacts
+                    )
+                    self._persisted_artifacts.discard(key)
+        except TimeoutError as error:
+            raise RuntimeError(
+                f"Artifact {artifact_id} for turn {updater.task_id} was not committed."
+            ) from error
 
     async def get(self, turn_id: str, context: Any = None) -> Optional[Task]:
         raw = await self._call("turn.get", turn_id=turn_id)

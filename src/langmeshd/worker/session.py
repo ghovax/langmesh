@@ -580,7 +580,7 @@ class SessionExecutor(AgentExecutor):
             if goal.is_open
             else None,
         )
-        self._spawn_background(self._persist_session_state(session_id, runtime), name="clear-goal")
+        await self._persist_session_state(session_id, runtime)
         return True
 
     async def _persist_session_state(self, session_id: str, runtime: AgentRuntime) -> None:
@@ -590,11 +590,7 @@ class SessionExecutor(AgentExecutor):
             if snapshot is None:
                 return
             revision = runtime.session_revision
-            try:
-                await self._turn_store.save_session_state(session_id, snapshot)
-            except Exception:  # noqa: BLE001 — the goal is already off in the live session
-                logger.exception("could not persist the session state for %s", session_id)
-                return
+            await self._turn_store.save_session_state(session_id, snapshot)
             runtime.clear_session_dirty(revision)
 
     async def _persist_turn_checkpoint(
@@ -671,7 +667,7 @@ class SessionExecutor(AgentExecutor):
         )
         return result if result and result.get("status") == "done" else None
 
-    def abort_context(self, session_id: str) -> bool:
+    async def abort_context(self, session_id: str) -> bool:
         # Stop is broadcast to every executor, but only the one holding this context has anything to stop.
         state = self._contexts.get(session_id)
         if state is None or (state.runtime is None and state.resume_pump is None):
@@ -695,13 +691,11 @@ class SessionExecutor(AgentExecutor):
             state.resume_pump = None
             handled = True
         if state.runtime is not None:
-            state.runtime.abort()
             goal = _features.goal(state.runtime)
             if goal is not None and goal.is_open:
                 _features.park_goal(state.runtime)
-                self._spawn_background(
-                    self._persist_session_state(session_id, state.runtime), name="park-goal"
-                )
+                await self._persist_session_state(session_id, state.runtime)
+            state.runtime.abort()
             handled = True
         return handled
 
@@ -964,9 +958,7 @@ class SessionExecutor(AgentExecutor):
         )
         # The host's plugin bundle: which features run and the ports they need.
         bundle = self._compose_plugins(session_id, runtime_directory, configuration, catalogue)
-        toolbox = toolbox_for(
-            session_id, enabled=self._global_configuration.toolbox.enabled
-        )
+        toolbox = toolbox_for(session_id, enabled=self._global_configuration.toolbox.enabled)
         if toolbox is not None:
             toolbox.prepare()
         runtime = AgentRuntime(
@@ -1113,7 +1105,6 @@ class SessionExecutor(AgentExecutor):
                 tool_call_identifier=job["tool_call_id"],
                 result=job["result"] or "",
             )
-            store.mark_delivered(job["job_id"])
 
     async def resume_pending_jobs(self) -> None:
         """Record this session's interrupted jobs and replay results its model never saw."""
@@ -1171,7 +1162,8 @@ class SessionExecutor(AgentExecutor):
             self._on_permission_state(task.context_id, True)
         await save_conversation()
         await self._turn_store.save(task)
-        await updater.update_status(
+        await self._turn_store.commit_status(
+            updater,
             TaskState.input_required,
             updater.new_agent_message([_event_part(StatusEvent(code="input_required"))]),
             final=True,
@@ -1188,7 +1180,7 @@ class SessionExecutor(AgentExecutor):
             updater = TaskUpdater(
                 event_queue, context.current_task.id, context.current_task.context_id
             )
-            await updater.cancel()
+            await self._turn_store.commit_status(updater, TaskState.canceled, final=True)
 
     # The facade the session's socket serves, binding the turn machinery to this one session.
 
@@ -1354,8 +1346,8 @@ class SessionExecutor(AgentExecutor):
         except Exception:  # noqa: BLE001 — a failed resume must not take the session down
             logger.exception("resuming session %s after an answer failed", self._session_id)
 
-    def abort(self) -> bool:
-        return self.abort_context(self._session_id)
+    async def abort(self) -> bool:
+        return await self.abort_context(self._session_id)
 
     def abort_tool_call(self, tool_call_identifier: str) -> bool:
         return self.abort_tool(self._session_id, tool_call_identifier)
