@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class ToolStatus(str, Enum):
@@ -32,10 +32,8 @@ class PermissionReason(BaseModel):
     paths: list[str] = Field(default_factory=list)
 
 
-class PermissionAnswer(BaseModel):
+class PermissionAnswer(BaseModel, strict=True):
     """One permission decision and the explanation delivered on denial."""
-
-    model_config = ConfigDict(strict=True)
 
     allow: bool
     reason: str = ""

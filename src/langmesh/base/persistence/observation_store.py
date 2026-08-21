@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 from urllib.parse import quote
 from enum import IntEnum
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 
 from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine
 from sqlalchemy import func, select
@@ -22,6 +22,15 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.pool import NullPool
 from watchdog.events import FileSystemEvent, FileSystemEventHandler, FileSystemMovedEvent
 from watchdog.observers import Observer
+
+from langmesh.base.content.observations import (
+    DirectiveEntry,
+    ObservationEntry,
+    ObservationSnapshot,
+    RegistryCounts,
+    RegistryMetadata,
+    RegistryTimestamps,
+)
 
 
 OBSERVATIONS_FILENAME = "observations.sqlite"
@@ -176,6 +185,11 @@ def _nonempty(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def _timestamp(value: object) -> datetime | None:
+    """Parse one stored ISO timestamp when present."""
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00")) if value is not None else None
+
+
 def _validate_row(ledger: str, entry_id: str, columns: dict[str, Any]) -> None:
     """Check one row's column values, the invariants SQLite's CHECKs hold and the reader re-checks."""
     if ledger == "observations":
@@ -290,18 +304,15 @@ class SQLiteObservationStore:
         with self._connection() as connection:
             return self._validate_schema(connection)
 
-    async def entries(self) -> dict[str, list[dict[str, Any]]]:
-        return (await self.snapshot())["entries"]
-
-    async def snapshot(self) -> dict[str, Any]:
+    async def snapshot(self) -> ObservationSnapshot:
         """Read one revision and its entries from the same SQLite snapshot."""
         return await asyncio.to_thread(self._snapshot_sync)
 
-    async def describe(self) -> dict[str, Any]:
+    async def describe(self) -> RegistryMetadata:
         """Return prompt-safe registry metadata, never raising: a missing or broken registry is itself reported."""
         return await asyncio.to_thread(self.describe_sync)
 
-    def describe_sync(self) -> dict[str, Any]:
+    def describe_sync(self) -> RegistryMetadata:
         """Read bounded metadata from one validated transaction without loading payloads.
 
         Never raises: a registry that is missing or mis-schemed is itself the report — ``status: missing|broken`` plus a ``problem`` message.
@@ -336,68 +347,64 @@ class SQLiteObservationStore:
         aggregates: dict[str, tuple[int, object, object]],
         *,
         problem: str,
-    ) -> dict[str, Any]:
+    ) -> RegistryMetadata:
         """The descriptor every call path produces, unified on ``status`` and ``problem``."""
         earliest_values = [
-            str(values[1]) for values in aggregates.values() if values[1] is not None
+            parsed
+            for values in aggregates.values()
+            if (parsed := _timestamp(values[1])) is not None
         ]
-        latest_values = [str(values[2]) for values in aggregates.values() if values[2] is not None]
-        descriptor = {
-            "path": str(self.path),
-            "exists": self.path.exists(),
-            "revision": revision,
-            "counts": {ledger: aggregates.get(ledger, (0, None, None))[0] for ledger in _LEDGERS},
-            "updated_at": {
-                "earliest": min(earliest_values) if earliest_values else None,
-                "latest": max(latest_values) if latest_values else None,
-            },
-        }
-        return {
-            **descriptor,
-            "status": _registry_status(descriptor["exists"], problem=problem),
-            "problem": problem,
-        }
+        latest_values = [
+            parsed
+            for values in aggregates.values()
+            if (parsed := _timestamp(values[2])) is not None
+        ]
+        exists = self.path.exists()
+        return RegistryMetadata(
+            path=str(self.path),
+            exists=exists,
+            revision=revision,
+            counts=RegistryCounts(
+                observations=aggregates.get("observations", (0, None, None))[0],
+                directives=aggregates.get("directives", (0, None, None))[0],
+            ),
+            updated_at=RegistryTimestamps(
+                earliest=min(earliest_values) if earliest_values else None,
+                latest=max(latest_values) if latest_values else None,
+            ),
+            status=_registry_status(exists, problem=problem),
+            problem=problem,
+        )
 
-    async def snapshot_with_metadata(self) -> tuple[dict[str, Any], dict[str, Any]]:
+    async def snapshot_with_metadata(self) -> tuple[ObservationSnapshot, RegistryMetadata]:
         """Return the interface payload and prompt descriptor from one validated read."""
         return await asyncio.to_thread(self._snapshot_with_metadata_sync)
 
-    def _snapshot_with_metadata_sync(self) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _snapshot_with_metadata_sync(self) -> tuple[ObservationSnapshot, RegistryMetadata]:
         snapshot = self._snapshot_sync()
         return snapshot, self._describe_snapshot(snapshot)
 
-    def _describe_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-        timestamps = [
-            str(entry["updated_at"]) for ledger in _LEDGERS for entry in snapshot["entries"][ledger]
-        ]
-        descriptor = {
-            "path": str(self.path),
-            "exists": self.path.exists(),
-            "revision": snapshot["revision"],
-            "counts": {ledger: len(snapshot["entries"][ledger]) for ledger in _LEDGERS},
-            "updated_at": {
-                "earliest": min(timestamps) if timestamps else None,
-                "latest": max(timestamps) if timestamps else None,
-            },
-        }
-        return {
-            **descriptor,
-            "status": _registry_status(descriptor["exists"]),
-            "problem": "",
-        }
+    def _describe_snapshot(self, snapshot: ObservationSnapshot) -> RegistryMetadata:
+        timestamps = [entry.updated_at for entry in (*snapshot.observations, *snapshot.directives)]
+        exists = self.path.exists()
+        return RegistryMetadata(
+            path=str(self.path),
+            exists=exists,
+            revision=snapshot.revision,
+            counts=RegistryCounts(
+                observations=len(snapshot.observations), directives=len(snapshot.directives)
+            ),
+            updated_at=RegistryTimestamps(
+                earliest=min(timestamps) if timestamps else None,
+                latest=max(timestamps) if timestamps else None,
+            ),
+            status=_registry_status(exists),
+        )
 
-    def _empty_description(self) -> dict[str, Any]:
-        return {
-            "path": str(self.path),
-            "exists": False,
-            "revision": 0,
-            "counts": {ledger: 0 for ledger in _LEDGERS},
-            "updated_at": {"earliest": None, "latest": None},
-            "status": "missing",
-            "problem": "",
-        }
+    def _empty_description(self) -> RegistryMetadata:
+        return RegistryMetadata(path=str(self.path))
 
-    async def watch(self) -> AsyncIterator[dict[str, Any]]:
+    async def watch(self) -> AsyncIterator[ObservationSnapshot]:
         """Yield the current snapshot and each distinct committed snapshot after it."""
         subscription = NativeFileSubscription(self.path)
         try:
@@ -418,12 +425,9 @@ class SQLiteObservationStore:
         finally:
             await asyncio.to_thread(subscription.close)
 
-    def _snapshot_sync(self) -> dict[str, Any]:
+    def _snapshot_sync(self) -> ObservationSnapshot:
         if not self.path.exists():
-            return {
-                "revision": 0,
-                "entries": {ledger: [] for ledger in _LEDGERS},
-            }
+            return ObservationSnapshot()
         with self._connection() as connection:
             revision = self._validate_schema(connection)
             rows_by_ledger: dict[str, list[tuple[Any, ...]]] = {}
@@ -438,7 +442,8 @@ class SQLiteObservationStore:
                         )
                     ).all()
                 ]
-        entries: dict[str, list[dict[str, Any]]] = {ledger: [] for ledger in _LEDGERS}
+        observations: list[ObservationEntry] = []
+        directives: list[DirectiveEntry] = []
         for ledger, rows in rows_by_ledger.items():
             columns = ("entry_id", *_LEDGER_FIELDS[ledger], "updated_at")
             for row in rows:
@@ -470,9 +475,16 @@ class SQLiteObservationStore:
                     if values[field] is not None
                 }
                 _validate_row(ledger, entry_id, entry)
-                entry.update(id=entry_id, updated_at=updated_at)
-                entries[ledger].append(entry)
-        return {"revision": revision, "entries": entries}
+                entry.update(id=entry_id, updated_at=parsed_timestamp)
+                if ledger == "observations":
+                    observations.append(ObservationEntry.model_validate(entry))
+                else:
+                    directives.append(DirectiveEntry.model_validate(entry))
+        return ObservationSnapshot(
+            revision=revision,
+            observations=tuple(observations),
+            directives=tuple(directives),
+        )
 
     def _validate_schema(self, connection: Any) -> int:
         """Verify the registry matches the documented columnar schema before any row is read.
@@ -594,7 +606,7 @@ class SQLiteObservationStore:
         return int(rows[0][1])
 
 
-def _registry_status(exists: bool, *, problem: str = "") -> str:
+def _registry_status(exists: bool, *, problem: str = "") -> Literal["missing", "ok", "broken"]:
     """A registry is ``missing``, ``ok``, or ``broken``; ``broken`` is the only problem state."""
     if not exists:
         return "missing"

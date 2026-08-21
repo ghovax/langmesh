@@ -45,10 +45,8 @@ def _bundled_dotagents_root() -> Path:
 BUNDLED_DOTAGENTS_ROOT = _bundled_dotagents_root()
 
 
-class Section(BaseModel):
+class Section(BaseModel, extra="forbid"):
     """A part of the configuration file, refusing every key it does not define so a typo is an error."""
-
-    model_config = {"extra": "forbid"}
 
 
 class ExaConfiguration(Section):
@@ -421,11 +419,9 @@ class AgentDefaults(Section):
     permission_mode: Literal["ask", "automatic", "allow"] = Field(default="ask")
 
 
-class Configuration(Section):
+class Configuration(Section, extra="allow"):
     # The configuration file is shared with the host app, which owns sections the library does not
     # model (dictation, composio, ...). Unknown top-level sections are tolerated, never rejected.
-    model_config = {"extra": "allow"}
-
     HOME_AGENTS_ROOT_DIRECTORY: ClassVar[str] = "~/.agents"
     AGENTS_ROOT_DIRECTORY: ClassVar[str] = ".agents"
     AGENTS_DIRECTORY: ClassVar[str] = ".agents/agents"
