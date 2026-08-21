@@ -43,6 +43,7 @@ from langmesh.base.primitives.limits import current_limits
 from langmesh.base.primitives.serialization import compact, lines
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.environment import RuntimeEnvironment
+from langmesh.runtime.session_control import RenderedPrompt
 from langmesh.runtime.internals import (
     _CONTINUE,
     _STOP,
@@ -119,6 +120,7 @@ class _RunsTurns(_DispatchesTools, ABC):
     _session_id: str
     _parent_session: str
     _system_prompt: str
+    _rendered_prompt: Any
     _execution_history: list[dict]
     _token_usage: dict[str, int]
     _approvals: Any
@@ -290,7 +292,17 @@ class _RunsTurns(_DispatchesTools, ABC):
                 if not isinstance(prompt, str):
                     raise TypeError("prompt_composer.compose() must return a string")
             self._cached_system_prompt = prompt.strip()
+            self._rendered_prompt = RenderedPrompt(
+                content=self._cached_system_prompt,
+                revision=self._system_prompt_revision(),
+            )
+            self._note_session_changed()
         return self._cached_system_prompt
+
+    @abstractmethod
+    def _system_prompt_revision(self) -> str:
+        """Identify stable prompt construction inputs without mutable session state."""
+        ...
 
     def _user_context_enabled(self) -> bool:
         user_context = getattr(self._global_configuration, "user_context", None)

@@ -27,6 +27,7 @@ from langmesh.base.confinement import Grant, Profile
 from langmesh.base.content.models import find_model, resolve_litellm
 from langmesh.base.contracts.catalogue import project_catalogue
 from langmesh.base.contracts.ports import Observation
+from langmesh.base.primitives.serialization import content_address
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.features import (
@@ -53,7 +54,7 @@ from langmesh.runtime.models.codex import ChatCodexModel
 from langmesh.runtime.models.cursor import ChatCursorModel
 from langmesh.runtime.models.litellm import ChatLiteLLMModel
 from langmesh.runtime.pipeline import ToolPipeline
-from langmesh.runtime.session_control import SessionSnapshot
+from langmesh.runtime.session_control import RenderedPrompt, SessionSnapshot
 from langmesh.runtime.tools import registry as tools_registry
 from langmesh.runtime.tools.arguments import with_shared_fields
 from langmesh.runtime.tools.context import ToolContext
@@ -368,6 +369,7 @@ class AgentRuntime(_RunsTurns):
         self._prompt_loader = _CataloguePrompts(self._catalogue)
         # Creation-time grants are described from the first turn: their messages sit at the head of the conversation, before any user message, and are stable for the session's life.
         self._cached_system_prompt: str | None = None
+        self._rendered_prompt: RenderedPrompt | None = None
         self._session_revision = 0
         self._persisted_session_revision = 0
         self._execution_history: list[dict] = []
@@ -448,7 +450,7 @@ class AgentRuntime(_RunsTurns):
                 set_latest_context_tokens=lambda value: setattr(
                     self, "_latest_context_tokens", value
                 ),
-                refresh_cached_prompt=lambda: setattr(self, "_cached_system_prompt", None),
+                refresh_cached_prompt=self.refresh_system_prompt,
             ),
             turn=TurnView(
                 abort_event=self._abort_event,
@@ -523,7 +525,53 @@ class AgentRuntime(_RunsTurns):
 
     def refresh_system_prompt(self) -> None:
         """Rebuild catalogue-derived prompt material at the next model-call boundary."""
+        if self._cached_system_prompt is None and self._rendered_prompt is None:
+            return
         self._cached_system_prompt = None
+        self._rendered_prompt = None
+        self._note_session_changed()
+
+    def _system_prompt_revision(self) -> str:
+        """Identify every stable construction input while excluding mutable session state."""
+        tools = []
+        for tool in self._model_tools:
+            schema = getattr(tool, "args_schema", None)
+            model_json_schema = getattr(schema, "model_json_schema", None)
+            tools.append(
+                {
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "schema": model_json_schema() if callable(model_json_schema) else {},
+                }
+            )
+        user_context = getattr(self._global_configuration, "user_context", None)
+        return content_address(
+            {
+                "agent": {
+                    "name": self._agent_configuration.name,
+                    "skills": self._agent_configuration.skills,
+                    "system_prompt": self._system_prompt,
+                },
+                "catalogue": self._catalogue.prompt_revision(),
+                "components": self._components.prompt_revision,
+                "features": self._features.prompt_revision(),
+                "profile": {
+                    "session": self._session_id,
+                    "parent": self._parent_session,
+                    "working_directory": self._working_directory,
+                    "project_directory": self._project_directory,
+                    "workspace_strategy": self._global_configuration.workspace.strategy,
+                    "sandbox_enforcement": self._global_configuration.sandbox.enforce,
+                    "user_context_enabled": bool(user_context and user_context.enabled),
+                },
+                "prompt_composer": (
+                    f"{type(self._prompt_composer).__module__}.{type(self._prompt_composer).__qualname__}"
+                    if self._prompt_composer is not None
+                    else ""
+                ),
+                "tools": tools,
+            }
+        )
 
     def _apply_contributed_schema_fields(self) -> None:
         """Add each plugin's extra argument fields to the tools they extend, and rebind.
@@ -816,6 +864,7 @@ class AgentRuntime(_RunsTurns):
             turn_recovery="retryable" if self._turn_recovery != "none" else "none",
             turn_failure_root=self._turn_failure_root,
             model_cache=cache_snapshot() if callable(cache_snapshot) else None,
+            system_prompt=self._rendered_prompt,
         )
 
     def restore_session(self, snapshot: SessionSnapshot) -> None:
@@ -826,6 +875,13 @@ class AgentRuntime(_RunsTurns):
         restore_model_cache = getattr(self._model, "restore_model_cache", None)
         if callable(restore_model_cache):
             restore_model_cache(snapshot.model_cache)
+        prompt = snapshot.system_prompt
+        if prompt is not None and prompt.revision == self._system_prompt_revision():
+            self._cached_system_prompt = prompt.content
+            self._rendered_prompt = prompt
+        else:
+            self._cached_system_prompt = None
+            self._rendered_prompt = None
         self._turn_recovery = snapshot.turn_recovery
         self._turn_failure_root = snapshot.turn_failure_root
         if self._turn_recovery != "retryable":

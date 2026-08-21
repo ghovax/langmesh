@@ -600,6 +600,10 @@ class CatalogueLike(Protocol):
         """One rendered prompt template, or ``""`` when this catalogue has no such template."""
         ...
 
+    def prompt_revision(self) -> str:
+        """A content identity that changes exactly when prompt-visible catalogue values change."""
+        ...
+
 
 @dataclass(frozen=True)
 class PromptLayer:

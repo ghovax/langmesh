@@ -105,6 +105,14 @@ class FeatureState:
 
 
 @dataclass(frozen=True)
+class RenderedPrompt:
+    """The exact system prompt sent upstream and the construction revision that produced it."""
+
+    content: str
+    revision: str
+
+
+@dataclass(frozen=True)
 class SessionSnapshot:
     """The runtime state that is durable independently of its conversation."""
 
@@ -112,6 +120,7 @@ class SessionSnapshot:
     turn_recovery: Literal["none", "retryable"] = "none"
     turn_failure_root: str | None = None
     model_cache: object | None = None
+    system_prompt: RenderedPrompt | None = None
 
     def feature(self, name: str) -> object | None:
         """Return one plugin's state by its stable name."""
@@ -126,6 +135,7 @@ class SessionSnapshot:
             "turn_recovery": self.turn_recovery,
             "turn_failure_root": self.turn_failure_root,
             "model_cache": _plain(self.model_cache),
+            "system_prompt": _plain(self.system_prompt),
         }
 
     @classmethod
@@ -137,6 +147,7 @@ class SessionSnapshot:
         if recovery not in {"none", "retryable"}:
             recovery = "none"
         raw_features = data.get("features", ())
+        raw_prompt = data.get("system_prompt")
         features = tuple(
             FeatureState(name=str(item["name"]), value=item.get("value"))
             for item in raw_features
@@ -149,6 +160,14 @@ class SessionSnapshot:
             if data.get("turn_failure_root")
             else None,
             model_cache=data.get("model_cache"),
+            system_prompt=RenderedPrompt(
+                content=str(raw_prompt.get("content") or ""),
+                revision=str(raw_prompt.get("revision") or ""),
+            )
+            if isinstance(raw_prompt, Mapping)
+            and str(raw_prompt.get("content") or "")
+            and str(raw_prompt.get("revision") or "")
+            else None,
         )
 
 
@@ -189,6 +208,7 @@ class SessionCheckpoint:
 __all__ = [
     "FeatureState",
     "PendingTurn",
+    "RenderedPrompt",
     "SessionCheckpoint",
     "SessionPhase",
     "SessionSnapshot",

@@ -60,6 +60,7 @@ class RuntimeComponents:
     file_leases: Any = None
     permissions: Any = None
     prompt_composer: Any = None
+    prompt_revision: str = ""
     toolbox: Any = None
     tools: Sequence[BaseTool] = field(default_factory=tuple)
     toolset: Sequence[BaseTool] | None = None

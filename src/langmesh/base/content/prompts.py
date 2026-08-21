@@ -8,6 +8,7 @@ import re
 from typing import Any, Callable, Optional
 
 from langmesh.base.persistence.file_cache import parsed_file
+from langmesh.base.primitives.serialization import content_address
 
 
 class PromptTemplates:
@@ -33,6 +34,16 @@ class PromptTemplates:
         if template is None:
             return self._fallback.load(template_name, variables) if self._fallback else ""
         return self.render(template, variables, template_name)
+
+    def revision(self) -> str:
+        """Return a content identity for the templates and fallback this loader owns."""
+        fallback_revision = getattr(self._fallback, "revision", None)
+        return content_address(
+            {
+                "templates": self._templates,
+                "fallback": fallback_revision() if callable(fallback_revision) else "",
+            }
+        )
 
     @classmethod
     def render(
@@ -104,6 +115,21 @@ class PackagePromptLoader(PromptTemplates):
         if template is None:
             return self._fallback.load(template_name, variables) if self._fallback else ""
         return self.render(template, variables, template_name)
+
+    def revision(self) -> str:
+        """Return a content identity for shipped templates without depending on their paths."""
+        templates = {
+            path.stem: parsed_file(path, lambda each: each.read_text()) or ""
+            for path in sorted(self._directory.glob(f"*.{self._extension}"))
+            if path.is_file()
+        }
+        fallback_revision = getattr(self._fallback, "revision", None)
+        return content_address(
+            {
+                "templates": templates,
+                "fallback": fallback_revision() if callable(fallback_revision) else "",
+            }
+        )
 
 
 __all__ = ["PackagePromptLoader", "PromptTemplates"]
