@@ -261,17 +261,19 @@ class ChatCodexModel(BaseChatModel):
             "summary": "auto",
         }
         payload["include"] = ["reasoning.encrypted_content"]
-        payload["prompt_cache_key"] = provider_cache_key(
-            str(payload.get("model") or ""),
-            str(payload.get("instructions") or ""),
-            compact(payload.get("tools") or []),
-            compact(
-                {
-                    "reasoning": payload.get("reasoning"),
-                    "tool_choice": payload.get("tool_choice"),
-                }
-            ),
-        )
+        if not hasattr(self, "_stable_prompt_cache_key"):
+            self._stable_prompt_cache_key = provider_cache_key(
+                str(payload.get("model") or ""),
+                str(payload.get("instructions") or ""),
+                compact(payload.get("tools") or []),
+                compact(
+                    {
+                        "reasoning": payload.get("reasoning"),
+                        "tool_choice": payload.get("tool_choice"),
+                    }
+                ),
+            )
+        payload["prompt_cache_key"] = self._stable_prompt_cache_key
         return payload
 
     async def _headers(self) -> dict[str, str]:

@@ -152,8 +152,11 @@ export function toolCallDetail(
     resultContent != null &&
     !isToolErrorResult(resultContent) &&
     resultRendersInside(name, resultContent, status);
-  // The task list is the model's own bookkeeping, so its line never expands regardless of its arguments.
   const isInternalPlanning = name === "set_tasks" || name === "update_tasks";
+  // Hide tasks tool calls completely — TasksChip is the single shared badge
+  if (isInternalPlanning) {
+    return { showArguments: false, showResult: false, collapsible: false };
+  }
   return {
     showArguments,
     showResult,
@@ -196,6 +199,7 @@ export function ToolCall({
     status,
   });
   if (!ready) return null;
+    if (name === "set_tasks" || name === "update_tasks") return null;
   // One decision shared with every other tool-line surface: what, if anything, this line expands into.
   const { collapsible } = toolCallDetail(name, toolArguments, result, status);
   // A running call whose interim result says the work moved to the background.

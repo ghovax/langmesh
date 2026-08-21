@@ -447,18 +447,21 @@ class ChatLiteLLMModel(BaseChatModel):
         return trace(pieces)
 
     def _provider_cache_key(self, params: dict[str, Any], sent: list[dict[str, Any]]) -> str:
-        instructions = compact(sent[0]) if sent and sent[0].get("role") == "system" else ""
-        return provider_cache_key(
-            str(params.get("model") or ""),
-            compact(params.get("tools") or []),
-            instructions,
-            compact(
-                {
-                    "reasoning_effort": params.get("reasoning_effort"),
-                    "tool_choice": params.get("tool_choice"),
-                }
-            ),
-        )
+        # Stable prefix captured once at first call — only ITEMs should append thereafter
+        if not hasattr(self, "_stable_provider_key"):
+            instructions = compact(sent[0]) if sent and sent[0].get("role") == "system" else ""
+            self._stable_provider_key = provider_cache_key(
+                str(params.get("model") or ""),
+                compact(params.get("tools") or []),
+                instructions,
+                compact(
+                    {
+                        "reasoning_effort": params.get("reasoning_effort"),
+                        "tool_choice": params.get("tool_choice"),
+                    }
+                ),
+            )
+        return self._stable_provider_key
 
     def _cache_diagnosis(self, current: RequestTrace) -> dict[str, object]:
         """What this request kept from the previous request in its cache lane."""
