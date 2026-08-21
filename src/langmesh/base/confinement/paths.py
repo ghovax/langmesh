@@ -23,7 +23,7 @@ def _xdg(variable: str, default: Path) -> Path:
     return path
 
 
-def config_directory() -> Path:
+def configuration_directory() -> Path:
     """User-editable configuration (``~/.config/langmesh``)."""
     return _xdg("XDG_CONFIG_HOME", Path.home() / ".config")
 
@@ -52,7 +52,7 @@ def runtime_directory() -> Path:
 
 
 def configuration_file_path() -> Path:
-    return config_directory() / CONFIGURATION_FILENAME
+    return configuration_directory() / CONFIGURATION_FILENAME
 
 
 def database_file_path() -> Path:

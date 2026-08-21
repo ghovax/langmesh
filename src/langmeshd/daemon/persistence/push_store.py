@@ -97,16 +97,16 @@ class PersistentPushNotificationConfigurationStore(PushNotificationConfigStore):
             )
         return [PushNotificationConfig.model_validate(json.loads(row)) for row in rows]
 
-    async def delete_info(self, turn_id: str, config_id: Optional[str] = None) -> None:
+    async def delete_info(self, turn_id: str, configuration_id: Optional[str] = None) -> None:
         await self._ensure_initialized()
         # The SDK defaults an unset configuration id to the task id, deleting that one rather than all.
-        if config_id is None:
-            config_id = turn_id
+        if configuration_id is None:
+            configuration_id = turn_id
         async with self._engine.begin() as connection:
             await connection.execute(
                 delete(self._table).where(
                     self._table.c.turn_id == turn_id,
-                    self._table.c.configuration_id == config_id,
+                    self._table.c.configuration_id == configuration_id,
                 )
             )
 

@@ -318,10 +318,10 @@ async def _serve() -> int:
         DaemonConfiguration,
         DictationConfiguration,
     )
-    from langmeshd.commons.configuration_file import load as load_config_document
+    from langmeshd.commons.configuration_file import load as load_configuration_document
 
     try:
-        _document = load_config_document() or {}
+        _document = load_configuration_document() or {}
     except OSError:
         _document = {}
     commons_state.daemon_configuration = DaemonConfiguration.model_validate(

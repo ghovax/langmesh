@@ -232,12 +232,12 @@ async def _watch_ssh_hosts() -> None:
     """Broadcast when the SSH host registry changes, filtered to the configuration file alone."""
     from watchfiles import awatch
 
-    ssh_config = Path("~/.ssh/config").expanduser()
-    if not ssh_config.parent.exists():
+    ssh_configuration = Path("~/.ssh/config").expanduser()
+    if not ssh_configuration.parent.exists():
         return
     try:
         async for _changes in awatch(
-            str(ssh_config.parent),
+            str(ssh_configuration.parent),
             recursive=False,
             watch_filter=lambda _change, changed: Path(changed).name == "config",
             stop_event=commons_state.shutting_down,
