@@ -47,7 +47,6 @@ _ENTRY_COLUMNS = {
         ("detail", "TEXT", 1, 0),
         ("evidence", "TEXT", 0, 0),
         ("standing", "TEXT", 1, 0),
-        ("files", "TEXT", 0, 0),
         ("updated_at", "TEXT", 1, 0),
     ],
     "directives": [
@@ -56,8 +55,14 @@ _ENTRY_COLUMNS = {
         ("summary", "TEXT", 1, 0),
         ("detail", "TEXT", 0, 0),
         ("occasion", "TEXT", 0, 0),
-        ("files", "TEXT", 0, 0),
         ("updated_at", "TEXT", 1, 0),
+    ],
+    "entry_files": [
+        # The last tuple element is PRAGMA table_info's 1-based position within the composite primary key.
+        ("ledger", "TEXT", 1, 1),
+        ("entry_id", "TEXT", 1, 2),
+        ("position", "INTEGER", 1, 3),
+        ("path", "TEXT", 1, 0),
     ],
 }
 
@@ -71,7 +76,6 @@ _CHECK_TOKENS = {
         "detail": ["LENGTH(TRIM(DETAIL))>0"],
         "evidence": ["EVIDENCEISNULLORLENGTH(TRIM(EVIDENCE))>0"],
         "standing": ["STANDINGIN", "VERIFIED", "REPORTED", "INFERRED"],
-        "files": ["FILESISNULLORLENGTH(TRIM(FILES))>0"],
     },
     "directives": {
         "entry_id": ["LENGTH(TRIM(ENTRY_ID))>0"],
@@ -79,7 +83,11 @@ _CHECK_TOKENS = {
         "summary": ["LENGTH(TRIM(SUMMARY))>0"],
         "detail": ["DETAILISNULLORLENGTH(TRIM(DETAIL))>0"],
         "occasion": ["OCCASIONISNULLORLENGTH(TRIM(OCCASION))>0"],
-        "files": ["FILESISNULLORLENGTH(TRIM(FILES))>0"],
+    },
+    "entry_files": {
+        "ledger": ["LEDGERIN", "OBSERVATIONS", "DIRECTIVES"],
+        "position": ["POSITION>=0"],
+        "path": ["LENGTH(TRIM(PATH))>0"],
     },
 }
 
@@ -219,16 +227,14 @@ def _validate_row(ledger: str, entry_id: str, columns: dict[str, Any]) -> None:
             raise ObservationRegistryError(
                 f"{ledger}/{entry_id}: {field} must be non-empty when present"
             )
-    if "files" in columns:
-        files = columns["files"]
-        # A files column is one newline-separated series of paths, not a JSON list, so a writer cannot forget a value.
-        if isinstance(files, list):
-            paths = [str(path) for path in files]
-        else:
-            paths = files.splitlines()
-        if not paths or any(not _nonempty(path) for path in paths):
+
+
+def _validate_file_rows(files_by_entry: dict[tuple[str, str], list[str]]) -> None:
+    """Check the cited-path rows every entry's ``files`` are assembled from."""
+    for (ledger, entry_id), paths in files_by_entry.items():
+        if any(not _nonempty(path) for path in paths):
             raise ObservationRegistryError(
-                f"{ledger}/{entry_id}: files must be non-empty newline-separated paths"
+                f"entry_files/{ledger}/{entry_id}: paths must be non-empty"
             )
 
 
@@ -240,9 +246,8 @@ _LEDGER_FIELDS = {
         "detail",
         "evidence",
         "standing",
-        "files",
     ),
-    "directives": ("kind", "summary", "detail", "occasion", "files"),
+    "directives": ("kind", "summary", "detail", "occasion"),
 }
 
 #: SQLite declared types to the SQLAlchemy types this reader binds them to.
@@ -279,6 +284,7 @@ class SQLiteObservationStore:
             Column("id", Integer, primary_key=True),
             Column("revision", Integer, nullable=False),
         )
+        self._entry_files = self._tables["entry_files"]
 
     @staticmethod
     def _engine_for(path: Path) -> Engine:
@@ -442,6 +448,21 @@ class SQLiteObservationStore:
                         )
                     ).all()
                 ]
+            file_rows = connection.execute(
+                select(
+                    self._entry_files.c.ledger,
+                    self._entry_files.c.entry_id,
+                    self._entry_files.c.path,
+                ).order_by(
+                    self._entry_files.c.ledger,
+                    self._entry_files.c.entry_id,
+                    self._entry_files.c.position,
+                )
+            ).all()
+        files_by_entry: dict[tuple[str, str], list[str]] = {}
+        for ledger, entry_id, path in file_rows:
+            files_by_entry.setdefault((str(ledger), str(entry_id)), []).append(str(path))
+        _validate_file_rows(files_by_entry)
         observations: list[ObservationEntry] = []
         directives: list[DirectiveEntry] = []
         for ledger, rows in rows_by_ledger.items():
@@ -466,16 +487,18 @@ class SQLiteObservationStore:
                     raise ObservationRegistryError(
                         f"{ledger}/{entry_id}: updated_at must include a UTC offset"
                     )
-                # Optional fields are absent when NULL; `files` surfaces as its newline-parsed list.
+                # Optional fields are absent when NULL; cited paths come from the entry_files table.
                 entry = {
-                    field: values[field].splitlines()
-                    if field == "files" and isinstance(values[field], str)
-                    else values[field]
+                    field: values[field]
                     for field in _LEDGER_FIELDS[ledger]
                     if values[field] is not None
                 }
                 _validate_row(ledger, entry_id, entry)
-                entry.update(id=entry_id, updated_at=parsed_timestamp)
+                entry.update(
+                    id=entry_id,
+                    updated_at=parsed_timestamp,
+                    files=tuple(files_by_entry.get((ledger, entry_id), ())),
+                )
                 if ledger == "observations":
                     observations.append(ObservationEntry.model_validate(entry))
                 else:
@@ -490,8 +513,10 @@ class SQLiteObservationStore:
         """Verify the registry matches the documented columnar schema before any row is read.
 
         The ledgers are plain columns with NOT NULL and CHECK invariants rather than one JSON
-        payload BLOB, so a writer cannot silently drop a required field. The reader re-checks
-        every row semantically in ``_validate_row``; this pass checks the schema itself.
+        payload BLOB, so a writer cannot silently drop a required field. Cited paths live in the
+        indexed ``entry_files`` child table so the same path is queryable across entries. The
+        reader re-checks every row semantically in ``_validate_row``; this pass checks the schema
+        itself.
         """
         integrity = connection.exec_driver_sql("PRAGMA quick_check").scalar()
         if not isinstance(integrity, str) or integrity.strip().lower() != "ok":
@@ -515,8 +540,10 @@ class SQLiteObservationStore:
             ("registry_meta", "table"),
             ("observations", "table"),
             ("directives", "table"),
+            ("entry_files", "table"),
             ("idx_observations_updated_at", "index"),
             ("idx_directives_updated_at", "index"),
+            ("idx_entry_files_path", "index"),
         }
         if user_objects != expected_objects:
             raise ObservationRegistryError(
@@ -531,7 +558,7 @@ class SQLiteObservationStore:
                 raise ObservationRegistryError(
                     f"{table} columns must be {columns}; found {found or 'no table'}"
                 )
-        for table in ("observations", "directives"):
+        for table in ("observations", "directives", "entry_files"):
             table_sql = str(
                 connection.exec_driver_sql(
                     "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
@@ -574,6 +601,11 @@ class SQLiteObservationStore:
             raise ObservationRegistryError(
                 "idx_directives_updated_at must index directives(updated_at)"
             )
+        if "idx_entry_files_path" not in index_sql or (
+            "ONENTRY_FILES" not in "".join(index_sql["idx_entry_files_path"].split())
+            or "PATH" not in "".join(index_sql["idx_entry_files_path"].split())
+        ):
+            raise ObservationRegistryError("idx_entry_files_path must index entry_files(path)")
         meta_sql = str(
             connection.exec_driver_sql(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name='registry_meta'"
