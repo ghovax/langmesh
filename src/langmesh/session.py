@@ -130,8 +130,8 @@ class Session:
                 application_tools=[*components.application_tools, *tools],
             )
         self._components = components
-        # Tools handed to `grant_tool` before the runtime exists join its initial stable schema.
-        self._pending_tools: list[ToolLike] = []
+        # Live grants remain caller-owned code and are rebound whenever this session rebuilds its runtime.
+        self._granted_tools: dict[str, ToolLike] = {}
         self._mcp_server_manager = components.mcp_servers
         # Reading configuration must not leave a file in the caller's home directory.
         if configuration is not None and not isinstance(configuration, Configuration):
@@ -241,16 +241,14 @@ class Session:
                         environment=environment,
                     ),
                 )
-            for tool in self._pending_tools:
+            for tool in self._granted_tools.values():
                 self._runtime.grant_tool(tool)
-            self._pending_tools = []
         return self._runtime
 
     def grant_tool(self, tool: ToolLike) -> None:
         """Grant a real provider-visible tool, replacing one of the same name when present."""
-        if self._runtime is None:
-            self._pending_tools.append(tool)
-        else:
+        self._granted_tools[tool.name] = tool
+        if self._runtime is not None:
             self._runtime.grant_tool(tool)
 
     def refresh_prompt(self) -> None:
