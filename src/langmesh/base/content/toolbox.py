@@ -43,7 +43,7 @@ class Toolbox:
         return {
             "PATH": f"{self.binaries}:{existing}" if existing else str(self.binaries),
             _XDG_STATE: str(self.root),
-            _NIX_CONFIG: _joined_config(base.get(_NIX_CONFIG, "")),
+            _NIX_CONFIG: _joined_configuration(base.get(_NIX_CONFIG, "")),
         }
 
     def prepare(self) -> "Toolbox":
@@ -52,7 +52,7 @@ class Toolbox:
         return self
 
 
-def _joined_config(existing: str) -> str:
+def _joined_configuration(existing: str) -> str:
     """Our one setting, added to whatever the parent already asked for."""
     lines = [line for line in existing.splitlines() if line.strip()]
     if _XDG_SETTING not in lines:

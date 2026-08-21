@@ -8,7 +8,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DEFAULT_SSH_CONFIG_PATH = Path("~/.ssh/config").expanduser()
+DEFAULT_SSH_CONFIGURATION_PATH = Path("~/.ssh/config").expanduser()
 _PATTERN_CHARACTERS = set("*?!")
 
 
@@ -23,10 +23,10 @@ class SshHost:
     identity_files: tuple[str, ...] = field(default_factory=tuple)
 
 
-def _config_paths(config_path: Path, _seen: set[Path] | None = None) -> list[Path]:
+def _configuration_paths(configuration_path: Path, _seen: set[Path] | None = None) -> list[Path]:
     """The configuration file and every include, glob-expanded and resolved from its includer."""
     seen = _seen if _seen is not None else set()
-    resolved = config_path.expanduser()
+    resolved = configuration_path.expanduser()
     if resolved in seen or not resolved.is_file():
         return []
     seen.add(resolved)
@@ -46,17 +46,17 @@ def _config_paths(config_path: Path, _seen: set[Path] | None = None) -> list[Pat
             candidate = Path(token).expanduser()
             bases = [resolved.parent] if not candidate.is_absolute() else [Path("/")]
             if not candidate.is_absolute():
-                bases.append(DEFAULT_SSH_CONFIG_PATH.parent)
+                bases.append(DEFAULT_SSH_CONFIGURATION_PATH.parent)
             for base in bases:
                 for match in sorted(glob.glob(str((base / token).expanduser()))):
-                    paths.extend(_config_paths(Path(match), seen))
+                    paths.extend(_configuration_paths(Path(match), seen))
     return paths
 
 
-def _literal_aliases(config_path: Path) -> list[str]:
+def _literal_aliases(configuration_path: Path) -> list[str]:
     aliases: list[str] = []
     seen: set[str] = set()
-    for path in _config_paths(config_path):
+    for path in _configuration_paths(configuration_path):
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
@@ -110,10 +110,10 @@ def resolve_host(alias: str, *, timeout: float = 5.0) -> SshHost | None:
     )
 
 
-def list_ssh_hosts(config_path: Path = DEFAULT_SSH_CONFIG_PATH) -> list[SshHost]:
+def list_ssh_hosts(configuration_path: Path = DEFAULT_SSH_CONFIGURATION_PATH) -> list[SshHost]:
     """Every connectable host in the SSH configuration, resolved; a missing file gives []."""
     hosts: list[SshHost] = []
-    for alias in _literal_aliases(config_path):
+    for alias in _literal_aliases(configuration_path):
         host = resolve_host(alias)
         if host is not None:
             hosts.append(host)
