@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional
 
+import segno
+
 # Requests whose bodies are streamed, and headers that describe a connection ending here rather than at the daemon.
 _DROPPED_REQUEST_HEADERS = frozenset(
     {
@@ -80,6 +82,12 @@ def pairing_link(endpoint: str, token: str) -> str:
     )
     encoded = base64.urlsafe_b64encode(payload.encode("utf-8")).rstrip(b"=").decode("ascii")
     return f"langmesh://pair#{encoded}"
+
+
+def print_pairing_code(link: str) -> None:
+    """Print a compact QR code when the command is attached to a terminal."""
+    if sys.stderr.isatty():
+        segno.make_qr(link).terminal(out=sys.stderr, compact=True)
 
 
 def interface_directory() -> Optional[Path]:
@@ -474,6 +482,7 @@ def run(arguments) -> int:
         endpoint = _tailnet_endpoint() or address
         link = pairing_link(endpoint, reach_token_value)
         logger.info("langmesh: pairing link: %s", link)
+        print_pairing_code(link)
         if not _tailnet_endpoint():
             logger.info(
                 "langmesh: this door is on loopback; a phone needs the tailnet address — run tailscale serve and re-pair with its https://<machine>.ts.net address."
