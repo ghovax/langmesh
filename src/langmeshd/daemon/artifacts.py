@@ -32,6 +32,8 @@ class _FileArtifactWriter:
         self._incoming_path = incoming_path
         self._target_path = target_path
         self._closed = False
+        self._failure: BaseException | None = None
+        self._lock = asyncio.Lock()
         self._size = 0
 
     @property
@@ -39,10 +41,13 @@ class _FileArtifactWriter:
         return self._reference
 
     async def write(self, data: bytes) -> None:
-        if self._closed:
-            raise RuntimeError("artifact writer is closed")
-        await asyncio.to_thread(self._handle.write, data)
-        self._size += len(data)
+        async with self._lock:
+            if self._closed:
+                raise RuntimeError("artifact writer is closed")
+            if self._failure is not None:
+                raise RuntimeError("artifact writer failed") from self._failure
+            await asyncio.to_thread(self._handle.write, data)
+            self._size += len(data)
 
     def _commit(self) -> None:
         self._handle.flush()
@@ -56,16 +61,23 @@ class _FileArtifactWriter:
             os.close(directory)
 
     async def close(self) -> ArtifactReference:
-        if not self._closed:
-            self._closed = True
-            await asyncio.to_thread(self._commit)
-            self._reference = ArtifactReference(
-                identifier=self._reference.identifier,
-                name=self._reference.name,
-                media_type=self._reference.media_type,
-                size=self._size,
-            )
-        return self._reference
+        async with self._lock:
+            if self._failure is not None:
+                raise RuntimeError("artifact writer failed") from self._failure
+            if not self._closed:
+                try:
+                    await asyncio.to_thread(self._commit)
+                except BaseException as error:
+                    self._failure = error
+                    raise
+                self._closed = True
+                self._reference = ArtifactReference(
+                    identifier=self._reference.identifier,
+                    name=self._reference.name,
+                    media_type=self._reference.media_type,
+                    size=self._size,
+                )
+            return self._reference
 
 
 class FileArtifacts:
@@ -80,10 +92,16 @@ class FileArtifacts:
         from langmesh.base.primitives.identifiers import new_id
 
         resolved_identifier = _valid_identifier(identifier or new_id("artifact"))
-        await asyncio.to_thread(self._directory.mkdir, parents=True, exist_ok=True)
         incoming_path = self._directory / f".{resolved_identifier}.incoming"
         target_path = self._directory / resolved_identifier
-        handle = await asyncio.to_thread(incoming_path.open, "wb")
+
+        def open_incoming() -> BinaryIO:
+            self._directory.mkdir(parents=True, exist_ok=True)
+            if target_path.exists():
+                raise FileExistsError(f"Artifact already exists: {resolved_identifier}")
+            return incoming_path.open("xb")
+
+        handle = await asyncio.to_thread(open_incoming)
         return _FileArtifactWriter(
             ArtifactReference(resolved_identifier, name, media_type),
             handle,
