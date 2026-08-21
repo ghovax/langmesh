@@ -29,7 +29,9 @@ def location_uri_for(address: LocationAddress) -> str:
     raise ValueError(f"Unknown location kind: {address.kind!r}")
 
 
-def executor_for(address: LocationAddress, *, control_directory: Path | None = None) -> LocationExecutor:
+def executor_for(
+    address: LocationAddress, *, control_directory: Path | None = None
+) -> LocationExecutor:
     """The executor that runs tools against this location."""
     if address.kind == "local":
         return LocalExecutor()

@@ -36,9 +36,7 @@ async def mcp_tools(server: str = "", working_directory: str = ""):
         home_root = home_agents_root().resolve()
         project_root = project_agents_root(working_directory).resolve()
         if project_root != home_root:
-            project_server_names = set(
-                load_mcp_configuration([project_root]).servers
-            )
+            project_server_names = set(load_mcp_configuration([project_root]).servers)
     else:
         configured = state.global_configuration.mcp.servers
     tools_by_server: dict[str, list] = {}

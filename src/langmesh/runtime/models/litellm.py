@@ -446,9 +446,7 @@ class ChatLiteLLMModel(BaseChatModel):
             )
         return trace(pieces)
 
-    def _provider_cache_key(
-        self, params: dict[str, Any], sent: list[dict[str, Any]]
-    ) -> str:
+    def _provider_cache_key(self, params: dict[str, Any], sent: list[dict[str, Any]]) -> str:
         instructions = compact(sent[0]) if sent and sent[0].get("role") == "system" else ""
         return provider_cache_key(
             str(params.get("model") or ""),
