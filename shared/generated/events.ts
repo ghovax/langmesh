@@ -320,10 +320,10 @@ export interface ToolResultEvent {
   tool_name: string;
 }
 /**
- * Session context captured in the cache-stable system prompt.
+ * Session context appended as immutable conversation state.
  *
  * Only the core's own fields are declared here. The plugins contribute their own
- * context through ``compose_context``, which merges it into the prompt dict; the
+ * context through ``compose_context``, which merges it into the context dict; the
  * core never names a plugin's context.
  *
  * This interface was referenced by `LangMeshEvents`'s JSON-Schema
@@ -332,7 +332,6 @@ export interface ToolResultEvent {
 export interface TurnContext {
   confinement?: Record<string, unknown>;
   locations?: Record<string, unknown>[];
-  now?: string;
   pwd?: string;
 }
 /**
