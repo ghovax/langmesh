@@ -83,11 +83,9 @@ def _assert_agent_exists(agent: str, working_directory: str) -> None:
     configuration = state.global_configuration
     if configuration is None:
         return
-    directories = (
-        configuration.agent_directories_for(working_directory)
-        if working_directory
-        else configuration.agent_directories()
-    )
+    from langmeshd.commons.configuration_locations import agent_directories
+
+    directories = agent_directories(working_directory)
     available = available_agent_names(directories)
     if agent not in available:
         known = ", ".join(sorted(available)) or "none found"

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-import json
 import logging
 import os
 from langmesh.base.confinement import environment_variables
 import re
 from fnmatch import fnmatch
-import sys
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Literal, Optional
 
@@ -15,30 +13,10 @@ from pydantic import BaseModel, Field, field_validator
 
 from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base import confinement
-from langmesh.base.content.observations import OBSERVATIONS_FILENAME
 from langmesh.base.persistence.file_cache import parsed_file
 
 
 logger = logging.getLogger(__name__)
-
-
-def _bundled_dotagents_root() -> Path:
-    """The ``.agents`` directory shipped with the harness, so every folder sees the base profiles."""
-    if getattr(sys, "frozen", False):
-        bundle_root = Path(getattr(sys, "_MEIPASS", sys.executable))
-        if (bundle_root / ".agents" / "agents").is_dir():
-            return bundle_root / ".agents"
-    here = Path(__file__).resolve().parent
-    installed = here.parent / "_bundled" / ".agents"
-    if (installed / "agents").is_dir():
-        return installed
-    for candidate in (here, *here.parents):
-        if (candidate / ".agents" / "agents").is_dir():
-            return candidate / ".agents"
-    return here.parents[2] / ".agents"
-
-
-BUNDLED_DOTAGENTS_ROOT = _bundled_dotagents_root()
 
 
 class Section(BaseModel, extra="forbid"):
@@ -307,23 +285,6 @@ class MCPConfiguration(Section):
     def enabled_servers(self) -> dict[str, MCPServerConfiguration]:
         return {name: server for name, server in self.servers.items() if server.enabled}
 
-    @classmethod
-    def from_dotagents_roots(cls, roots: Iterable[Path]) -> MCPConfiguration:
-        servers: dict[str, MCPServerConfiguration] = {}
-        for root in roots:
-            path = root / "mcp.json"
-            if not path.exists():
-                continue
-            data = json.loads(path.read_text())
-            raw_servers = data.get("mcpServers", data.get("servers", {}))
-            for name, raw_configuration in raw_servers.items():
-                configuration = dict(raw_configuration)
-                if "type" in configuration and "transport" not in configuration:
-                    configuration["transport"] = configuration.pop("type")
-                servers[name] = MCPServerConfiguration(**configuration)
-        return cls(servers=servers)
-
-
 class RemoteAgentAuthConfiguration(BaseModel):
     """How to authenticate to one external agent. ``${VAR}`` expands at load, so tokens stay out of the file."""
 
@@ -362,27 +323,6 @@ class RemoteAgentsConfiguration(Section):
             name: agent for name, agent in self.agents.items() if agent.enabled and agent.card_url
         }
 
-    @classmethod
-    def from_dotagents_roots(cls, roots: Iterable[Path]) -> RemoteAgentsConfiguration:
-        agents: dict[str, RemoteAgentServerConfiguration] = {}
-        for root in roots:
-            path = root / "remote-agents.json"
-            if not path.exists():
-                continue
-            data = json.loads(path.read_text())
-            raw_agents = data.get("agents", {})
-            for name, raw_configuration in raw_agents.items():
-                configuration = dict(raw_configuration)
-                raw_auth = dict(configuration.get("auth") or {})
-                for secret_field in ("token", "client_secret", "client_id"):
-                    if isinstance(raw_auth.get(secret_field), str):
-                        raw_auth[secret_field] = os.path.expandvars(raw_auth[secret_field])
-                if raw_auth:
-                    configuration["auth"] = raw_auth
-                agents[name] = RemoteAgentServerConfiguration(**configuration)
-        return cls(agents=agents)
-
-
 class TelemetryExporterConfiguration(Section):
     """Where traces are sent."""
 
@@ -418,11 +358,6 @@ class AgentDefaults(Section):
 class Configuration(Section, extra="allow"):
     # The configuration file is shared with the host app, which owns sections the library does not
     # model (dictation, composio, ...). Unknown top-level sections are tolerated, never rejected.
-    HOME_AGENTS_ROOT_DIRECTORY: ClassVar[str] = "~/.agents"
-    AGENTS_ROOT_DIRECTORY: ClassVar[str] = ".agents"
-    AGENTS_DIRECTORY: ClassVar[str] = ".agents/agents"
-    SKILLS_DIRECTORY: ClassVar[str] = ".agents/skills"
-
     providers: dict[str, ProviderCredential] = Field(default_factory=dict)
     exa: ExaConfiguration = Field(default_factory=ExaConfiguration)
     jina: JinaConfiguration = Field(default_factory=JinaConfiguration)
@@ -459,130 +394,6 @@ class Configuration(Section, extra="allow"):
             for identifier, credential in self.providers.items()
             if credential.base_url
         }
-
-    def agents_root_directories(self) -> list[Path]:
-        return _dedupe_paths(
-            [
-                Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser(),
-                Path(self.AGENTS_ROOT_DIRECTORY),
-            ]
-        )
-
-    def agent_directories(self) -> list[Path]:
-        return _dedupe_paths(
-            [
-                # Bundled agents are the base layer; home and project profiles override one of the same id.
-                BUNDLED_DOTAGENTS_ROOT / "agents",
-                Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser() / "agents",
-                Path(self.AGENTS_ROOT_DIRECTORY) / "agents",
-                Path(self.AGENTS_DIRECTORY),
-            ]
-        )
-
-    def skill_directories(self) -> list[Path]:
-        return _dedupe_paths(
-            [
-                # Bundled skills are the base layer, exactly like agents.
-                BUNDLED_DOTAGENTS_ROOT / "skills",
-                Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser() / "skills",
-                Path(self.AGENTS_ROOT_DIRECTORY) / "skills",
-                Path(self.SKILLS_DIRECTORY),
-            ]
-        )
-
-    def memory_directories(self) -> list[Path]:
-        return _dedupe_paths(
-            [
-                Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser() / "memories",
-                Path(self.AGENTS_ROOT_DIRECTORY) / "memories",
-            ]
-        )
-
-    # Project-relative roots resolve against the session's working directory, not the harness's CWD.
-
-    def _local_base(self, working_directory: str) -> Path:
-        """What project-relative ``.agents`` roots resolve against, falling back to the harness's CWD."""
-        return Path(working_directory).expanduser() if working_directory else Path.cwd()
-
-    def _resolve_local(self, working_directory: str, directory: str) -> Path:
-        path = Path(directory).expanduser()
-        return path if path.is_absolute() else self._local_base(working_directory) / path
-
-    def home_agents_root(self) -> Path:
-        """The global ``~/.agents`` root — the scope shared by every folder."""
-        return Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser()
-
-    def project_agents_root_for(self, working_directory: str) -> Path:
-        """The working directory's own ``.agents`` root, which equals the home root when they are the same place."""
-        return self._resolve_local(working_directory, self.AGENTS_ROOT_DIRECTORY)
-
-    def observation_database_for(self, working_directory: str) -> Path:
-        """The workspace-owned observation database beside that workspace's `mcp.json`."""
-        return self.project_agents_root_for(working_directory) / OBSERVATIONS_FILENAME
-
-    def agents_root_directories_for(self, working_directory: str) -> list[Path]:
-        return _dedupe_paths(
-            [
-                self.home_agents_root(),
-                self.project_agents_root_for(working_directory),
-            ]
-        )
-
-    def agent_directories_for(self, working_directory: str) -> list[Path]:
-        return _dedupe_paths(
-            [
-                # Bundled agents are the base layer; home and project profiles override one of the same id.
-                BUNDLED_DOTAGENTS_ROOT / "agents",
-                Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser() / "agents",
-                self._resolve_local(working_directory, self.AGENTS_ROOT_DIRECTORY) / "agents",
-                self._resolve_local(working_directory, self.AGENTS_DIRECTORY),
-            ]
-        )
-
-    def skill_directories_for(self, working_directory: str) -> list[Path]:
-        return _dedupe_paths(
-            [
-                # Bundled skills are the base layer, exactly like agents.
-                BUNDLED_DOTAGENTS_ROOT / "skills",
-                Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser() / "skills",
-                self._resolve_local(working_directory, self.AGENTS_ROOT_DIRECTORY) / "skills",
-                self._resolve_local(working_directory, self.SKILLS_DIRECTORY),
-            ]
-        )
-
-    def memory_directories_for(self, working_directory: str) -> list[Path]:
-        return _dedupe_paths(
-            [
-                Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser() / "memories",
-                self._resolve_local(working_directory, self.AGENTS_ROOT_DIRECTORY) / "memories",
-            ]
-        )
-
-    def mcp_configuration_for(self, working_directory: str) -> MCPConfiguration:
-        """The MCP servers declared for a working directory: home plus its own, deduped, the folder winning."""
-        return MCPConfiguration.from_dotagents_roots(
-            self.agents_root_directories_for(working_directory)
-        )
-
-    def remote_agents_configuration_for(self, working_directory: str) -> RemoteAgentsConfiguration:
-        """The external agents declared for a working directory: home plus its own."""
-        return RemoteAgentsConfiguration.from_dotagents_roots(
-            self.agents_root_directories_for(working_directory)
-        )
-
-
-def _dedupe_paths(paths: Iterable[Path]) -> list[Path]:
-    result: list[Path] = []
-    seen: set[Path] = set()
-    for path in paths:
-        resolved = path.expanduser()
-        key = resolved.resolve() if resolved.exists() else resolved.absolute()
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(resolved)
-    return result
-
 
 class NamedToolPermissions(BaseModel):
     """Per-call permission rules for a tool whose calls have a name."""
@@ -783,10 +594,10 @@ class PromptLoader:
         overrides: Optional[Callable[[str], Optional[str]]] = None,
         fallback: Optional[Any] = None,
     ):
-        """A template directory, an override hook consulted first, and an optional fallback loader.
+        """A shipped template directory, an override hook, and an optional fallback loader.
 
         The override hook answers a template name with a template already in hand, so a caller's
-        catalogue can supply one without touching this directory. The fallback lets a plugin chain
+        catalogue can supply one directly. The fallback lets a plugin chain
         its own templates behind the shared ones when a name is not its own.
         """
         self._directory = Path(prompts_directory)
@@ -795,7 +606,7 @@ class PromptLoader:
         self._fallback = fallback
 
     def load(self, template_name: str, variables: Mapping[str, object]) -> str:
-        """A template rendered with these variables, read from disk only when the file has changed."""
+        """Render a shipped template, re-reading it only when the package file changes."""
         if self._overrides is not None:
             override = self._overrides(template_name)
             if override is not None:

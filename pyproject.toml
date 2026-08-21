@@ -90,11 +90,11 @@ only-include = [
 packages = ["src/langmesh", "src/langmeshd"]
 
 [tool.hatch.build.targets.wheel.force-include]
-".agents/agents/reviewer/AGENT.md" = "langmesh/_bundled/.agents/agents/reviewer/AGENT.md"
-".agents/skills/context7-mcp/SKILL.md" = "langmesh/_bundled/.agents/skills/context7-mcp/SKILL.md"
-".agents/skills/observational-memory/SKILL.md" = "langmesh/_bundled/.agents/skills/observational-memory/SKILL.md"
-".agents/skills/observational-memory/agents/openai.yaml" = "langmesh/_bundled/.agents/skills/observational-memory/agents/openai.yaml"
-".agents/mcp.json" = "langmesh/_bundled/.agents/mcp.json"
+".agents/agents/reviewer/AGENT.md" = "langmeshd/_bundled/.agents/agents/reviewer/AGENT.md"
+".agents/skills/context7-mcp/SKILL.md" = "langmeshd/_bundled/.agents/skills/context7-mcp/SKILL.md"
+".agents/skills/observational-memory/SKILL.md" = "langmeshd/_bundled/.agents/skills/observational-memory/SKILL.md"
+".agents/skills/observational-memory/agents/openai.yaml" = "langmeshd/_bundled/.agents/skills/observational-memory/agents/openai.yaml"
+".agents/mcp.json" = "langmeshd/_bundled/.agents/mcp.json"
 
 [tool.uv]
 package = true

@@ -19,6 +19,7 @@ from langchain_core.messages import messages_from_dict
 
 from langmeshd.worker import features_access as _features
 from langmeshd.commons.agent_files import AgentFileLoader, list_agents
+from langmeshd.commons.configuration_locations import agent_directories
 from langmeshd.daemon.machine import machine_catalogue
 from langmeshd.commons.toolboxes import toolbox_for
 from langmesh.base.primitives.limits import current_limits
@@ -74,11 +75,7 @@ def _installed_agent_names(
     global_configuration: Configuration, working_directory: str
 ) -> list[str]:
     """The profiles a peer could be created with, read at build time so a bad name is unrepresentable."""
-    directories = (
-        global_configuration.agent_directories_for(working_directory)
-        if working_directory
-        else global_configuration.agent_directories()
-    )
+    directories = agent_directories(working_directory)
     try:
         return [entry["id"] for entry in list_agents(directories)]
     except Exception:  # noqa: BLE001 — an unreadable profile directory must not fail the runtime

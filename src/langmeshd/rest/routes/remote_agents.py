@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from langmeshd.commons import state
 from langmeshd.commons.services.broadcast import _publish_broadcast
 from langmeshd.commons.brokers.remote_agents import _reload_remote_agents
+from langmeshd.commons.configuration_locations import home_agents_root
 
 router = APIRouter()
 
@@ -41,7 +42,7 @@ class RemoteAgentInput(BaseModel):
 
 def _home_remote_agents_path() -> Path:
     assert state.global_configuration is not None
-    root = state.global_configuration.home_agents_root()
+    root = home_agents_root()
     root.mkdir(parents=True, exist_ok=True)
     return root / "remote-agents.json"
 
