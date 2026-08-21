@@ -175,6 +175,7 @@ class Session:
         self._restored = False
         self._refresh_prompt_on_restore = False
         self._turn_lock = asyncio.Lock()
+        self._checkpoint_lock = asyncio.Lock()
         self._phase = SessionPhase.IDLE
         self._pending: PendingTurn | None = None
 
@@ -334,12 +335,13 @@ class Session:
             await self._save()
 
     async def set_permission_mode(self, mode: str | PermissionMode) -> SessionState:
-        """Change live permission policy and re-evaluate any unanswered parked gates."""
+        """Persist live permission policy before applying it and re-evaluate parked gates."""
         resolved = mode if isinstance(mode, PermissionMode) else PermissionMode.resolve(mode)
         if not self._restored:
             async with self._turn_lock:
                 if not self._restored:
                     await self._restore()
+        await self._save(permission_mode=resolved)
         self._permission_mode = str(resolved)
         runtime = self.runtime
         runtime.set_permission_mode(resolved)
@@ -394,6 +396,8 @@ class Session:
 
         self.runtime.conversation[:] = messages_from_dict(list(checkpoint.conversation))
         self.runtime.restore_session(checkpoint.session)
+        if checkpoint.session.permission_mode:
+            self._permission_mode = checkpoint.session.permission_mode
         if checkpoint.pending is not None:
             self._pending = checkpoint.pending
             self._phase = SessionPhase.SUSPENDED
@@ -410,17 +414,21 @@ class Session:
                 await self._restore()
             await self._save()
 
-    async def _save(self) -> None:
+    async def _save(self, *, permission_mode: PermissionMode | None = None) -> None:
         from langchain_core.messages import message_to_dict
 
-        await self._checkpoints.save(
-            self._session_id,
-            SessionCheckpoint(
-                conversation=tuple(message_to_dict(message) for message in self.conversation),
-                session=self.runtime.session_snapshot(),
-                pending=self._pending,
-            ),
-        )
+        async with self._checkpoint_lock:
+            snapshot = self.runtime.session_snapshot()
+            if permission_mode is not None:
+                snapshot = dataclasses.replace(snapshot, permission_mode=str(permission_mode))
+            await self._checkpoints.save(
+                self._session_id,
+                SessionCheckpoint(
+                    conversation=tuple(message_to_dict(message) for message in self.conversation),
+                    session=snapshot,
+                    pending=self._pending,
+                ),
+            )
 
     def _compose(
         self, message: str, attachments: Sequence[Attachment]

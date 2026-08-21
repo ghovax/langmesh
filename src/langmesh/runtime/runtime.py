@@ -858,6 +858,7 @@ class AgentRuntime(_RunsTurns):
         cache_snapshot = getattr(self._model, "model_cache_snapshot", None)
         return SessionSnapshot(
             features=self._features.snapshot(),
+            permission_mode=str(self._permission_mode),
             turn_recovery="retryable" if self._turn_recovery != "none" else "none",
             turn_failure_root=self._turn_failure_root,
             model_cache=cache_snapshot() if callable(cache_snapshot) else None,
@@ -869,6 +870,8 @@ class AgentRuntime(_RunsTurns):
         """Rehydrate the features' durable state and the core's recovery flag."""
         if not isinstance(snapshot, SessionSnapshot):
             raise TypeError("snapshot must be a SessionSnapshot value")
+        if snapshot.permission_mode:
+            self._permission_mode = PermissionMode.resolve(snapshot.permission_mode)
         self._features.restore(snapshot.features)
         restore_model_cache = getattr(self._model, "restore_model_cache", None)
         if callable(restore_model_cache):
