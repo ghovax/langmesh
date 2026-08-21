@@ -254,7 +254,6 @@ class AgentRuntime(_RunsTurns):
         self._prompt_composer = components.prompt_composer
         self._hooks = HookRunner(components.hooks)
         self._pipeline = ToolPipeline(components.middleware)
-        self._resource_sync = components.synchronize_resources
         self._session_id = profile.session_id
         # The session that created this one, empty when a person did. Reporting back needs its id.
         self._parent_session = profile.parent_session

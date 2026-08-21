@@ -72,7 +72,6 @@ class RuntimeComponents:
     tool_gate: str = "ask"
     hooks: Sequence[Any] = field(default_factory=tuple)
     middleware: Sequence[Any] = field(default_factory=tuple)
-    synchronize_resources: Callable[[], Awaitable[None]] | None = None
     related_turns: Callable[[str], Awaitable[Any]] | None = None
     features: Sequence[Any] | None = None
     # The host's opaque plugin bundle: whatever the composing host supplies for its plugins

@@ -75,7 +75,7 @@ class ToolContext:
         )
 
     def for_directory(self, directory: str) -> "ToolContext":
-        """This context with its workspace repointed, as a new value rather than a mutation."""
+        """This context with its execution directory replaced as a new value."""
         return replace(self, workspace=directory)
 
     def for_remote(self) -> "ToolContext":

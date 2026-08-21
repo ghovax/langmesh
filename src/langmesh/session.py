@@ -172,8 +172,6 @@ class Session:
         _require(SessionAccess, components.sessions, "components.sessions")
         _require(MCPServers, components.mcp_servers, "components.mcp_servers")
         self._tracer_provider = components.tracer_provider
-        # Where tools actually run. Equal to `directory` unless a workspace repointed it.
-        self._runtime_directory = self._directory
         self._runtime: AgentRuntime | None = None
         self._restored = False
         self._turn_lock = asyncio.Lock()
@@ -225,7 +223,7 @@ class Session:
                         agent=agent_configuration,
                         configuration=self._configuration,
                         session_id=self._session_id,
-                        working_directory=self._runtime_directory,
+                        working_directory=self._directory,
                         project_directory=self._directory,
                         permission_mode=self._permission_mode,
                         sandbox=self._sandbox,
@@ -238,7 +236,6 @@ class Session:
                         artifacts=self._artifacts,
                         transcript=self._transcript,
                         mcp_servers=self._mcp_server_manager,
-                        synchronize_resources=None,
                         features=self._components.features or [],
                         environment=environment,
                     ),
@@ -599,7 +596,6 @@ class Session:
         self._restored = False
         self._phase = SessionPhase.IDLE
         self._pending = None
-        self._runtime_directory = self._directory
 
     async def __aenter__(self) -> "Session":
         return self
