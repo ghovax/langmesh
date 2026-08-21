@@ -725,13 +725,16 @@ class SessionExecutor(AgentExecutor):
 
     def set_locations(self, locations: Optional[list[dict]]) -> int:
         """Adopt the workspace's environments after an edit, so a session already open sees the new set."""
+        from langmeshd.features import attach_location_executors
+
+        resolved_locations = attach_location_executors(locations)
         for state in self._contexts.values():
             if state.runtime is not None:
                 # The locations plugin owns the map; a session without the plugin ignores this.
                 capability = state.runtime.features.capability(LocationsCapability)
                 if capability is not None:
-                    capability.set_locations(locations)
-        return len(locations or [])
+                    capability.set_locations(resolved_locations)
+        return len(resolved_locations or [])
 
     async def set_permission_mode(self, mode: str) -> str:
         """Adopt a new permission mode now rather than on the next turn, since the turn to reach is the running one."""

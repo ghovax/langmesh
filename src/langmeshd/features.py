@@ -41,10 +41,16 @@ def _session_locations(session_id: str) -> list[dict[str, Any]] | None:
     """The workspace's locations for a session, resolved by the daemon's own services."""
     from langmeshd.commons.services.locations import _resolve_session_locations
 
+    return attach_location_executors(_resolve_session_locations(session_id))
+
+
+def attach_location_executors(
+    locations: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    """Attach daemon-owned executors to serialized workspace locations."""
     from langmesh.runtime.plugins.locations.resolver import LocationAddress, executor_for
     from langmeshd.commons.paths import ssh_control_directory
 
-    locations = _resolve_session_locations(session_id)
     for location in locations or []:
         address = LocationAddress(
             kind=str(location.get("kind") or "local"),
