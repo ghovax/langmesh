@@ -14,6 +14,7 @@ from langmeshd.commons import state
 from langmeshd.commons.services.broadcast import _publish_broadcast
 from langmeshd.commons.brokers.remote_agents import _reload_remote_agents
 from langmeshd.commons.configuration_locations import home_agents_root
+from langmeshd.commons.atomic_file import write_text
 
 router = APIRouter()
 
@@ -61,7 +62,7 @@ def _read_file() -> dict:
 
 
 def _write_file(data: dict) -> None:
-    _home_remote_agents_path().write_text(json.dumps(data, indent=2))
+    write_text(_home_remote_agents_path(), json.dumps(data, indent=2))
 
 
 def _entry_from_input(payload: RemoteAgentInput) -> dict:

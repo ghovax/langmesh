@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 from functools import lru_cache
 import json
-import os
 from typing import Any, cast
 
 from langmesh.base.identity.credentials import ChatGPTTokens
 from langmesh.base.identity.cursor_credentials import CursorTokens
 from langmeshd.commons.paths import oauth_token_path
+from langmeshd.commons.atomic_file import write_text
 
 
 _TOKEN_TYPES = {"chatgpt": ChatGPTTokens, "cursor": CursorTokens}
@@ -34,9 +34,10 @@ class FileCredentialStore:
     def save(self, provider_identifier: str, tokens: Any) -> None:
         if provider_identifier not in _TOKEN_TYPES or not is_dataclass(tokens):
             raise TypeError(f"Unsupported credentials for {provider_identifier!r}.")
-        path = oauth_token_path(provider_identifier)
-        path.write_text(json.dumps(asdict(cast(Any, tokens)), separators=(",", ":")))
-        os.chmod(path, 0o600)
+        write_text(
+            oauth_token_path(provider_identifier),
+            json.dumps(asdict(cast(Any, tokens)), separators=(",", ":")),
+        )
 
     def clear(self, provider_identifier: str) -> None:
         oauth_token_path(provider_identifier).unlink(missing_ok=True)
