@@ -61,9 +61,8 @@ dependencies = [
     "playwright>=1.61.0",
     "model2vec>=0.8.2",
     "croniter>=6.2.4",
-    # `langmesh reach pair` prints its pairing link as a QR code, because the alternative is asking
-    # somebody to type a 43-character token into a phone. Pure Python and dependency-free, which
-    # matters for something the frozen build has to carry.
+    # Segno renders pairing links as terminal QR codes without image dependencies.
+    "segno>=1.6,<2",
 ]
 
 [project.scripts]
