@@ -7,6 +7,7 @@ from langmeshd.commons.paths import uploads_directory
 from pathlib import Path
 import asyncio
 import hashlib
+import os
 from typing import Annotated
 from langmesh.protocol.dtos import (
     AttachmentReference,
@@ -50,12 +51,14 @@ async def upload_file(file: Annotated[UploadFile, File()]):
     digest = hashlib.sha256()
     size = 0
     try:
-        handle = await asyncio.to_thread(incoming_path.open, "wb")
+        handle = await asyncio.to_thread(incoming_path.open, "xb")
         try:
             while chunk := await file.read(1024 * 1024):
                 size += len(chunk)
                 digest.update(chunk)
                 await asyncio.to_thread(handle.write, chunk)
+            await asyncio.to_thread(handle.flush)
+            await asyncio.to_thread(os.fsync, handle.fileno())
         finally:
             await asyncio.to_thread(handle.close)
     except BaseException:
