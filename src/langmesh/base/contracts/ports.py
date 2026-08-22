@@ -540,11 +540,7 @@ class ContinuationPolicy(Protocol):
 
     def continue_goal(self, goal: Any) -> bool: ...
 
-    def continue_tasks(
-        self,
-        unfinished_tasks: Sequence[Mapping[str, Any]],
-        completed_turns: int,
-    ) -> bool: ...
+    def continue_tasks(self, unfinished_tasks: Sequence[Mapping[str, Any]]) -> bool: ...
 
 
 @runtime_checkable

@@ -79,13 +79,13 @@ Keep the summary request as real messages rather than a rendered string, so the 
 ```python
 from langmesh.runtime.plugins.continuation import Continuation, DefaultContinuationPolicy
 
-# The shipped policy reads the goal and task allowances from the current limits.
+# The shipped policy keeps open goals and unfinished tasks going on their own.
 components = SessionComponents(features=[Continuation(policy=DefaultContinuationPolicy())])
 ```
 
-The standard policy keeps an open goal going on its own and reads the task allowance (`task_continuation_turns`) from the current limits. Each plugin that has a next obligation contributes its own message segment — the goal its reminder or review prose, tracked tasks their note — and they are appended into one next turn, so the obligations never race or open competing turns.
+The standard policy keeps an open goal and unfinished tracked tasks going on their own, with no hard turn cap. Each plugin that has a next obligation contributes its own message — the goal its reminder or review prose, tracked tasks their note — staged as separate messages within one next turn, so the obligations never race or open competing turns.
 
-A new user message restores the task allowance and resumes a parked goal. Clearing a goal goes through the goal feature (`update_goal` sets it; the review that closes it is separate).
+A new user message resumes a parked goal. Clearing a goal goes through the goal feature (`update_goal` sets it; the review that closes it is separate).
 
 ## Persistence adapters
 

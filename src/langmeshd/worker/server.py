@@ -115,6 +115,11 @@ async def _clear_goal(session, _params: dict) -> dict:
     return {"cleared": await session.clear_goal(session.session_id)}
 
 
+async def _resume_goal(session, _params: dict) -> dict:
+    """The person restarted a parked goal, so the session opens turns for it again."""
+    return {"resumed": await session.resume_goal(session.session_id)}
+
+
 async def _compact(session, _params: dict) -> dict:
     return await session.compact()
 
@@ -170,6 +175,7 @@ METHODS: dict[str, Callable[[Any, dict], Awaitable[dict]]] = {
     "tasks/cancel": _cancel,
     "session/status": _status,
     "session/goal-clear": _clear_goal,
+    "session/goal-resume": _resume_goal,
     "session/compact": _compact,
     "session/retry": _retry,
     "session/locations": _set_locations,

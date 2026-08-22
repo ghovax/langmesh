@@ -592,6 +592,32 @@ class SessionExecutor(AgentExecutor):
         await self._persist_session_state(session_id, runtime)
         return True
 
+    async def resume_goal(self, session_id: str) -> bool:
+        """The person restarting a parked goal: back to active, and the continuation re-armed.
+
+        A stop or a spent wait parks the goal rather than abandoning it; this is the way back in.
+        The session re-opens on the goal itself, whose reminder leads either to more work or to a
+        status the secondary review then settles.
+        """
+        state = self._contexts.get(session_id)
+        runtime = state.runtime if state is not None else None
+        if runtime is None:
+            # Parked state survives a restart, so resuming works from asleep exactly as clearing does.
+            runtime = await self._runtime_for(session_id, self._workspace())
+        goal = _features.goal(runtime) if runtime is not None else None
+        if runtime is None or goal is None or not goal.is_parked:
+            return False
+        if state is not None:
+            state.aborted = False
+            state.continuation.cancel_review()
+        _features.write_goal(
+            runtime,
+            goal.updated(status=Goal.ACTIVE, review_message=None, review_id=None),
+        )
+        await self._persist_session_state(session_id, runtime)
+        self._arm_continuation(session_id, _ContinuationPlan(goal=True))
+        return True
+
     async def _persist_session_state(self, session_id: str, runtime: AgentRuntime) -> None:
         """Write the durable session state outside a turn, since calling off a goal changes it between turns."""
         async with self._session_state_lock:

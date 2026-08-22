@@ -1,5 +1,5 @@
 // Where the daemon lives, and the capability token that proves we may talk to it.
-import { setFaultSender, swallowed } from "./swallowed";
+import { setFaultSender, reportError } from "./faults";
 
 // The development server is pointed straight at the daemon by web-development.sh; a built page
 // is served by the daemon itself (or by Tauri, which reports the endpoint below).
@@ -738,8 +738,6 @@ export interface CompactionSettings {
   reclaim_at_fraction: number;
   output_reserve_fraction: number;
   recent_working_set_fraction: number;
-  // How many times the hidden summarizer may be asked again after reviewing but not submitting.
-  summary_attempts: number;
 }
 
 export interface Settings {
@@ -786,7 +784,6 @@ const DEFAULT_COMPACTION: CompactionSettings = {
   reclaim_at_fraction: 0.85,
   output_reserve_fraction: 0.1,
   recent_working_set_fraction: 0.15,
-  summary_attempts: 3,
 };
 
 // Persist the context-reclaiming settings.
@@ -967,7 +964,7 @@ export async function fetchSystemPermissions(): Promise<Record<SystemPermission,
       accessibility: body.permissions?.accessibility === true,
     };
   } catch (caught) {
-    swallowed({ component: "api", operation: "read the system permission state" }, caught);
+    reportError({ component: "api", operation: "read the system permission state" }, caught);
     return { full_disk_access: false, accessibility: false };
   }
 }
@@ -979,7 +976,7 @@ export async function openSystemPermission(permission: SystemPermission): Promis
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ permission }),
   }).catch((caught) =>
-    swallowed({ component: "api", operation: `open the ${permission} pane` }, caught),
+    reportError({ component: "api", operation: `open the ${permission} pane` }, caught),
   );
 }
 
@@ -1243,7 +1240,7 @@ export async function fetchSkills(workingDirectory?: string): Promise<AgentSkill
     );
     return data.skills ?? [];
   } catch (caught) {
-    swallowed({ component: "api", operation: "list the skills" }, caught);
+    reportError({ component: "api", operation: "list the skills" }, caught);
     return [];
   }
 }
@@ -1259,7 +1256,7 @@ export async function fetchMcpTools(workingDirectory?: string): Promise<McpServe
     );
     return data.servers ?? [];
   } catch (caught) {
-    swallowed({ component: "api", operation: "list MCP server tools" }, caught);
+    reportError({ component: "api", operation: "list MCP server tools" }, caught);
     return [];
   }
 }
@@ -1333,7 +1330,7 @@ export async function fetchHostHomeDirectory(alias: string): Promise<string> {
     const data = await response.json();
     return String(data.path ?? "");
   } catch (caught) {
-    swallowed({ component: "api", operation: "read a host's home directory" }, caught);
+    reportError({ component: "api", operation: "read a host's home directory" }, caught);
     return "";
   }
 }
@@ -1395,7 +1392,7 @@ export async function fetchSession(
     const data = await rpc<{ session: SessionSummary }>("session.get", { id: sessionId }, options);
     return data.session ?? null;
   } catch (caught) {
-    swallowed({ component: "api", operation: "read a session" }, caught);
+    reportError({ component: "api", operation: "read a session" }, caught);
     return null;
   }
 }
@@ -1414,7 +1411,7 @@ export async function sessionTree(
   try {
     return await rpc<SessionTree>("session.tree", { id: sessionId }, options);
   } catch (caught) {
-    swallowed({ component: "api", operation: "read a session tree" }, caught);
+    reportError({ component: "api", operation: "read a session tree" }, caught);
     return null;
   }
 }
@@ -1532,7 +1529,7 @@ export async function turnGet(turnId: string): Promise<A2ATurn | null> {
     const data = await rpc<{ turn: A2ATurn }>("turn.get", { turn_id: turnId });
     return data.turn ?? null;
   } catch (caught) {
-    swallowed({ component: "api", operation: "read a turn" }, caught);
+    reportError({ component: "api", operation: "read a turn" }, caught);
     return null;
   }
 }
@@ -1544,7 +1541,7 @@ export async function daemonStatus(
   try {
     return await rpc<Record<string, unknown>>("daemon.status", {}, options);
   } catch (caught) {
-    swallowed({ component: "api", operation: "read the daemon status" }, caught);
+    reportError({ component: "api", operation: "read the daemon status" }, caught);
     return null;
   }
 }
@@ -1683,7 +1680,7 @@ export async function cancelTurn(sessionId: string): Promise<boolean> {
     const result = await rpc<{ cancelled?: unknown }>("turn.cancel", { id: sessionId });
     return result?.cancelled !== false;
   } catch (caught) {
-    swallowed({ component: "api", operation: "cancel a turn" }, caught);
+    reportError({ component: "api", operation: "cancel a turn" }, caught);
     return false;
   }
 }
@@ -1694,7 +1691,7 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
     await rpc("session.end", { id: sessionId });
     return true;
   } catch (caught) {
-    swallowed({ component: "api", operation: "delete a session" }, caught);
+    reportError({ component: "api", operation: "delete a session" }, caught);
     return false;
   }
 }
@@ -1705,7 +1702,18 @@ export async function clearSessionGoal(sessionId: string): Promise<boolean> {
     const result = await rpc<{ cleared?: boolean }>("session.goal_clear", { id: sessionId });
     return Boolean(result?.cleared);
   } catch (caught) {
-    swallowed({ component: "api", operation: "call off a session goal" }, caught);
+    reportError({ component: "api", operation: "call off a session goal" }, caught);
+    return false;
+  }
+}
+
+// Restart a parked goal: the session re-opens on it and works toward it again.
+export async function resumeSessionGoal(sessionId: string): Promise<boolean> {
+  try {
+    const result = await rpc<{ resumed?: boolean }>("session.goal_resume", { id: sessionId });
+    return Boolean(result?.resumed);
+  } catch (caught) {
+    reportError({ component: "api", operation: "restart a parked goal" }, caught);
     return false;
   }
 }
@@ -1730,7 +1738,7 @@ export async function compactSession(sessionId: string): Promise<CompactionResul
   try {
     return await rpc<CompactionResult>("session.compaction", { id: sessionId });
   } catch (caught) {
-    swallowed({ component: "api", operation: "compaction a session" }, caught);
+    reportError({ component: "api", operation: "compaction a session" }, caught);
     throw caught;
   }
 }
@@ -1740,7 +1748,7 @@ export async function retrySessionTurn(sessionId: string): Promise<boolean> {
     const result = await rpc<{ retried?: unknown }>("session.retry", { id: sessionId });
     return result.retried === true;
   } catch (caught) {
-    swallowed({ component: "api", operation: "retry a session turn" }, caught);
+    reportError({ component: "api", operation: "retry a session turn" }, caught);
     return false;
   }
 }
@@ -1755,7 +1763,7 @@ export async function abortToolCall(sessionId: string, toolCallId: string): Prom
     });
     return result?.cancelled !== false;
   } catch (caught) {
-    swallowed({ component: "api", operation: "abort a tool call" }, caught);
+    reportError({ component: "api", operation: "abort a tool call" }, caught);
     return false;
   }
 }
@@ -1772,7 +1780,7 @@ export async function sendToolToBackground(
     });
     return Boolean(result?.backgrounded);
   } catch (caught) {
-    swallowed({ component: "api", operation: "send a tool call to the background" }, caught);
+    reportError({ component: "api", operation: "send a tool call to the background" }, caught);
     return false;
   }
 }
@@ -1791,7 +1799,7 @@ export async function fetchBackgroundJobs(sessionId: string): Promise<Background
     const result = await rpc<{ jobs?: BackgroundJob[] }>("jobs.list", { id: sessionId });
     return Array.isArray(result?.jobs) ? result.jobs : [];
   } catch (caught) {
-    swallowed({ component: "api", operation: "list the background jobs" }, caught);
+    reportError({ component: "api", operation: "list the background jobs" }, caught);
     return [];
   }
 }
@@ -1869,7 +1877,7 @@ export async function revealInFinder(path: string): Promise<boolean> {
     });
     return response.ok;
   } catch (caught) {
-    swallowed({ component: "api", operation: "reveal a path in Finder" }, caught);
+    reportError({ component: "api", operation: "reveal a path in Finder" }, caught);
     return false;
   }
 }
@@ -1883,7 +1891,7 @@ export async function openBrowserRemoteDebugging(browserName = "chrome"): Promis
     );
     return response.ok;
   } catch (caught) {
-    swallowed({ component: "api", operation: "open the browser's remote debugging" }, caught);
+    reportError({ component: "api", operation: "open the browser's remote debugging" }, caught);
     return false;
   }
 }
@@ -2101,7 +2109,7 @@ function attachTranscript(
           headers: { Accept: "text/event-stream" },
         });
         if (!response.ok || !response.body) {
-          swallowed(
+          reportError(
             { component: "session-stream", operation: "attach to the session" },
             new Error("the daemon refused the attach stream"),
             { status: response.status, path },

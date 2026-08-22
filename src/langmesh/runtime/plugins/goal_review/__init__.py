@@ -410,8 +410,6 @@ class GoalReviewFeature(Feature):
         try:
             from langmesh.runtime.verdict import drive_verdict_session
 
-            maximum_attempts = self._context.global_configuration.goal_review.maximum_attempts
-
             async def _run_turn(instruction: str) -> bool:
                 ran = await self._run_goal_review_turn(reviewer, instruction, review_id, publish)
                 if not ran:
@@ -426,24 +424,15 @@ class GoalReviewFeature(Feature):
                 review._review_id = review_id
                 await finish_transcript("completed", review)
 
-            def _on_empty(attempt: int, maximum: int) -> None:
+            def _on_empty(attempt: int) -> None:
                 logger.warning(
-                    "the goal reviewer stopped without submitting its verdict (attempt %d/%d); continuing it",
+                    "the goal reviewer stopped without submitting its verdict (attempt %d); continuing it",
                     attempt,
-                    maximum,
                 )
 
-            async def _on_exhausted():
-                logger.error(
-                    "goal reviewer did not submit after %d attempts; last text: %r",
-                    maximum_attempts,
-                    getattr(reviewer, "_last_review_text", ""),
-                )
-                await finish_transcript("failed")
-
+            # No cap: the reviewer is asked again until it submits correctly, which is the model's
+            # own job — a hard limit on how often it may get it wrong only sets a price on honesty.
             review = await drive_verdict_session(
-                attempts=maximum_attempts,
-                reason=f"goal review {review_id}",
                 run_turn=_run_turn,
                 submitted=_submitted,
                 require_submission=lambda: self._require_review_submission(reviewer),
@@ -452,7 +441,6 @@ class GoalReviewFeature(Feature):
                 initial_instruction=instructions,
                 on_success=_on_success,
                 on_empty=_on_empty,
-                on_exhausted=_on_exhausted,
             )
             if review is not None:
                 return review

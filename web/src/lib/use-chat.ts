@@ -35,8 +35,8 @@ import {
   type ToolPermission,
   type ToolQuestion,
 } from "./tool-event";
-import { toaster } from "@/components/ui/toaster";
-import { swallowed } from "@/lib/swallowed";
+import { toaster } from "@/components/ui/Toaster";
+import { reportError } from "@/lib/faults";
 import { useTranslations } from "next-intl";
 import { asRecord } from "@/lib/coerce";
 import type { PrefixDivergence, WireEvent } from "@shared/generated/events";
@@ -436,6 +436,9 @@ class ReduceState {
   private transcript: ChatMessage[] = [];
   tasks: ChatTask[] = [];
   tokenUsage: TokenUsage | null = null; // latest cumulative token totals, if any reported
+  // Whether the daemon has said its request is with the provider and nothing has come back yet.
+  // Server-grounded: set only by the `awaiting_model` status, cleared by any real output.
+  awaitingModel = false;
   // Per-source occurrence counter, so a key comes from the server messageId rather than array position.
   keyCounts = new Map<string, number>();
   live = new LiveDeltaBuffer();
@@ -531,6 +534,7 @@ function isRunningThinkingMessage(message: ChatMessage): boolean {
 }
 
 function finishRunningThinking(state: ReduceState): void {
+  state.awaitingModel = false;
   const index = state.index.thinking();
   if (index < 0) return;
   const message = state.messages[index];
@@ -564,6 +568,8 @@ function finishActiveTools(state: ReduceState): void {
 
 // The one path for the thinking signal: ensure a running row exists, then append the reasoning.
 function applyThinking(state: ReduceState, text: string): void {
+  // Real reasoning arrived, so the provider wait is over in favour of what it returned.
+  state.awaitingModel = false;
   let index = state.index.thinking();
   if (index === -1) {
     // Counted in its own right, not by the array's length nor by the shared anonymous counter: both advance
@@ -952,11 +958,11 @@ function reduceDataPart(
       break;
     }
     case "status": {
-      // Paused on tool execution: tools surface their own status, so just close the thinking indicator.
+      // Paused on tool execution: tools surface their own status, so the await is over.
       if (event.code === "waiting_for_tools") finishRunningThinking(state);
-      // The request is with the provider, so the wait is said out loud rather than looking idle.
-      if (event.code === "awaiting_model") applyThinking(state, "");
-      // Anything else a status says is shown by its own row; this arm stops it reaching the unknown path.
+      // The request is with the provider: say the wait out loud instead of looking idle. No row is
+      // fabricated; the placeholder is drawn from this flag and the first real output clears it.
+      if (event.code === "awaiting_model") state.awaitingModel = true;
       break;
     }
     case "thinking":
@@ -1320,6 +1326,8 @@ export function useChat(
   // Bumped to force the history-load effect to re-run (a manual retry).
   const [historyReloadNonce, setHistoryReloadNonce] = useState(0);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+  const [handedMessages, setHandedMessages] = useState<QueuedMessage[]>([]);
+  const [awaitingModel, setAwaitingModel] = useState(false);
   const [outboxHold, setOutboxHold] = useState<OutboxHold>(null);
   // Set when the session was created under a stricter mode than the one asked for.
   const [grantedPermissionMode, setGrantedPermissionMode] = useState<PermissionMode | null>(null);
@@ -1341,6 +1349,9 @@ export function useChat(
   const startTurnRef = useRef<(message: OutboxMessage) => Promise<Delivery>>(async () => "failed");
   const flushScheduledRef = useRef(false);
   const historyBufferRef = useRef(new TranscriptHistoryBuffer());
+  // The queue, and the only thing that empties it. A ref, because it outlives every render. Declared
+  // with the other refs so earlier callbacks can hand hand-overs back to it on the session's word.
+  const outboxRef = useRef<Outbox | null>(null);
 
   // Whether the transcript holds a decision nobody has made: a parked session has stopped, not paused.
   const hasPendingDecision = useCallback(
@@ -1378,11 +1389,22 @@ export function useChat(
     flushScheduledRef.current = false;
     drainLiveDeltas(stateRef.current);
     historyBufferRef.current.drainInto(stateRef.current);
+    // A hand-over is retired the moment the session's echo draws the row it promised: the transcript's
+    // user rows are collected, then the queue drops everything it now matches. A direct call on the
+    // queue (like every other it answers) — no mutation from inside a hook callback.
+    if (outboxRef.current) {
+      const userRowIds = new Set<string>();
+      for (const message of stateRef.current.messages) {
+        if (message.role === "user") userRowIds.add(message.id);
+      }
+      outboxRef.current.retireEchoed(userRowIds);
+    }
     // Reducers mutate indexed rows in place between paints; one shallow snapshot per paint makes
     // React observe the batch without copying the entire transcript for every provider chunk.
     setMessages([...stateRef.current.messages]);
     setTasks(stateRef.current.tasks);
     setTokenUsage(stateRef.current.tokenUsage);
+    setAwaitingModel(stateRef.current.awaitingModel);
   }, []);
 
   const flush = useCallback(() => {
@@ -1515,26 +1537,8 @@ export function useChat(
     (input: OutboxMessage): Promise<Delivery> =>
       new Promise<Delivery>((settleDelivery) => {
         const dataParts = input.dataParts ?? [];
-        const attachments = dataParts.flatMap((dataPart) => attachmentsFromData(dataPart));
-        const meta = attachments.length > 0 ? { attachments } : {};
         // The id the composer gave this message, carried onto the wire, so the copy and the echo are one row.
         const userMessageId = input.id;
-        const withdrawOptimistic = () => {
-          // Refused, so the row goes and the queued card stays the only place it is shown.
-          dropMessage(stateRef.current, stableMessageId(stateRef.current, "user", userMessageId));
-          flushNow();
-        };
-        const showOptimistically = () => {
-          upsertMessage(stateRef.current, {
-            id: stableMessageId(stateRef.current, "user", userMessageId),
-            role: "user",
-            content: input.text,
-            timestamp: new Date().toISOString(),
-            ...(Object.keys(meta).length > 0 ? { meta } : {}),
-          });
-          // No thinking row here: the session says when it is thinking, and until then it has not started.
-          flushNow();
-        };
 
         isStreamingRef.current = true;
         streamedLocallyRef.current = true;
@@ -1598,8 +1602,9 @@ export function useChat(
           );
         };
 
-        // The outbox card is the only place the message is shown until the session confirms delivery
-        // This prevents awkward order where transcript shows message before it's actually sent
+        // The outbox card is the only place the message is shown. Nothing is drawn into the
+        // transcript here: the row appears only when the session echoes it back, so the screen
+        // never shows a message the session has not actually taken.
 
         // A turn is two calls: ensure a session, then send. `send` carries no settings and cannot change them.
         void (async () => {
@@ -1633,7 +1638,6 @@ export function useChat(
             });
             // Refused because the session is parked: nothing was delivered, and the message stays in the queue.
             if (!outcome.accepted) {
-              withdrawOptimistic();
               if (outcome.compactionRequired) {
                 finishTurn();
                 settleDelivery("compaction");
@@ -1645,15 +1649,11 @@ export function useChat(
               return;
             }
             sendAccepted = true;
-            // Now that it's accepted, move from outbox to transcript in same tick
-            showOptimistically();
             if (idleSnapshotSeen) finishTurn();
             settleDelivery("accepted");
           } catch (caught) {
             // What was thrown goes to telemetry as its own fields, where a name and a stack stay searchable.
-            swallowed({ component: "chat", operation: "start the turn" }, caught);
-            // Never delivered, so the row goes and the queued card is again the only place it is shown.
-            withdrawOptimistic();
+            reportError({ component: "chat", operation: "start the turn" }, caught);
             pushErrorMessage(stateRef.current, { code: "server_error" });
             // One wind-down for every ending. `finishTurn` closes the stream if one was opened.
             finishTurn();
@@ -1684,36 +1684,24 @@ export function useChat(
     async (message: OutboxMessage): Promise<Delivery> => {
       const context = sessionIdRef.current;
       if (!isStreamingRef.current || !context) return startTurnRef.current(message);
-      const key = stableMessageId(stateRef.current, "user", message.id);
       try {
-        // Drawn before the send, or anything the session says lands above it.
-        upsertMessage(stateRef.current, {
-          id: key,
-          role: "user",
-          content: message.text,
-          timestamp: new Date().toISOString(),
-        });
-        // Synchronously, so the chip and the transcript row hand over as a move rather than a flicker.
-        flushNow();
         const outcome = await sessionSend(context, messageParts(message.text, message.dataParts), {
           messageId: message.id,
         });
         if (!outcome.accepted) {
-          dropMessage(stateRef.current, key);
-          flushNow();
           if (outcome.compactionRequired) return "compaction";
           notifyHeldForDecision(outcome.waitingOn);
           return "refused";
         }
+        // Accepted, not yet drawn: the row appears only when the session echoes it, and until then
+        // the hand-over stays the queued card it already is. Nothing optimistic reaches the screen.
         return "accepted";
       } catch {
-        // Never delivered, so the row goes and the queued card is again the only place it is shown.
-        dropMessage(stateRef.current, key);
-        flushNow();
+        // It never reached the session, so nothing moves to the transcript.
         return "failed";
       }
     },
-    [notifyHeldForDecision, flushNow],
+    [notifyHeldForDecision],
   );
 
   // The queue, and the only thing that empties it. A ref, because it outlives every render.
@@ -1725,7 +1713,6 @@ export function useChat(
   useEffect(() => {
     parkedRef.current = hasPendingDecision;
   }, [hasPendingDecision]);
-  const outboxRef = useRef<Outbox | null>(null);
   useEffect(() => {
     if (outboxRef.current) return;
     outboxRef.current = new Outbox({
@@ -1733,6 +1720,7 @@ export function useChat(
       parked: () => parkedRef.current(),
       changed: (state) => {
         setQueuedMessages(state.messages);
+        setHandedMessages(state.handed);
         setOutboxHold(state.hold);
         setDeliveringMessage(state.delivering);
       },
@@ -1987,7 +1975,7 @@ export function useChat(
           }
           flushNow();
         } catch (caught) {
-          swallowed({ component: "chat", operation: "read the compacted transcript" }, caught);
+          reportError({ component: "chat", operation: "read the compacted transcript" }, caught);
           if (failed) {
             settleCompactionMarker(stateRef.current, markerId, {
               status: "failed",
@@ -2024,7 +2012,7 @@ export function useChat(
         }
       })
       .catch((caught) => {
-        swallowed({ component: "chat", operation: "compact the conversation" }, caught);
+        reportError({ component: "chat", operation: "compact the conversation" }, caught);
         settleCompactionMarker(stateRef.current, markerId, {
           status: "failed",
           compactionErrorCode: "compaction_failed",
@@ -2171,6 +2159,8 @@ export function useChat(
     tasks,
     tokenUsage,
     queuedMessages,
+    handedMessages,
+    awaitingModel,
     sessionId,
     isStreaming: isStreaming || sessionRunning,
     isHistoryLoading,

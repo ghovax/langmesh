@@ -7,8 +7,8 @@ import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { LuExternalLink } from "react-icons/lu";
 import { openSystemPermission, openBrowserRemoteDebugging } from "@/lib/api";
-import { MarkdownContent } from "../markdown-content";
-import { RelativeTime } from "../ui/relative-time";
+import { MarkdownContent } from "../MarkdownContent";
+import { RelativeTime } from "../ui/RelativeTime";
 import {
   Card,
   EmptyHint,
@@ -19,10 +19,10 @@ import {
   MonoBlock,
   MonoList,
   ProseList,
-} from "../ui/display";
+} from "../ui/Display";
 import { asArray, asRecord, asString } from "@/lib/coerce";
 import { mutationClaim, requestedAccess } from "@shared/tools";
-import { Pill } from "../ui/pill";
+import { Pill } from "../ui/Pill";
 import { STATUS_PALETTE, taskLifecycleKind } from "@/lib/status";
 import { hasBackgroundJobId, type ToolEventStatus } from "@/lib/tool-event";
 

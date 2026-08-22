@@ -142,21 +142,16 @@ class WorkspaceConfiguration(Section):
 
 
 class CompactionConfiguration(Section):
-    """Context compacting thresholds. Observational memory is a separate, user-managed concern."""
+    """Context compacting thresholds. Observational memory is a separate, user-managed concern.
+
+    The hidden summarizer is asked again until it submits its summary — emitting the tool call
+    correctly is the model's own job, so nothing caps how often it may be reminded.
+    """
 
     automatic: bool = Field(default=True)
     reclaim_at_fraction: float = Field(default=0.85)
     output_reserve_fraction: float = Field(default=0.1)
     recent_working_set_fraction: float = Field(default=0.15)
-    # How many times the hidden summarizer may be asked again after reviewing but not submitting.
-    summary_attempts: int = Field(default=3)
-
-    @field_validator("summary_attempts")
-    @classmethod
-    def _summary_attempts(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("summary_attempts must be at least 1")
-        return value
 
     @field_validator(
         "reclaim_at_fraction",
@@ -171,22 +166,13 @@ class CompactionConfiguration(Section):
 
 
 class GoalReviewConfiguration(Section):
-    """How hard the secondary goal review is pushed to submit a verdict.
+    """How the secondary goal review settles an agent-marked goal.
 
     The agent owns its goal's status; a marked ``satisfied`` or ``blocked`` is settled by an
     independent reviewer that either confirms the mark or overrides it, while an open, unmarked
-    goal is re-opened with a light continuation reminder.
+    goal is re-opened with a light continuation reminder. The reviewer is asked again until it
+    submits — modelling correctly is the model's own job, so nothing caps how often.
     """
-
-    # How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset.
-    maximum_attempts: int = Field(default=3)
-
-    @field_validator("maximum_attempts")
-    @classmethod
-    def _maximum_attempts(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("goal_review.maximum_attempts must be at least 1")
-        return value
 
 
 class AttachmentsConfiguration(Section):
