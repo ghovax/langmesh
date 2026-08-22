@@ -31,6 +31,8 @@ export type OutboxHold =
 export interface OutboxState {
   /** In the order they were typed. Every one of these is undelivered — that is what being here means. */
   messages: OutboxMessage[];
+  /** Taken by the session but not yet drawn back as its own row: still waiting, still visible. */
+  handed: OutboxMessage[];
   hold: OutboxHold;
   /** The message being handed over right now: in the list, but going rather than waiting. */
   delivering: string | null;
@@ -47,6 +49,9 @@ export interface OutboxPorts {
 
 export class Outbox {
   private messages: OutboxMessage[] = [];
+  // Handed over but not yet echoed by the session as a transcript row. It is taken, so it is no
+  // longer in the delivery list, but it is not drawn until the session really records it.
+  private handed = new Map<string, OutboxMessage>();
   private held: OutboxHold = null;
   private handing: string | null = null;
   // One attempt at a time, since two overlapping pumps would deliver the same head twice.
@@ -58,7 +63,12 @@ export class Outbox {
   constructor(private readonly ports: OutboxPorts) {}
 
   state(): OutboxState {
-    return { messages: [...this.messages], hold: this.held, delivering: this.handing };
+    return {
+      messages: [...this.messages],
+      handed: [...this.handed.values()],
+      hold: this.held,
+      delivering: this.handing,
+    };
   }
 
   /** Point the queue at a conversation, keeping the messages when the session is only now coming into being. */
@@ -121,11 +131,30 @@ export class Outbox {
     this.announce();
   }
 
+  /** The session recorded it as a transcript row, so the handed card retires. */
+  echoed(id: string): void {
+    if (!this.handed.delete(id)) return;
+    this.announce();
+  }
+
+  /** Retire every hand-over the transcript now holds, given the transcript's current user row ids. */
+  retireEchoed(userRowIds: ReadonlySet<string>): void {
+    let retired = false;
+    for (const id of Array.from(this.handed.keys())) {
+      if (userRowIds.has(`user-${id}`)) {
+        this.handed.delete(id);
+        retired = true;
+      }
+    }
+    if (retired) this.announce();
+  }
+
   /** Switching to another session: this queue belonged to the one being left. */
   clear(): void {
-    if (this.messages.length === 0 && this.held === null) return;
+    if (this.messages.length === 0 && this.handed.size === 0 && this.held === null) return;
     for (const message of this.messages) this.settle(message.id, "failed");
     this.messages = [];
+    this.handed.clear();
     this.held = null;
     this.handing = null;
     this.announce();
@@ -172,7 +201,9 @@ export class Outbox {
           this.hold("unreachable");
           return;
         }
-        // Delivered: it leaves the queue only now, on the session's own word.
+        // Taken by the session: it leaves the delivery list but not the screen — it stays a
+        // queued card until the session draws it back as its own row.
+        this.handed.set(head.id, head);
         this.messages = this.messages.filter((message) => message.id !== head.id);
         this.settle(head.id, outcome);
         this.held = null;

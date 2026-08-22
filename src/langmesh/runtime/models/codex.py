@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Optional, Sequence, cast
 
 import httpx
@@ -39,12 +41,16 @@ from langmesh.base.content.model_errors import CONTEXT_OVERFLOW_CODES, ContextWi
 from langmesh.runtime.cache_trace import (
     INSTRUCTIONS,
     ITEM,
+    SETTINGS,
     TOOLS,
     Piece,
     RequestTrace,
     active_cache_lane,
     diagnose,
     provider_cache_key,
+    remember_cache_lane,
+    reconcile,
+    restore_request_traces,
     trace,
 )
 from langmesh.base.primitives.serialization import compact, upstream_detail
@@ -57,6 +63,14 @@ from langmesh.base.identity.subscription import (
 
 # What the endpoint serves before its catalogue is fetched, deliberately the conservative figure.
 COLD_START_WINDOW = 272_000
+
+
+@dataclass(frozen=True)
+class CodexCacheState:
+    """The request baselines retained for one Codex model route."""
+
+    model: str
+    traces: Mapping[str, RequestTrace]
 
 
 def _error_code(body: str) -> str:
@@ -78,7 +92,7 @@ class ChatCodexModel(BaseChatModel):
     reasoning_effort: Optional[str] = None
     temperature: float = 0.0
     context_length: int = 0
-    #: The conversation this model serves, sent as `prompt_cache_key`.
+    #: The conversation identity used for request metadata and retained trace baselines.
     session_id: str = ""
     # A generous bound so a dead connection cannot hang a turn forever, since aborts are only checked between chunks.
     timeout: Optional[float] = 300.0
@@ -105,6 +119,19 @@ class ChatCodexModel(BaseChatModel):
     @property
     def _identifying_params(self) -> dict[str, Any]:
         return {"model": self.model, "reasoning_effort": self.reasoning_effort}
+
+    def model_cache_snapshot(self) -> CodexCacheState:
+        """Return this session's bounded request-diagnostic baselines."""
+        return CodexCacheState(self.model, dict(self._previous_traces))
+
+    def restore_model_cache(self, snapshot: object) -> None:
+        """Restore validated request-diagnostic baselines from durable session state."""
+        if isinstance(snapshot, CodexCacheState):
+            if snapshot.model == self.model:
+                self._previous_traces = dict(snapshot.traces)
+            return
+        if isinstance(snapshot, Mapping) and snapshot.get("model") == self.model:
+            self._previous_traces = restore_request_traces(snapshot.get("traces"))
 
     # The same tool-binding surface as the LiteLLM client; the Responses-shaped flattening happens at payload-build time.
 
@@ -228,15 +255,25 @@ class ChatCodexModel(BaseChatModel):
         tools = kwargs.get("tools")
         if tools:
             payload["tools"] = [self._to_responses_tool(tool) for tool in tools]
-        if self.session_id:
-            # Which cache to look in, since the endpoint routes a lookup by hashing the prefix together with this key.
-            payload["prompt_cache_key"] = provider_cache_key(self.session_id)
         # Both unconditional, as in the Codex client: asking for the encrypted reasoning is what makes `store: false` workable.
         payload["reasoning"] = {
             "effort": self.reasoning_effort or None,
             "summary": "auto",
         }
         payload["include"] = ["reasoning.encrypted_content"]
+        if not hasattr(self, "_stable_prompt_cache_key"):
+            self._stable_prompt_cache_key = provider_cache_key(
+                str(payload.get("model") or ""),
+                str(payload.get("instructions") or ""),
+                compact(payload.get("tools") or []),
+                compact(
+                    {
+                        "reasoning": payload.get("reasoning"),
+                        "tool_choice": payload.get("tool_choice"),
+                    }
+                ),
+            )
+        payload["prompt_cache_key"] = self._stable_prompt_cache_key
         return payload
 
     async def _headers(self) -> dict[str, str]:
@@ -400,6 +437,15 @@ class ChatCodexModel(BaseChatModel):
         pieces = [
             Piece(kind=INSTRUCTIONS, text=payload.get("instructions") or ""),
             Piece(kind=TOOLS, text=compact(payload.get("tools") or [])),
+            Piece(
+                kind=SETTINGS,
+                text=compact(
+                    {
+                        "reasoning": payload.get("reasoning"),
+                        "tool_choice": payload.get("tool_choice"),
+                    }
+                ),
+            ),
         ]
         for position, item in enumerate(payload.get("input") or []):
             # A Responses item is identified by its type, and by its role where it has one, which is the more telling of the two.
@@ -427,9 +473,14 @@ class ChatCodexModel(BaseChatModel):
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
         }
-        cached = (usage.get("input_tokens_details") or {}).get("cached_tokens")
-        if cached:
-            metadata["input_token_details"] = {"cache_read": int(cached)}
+        input_details = usage.get("input_tokens_details") or {}
+        cached = int(input_details.get("cached_tokens") or 0)
+        cache_write = int(input_details.get("cache_write_tokens") or 0)
+        if cached or cache_write:
+            metadata["input_token_details"] = {
+                "cache_read": cached,
+                "cache_creation": cache_write,
+            }
         reasoning = (usage.get("output_tokens_details") or {}).get("reasoning_tokens")
         if reasoning:
             metadata["output_token_details"] = {"reasoning": int(reasoning)}
@@ -444,7 +495,7 @@ class ChatCodexModel(BaseChatModel):
         if previous is None and lane != "conversation":
             previous = self._previous_traces.get("conversation")
         diagnosis = diagnose(current, previous)
-        self._previous_traces[lane] = current
+        remember_cache_lane(self._previous_traces, lane, current)
         return diagnosis
 
     async def _astream(
@@ -456,8 +507,9 @@ class ChatCodexModel(BaseChatModel):
     ) -> AsyncIterator[ChatGenerationChunk]:
         payload = self._build_payload(messages, stream=True, **kwargs)
         headers = await self._headers()
-        # Taken before the request and held until the response says what the cache did.
+        # The baseline advances when the request is sent, so a usage-less or interrupted response still leaves the next request a true comparison.
         current_trace = self._trace_payload(payload)
+        diagnosis = self._cache_diagnosis(current_trace)
         reported = False
         # Carried so a failure can name the model that refused the request and the window it was measured against.
         state: dict[str, Any] = {
@@ -476,12 +528,19 @@ class ChatCodexModel(BaseChatModel):
                 async for line in response.aiter_lines():
                     chunk = self._line_to_chunk(line, state)
                     if chunk is not None:
+                        usage = getattr(chunk.message, "usage_metadata", None)
                         # Attached to the chunk carrying usage, so the diagnosis travels with the figure it explains.
-                        if getattr(chunk.message, "usage_metadata", None) and not reported:
+                        if usage and not reported:
                             reported = True
-                            chunk.message.additional_kwargs["cache_trace"] = self._cache_diagnosis(
-                                current_trace
+                            # The byte verdict was made before the call; the response's cache figure corrects it.
+                            reconcile(
+                                diagnosis,
+                                int(
+                                    (usage.get("input_token_details") or {}).get("cache_read", 0)
+                                    or 0
+                                ),
                             )
+                            chunk.message.additional_kwargs["cache_trace"] = diagnosis
                         yield chunk
 
     @staticmethod
@@ -527,6 +586,8 @@ class ChatCodexModel(BaseChatModel):
             raise ChatGPTAuthError("Not signed in to ChatGPT (or the session expired).")
         payload = self._build_payload(messages, stream=True, **kwargs)
         headers = request_headers(tokens, self.session_id)
+        diagnosis = self._cache_diagnosis(self._trace_payload(payload))
+        reported = False
         # Carried so a failure can name the model that refused the request and the window it was measured against.
         state: dict[str, Any] = {
             "saw_tool_call": False,
@@ -544,5 +605,16 @@ class ChatCodexModel(BaseChatModel):
                 for line in response.iter_lines():
                     chunk = self._line_to_chunk(line, state)
                     if chunk is not None:
+                        usage = getattr(chunk.message, "usage_metadata", None)
+                        if usage and not reported:
+                            reported = True
+                            reconcile(
+                                diagnosis,
+                                int(
+                                    (usage.get("input_token_details") or {}).get("cache_read", 0)
+                                    or 0
+                                ),
+                            )
+                            chunk.message.additional_kwargs["cache_trace"] = diagnosis
                         chunks.append(cast(AIMessageChunk, chunk.message))
         return self._chunks_to_result(chunks)

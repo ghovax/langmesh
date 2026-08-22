@@ -56,6 +56,7 @@ The library ships no default battery. A `SessionComponents()` with nothing else 
 
 ```python
 from langmesh import Session, SessionComponents
+from langmesh.runtime.plugins.background import BackgroundJobsFeature
 from langmesh.runtime.plugins.bash import Bash
 from langmesh.runtime.plugins.web import Web
 
@@ -63,7 +64,7 @@ session = Session(
     agent,
     directory="/srv/checkout",
     providers={"anthropic": "sk-ant-…"},
-    components=SessionComponents(features=[Bash(), Web()]),
+    components=SessionComponents(features=[BackgroundJobsFeature(), Bash(), Web()]),
 )
 ```
 
@@ -93,7 +94,7 @@ session = Session(agent, directory="/srv/checkout", components=components)
 
 ## Supplied tools
 
-Pass tools to `Session(..., tools=[...])`, or add one at any later moment with `session.grant_tool(...)`. Both are append-only: the tool's description and schema ride as an appended conversation message, so the provider-cache prefix never changes. A caller-supplied tool is gated by default.
+Pass predictable tools to `Session(..., tools=[...])` so they join the initial stable provider schema, or add or replace one later with `session.grant_tool(...)`. A live grant intentionally changes the next request's tool segment, then becomes the reusable schema for following calls. A caller-supplied tool is gated by default.
 
 ```python
 from langchain_core.tools import tool
@@ -117,5 +118,4 @@ See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 
 - [Composition](composition.md) explains every configured value, the plugin seam, and the product boundary.
 - [Lifecycle and driving](lifecycle.md) covers suspension, resume, interrupts, steering, retries, and the complete stream contract.
-- [Compaction and continuation](persistence.md) covers history compaction and autonomous work.
-- [Resources and persistence](persistence.md) covers virtual workspaces, checkpoints, transcripts, observational memory, and background jobs.
+- [Compaction, continuation, and persistence](persistence.md) covers history compaction, autonomous work, checkpoints, artifacts, transcripts, observational memory, and background jobs.

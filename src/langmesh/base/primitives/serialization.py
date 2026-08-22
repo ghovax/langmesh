@@ -40,7 +40,5 @@ def upstream_detail(body: str) -> str:
     except ValueError:
         payload = None
     text = body.strip() if payload is None else compact(payload)
-    clipped, was_clipped = clip_to_tokens(
-        text, current_limits().upstream_error_detail_tokens
-    )
+    clipped, was_clipped = clip_to_tokens(text, current_limits().upstream_error_detail_tokens)
     return f"{clipped}…" if was_clipped else clipped

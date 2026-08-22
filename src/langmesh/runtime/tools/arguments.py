@@ -16,14 +16,16 @@ from typing import Any, Callable, cast
 from langchain_core.tools import BaseTool
 from pydantic import Field, create_model
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 
 #: Why a call is happening, in the words the person watching reads. Every tool takes one.
-EXPLANATION = PromptLoader(Path(__file__).parent / "descriptions").load("explanation", {}).strip()
+EXPLANATION = (
+    PackagePromptLoader(Path(__file__).parent / "descriptions").load("explanation", {}).strip()
+)
 
 #: What a call says about changing anything, and what it needs beyond confinement.
 ACCESS_REQUEST = (
-    PromptLoader(Path(__file__).parent / "descriptions").load("access_request", {}).strip()
+    PackagePromptLoader(Path(__file__).parent / "descriptions").load("access_request", {}).strip()
 )
 
 #: The shared fields every tool carries.
@@ -98,11 +100,7 @@ def with_shared_fields(tool: BaseTool) -> BaseTool:
     signature = inspect.signature(func)
     parameters = signature.parameters.values()
     has_var_keyword = any(parameter.kind == parameter.VAR_KEYWORD for parameter in parameters)
-    accepted = {
-        name
-        for name in _SHARED_FIELDS
-        if name in signature.parameters or has_var_keyword
-    }
+    accepted = {name for name in _SHARED_FIELDS if name in signature.parameters or has_var_keyword}
     wrapped = _forwarding(func, accepted)
     if inspect.iscoroutinefunction(func):
         tool.coroutine = wrapped

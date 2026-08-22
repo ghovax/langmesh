@@ -3,7 +3,7 @@
 import { Span } from "@chakra-ui/react";
 import type { ReactNode } from "react";
 
-import { Strong } from "@/components/ui/semantic";
+import { Strong } from "@/components/ui/Semantic";
 
 /** Pass to `translation.rich(key, richTags)`, so a message's markup renders rather than showing as punctuation. */
 export const richTags = {

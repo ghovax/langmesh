@@ -2,7 +2,7 @@
 
 // What the model expects, which the audio context is opened at so nothing resamples on either side.
 import { transcribeDictation } from "@/lib/api";
-import { expected } from "@/lib/swallowed";
+import { expected } from "@/lib/faults";
 import { errorMessage } from "@/lib/errors";
 
 export const DICTATION_SAMPLE_RATE = 16000;

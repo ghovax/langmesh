@@ -49,7 +49,12 @@ class ObservationCompactionPreparation:
             return False
 
     async def describe(self) -> dict:
-        return await self._store.describe()
+        description = await self._store.describe()
+        model_dump = getattr(description, "model_dump", None)
+        if callable(model_dump):
+            value = model_dump(mode="json")
+            return value if isinstance(value, dict) else {}
+        return dict(description) if hasattr(description, "keys") else {}
 
 
 class DirectCompactionPreparation:

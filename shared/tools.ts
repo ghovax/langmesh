@@ -7,7 +7,7 @@ export type GlyphName =
   | "mouse-pointer-click"
   | "download"
   | "message-circle-question"
-  | "target"
+  | "flag"
   | "user-search"
   | "sparkles"
   | "plug"
@@ -71,7 +71,7 @@ const NEVER_MUTATES: ReadonlySet<string> = new Set([
   "ask_user",
 ]);
 
-const ALWAYS_MUTATES: ReadonlySet<string> = new Set(["download_file"]);
+const ALWAYS_MUTATES: ReadonlySet<string> = new Set(["download"]);
 
 /** Missing mutation declarations are unknown rather than writes. */
 export function mutationClaim(
@@ -137,12 +137,12 @@ const TOOL_GLYPHS: Record<string, { glyph: GlyphName; tint: string }> = {
   bash: { glyph: "terminal", tint: "green.fg" },
   control_screen: { glyph: "mouse-pointer-click", tint: "cyan.fg" },
   fetch_url: { glyph: "download", tint: "blue.fg" },
-  download_file: { glyph: "hard-drive-download", tint: "blue.fg" },
+  download: { glyph: "hard-drive-download", tint: "blue.fg" },
   ask_user: { glyph: "message-circle-question", tint: "purple.fg" },
   load_skill: { glyph: "sparkles", tint: "pink.fg" },
   set_tasks: { glyph: "list-checks", tint: "blue.fg" },
   update_tasks: { glyph: "square-check", tint: "blue.fg" },
-  update_goal: { glyph: "target", tint: "orange.fg" },
+  update_goal: { glyph: "flag", tint: "orange.fg" },
   // The internal reviewer's verdict: it changes only what the record holds about the goal it was asked to read.
   submit_goal_review: { glyph: "badge-check", tint: "purple.fg" },
   // A wait is the one call doing nothing on purpose, so it reads that way in the muted tint.

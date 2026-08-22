@@ -1,8 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
-import { Provider } from "@/components/ui/provider";
-import { Toaster } from "@/components/ui/toaster";
-import { DesktopChrome } from "@/components/desktop-chrome";
+import { Provider } from "@/components/ui/Provider";
+import { Toaster } from "@/components/ui/Toaster";
+import { DesktopChrome } from "@/components/DesktopChrome";
 import "./globals.css";
 
 const sansFont = localFont({

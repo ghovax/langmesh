@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import hashlib
 import json
 import os
 import platform
 import shlex
+from collections.abc import Mapping
 
 from langmesh.base.primitives.identifiers import new_id
 import time
@@ -34,13 +36,15 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
+from pydantic import PrivateAttr
 
 from langmesh.base.identity.cursor_credentials import (
     CursorAuthError,
     CursorTokens,
+    load_tokens,
     valid_tokens,
 )
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.runtime.cache_trace import active_cache_lane
 from langmesh.base.identity.cursor_subscription import (
     APPEND_PATH,
@@ -64,7 +68,7 @@ from langmesh.base.primitives.limits import current_limits
 
 
 # Everything this client says to a model is a prompt on disk, like every other prompt the harness sends.
-_PROMPTS = PromptLoader(Path(__file__).resolve().parent.parent / "prompts")
+_PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent.parent / "prompts")
 
 # A translated built-in has no reason of its own, so it says what it truthfully is for the permission surface.
 _BUILTIN_JUSTIFICATION = "Requested by the Cursor agent while working on this turn."
@@ -185,6 +189,29 @@ class _Channel:
             raise ChatCursorModel._auth_error(response.status_code, response.text)
 
 
+@dataclass(frozen=True)
+class CursorResumptionState:
+    """One server checkpoint and the blobs required to resume it."""
+
+    key: str
+    prefix_length: int
+    prefix_digest: str
+    checkpoint: str
+    blobs: tuple[tuple[str, str], ...]
+    conversation_id: str
+    age_seconds: float
+
+
+@dataclass(frozen=True)
+class CursorCacheState:
+    """The resumable server state retained for one Cursor account and model."""
+
+    model: str
+    account: str
+    saved_at: float
+    resumptions: tuple[CursorResumptionState, ...]
+
+
 class ChatCursorModel(BaseChatModel):
     """A `BaseChatModel` backed by a Cursor subscription, reading its token from the shared store on every call."""
 
@@ -193,6 +220,8 @@ class ChatCursorModel(BaseChatModel):
     context_length: int = 0
     # A generous bound so a dead connection cannot hang a turn forever, matching the other two clients.
     timeout: Optional[float] = 300.0
+
+    _resumptions: dict[str, _Resumption] = PrivateAttr(default_factory=dict)
 
     @property
     def _llm_type(self) -> str:
@@ -208,6 +237,104 @@ class ChatCursorModel(BaseChatModel):
     @property
     def _identifying_params(self) -> dict[str, Any]:
         return {"model": self.model}
+
+    @staticmethod
+    def _account_key() -> str:
+        """Fingerprint the account a server checkpoint belongs to without persisting its identity."""
+        tokens = load_tokens()
+        if tokens is None or not tokens.account:
+            return ""
+        return hashlib.sha256(tokens.account.encode()).hexdigest()
+
+    def model_cache_snapshot(self) -> CursorCacheState:
+        """Return this session's bounded server checkpoints and their referenced blobs."""
+        self._prune_resumptions()
+        return CursorCacheState(
+            model=self.model,
+            account=self._account_key(),
+            saved_at=time.time(),
+            resumptions=tuple(
+                CursorResumptionState(
+                    key=key,
+                    prefix_length=entry.prefix_length,
+                    prefix_digest=entry.prefix_digest,
+                    checkpoint=base64.b64encode(entry.checkpoint).decode(),
+                    blobs=tuple(
+                        (base64.b64encode(blob_id).decode(), base64.b64encode(blob).decode())
+                        for blob_id, blob in entry.blobs.items()
+                    ),
+                    conversation_id=entry.conversation_id,
+                    age_seconds=max(0.0, time.monotonic() - entry.touched_at),
+                )
+                for key, entry in self._resumptions.items()
+            ),
+        )
+
+    def restore_model_cache(self, snapshot: object) -> None:
+        """Restore server checkpoints only when they belong to the currently signed-in account."""
+        self._resumptions = {}
+        account_key = self._account_key()
+        if isinstance(snapshot, CursorCacheState):
+            if snapshot.model != self.model or not account_key or snapshot.account != account_key:
+                return
+            saved_at = snapshot.saved_at
+            raw_resumptions: object = snapshot.resumptions
+        elif isinstance(snapshot, Mapping):
+            if (
+                snapshot.get("model") != self.model
+                or not account_key
+                or snapshot.get("account") != account_key
+            ):
+                return
+            saved_at = snapshot.get("saved_at")
+            raw_resumptions = snapshot.get("resumptions")
+        else:
+            return
+        if not isinstance(raw_resumptions, (list, tuple)):
+            return
+        try:
+            downtime = max(0.0, time.time() - float(saved_at or time.time()))
+        except (TypeError, ValueError):
+            downtime = current_limits().subscription_resume_ttl
+        for raw in raw_resumptions[-16:]:
+            if isinstance(raw, CursorResumptionState):
+                raw = {
+                    "key": raw.key,
+                    "prefix_length": raw.prefix_length,
+                    "prefix_digest": raw.prefix_digest,
+                    "checkpoint": raw.checkpoint,
+                    "blobs": raw.blobs,
+                    "conversation_id": raw.conversation_id,
+                    "age_seconds": raw.age_seconds,
+                }
+            if not isinstance(raw, Mapping):
+                continue
+            try:
+                key = str(raw["key"]).strip()
+                checkpoint = base64.b64decode(str(raw["checkpoint"]), validate=True)
+                raw_blobs = raw["blobs"]
+                if not key or not checkpoint or not isinstance(raw_blobs, list):
+                    continue
+                blobs = {
+                    base64.b64decode(str(pair[0]), validate=True): base64.b64decode(
+                        str(pair[1]), validate=True
+                    )
+                    for pair in raw_blobs
+                    if isinstance(pair, (list, tuple)) and len(pair) == 2
+                }
+                self._resumptions[key] = _Resumption(
+                    prefix_length=max(0, int(raw["prefix_length"])),
+                    prefix_digest=str(raw["prefix_digest"]),
+                    checkpoint=checkpoint,
+                    blobs=blobs,
+                    conversation_id=str(raw["conversation_id"]),
+                    touched_at=time.monotonic()
+                    - max(0.0, float(raw.get("age_seconds") or 0.0))
+                    - downtime,
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        self._prune_resumptions()
 
     # The same tool-binding surface as the other two clients; the Cursor-shaped translation happens at request-build time.
 
@@ -308,11 +435,11 @@ class ChatCursorModel(BaseChatModel):
         A probe may resume too: it shares the conversation's prefix, so the checkpoint applies.
         It just must never record one (`_remember_resumption` stays gated on the flag).
         """
-        _prune_resumptions()
+        self._prune_resumptions()
         lane = active_cache_lane()
-        entry = _resumptions.get(self._conversation_key(messages, lane))
+        entry = self._resumptions.get(self._conversation_key(messages, lane))
         if entry is None and lane != "conversation":
-            entry = _resumptions.get(self._conversation_key(messages, "conversation"))
+            entry = self._resumptions.get(self._conversation_key(messages, "conversation"))
         if entry is None or entry.prefix_length >= len(messages):
             return None
         if _digest_messages(messages[: entry.prefix_length]) != entry.prefix_digest:
@@ -328,7 +455,9 @@ class ChatCursorModel(BaseChatModel):
     ) -> None:
         if not checkpoint:
             return
-        _resumptions[self._conversation_key(messages)] = _Resumption(
+        key = self._conversation_key(messages)
+        self._resumptions.pop(key, None)
+        self._resumptions[key] = _Resumption(
             prefix_length=len(messages),
             prefix_digest=_digest_messages(messages),
             checkpoint=checkpoint,
@@ -336,6 +465,14 @@ class ChatCursorModel(BaseChatModel):
             conversation_id=conversation_id,
             touched_at=time.monotonic(),
         )
+        while len(self._resumptions) > 16:
+            del self._resumptions[next(iter(self._resumptions))]
+
+    def _prune_resumptions(self) -> None:
+        """Drop expired server checkpoints because losing one costs only a full replay."""
+        horizon = time.monotonic() - current_limits().subscription_resume_ttl
+        for key in [key for key, entry in self._resumptions.items() if entry.touched_at < horizon]:
+            del self._resumptions[key]
 
     def _build_turn(
         self, messages: Sequence[BaseMessage], tools: list[dict[str, Any]]
@@ -687,9 +824,7 @@ class ChatCursorModel(BaseChatModel):
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(
-                self._agenerate(messages, stop=stop, run_manager=None, **kwargs)
-            )
+            return asyncio.run(self._agenerate(messages, stop=stop, run_manager=None, **kwargs))
         raise RuntimeError(
             "ChatCursorModel has no synchronous path inside a running event loop — await ainvoke/astream instead."
         )
@@ -768,10 +903,6 @@ class _Resumption:
     touched_at: float
 
 
-# Keyed by conversation identity and evicted by age, since losing this cache costs only a full replay.
-_resumptions: dict[str, _Resumption] = {}
-
-
 def _digest_messages(messages: Sequence[BaseMessage]) -> str:
     """A fingerprint of a message list by role, text and tool-call arguments, leaving out per-call ids."""
     hasher = hashlib.sha256()
@@ -787,14 +918,3 @@ def _digest_messages(messages: Sequence[BaseMessage]) -> str:
             )
         hasher.update(b"\x1e")
     return hasher.hexdigest()
-
-
-def _prune_resumptions() -> None:
-    horizon = time.monotonic() - current_limits().subscription_resume_ttl
-    for key in [key for key, entry in _resumptions.items() if entry.touched_at < horizon]:
-        del _resumptions[key]
-
-
-def clear_resumptions() -> None:
-    """Forget every resumable conversation, since the state belongs to the account that produced it."""
-    _resumptions.clear()

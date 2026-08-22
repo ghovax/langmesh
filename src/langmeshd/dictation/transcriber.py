@@ -33,7 +33,11 @@ STARTUP_LOAD_FAILED = "load_failed"
 
 
 def _worker_main(
-    request_queue, response_queue, model_identifier: str, parent_process_identifier: int, log_path: str = ""
+    request_queue,
+    response_queue,
+    model_identifier: str,
+    parent_process_identifier: int,
+    log_path: str = "",
 ) -> None:
     """Load the model once, then answer transcription requests until told to stop."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -44,7 +48,7 @@ def _worker_main(
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
         handlers=[
             logging.StreamHandler(sys.stderr),
-            *( [logging.FileHandler(log_path)] if log_path else [] ),
+            *([logging.FileHandler(log_path)] if log_path else []),
         ],
     )
 
@@ -225,7 +229,7 @@ class SpeechTranscriber:
             except queue.Empty:
                 if self._closed:
                     self._stop_process()
-                    raise DictationUnavailable("Dictation is shutting down.")
+                    raise DictationUnavailable("Dictation is shutting down.") from None
                 if not self._process.is_alive():
                     status = self._process.exitcode
                     self._stop_process()
@@ -236,7 +240,7 @@ class SpeechTranscriber:
                     )
                     raise DictationUnavailable(
                         f"The dictation model could not be started (worker exited: {status}). If the daemon log has no traceback from the worker, it never ran."
-                    )
+                    ) from None
                 continue
             if kind == "ready":
                 logger.info("dictation model loaded", extra={"model": self._model_identifier})

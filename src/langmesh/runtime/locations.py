@@ -8,7 +8,7 @@ plugin's reviewer submits.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -31,6 +31,19 @@ class CallExecutionPolicy:
     def gates(self) -> bool:
         """Whether this call is gated at all. ``allow`` mode skips every gate."""
         return self.mode.gates
+
+
+@dataclass(frozen=True)
+class ExecutionTarget:
+    """A resolved executor and its working directory for one tool call."""
+
+    executor: Any
+    working_directory: str
+
+    @property
+    def is_remote(self) -> bool:
+        """Whether execution leaves the local machine."""
+        return not bool(self.executor.is_local)
 
 
 class PermissionDecision(BaseModel):

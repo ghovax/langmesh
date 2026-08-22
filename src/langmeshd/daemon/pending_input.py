@@ -21,7 +21,7 @@ async def _abort_pending_input(session_id: str) -> bool:
     return bool(result.get("aborted"))
 
 
-async def settle_and_reap(session_id: str) -> None:
+async def retire_session(session_id: str) -> None:
     """What deleting a record means for the session: settle what it is parked on, then end it."""
     from langmeshd.commons import state as commons_state
 
@@ -32,4 +32,4 @@ async def settle_and_reap(session_id: str) -> None:
     commons_state.broadcaster.publish({"type": "sessions_changed"})
 
 
-__all__ = ["settle_and_reap"]
+__all__ = ["retire_session"]

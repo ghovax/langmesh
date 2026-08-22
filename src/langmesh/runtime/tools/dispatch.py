@@ -8,13 +8,20 @@ a tool name.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-
 from contextlib import suppress
 from datetime import datetime, timezone
-from langmesh.base.primitives import telemetry as _telemetry
+from typing import Any, AsyncIterator, cast
+
+from langchain_core.messages import HumanMessage, ToolMessage
+from pydantic import ValidationError
+
+from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base.confinement import parse_access_request
+from langmesh.base.primitives import telemetry as _telemetry
+from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.internals import (
     _cap_model_result_payload,
     _coerce_mcp_arguments,
@@ -25,29 +32,25 @@ from langmesh.runtime.internals import (
     _tool_timing_metadata,
     _utc_timestamp,
 )
+from langmesh.runtime.background import bind_tool_call_id, unbind_tool_call_id
+from langmesh.runtime.features import BackgroundCapability, LocationsCapability
+from langmesh.runtime.locations import CallExecutionPolicy, ExecutionTarget
 from langmesh.runtime.tools import context as tool_context
-from langmesh.runtime.values import ToolStatus
-
-from langmesh.runtime.turn_events import (
-    DeniedInjection,
-    Error,
-    ToolCall,
-    ToolResult,
-    TurnEvent,
-)
-from langchain_core.messages import HumanMessage, ToolMessage
-from langmesh.runtime.locations import CallExecutionPolicy
-from langmesh.base.configuration.permission_mode import PermissionMode
-from pydantic import ValidationError
-from typing import Any, AsyncIterator, cast
-import asyncio
-from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools.execution import (
+    ToolExecution,
     bind_tool_decision,
     bind_tool_services,
     unbind_tool_decision,
     unbind_tool_services,
 )
+from langmesh.runtime.turn_events import (
+    DeniedInjection,
+    Error,
+    ToolCall,
+    ToolExecutionEvent,
+    ToolResult,
+)
+from langmesh.runtime.values import ToolStatus
 
 logger = logging.getLogger(__name__)
 
@@ -112,10 +115,13 @@ class _DispatchesTools:
             },
         )
 
-    def _call_policy(self, _location: Any = None) -> CallExecutionPolicy:
+    def _call_policy(self, location: ExecutionTarget | None = None) -> CallExecutionPolicy:
         """One call's execution policy, as a value, so concurrent calls cannot cross."""
         return CallExecutionPolicy(
-            working_directory=self._working_directory, mode=self._permission_mode
+            working_directory=(
+                location.working_directory if location is not None else self._working_directory
+            ),
+            mode=self._permission_mode,
         )
 
     async def _run_one_tool(
@@ -125,7 +131,7 @@ class _DispatchesTools:
         turn_tool_results_log: list[dict],
         outcomes: dict[str, dict],
         decision: _ResolvedToolDecision,
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[ToolExecutionEvent]:
         """Run one call and record its outcome. Self-contained, so it can run concurrently with other tools."""
         tool_name = tool_call_data["name"]
         tool_arguments = tool_call_data["args"]
@@ -151,6 +157,7 @@ class _DispatchesTools:
         background_job_id: str | None = None
         denied_commands: list[str] = []
         model_guidance: list[str] = []
+        content_blocks: list[dict] = []
         tool_failed = False
 
         tool_span = _telemetry.start_span("tool.execute", {"tool.name": tool_name})
@@ -160,6 +167,9 @@ class _DispatchesTools:
             ):
                 yield event
                 if isinstance(event, ToolResult):
+                    blocks = event.extra.get("content_blocks")
+                    if isinstance(blocks, list) and blocks:
+                        content_blocks.extend(block for block in blocks if isinstance(block, dict))
                     if event.model_guidance:
                         model_guidance.append(event.model_guidance)
                     result_str = event.result
@@ -200,19 +210,23 @@ class _DispatchesTools:
                 elif isinstance(event, DeniedInjection):
                     denied_commands.append(event.command)
         except asyncio.CancelledError:
-            result_content = "Tool call aborted by the user; if any, read their newest request first."
+            tool_failed = True
+            result_content = "Tool call interrupted."
             yield Error(
                 id=tool_call_identifier,
                 message=result_content,
                 tool=tool_name,
+                code="tool_interrupted",
             )
             turn_tool_results_log.append({"name": tool_name, "result": result_content})
         except Exception as exception:
+            tool_failed = True
             result_content = f"{exception}"
             yield Error(
                 id=tool_call_identifier,
                 message=result_content,
                 tool=tool_name,
+                code="tool_failed",
             )
             turn_tool_results_log.append({"name": tool_name, "result": result_content})
         finally:
@@ -235,6 +249,7 @@ class _DispatchesTools:
             "background_job_id": background_job_id,
             "denied_commands": denied_commands,
             "model_guidance": model_guidance,
+            "content_blocks": content_blocks,
             "metadata": timing_metadata,
         }
 
@@ -245,27 +260,30 @@ class _DispatchesTools:
         turn_tool_results_log: list[dict],
         outcomes: dict[str, dict],
         decisions: dict[str, _ResolvedToolDecision],
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[ToolExecutionEvent]:
         # One call at a time, in order; a Stop or per-call cancel reaches the running task directly.
         for tool_call_data in tool_calls:
             if self._abort_event.is_set() or self._stop_requested:
                 break
             tool_call_identifier = tool_call_data["id"]
-            pipe: asyncio.Queue[TurnEvent | None] = asyncio.Queue()
+            pipe: asyncio.Queue[ToolExecutionEvent | None] = asyncio.Queue()
 
-            async def run_one() -> None:
+            async def run_one(
+                call: dict = tool_call_data,
+                call_id: str = tool_call_identifier,
+                event_pipe: asyncio.Queue[ToolExecutionEvent | None] = pipe,
+            ) -> None:
                 try:
                     async for event in self._run_one_tool(
-                        tool_call_data,
+                        call,
                         turn_tool_calls_log,
                         turn_tool_results_log,
                         outcomes,
-                        decisions.get(tool_call_identifier)
-                        or _ResolvedToolDecision(tool_call_id=tool_call_identifier),
+                        decisions.get(call_id) or _ResolvedToolDecision(tool_call_id=call_id),
                     ):
-                        await pipe.put(event)
+                        await event_pipe.put(event)
                 finally:
-                    await pipe.put(None)
+                    await event_pipe.put(None)
 
             task = asyncio.create_task(run_one())
             self._active_tool_tasks[tool_call_identifier] = task
@@ -338,7 +356,23 @@ class _DispatchesTools:
                 if schema_validator is not None:
                     schema_validator(arguments)
             except ValidationError as exception:
-                return ("invalid_tool_arguments", str(exception))
+                try:
+                    schema_json = (
+                        schema.model_json_schema()
+                        if hasattr(schema, "model_json_schema")
+                        else {}
+                    )
+                    detail = self._prompt_loader.load(
+                        "invalid_tool_schema",
+                        {
+                            "tool_name": tool_name,
+                            "error": str(exception),
+                            "schema": compact(schema_json),
+                        },
+                    )
+                except Exception:
+                    detail = str(exception)
+                return ("invalid_tool_arguments", detail)
             # The validated model is kept — see `_with_schema_defaults` — so a documented default actually applies. Validated once here, so a malformed request fails as a tool error rather than becoming a grant.
         if "access_request" in arguments:
             _, complaint = parse_access_request(arguments.get("access_request"))
@@ -358,11 +392,12 @@ class _DispatchesTools:
             tool_call_identifier = tool_call_data["id"]
             outcome = outcomes.get(tool_call_identifier, {})
             content = outcome.get("content", "")
+            interrupted = not outcome and (self._abort_event.is_set() or self._stop_requested)
             if not content:
-                content = "(interrupted)" if self._abort_event.is_set() else ""
+                content = "Tool call interrupted." if interrupted else ""
             result_status, result_code = _model_result_status(
                 content,
-                ok=outcome.get("ok", True),
+                ok=outcome.get("ok", not interrupted),
                 backgrounded=bool(outcome.get("background_job_id")),
             )
             metadata = outcome.get("metadata") or _tool_timing_metadata(
@@ -389,9 +424,19 @@ class _DispatchesTools:
             guidance_notes.extend(
                 (tool_call_identifier, note) for note in outcome.get("model_guidance", []) if note
             )
+            media_blocks = outcome.get("content_blocks") or []
+            if media_blocks:
+                self._conversation.append(
+                    self._reminder_message(
+                        self._prompt_loader.load("read_paths_media", {}),
+                        image_blocks=list(media_blocks),
+                        marks={"tool_call_id": tool_call_identifier, "media": True},
+                    )
+                )
             background_job_id = outcome.get("background_job_id")
             if background_job_id:
-                self._features.invoke("bind_background_tool", background_job_id, tool_call_identifier)
+                background = self._features.require(BackgroundCapability)
+                background.bind_tool_call(background_job_id, tool_call_identifier)
             denied_commands = outcome.get("denied_commands", [])
             if denied_commands:
                 guidance_notes.append(
@@ -425,7 +470,7 @@ class _DispatchesTools:
         tool_arguments: dict,
         tool_call_identifier: str,
         decision: _ResolvedToolDecision,
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[ToolExecutionEvent]:
         """Execute one call, yielding events. Permission is already resolved, so this path never prompts."""
         # A call that already ran is replayed: whatever side effects it had, it had once.
         if decision.completed is not None:
@@ -465,14 +510,14 @@ class _DispatchesTools:
         # Coerce JSON-string arguments up front, so validation and dispatch see the real container.
         schema = (
             self._features.maintenance_tool_schemas().get(tool_name)
-            if self._features.active_maintenance() and tool_name in self._features.maintenance_tool_schemas()
+            if self._features.active_maintenance()
+            and tool_name in self._features.maintenance_tool_schemas()
             else self._tool_schemas.get(tool_name)
         )
         if schema is not None:
             tool_arguments = _coerce_structured_arguments(schema, tool_arguments)
             # And fill the schema's defaults, so a documented default is the one that applies.
             tool_arguments = _with_schema_defaults(schema, tool_arguments)
-
 
         validation_error = self._validate_tool_call(
             tool_name,
@@ -488,7 +533,12 @@ class _DispatchesTools:
         # Resolve the call's execution target: a feature answers with an opaque call site, or `None` for local.
         call_site = None
         try:
-            call_site = self._features.invoke("resolve_execution", tool_name, tool_arguments)
+            locations = self._features.capability(LocationsCapability)
+            call_site = (
+                locations.resolve_execution(tool_name, tool_arguments)
+                if locations is not None
+                else None
+            )
         except ValueError as exception:
             yield Error(
                 id=tool_call_identifier,
@@ -497,7 +547,7 @@ class _DispatchesTools:
                 tool=tool_name,
             )
             return
-        policy = self._call_policy(None)
+        policy = self._call_policy(call_site)
 
         # Dispatch is data-driven over the session's own tool units: a built-in or a caller's tool is the same `Tool`, so there is no name table and a caller's implementation of the same name simply replaces the built-in's.
         unit = self._tool_units.get(tool_name)
@@ -511,18 +561,20 @@ class _DispatchesTools:
         # A handler that invokes a schema tool directly (`.ainvoke`) resolves the same services and the resolved decision.
         services_token = bind_tool_services(self._services)
         decision_token = bind_tool_decision(decision)
+        call_token = bind_tool_call_id(tool_call_identifier)
         try:
-            async for event in unit.handler(
-                self._services,
-                tool_name,
-                tool_arguments,
-                tool_call_identifier,
-                decision,
-                policy,
-                call_site,
-            ):
+            execution = ToolExecution(
+                services=self._services,
+                name=tool_name,
+                arguments=tool_arguments,
+                call_id=tool_call_identifier,
+                decision=decision,
+                policy=policy,
+                location=call_site,
+            )
+            async for event in unit.handler(execution):
                 yield event
         finally:
+            unbind_tool_call_id(call_token)
             unbind_tool_decision(decision_token)
             unbind_tool_services(services_token)
-

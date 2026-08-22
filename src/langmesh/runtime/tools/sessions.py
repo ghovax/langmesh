@@ -8,14 +8,14 @@ from typing import Any, Literal, Optional
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import Field, ValidationError, create_model
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.output import ToolOutput
 from langmesh.runtime.tools.registry import tool_description as _description
 
 # The prompts these tools speak with. What they tell the *model* is a description, and lives with every other one.
-_PROMPTS = PromptLoader(Path(__file__).resolve().parent.parent / "prompts")
+_PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent.parent / "prompts")
 
 
 def _unavailable(code: str) -> str:

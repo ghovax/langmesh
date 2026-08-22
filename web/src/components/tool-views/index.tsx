@@ -7,8 +7,8 @@ import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { LuExternalLink } from "react-icons/lu";
 import { openSystemPermission, openBrowserRemoteDebugging } from "@/lib/api";
-import { MarkdownContent } from "../markdown-content";
-import { RelativeTime } from "../ui/relative-time";
+import { MarkdownContent } from "../MarkdownContent";
+import { RelativeTime } from "../ui/RelativeTime";
 import {
   Card,
   EmptyHint,
@@ -19,10 +19,10 @@ import {
   MonoBlock,
   MonoList,
   ProseList,
-} from "../ui/display";
+} from "../ui/Display";
 import { asArray, asRecord, asString } from "@/lib/coerce";
 import { mutationClaim, requestedAccess } from "@shared/tools";
-import { Pill } from "../ui/pill";
+import { Pill } from "../ui/Pill";
 import { STATUS_PALETTE, taskLifecycleKind } from "@/lib/status";
 import { hasBackgroundJobId, type ToolEventStatus } from "@/lib/tool-event";
 
@@ -112,6 +112,82 @@ function taskStatusAppearance(status: string): { key: string; palette: string } 
   const kind = taskLifecycleKind(status);
   if (kind === "completed") return null;
   return { key: TASK_STATUS_LABEL_KEY[kind] ?? "statusUnknown", palette: STATUS_PALETTE[kind] };
+}
+
+// Wire codes the plugins emit, named in the interface's language rather than shown as the identifier.
+const GOAL_CODE_APPEARANCE: Record<string, { key: string; palette: string }> = {
+  active: { key: "goalStatusActive", palette: "blue" },
+  satisfied: { key: "standingSatisfied", palette: "green" },
+  blocked: { key: "standingBlocked", palette: "red" },
+  parked: { key: "goalStatusParked", palette: "orange" },
+  cleared: { key: "goalStatusCleared", palette: "gray" },
+  unmet: { key: "standingUnmet", palette: "orange" },
+};
+
+const CONTRACT_CODE_APPEARANCE: Record<string, { key: string; palette: string }> = {
+  complete: { key: "contractComplete", palette: "purple" },
+  needs_revision: { key: "contractNeedsRevision", palette: "purple" },
+};
+
+const PERMISSION_ACTION_APPEARANCE: Record<string, { key: string; palette: string }> = {
+  allow: { key: "permissionAllow", palette: "green" },
+  deny: { key: "permissionDeny", palette: "red" },
+};
+
+const PERMISSION_RISK_APPEARANCE: Record<string, { key: string; palette: string }> = {
+  low: { key: "riskLow", palette: "green" },
+  medium: { key: "riskMedium", palette: "yellow" },
+  high: { key: "riskHigh", palette: "red" },
+};
+
+const CONTROL_ACTION_LABEL_KEY: Record<string, string> = {
+  find_one: "controlActionFindOne",
+  find_many: "controlActionFindMany",
+  click: "controlActionClick",
+  type: "controlActionType",
+  press: "controlActionPress",
+  scroll: "controlActionScroll",
+  drag: "controlActionDrag",
+  select: "controlActionSelect",
+  caret: "controlActionCaret",
+  read: "controlActionRead",
+};
+
+const LIFECYCLE_CODE_APPEARANCE: Record<string, { key: string; palette: string }> = {
+  ok: { key: "ok", palette: "green" },
+  error: { key: "statusFailed", palette: "red" },
+  running: { key: "statusInProgress", palette: "blue" },
+};
+
+function CodePill({
+  appearance,
+}: {
+  appearance: { key: string; palette: string };
+}) {
+  const translation = useTranslations("ToolViews");
+  return (
+    <Pill colorPalette={appearance.palette}>
+      {translation(appearance.key as Parameters<typeof translation>[0])}
+    </Pill>
+  );
+}
+
+function codedAppearance(field: string, value: string): { key: string; palette: string } | null {
+  switch (field) {
+    case "pending_review":
+    case "standing":
+      return GOAL_CODE_APPEARANCE[value] ?? null;
+    case "status":
+      return GOAL_CODE_APPEARANCE[value] ?? LIFECYCLE_CODE_APPEARANCE[value] ?? null;
+    case "goal_contract":
+      return CONTRACT_CODE_APPEARANCE[value] ?? null;
+    case "action":
+      return PERMISSION_ACTION_APPEARANCE[value] ?? null;
+    case "risk":
+      return PERMISSION_RISK_APPEARANCE[value] ?? null;
+    default:
+      return null;
+  }
 }
 
 // "task-..." or a bare index -> "#..." — the internal id is never shown raw, only its numeric suffix.
@@ -228,6 +304,24 @@ const PROSE_FIELD_KEYS = new Set([
 const FIELD_LABEL_KEYS: Record<string, string> = {
   // The goal tool, whose fields would otherwise fall through and be labelled with their own raw keys.
   status: "fieldStatus",
+  pending_review: "goalReviewPending",
+  standing: "fieldStanding",
+  goal_contract: "fieldContract",
+  assessment: "assessment",
+  unmet: "unmet",
+  evidence: "evidence",
+  blocker: "blocker",
+  action: "fieldAction",
+  risk: "fieldRisk",
+  activity: "fieldStatus",
+  lifecycle: "fieldStatus",
+  permission_mode: "peerMode",
+  agent: "peerAgent",
+  session: "peerSession",
+  working_directory: "peerDirectory",
+  previous_goal: "goal",
+  hard_deadline: "timeout",
+  background: "fieldBackground",
   goal: "goal",
   purpose: "goalPurpose",
   requirements: "goalRequirements",
@@ -311,6 +405,9 @@ function FetchUrlCallView({ args }: { args: Record<string, unknown> }) {
           {translation("secondsValue", { value: asString(args.timeout) })}
         </InlineField>
       )}
+      {args.background === true && (
+        <InlineField label={translation("fieldBackground")}>{translation("yes")}</InlineField>
+      )}
     </FieldList>
   );
 }
@@ -368,10 +465,12 @@ function ChangeRow({ entry }: { entry: Record<string, unknown> }) {
   const destination = asString(navigated.title) || asString(navigated.url);
   const appearedCount = Number(entry.appeared_total) || asArray(entry.appeared).length;
   const nothingChanged = Array.isArray(entry.changed) && entry.changed.length === 0;
+  const action = asString(entry.action);
+  const actionKey = CONTROL_ACTION_LABEL_KEY[action];
   return (
     <Flex align="baseline" gap={2} wrap="wrap">
       <Text fontSize="2xs" color="fg.muted">
-        {asString(entry.action)}
+        {actionKey ? translation(actionKey as Parameters<typeof translation>[0]) : action}
       </Text>
       {where && (
         <Mono fontSize="2xs" color="fg.subtle">
@@ -529,7 +628,9 @@ function GenericView({ data }: { data: Record<string, unknown> }) {
   if (entries.length === 0) return <EmptyHint>{translation("noData")}</EmptyHint>;
   return (
     <FieldList>
-      {entries.map(([key, value]) => (
+      {entries.map(([key, value]) => {
+        const appearance = codedAppearance(key, asString(value));
+        return (
         <InlineField
           key={key}
           label={
@@ -539,17 +640,19 @@ function GenericView({ data }: { data: Record<string, unknown> }) {
           }
         >
           {value && typeof value === "object" ? (
-            // Structured values (objects/arrays) are data — monospace JSON.
             <MonoBlock>{JSON.stringify(value, null, 2)}</MonoBlock>
           ) : PROSE_FIELD_KEYS.has(key) ? (
-            // Prose values render as markdown, sized to match the compact field context.
             <MarkdownContent content={asString(value)} fontSize="xs" />
+          ) : appearance ? (
+            <CodePill appearance={appearance} />
+          ) : typeof value === "boolean" ? (
+            translation(value ? "yes" : "no")
           ) : (
-            // Scalar identifiers/data (names, ids, flags) render in monospace.
             <Mono whiteSpace="pre-wrap">{asString(value)}</Mono>
           )}
         </InlineField>
-      ))}
+        );
+      })}
     </FieldList>
   );
 }
@@ -640,24 +743,31 @@ const PEER_ACTIVITY_PALETTE: Record<string, string> = {
 function SessionListResultView({ data }: { data: Record<string, unknown> }) {
   const translation = useTranslations("ToolViews");
   const agentName = useAgentName();
-  const sessions = asArray(data.sessions).map(asRecord);
-  if (sessions.length === 0) return <EmptyHint>{translation("noPeerSessions")}</EmptyHint>;
+  const sessions = useTranslations("SessionsSidebar");
+  const rows = asArray(data.sessions).map(asRecord);
+  if (rows.length === 0) return <EmptyHint>{translation("noPeerSessions")}</EmptyHint>;
   return (
     <FieldList>
-      {sessions.map((session, index) => (
+      {rows.map((session, index) => {
+        const activity = asString(session.activity);
+        const activityKey = ACTIVITY_LABEL_KEYS[activity];
+        return (
         <InlineField key={index} label={agentName(asString(session.agent))}>
           <Flex align="center" gap={1.5} wrap="wrap">
             <Mono>{asString(session.id)}</Mono>
             {/* `activity` is what a peer is doing right now, derived by the daemon on every read. */}
-            <Pill colorPalette={PEER_ACTIVITY_PALETTE[asString(session.activity)] ?? "gray"}>
-              {asString(session.activity) || asString(session.lifecycle)}
+            <Pill colorPalette={PEER_ACTIVITY_PALETTE[activity] ?? "gray"}>
+              {activityKey
+                ? sessions(activityKey as Parameters<typeof sessions>[0])
+                : activity || asString(session.lifecycle)}
             </Pill>
             {session.awaiting_input ? (
               <Pill colorPalette="orange">{translation("peerWaiting")}</Pill>
             ) : null}
           </Flex>
         </InlineField>
-      ))}
+        );
+      })}
     </FieldList>
   );
 }
@@ -721,9 +831,16 @@ function UpdateGoalCallView({ args }: { args: Record<string, unknown> }) {
   const purpose = asString(args.purpose).trim();
   // The three parts of a goal are what it can be judged against, so a call that sets one shows all of them.
   const requirements = asArray(args.requirements).map(asString).filter(Boolean);
-  if (!goal && !purpose && !requirements.length) return null;
+  const status = asString(args.status).trim();
+  const statusAppearance = GOAL_CODE_APPEARANCE[status];
+  if (!goal && !purpose && !requirements.length && !status) return null;
   return (
     <FieldList>
+      {statusAppearance ? (
+        <InlineField label={translation("fieldStatus")}>
+          <CodePill appearance={statusAppearance} />
+        </InlineField>
+      ) : null}
       {goal ? (
         <Field label={translation("goal")}>
           <MarkdownContent content={goal} fontSize="xs" />
@@ -743,35 +860,22 @@ function UpdateGoalCallView({ args }: { args: Record<string, unknown> }) {
 function SubmitGoalReviewCallView({ args }: { args: Record<string, unknown> }) {
   const translation = useTranslations("ToolViews");
   const standing = asString(args.standing);
-  const standingPalette =
-    standing === "satisfied" ? "green" : standing === "blocked" ? "red" : "orange";
-  const standingKey =
-    standing === "satisfied"
-      ? "standingSatisfied"
-      : standing === "blocked"
-        ? "standingBlocked"
-        : "standingUnmet";
+  const standingAppearance = GOAL_CODE_APPEARANCE[standing] ?? GOAL_CODE_APPEARANCE.unmet;
   const contract = asString(args.goal_contract);
+  const contractAppearance =
+    CONTRACT_CODE_APPEARANCE[contract] ?? CONTRACT_CODE_APPEARANCE.complete;
   const assessment = asString(args.assessment).trim();
-  const unmet = asArray(args.unmet).map(asString).filter(Boolean);
-  const evidence = asString(args.evidence).trim();
-  const blocker = asString(args.blocker).trim();
-  const message = asString(args.message).trim();
+  const unmet = standing === "satisfied" ? [] : asArray(args.unmet).map(asString).filter(Boolean);
+  const evidence = standing === "satisfied" ? asString(args.evidence).trim() : "";
+  const blocker = standing === "blocked" ? asString(args.blocker).trim() : "";
+  const message = standing === "unmet" ? asString(args.message).trim() : "";
   return (
     <FieldList>
       <InlineField label={translation("fieldStanding")}>
-        <Pill colorPalette={standingPalette}>
-          {translation(standingKey as Parameters<typeof translation>[0])}
-        </Pill>
+        <CodePill appearance={standingAppearance} />
       </InlineField>
       <InlineField label={translation("fieldContract")}>
-        <Pill colorPalette="purple">
-          {translation(
-            (contract === "needs_revision"
-              ? "contractNeedsRevision"
-              : "contractComplete") as Parameters<typeof translation>[0],
-          )}
-        </Pill>
+        <CodePill appearance={contractAppearance} />
       </InlineField>
       {assessment ? (
         <Field label={translation("assessment")}>
@@ -808,20 +912,35 @@ function SubmitGoalReviewCallView({ args }: { args: Record<string, unknown> }) {
   );
 }
 
-/** The goal that is now set: setting one is the only outcome this tool has. */
+/** The goal that is now set, or whose status the agent marked. */
 function UpdateGoalResultView({ data }: { data: Record<string, unknown> }) {
   const translation = useTranslations("ToolViews");
   const goal = asString(data.goal).trim();
   const purpose = asString(data.purpose).trim();
   const requirements = asArray(data.requirements).map(asString).filter(Boolean);
-  if (asString(data.code) !== "goal_active") {
+  const code = asString(data.code);
+  const status = asString(data.status).trim();
+  const pendingReview = asString(data.pending_review).trim();
+  if (code !== "goal_active" && code !== "goal_status") {
     return <ErrorView message={asString(data.message) || asString(data.code)} />;
   }
+  const marked = code === "goal_status" && status;
+  const statusAppearance = GOAL_CODE_APPEARANCE[status];
+  const pendingAppearance = GOAL_CODE_APPEARANCE[pendingReview];
   return (
     <FieldList>
-      <InlineField label={translation("fieldOutcome")}>
-        <Pill colorPalette="blue">{translation("goalActive")}</Pill>
+      <InlineField label={translation(marked ? "fieldStatus" : "fieldOutcome")}>
+        {marked && statusAppearance ? (
+          <CodePill appearance={statusAppearance} />
+        ) : (
+          <Pill colorPalette="blue">{translation("goalActive")}</Pill>
+        )}
       </InlineField>
+      {pendingAppearance ? (
+        <InlineField label={translation("goalReviewPending")}>
+          <CodePill appearance={pendingAppearance} />
+        </InlineField>
+      ) : null}
       {goal ? (
         <Field label={translation("goal")}>
           <MarkdownContent content={goal} fontSize="xs" />
@@ -833,6 +952,61 @@ function UpdateGoalResultView({ data }: { data: Record<string, unknown> }) {
         </Field>
       ) : null}
       <GoalLines label={translation("goalRequirements")} lines={requirements} />
+    </FieldList>
+  );
+}
+
+function PermissionDecisionCallView({ args }: { args: Record<string, unknown> }) {
+  const translation = useTranslations("ToolViews");
+  const action = PERMISSION_ACTION_APPEARANCE[asString(args.action)];
+  const risk = PERMISSION_RISK_APPEARANCE[asString(args.risk)];
+  const explanation = asString(args.explanation).trim();
+  return (
+    <FieldList>
+      {action ? (
+        <InlineField label={translation("fieldAction")}>
+          <CodePill appearance={action} />
+        </InlineField>
+      ) : null}
+      {risk ? (
+        <InlineField label={translation("fieldRisk")}>
+          <CodePill appearance={risk} />
+        </InlineField>
+      ) : null}
+      {explanation ? (
+        <Field label={translation("explanation")}>
+          <MarkdownContent content={explanation} fontSize="xs" />
+        </Field>
+      ) : null}
+    </FieldList>
+  );
+}
+
+function CompactionSummaryCallView({ args }: { args: Record<string, unknown> }) {
+  const translation = useTranslations("ToolViews");
+  const summary = asString(args.summary).trim();
+  if (!summary) return null;
+  return (
+    <FieldList>
+      <Field label={translation("summary")}>
+        <MarkdownContent content={summary} fontSize="xs" />
+      </Field>
+    </FieldList>
+  );
+}
+
+function DownloadCallView({ args }: { args: Record<string, unknown> }) {
+  const translation = useTranslations("ToolViews");
+  return (
+    <FieldList>
+      <InlineField label={translation("url")}>
+        <Mono>{asString(args.url)}</Mono>
+      </InlineField>
+      {args.timeout != null && (
+        <InlineField label={translation("timeout")}>
+          {translation("secondsValue", { value: asString(args.timeout) })}
+        </InlineField>
+      )}
     </FieldList>
   );
 }
@@ -867,6 +1041,12 @@ export function ToolCallView({ name, args }: { name: string; args?: Record<strin
         return <UpdateGoalCallView args={args} />;
       case "submit_goal_review":
         return <SubmitGoalReviewCallView args={args} />;
+      case "permission_decision":
+        return <PermissionDecisionCallView args={args} />;
+      case "submit_compaction_summary":
+        return <CompactionSummaryCallView args={args} />;
+      case "download":
+        return <DownloadCallView args={args} />;
       default: {
         // The explanation is already the collapsed heading, so it is stripped from the expanded body.
         const rest = { ...args };
@@ -1176,7 +1356,7 @@ export function ToolResultView({
   // Discovery results are internal noise, since the call card already conveys that discovery happened.
   if (name === "list_mcp_tools" || name === "list_mcp_resources") return null;
 
-  // The task tools confirm with raw ids the call card already shows as numbers, so the confirmation is dropped.
+  // Tasks are rendered solely via TasksChip's single compounding badge — no separate result view
   if (name === "set_tasks" || name === "update_tasks") return null;
 
   // The verdict tools confirm with internal codes; the call card already shows the full verdict,
@@ -1192,7 +1372,7 @@ export function ToolResultView({
     const data = parsed as Record<string, unknown>;
     const code = asString(data.code);
     if (status === "running" && hasBackgroundJobId(data)) return null;
-    if (code === "tool_error") return null;
+    if (["tool_error", "tool_failed", "tool_interrupted"].includes(code)) return null;
     if (code === "web_search_completed") return <SearchWebResultView data={data} />;
     if (code === "web_search_error")
       return <ErrorView message={asString(data.message) || translation("searchFailed")} />;

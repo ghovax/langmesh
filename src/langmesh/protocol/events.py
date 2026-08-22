@@ -21,6 +21,8 @@ TurnErrorCode = Literal[
     "turn_failed",
     "turn_interrupted",
     "tool_error",
+    "tool_failed",
+    "tool_interrupted",
 ]
 CompactionErrorCode = Literal[
     "compaction_cancelled",
@@ -94,7 +96,7 @@ class ToolResultEvent(_EventBase):
     metadata: ToolMetadata
 
 
-class McpEvent(_EventBase):
+class MCPEvent(_EventBase):
     kind: Literal["mcp_event"] = "mcp_event"
     tool_call_id: str
     server: str = ""
@@ -134,8 +136,9 @@ class CumulativeUsage(BaseModel):
     output_tokens: int = 0
     total_tokens: int = 0
     cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     #: What a cache could have returned across the session, so the read figure has a denominator.
-    reachable_tokens: int = 0
+    reusable_prefix_tokens: int = 0
     reasoning_tokens: int = 0
     model_calls: int = 0
 
@@ -184,12 +187,13 @@ class TokenUsageEvent(_EventBase):
     context_window_estimated: bool = False
     # Per-call cache and reasoning, because a running total cannot say which call missed.
     cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     reasoning_tokens: int = 0
     # Session-lifetime running totals for this agent's own calls.
     cumulative: CumulativeUsage = Field(default_factory=CumulativeUsage)
-    # What the cache figure means, which the figure alone cannot say: a moved prefix, or one the provider dropped.
-    prefix_intact: bool = False
-    reachable_tokens: int = 0
+    # Whether the preceding request is a complete prefix, or unknown when this lane has no local baseline.
+    cache_prefix_reusable: Optional[bool] = None
+    reusable_prefix_tokens: int = 0
     segments: int = 0
     shared_segments: int = 0
     divergence: Optional[PrefixDivergence] = None
@@ -233,6 +237,9 @@ class ErrorEvent(_EventBase):
     # Values interpolated by the client's locale catalogue. Provider text never crosses this boundary.
     parameters: dict[str, Any] = Field(default_factory=dict)
     status: int | None = None
+    # The transcript identity of a turn-level failure. Live delivery and durable replay both reduce this
+    # field, so the card is one row rather than an A2A envelope id that differs across lanes.
+    message_id: str = ""
 
 
 # The discriminated union of everything that can appear on the wire.
@@ -243,7 +250,7 @@ WireEvent = Annotated[
         ThinkingDoneEvent,
         ToolCallEvent,
         ToolResultEvent,
-        McpEvent,
+        MCPEvent,
         StatusEvent,
         DoneEvent,
         CompactionEvent,
@@ -265,7 +272,7 @@ WIRE_EVENT_MODELS: tuple[type[_EventBase], ...] = (
     ThinkingDoneEvent,
     ToolCallEvent,
     ToolResultEvent,
-    McpEvent,
+    MCPEvent,
     StatusEvent,
     DoneEvent,
     CompactionEvent,

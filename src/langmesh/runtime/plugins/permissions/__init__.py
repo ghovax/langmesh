@@ -47,6 +47,7 @@ MUTATING_SCREEN_PRIMITIVES = frozenset(
     }
 )
 
+
 def screen_mutations(script: str) -> tuple[str, ...]:
     """The state-changing primitives a script calls. Decides who is asked, never what is available."""
     try:
@@ -62,6 +63,7 @@ def screen_mutations(script: str) -> tuple[str, ...]:
                 found.append(name)
     return tuple(found)
 
+
 def _screen_primitive(func: ast.expr) -> str:
     """The primitive a call node names, bare or through ``screen``."""
     if isinstance(func, ast.Attribute):
@@ -69,6 +71,7 @@ def _screen_primitive(func: ast.expr) -> str:
     if isinstance(func, ast.Name):
         return func.id
     return ""
+
 
 class PermissionReview(Feature):
     """Whether a call runs, is asked about, or is refused, and what approval a session keeps."""
@@ -91,6 +94,10 @@ class PermissionReview(Feature):
     def granted_profile(self):
         """The session's confinement with every standing grant compacted in. What an escape is measured against."""
         return self._host.boundary.granted_profile()
+
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Gates wait for an answer; they are not a process this plugin owns to kill."""
+        return False
 
     async def review(self, gate: _PreflightGate) -> PermissionDecision:
         """The verdict on one gate, from the injected automatic reviewer or a denial when absent."""
@@ -198,8 +205,8 @@ class PermissionReview(Feature):
             return plan
 
         subject, rule = self._rule_for(tool_name, tool_arguments)
-        # A call with an execution target (a remote location) has no box here to escape, so the rules are the whole policy.
-        profile = None if call_site is not None else self.granted_profile()
+        # A remote call has no local sandbox to escape, while a named local target retains the local boundary.
+        profile = None if call_site is not None and call_site.is_remote else self.granted_profile()
         request, _ = parse_access_request(tool_arguments.get("access_request"))
         escape = escape_of(request, profile, workspace=policy.working_directory)
 
@@ -321,21 +328,6 @@ class PermissionReview(Feature):
             "confined_attempt": gate.refused_result,
         }
 
-    def invoke(self, name: str, *args, **kwargs):
-        """Answer the permission capabilities the core and tools ask for by name."""
-        if name == "retry_gate":
-            return self.retry_gate(*args, **kwargs)
-        if name == "decide_retry":
-            (gate,) = args
-            return self.decide_retry(gate)
-        if name == "retry_refusal_result":
-            (gate,) = args
-            return self.retry_refusal_result(gate, **kwargs)
-        if name == "reconsider_gate":
-            (gate,) = args
-            return self.reconsider_gate(gate)
-        return None
-
     def _rule_for(self, tool_name: str, tool_arguments: dict) -> tuple[str, str]:
         """What the configuration says about this call. The subject differs by tool, because the calls do."""
         tools = self._context.agent_configuration.tools
@@ -394,7 +386,9 @@ class PermissionReview(Feature):
             },
         }
 
-    def approve(self, gate: _PreflightGate, *, by: confinement.ApprovedBy, plan: Optional[_ToolPlan] = None) -> None:
+    def approve(
+        self, gate: _PreflightGate, *, by: confinement.ApprovedBy, plan: Optional[_ToolPlan] = None
+    ) -> None:
         """Carry out what approving a gate means, in one place, since it can grant two different things."""
         if gate.escape or gate.whole_disk:
             self.record_grant(
@@ -559,5 +553,6 @@ class PermissionReview(Feature):
             purpose=gate.explanation,
             whole_disk=True,
         )
+
 
 __all__ = ["MUTATING_SCREEN_PRIMITIVES", "PermissionReview", "screen_mutations"]

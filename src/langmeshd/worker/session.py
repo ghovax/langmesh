@@ -18,20 +18,23 @@ from a2a.types import DataPart, Message, MessageSendParams, Part, Role, Task, Ta
 from langchain_core.messages import messages_from_dict
 
 from langmeshd.worker import features_access as _features
-from langmeshd.daemon.agent_files import AgentFileLoader, list_agents
+from langmeshd.commons.agent_files import AgentFileLoader, list_agents
+from langmeshd.commons.configuration_locations import agent_directories
 from langmeshd.daemon.machine import machine_catalogue
+from langmeshd.commons.toolboxes import toolbox_for
 from langmesh.base.primitives.limits import current_limits
-from langmesh.base.confinement.file_leases import FileLeaseManager
+from langmeshd.daemon.persistence.file_leases import FileLeaseManager
 from langmesh.base.configuration import Configuration
-from langmesh.base.persistence.background_store import get_background_job_store
+from langmeshd.daemon.persistence.background_jobs import get_background_job_store
 from langmesh.base.contracts.ports import JobStore
-from langmesh.base.persistence.worktrees import SessionWorktree
+from langmeshd.daemon.persistence.worktrees import SessionWorktree
 from langmesh.protocol.metadata import (
     AUTONOMOUS_RESUME_KIND,
     COMPACTION_KIND,
     COMPACTION_PREPARE_KIND,
     COMPACTION_RESUME_KIND,
     GOAL_CONTINUATION_KIND,
+    GOAL_REMINDER_KIND,
     TASK_CONTINUATION_KIND,
     REPORT_REMINDER_KIND,
     RETRY_TURN_KIND,
@@ -48,12 +51,16 @@ from langmesh.protocol.turn_record import PendingInteraction, ToolGate, TurnReco
 from langmesh.runtime.plugins.goal_review.goal import Goal, GoalReviewPhase
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.runtime import AgentRuntime
+from langmesh.runtime.environment import RuntimeEnvironment
+from langmesh.runtime.session_control import SessionSnapshot
+from langmesh.runtime.features import LocationsCapability
 from langmesh.runtime.turn_events import SuspensionGate
 from langmesh.runtime.values import PermissionAnswer
 from langmeshd.worker.host import HostServices, NullHostServices
 from langmeshd.worker.peers import PeerSessions
 from langmeshd.worker.turn import _ContextState, _ContinuationPlan, _TurnRunner
 from langmeshd.worker.turn_store import HostTurnStore
+from langmeshd.daemon.persistence.credentials import file_credential_store
 from langmesh.base.primitives.serialization import compact
 
 logger = logging.getLogger(__name__)
@@ -64,19 +71,17 @@ _MCP_TOOL_NAMES = frozenset(
 )
 _REMOTE_TOOL_NAMES = frozenset({"list_remote_agents", "message_remote_agent"})
 
+
 def _installed_agent_names(
     global_configuration: Configuration, working_directory: str
 ) -> list[str]:
     """The profiles a peer could be created with, read at build time so a bad name is unrepresentable."""
-    directories = (
-        global_configuration.agent_directories_for(working_directory)
-        if working_directory
-        else global_configuration.agent_directories()
-    )
+    directories = agent_directories(working_directory)
     try:
         return [entry["id"] for entry in list_agents(directories)]
     except Exception:  # noqa: BLE001 — an unreadable profile directory must not fail the runtime
         return []
+
 
 def _compose_session_tools(
     configuration: Any,
@@ -102,9 +107,7 @@ def _compose_session_tools(
         if schema is None or not hasattr(schema, "name"):
             continue
         if name == "ask_user" and not (
-            permission_mode is None
-            or cast(Any, permission_mode).asks
-            or permission_mode == "allow"
+            permission_mode is None or cast(Any, permission_mode).asks or permission_mode == "allow"
         ):
             continue
         if name in _MCP_TOOL_NAMES and not global_configuration.mcp.enabled_servers():
@@ -113,12 +116,11 @@ def _compose_session_tools(
             continue
         tools.append(schema)
     if can_reach_peers:
-        tools.extend(
-            session_tools(_installed_agent_names(global_configuration, working_directory))
-        )
+        tools.extend(session_tools(_installed_agent_names(global_configuration, working_directory)))
         if global_configuration.remote_agents.agents:
             tools.extend(remote_agent_tools())
     return tools
+
 
 class SessionExecutor(AgentExecutor):
     """The live half of one session. The machinery still speaks in contexts, but a worker only ever has one."""
@@ -150,9 +152,7 @@ class SessionExecutor(AgentExecutor):
         self._feature_factory = feature_factory
         # A worker is a process a restart happens to, so its jobs want the durable store. Injectable all the same.
         self._job_store: JobStore = (
-            job_store
-            if job_store is not None
-            else cast(JobStore, get_background_job_store())
+            job_store if job_store is not None else cast(JobStore, get_background_job_store())
         )
         self._working_directory = working_directory
         # Where tools actually run, resolved by the host: a worktree workspace is not the project directory.
@@ -196,7 +196,7 @@ class SessionExecutor(AgentExecutor):
         self._aborts: dict[str, AgentRuntime] = {}
         # One session, one conversation. The map has one entry, and exists because the machinery indexes it.
         self._conversations: dict[str, list] = {}
-        self._startup_resume_tasks: set[asyncio.Task] = set()
+        self._background_tasks: set[asyncio.Task[Any]] = set()
         # The background task that names the session after its first message, once.
         self._title_task: Optional[asyncio.Task] = None
         # The report reminder fires at most once for a session's whole life.
@@ -210,6 +210,28 @@ class SessionExecutor(AgentExecutor):
         self._send_lock = asyncio.Lock()
         self._observation_registry_metadata: dict[str, Any] = {}
         self._observation_registry_error: str | None = None
+
+    def _spawn_background(
+        self, coroutine: Coroutine[Any, Any, Any], *, name: str
+    ) -> asyncio.Task[Any]:
+        """Start session-owned work and retain it until completion or shutdown."""
+        task = asyncio.create_task(coroutine, name=f"langmesh:{self._session_id}:{name}")
+        self._background_tasks.add(task)
+        task.add_done_callback(self._finish_background)
+        return task
+
+    def _finish_background(self, task: asyncio.Task[Any]) -> None:
+        """Retire completed session work and surface an otherwise unobserved failure."""
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "session background task %s failed",
+                task.get_name(),
+                exc_info=(type(error), error, error.__traceback__),
+            )
 
     def _publish_stream_event(self, session_id: str, part) -> None:
         """Publish one structural part directly to the in-process live bus."""
@@ -242,14 +264,17 @@ class SessionExecutor(AgentExecutor):
             runtime = getattr(context, "runtime", None)
             if runtime is None:
                 continue
-            if _features.has_pending_jobs(runtime) or _features.has_completed_undelivered_jobs(runtime):
+            if _features.has_pending_jobs(runtime) or _features.has_completed_undelivered_jobs(
+                runtime
+            ):
                 return True
         return False
 
     def _notify_permission_state(self, session_id: str, awaiting: bool) -> None:
         """Tell the host this session is parked on a human, so `ps` shows waiting rather than working."""
-        asyncio.create_task(
-            self._turn_store.publish_event({"session_id": session_id, "awaiting_input": awaiting})
+        self._spawn_background(
+            self._turn_store.publish_event({"session_id": session_id, "awaiting_input": awaiting}),
+            name="permission-state",
         )
 
     async def compact_context(self, session_id: str) -> dict:
@@ -302,7 +327,9 @@ class SessionExecutor(AgentExecutor):
                         result_event_kind="compaction",
                     )
                     return {"compacted": result is not None, **(result or {})}
-                if not _features.compaction_failure(runtime) and _features.begin_compaction_preparation(runtime):
+                if not _features.compaction_failure(
+                    runtime
+                ) and _features.begin_compaction_preparation(runtime):
                     result = await self._drive_self_sent_turn(
                         session_id,
                         COMPACTION_PREPARE_KIND,
@@ -456,7 +483,8 @@ class SessionExecutor(AgentExecutor):
         self._maybe_evict(session_id)
 
     async def _continue(self, session_id: str, plan: _ContinuationPlan) -> None:
-        """Review a goal first, then carry either or both obligations in one next turn."""
+        """A marked goal is settled by a secondary review; an open, unmarked goal is reminded;
+        either rides with the task obligation in a single next turn."""
         state = self._contexts.get(session_id)
         runtime = state.runtime if state is not None else None
         if runtime is None:
@@ -466,32 +494,40 @@ class SessionExecutor(AgentExecutor):
         review_phase_active = False
         try:
             goal = _features.goal(runtime)
-            if plan.goal and goal is not None and goal.is_open:
-                if _features.goal_review_mode(runtime) == "self_managed":
-                    # The simple goal mode: no reviewer. The session re-opens on the goal
-                    # itself, and the agent owns it through the update_goal tool.
+            if plan.review and goal is not None and goal.pending_review:
+                # The secondary review settles the status the agent marked; the review itself
+                # drives no model turn, so what opens next is decided from its verdict.
+                await self._continue_with_review(session_id, state, runtime, goal)
+                review_phase_active = True
+                goal = _features.goal(runtime)
+                if goal is not None and goal.is_open and goal.review_message:
                     await self._drive_self_sent_turn(
                         session_id,
                         GOAL_CONTINUATION_KIND,
                         metadata_flags={
                             Metadata.GOAL_CONTINUATION: True,
+                            Metadata.GOAL_REVIEW_ID: goal.review_id,
                             **({Metadata.TASK_CONTINUATION: True} if plan.tasks else {}),
                         },
-                        text=goal.text,
+                        text=goal.review_message,
                     )
-                else:
-                    await self._continue_with_review(session_id, state, runtime, plan, goal)
-            goal = _features.goal(runtime)
-            if goal is not None and goal.is_open and goal.review_message:
+                elif plan.tasks:
+                    await self._drive_self_sent_turn(
+                        session_id,
+                        TASK_CONTINUATION_KIND,
+                        metadata_flags={Metadata.TASK_CONTINUATION: True},
+                    )
+            elif plan.goal and goal is not None and goal.is_open:
+                # The goal is still open and the agent did not mark it: a hidden reminder to
+                # keep going or state where it stands, carrying the task obligation with it.
+                # Sent behind the scenes as a system note, never as a user-visible message.
                 await self._drive_self_sent_turn(
                     session_id,
-                    GOAL_CONTINUATION_KIND,
+                    GOAL_REMINDER_KIND,
                     metadata_flags={
-                        Metadata.GOAL_CONTINUATION: True,
-                        Metadata.GOAL_REVIEW_ID: goal.review_id,
+                        Metadata.GOAL_REMINDER: True,
                         **({Metadata.TASK_CONTINUATION: True} if plan.tasks else {}),
                     },
-                    text=goal.review_message,
                 )
             elif plan.tasks:
                 await self._drive_self_sent_turn(
@@ -505,12 +541,10 @@ class SessionExecutor(AgentExecutor):
             # Exactly one release for the plan hold, whichever obligation opened the next turn.
             self._notify_turn_state(session_id, False)
 
-    async def _continue_with_review(self, session_id, state, runtime, plan, goal) -> None:
-        """Review an open goal first; a verdict that lands decides the next turn."""
+    async def _continue_with_review(self, session_id, state, runtime, goal) -> None:
+        """Settle a marked goal: the secondary review either confirms the claimed status or overrides it."""
         self._notify_goal_state(session_id, goal, review_phase=GoalReviewPhase.CHECKING)
-        review = asyncio.create_task(
-            cast(Coroutine[Any, Any, Any], _features.review_goal(runtime))
-        )
+        review = asyncio.create_task(cast(Coroutine[Any, Any, Any], _features.review_goal(runtime)))
         state.continuation.attach_review(review)
         try:
             verdict = await review
@@ -550,12 +584,39 @@ class SessionExecutor(AgentExecutor):
             return False
         if state is not None:
             state.continuation.cancel_review()
-        _features.write_goal(runtime, 
+        _features.write_goal(
+            runtime,
             goal.updated(status=Goal.CLEARED, review_message=None, review_id=None)
             if goal.is_open
-            else None
+            else None,
         )
-        asyncio.create_task(self._persist_session_state(session_id, runtime))
+        await self._persist_session_state(session_id, runtime)
+        return True
+
+    async def resume_goal(self, session_id: str) -> bool:
+        """The person restarting a parked goal: back to active, and the continuation re-armed.
+
+        A stop or a spent wait parks the goal rather than abandoning it; this is the way back in.
+        The session re-opens on the goal itself, whose reminder leads either to more work or to a
+        status the secondary review then settles.
+        """
+        state = self._contexts.get(session_id)
+        runtime = state.runtime if state is not None else None
+        if runtime is None:
+            # Parked state survives a restart, so resuming works from asleep exactly as clearing does.
+            runtime = await self._runtime_for(session_id, self._workspace())
+        goal = _features.goal(runtime) if runtime is not None else None
+        if runtime is None or goal is None or not goal.is_parked:
+            return False
+        if state is not None:
+            state.aborted = False
+            state.continuation.cancel_review()
+        _features.write_goal(
+            runtime,
+            goal.updated(status=Goal.ACTIVE, review_message=None, review_id=None),
+        )
+        await self._persist_session_state(session_id, runtime)
+        self._arm_continuation(session_id, _ContinuationPlan(goal=True))
         return True
 
     async def _persist_session_state(self, session_id: str, runtime: AgentRuntime) -> None:
@@ -565,11 +626,7 @@ class SessionExecutor(AgentExecutor):
             if snapshot is None:
                 return
             revision = runtime.session_revision
-            try:
-                await self._turn_store.save_session_state(session_id, snapshot)
-            except Exception:  # noqa: BLE001 — the goal is already off in the live session
-                logger.exception("could not persist the session state for %s", session_id)
-                return
+            await self._turn_store.save_session_state(session_id, snapshot)
             runtime.clear_session_dirty(revision)
 
     async def _persist_turn_checkpoint(
@@ -646,7 +703,7 @@ class SessionExecutor(AgentExecutor):
         )
         return result if result and result.get("status") == "done" else None
 
-    def abort_context(self, session_id: str) -> bool:
+    async def abort_context(self, session_id: str) -> bool:
         # Stop is broadcast to every executor, but only the one holding this context has anything to stop.
         state = self._contexts.get(session_id)
         if state is None or (state.runtime is None and state.resume_pump is None):
@@ -670,11 +727,11 @@ class SessionExecutor(AgentExecutor):
             state.resume_pump = None
             handled = True
         if state.runtime is not None:
-            state.runtime.abort()
             goal = _features.goal(state.runtime)
             if goal is not None and goal.is_open:
                 _features.park_goal(state.runtime)
-                asyncio.create_task(self._persist_session_state(session_id, state.runtime))
+                await self._persist_session_state(session_id, state.runtime)
+            state.runtime.abort()
             handled = True
         return handled
 
@@ -698,11 +755,16 @@ class SessionExecutor(AgentExecutor):
 
     def set_locations(self, locations: Optional[list[dict]]) -> int:
         """Adopt the workspace's environments after an edit, so a session already open sees the new set."""
+        from langmeshd.features import attach_location_executors
+
+        resolved_locations = attach_location_executors(locations)
         for state in self._contexts.values():
             if state.runtime is not None:
                 # The locations plugin owns the map; a session without the plugin ignores this.
-                state.runtime.features.invoke("set_locations", locations)
-        return len(locations or [])
+                capability = state.runtime.features.capability(LocationsCapability)
+                if capability is not None:
+                    capability.set_locations(resolved_locations)
+        return len(resolved_locations or [])
 
     async def set_permission_mode(self, mode: str) -> str:
         """Adopt a new permission mode now rather than on the next turn, since the turn to reach is the running one."""
@@ -932,6 +994,9 @@ class SessionExecutor(AgentExecutor):
         )
         # The host's plugin bundle: which features run and the ports they need.
         bundle = self._compose_plugins(session_id, runtime_directory, configuration, catalogue)
+        toolbox = toolbox_for(session_id, enabled=self._global_configuration.toolbox.enabled)
+        if toolbox is not None:
+            toolbox.prepare()
         runtime = AgentRuntime(
             RuntimeProfile(
                 agent=configuration,
@@ -949,26 +1014,37 @@ class SessionExecutor(AgentExecutor):
                 sessions=self._peers,
                 mcp_servers=self._mcp_server_manager,
                 jobs=self._job_store,
-                toolset=composed,
+                artifacts=self._artifact_store(session_id),
+                available_tools=composed,
                 related_turns=self._build_turn_reader(),
                 features=(bundle.get("features") or []),
                 services=bundle.get("services"),
+                toolbox=toolbox,
                 # The host probes the machine and the user's context; the library never does.
                 machine_snapshot=self._machine_snapshot(),
                 user_context=self._user_context_snapshot(),
+                environment=RuntimeEnvironment(credentials=file_credential_store()),
             ),
             conversation=conversation,
         )
         if self._observation_registry_metadata or self._observation_registry_error:
-            _features.note_observation_registry(runtime, 
+            _features.note_observation_registry(
+                runtime,
                 self._observation_registry_metadata,
                 self._observation_registry_error,
             )
         return runtime
 
+    @staticmethod
+    def _artifact_store(session_id: str):
+        from langmeshd.commons.paths import session_artifacts_directory
+        from langmeshd.daemon.artifacts import FileArtifacts
+
+        return FileArtifacts(session_artifacts_directory(session_id))
+
     def _machine_snapshot(self) -> dict:
         """The machine snapshot for this session, probed by the host and passed into the runtime."""
-        from langmesh.runtime.prompt_environment import probe_local_environment
+        from langmeshd.daemon.machine_environment import probe_local_environment
 
         import json as _json
 
@@ -983,7 +1059,7 @@ class SessionExecutor(AgentExecutor):
         user_context = getattr(self._global_configuration, "user_context", None)
         if user_context is None or not user_context.enabled:
             return {}
-        from langmesh.runtime.prompt_environment import probe_user_context
+        from langmeshd.daemon.machine_environment import probe_user_context
 
         import json as _json
 
@@ -993,9 +1069,7 @@ class SessionExecutor(AgentExecutor):
             parsed = {}
         return parsed if isinstance(parsed, dict) else {}
 
-    def _compose_plugins(
-        self, session_id: str, runtime_directory: str, configuration, catalogue
-    ):
+    def _compose_plugins(self, session_id: str, runtime_directory: str, configuration, catalogue):
         """The session's plugin bundle (features and their ports), from the host's injected composer."""
         if self._feature_factory is None:
             return {}
@@ -1030,7 +1104,7 @@ class SessionExecutor(AgentExecutor):
         state = self._context(session_id)
         runtime = state.runtime
         if runtime is None:
-            session_state = {}
+            session_state = SessionSnapshot()
             # Restore a persisted conversation the first time a context is seen, so the agent resumes with its history.
             if session_id not in self._conversations:
                 # The two independent rows are read together, so a cold turn pays one database round trip.
@@ -1054,7 +1128,7 @@ class SessionExecutor(AgentExecutor):
                 conversation=conversation,
             )
             # Restore the durable objective alongside the conversation, so a marathon run never loses what it was for.
-            if session_state:
+            if session_state != SessionSnapshot():
                 runtime.restore_session(session_state)
                 # Announce the restored goal here: `restore_session` deliberately does not, being the write that changes nothing.
                 self._notify_goal_state(session_id, _features.goal(runtime))
@@ -1068,13 +1142,13 @@ class SessionExecutor(AgentExecutor):
     def _replay_stored_background_results(self, session_id: str, runtime: AgentRuntime) -> None:
         store = self._job_store
         for job in store.undelivered_jobs(session_id, self._agent_name):
-            _features.inject_stored_background_result(runtime, 
+            _features.inject_stored_background_result(
+                runtime,
                 kind=job["kind"],
                 identifier=job["job_id"],
                 tool_call_identifier=job["tool_call_id"],
                 result=job["result"] or "",
             )
-            store.mark_delivered(job["job_id"])
 
     async def resume_pending_jobs(self) -> None:
         """Record this session's interrupted jobs and replay results its model never saw."""
@@ -1094,9 +1168,9 @@ class SessionExecutor(AgentExecutor):
             )
         if not store.has_undelivered_jobs(self._session_id, self._agent_name):
             return
-        wake_task = asyncio.create_task(self._run_autonomous_turn(self._session_id))
-        self._startup_resume_tasks.add(wake_task)
-        wake_task.add_done_callback(self._startup_resume_tasks.discard)
+        self._spawn_background(
+            self._run_autonomous_turn(self._session_id), name="resume-autonomous-turn"
+        )
 
     def _workspace(self, requested_working_directory: str = "") -> SessionWorktree:
         """Where this session's work happens, resolved once by the host rather than renegotiated per turn."""
@@ -1132,7 +1206,8 @@ class SessionExecutor(AgentExecutor):
             self._on_permission_state(task.context_id, True)
         await save_conversation()
         await self._turn_store.save(task)
-        await updater.update_status(
+        await self._turn_store.commit_status(
+            updater,
             TaskState.input_required,
             updater.new_agent_message([_event_part(StatusEvent(code="input_required"))]),
             final=True,
@@ -1149,7 +1224,7 @@ class SessionExecutor(AgentExecutor):
             updater = TaskUpdater(
                 event_queue, context.current_task.id, context.current_task.context_id
             )
-            await updater.cancel()
+            await self._turn_store.commit_status(updater, TaskState.canceled, final=True)
 
     # The facade the session's socket serves, binding the turn machinery to this one session.
 
@@ -1229,9 +1304,7 @@ class SessionExecutor(AgentExecutor):
                 if not identified.done():
                     identified.set_result("")
 
-        turn = asyncio.create_task(drive())
-        self._startup_resume_tasks.add(turn)
-        turn.add_done_callback(self._startup_resume_tasks.discard)
+        self._spawn_background(drive(), name="relay-turn")
         return await identified
 
     def _title_from_first_message(self, parts: list) -> None:
@@ -1281,7 +1354,8 @@ class SessionExecutor(AgentExecutor):
         self._observation_registry_error = error.strip() if error else None
         state = self._contexts.get(self._session_id)
         if state is not None and state.runtime is not None:
-            _features.note_observation_registry(state.runtime, 
+            _features.note_observation_registry(
+                state.runtime,
                 self._observation_registry_metadata,
                 self._observation_registry_error,
             )
@@ -1303,7 +1377,9 @@ class SessionExecutor(AgentExecutor):
                 task_id=turn_id,
                 context_id=self._session_id,
             )
-            asyncio.create_task(self._drive_input_response(handler, message))
+            self._spawn_background(
+                self._drive_input_response(handler, message), name="resume-input"
+            )
             return True
         return False
 
@@ -1314,8 +1390,8 @@ class SessionExecutor(AgentExecutor):
         except Exception:  # noqa: BLE001 — a failed resume must not take the session down
             logger.exception("resuming session %s after an answer failed", self._session_id)
 
-    def abort(self) -> bool:
-        return self.abort_context(self._session_id)
+    async def abort(self) -> bool:
+        return await self.abort_context(self._session_id)
 
     def abort_tool_call(self, tool_call_identifier: str) -> bool:
         return self.abort_tool(self._session_id, tool_call_identifier)
@@ -1343,7 +1419,7 @@ class SessionExecutor(AgentExecutor):
         if state is not None and state.runtime is not None:
             return _features.compaction_failure(state.runtime)
         snapshot = await self._turn_store.load_session_state(self._session_id)
-        compaction = (snapshot or {}).get("compaction")
+        compaction = snapshot.feature("langmesh.runtime.plugins.compaction.Compaction")
         if not isinstance(compaction, dict) or not compaction.get("failure"):
             return None
         return str(compaction["failure"])
@@ -1452,6 +1528,14 @@ class SessionExecutor(AgentExecutor):
         if self._title_task is not None and not self._title_task.done():
             with contextlib.suppress(Exception):
                 await self._title_task
+        background_tasks = [task for task in self._background_tasks if not task.done()]
+        if background_tasks:
+            completed, pending = await asyncio.wait(
+                background_tasks, timeout=current_limits().sigterm_grace
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*completed, *pending, return_exceptions=True)
         if self._mcp_connect is not None and not self._mcp_connect.done():
             self._mcp_connect.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):

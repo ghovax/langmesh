@@ -26,8 +26,6 @@ class EventType(str, Enum):
     ERROR = "error"
     DENIED_INJECTION = "denied_injection"
     RETRY_REQUESTED = "retry_requested"
-    GROUP_STARTED = "group_started"
-    RELAYED = "relayed"
     STEERING = "steering"
     COMPACTION_STARTED = "compaction_started"
     COMPACTION_DONE = "compaction_done"
@@ -103,7 +101,7 @@ class ToolResult(TurnEvent):
 
 
 @dataclass(frozen=True)
-class Mcp(TurnEvent):
+class MCPEvent(TurnEvent):
     TYPE = EventType.MCP_EVENT
     id: str = ""
     name: str = ""
@@ -119,14 +117,15 @@ class Usage(TurnEvent):
     output_tokens: int = 0
     total_tokens: int = 0
     cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     reasoning_tokens: int = 0
     context_window: int = 0
     context_window_estimated: bool = False
     cumulative: dict[str, Any] = field(default_factory=dict)
-    #: Whether every byte shared with the last request was unchanged, which is what makes the read figure readable.
-    prefix_intact: bool = False
-    #: How much of the prefix was unchanged, estimated with this harness's tokenizer rather than the provider's.
-    reachable_tokens: int = 0
+    #: Whether the preceding request is a complete prefix; ``None`` means this lane has no local baseline.
+    cache_prefix_reusable: bool | None = None
+    #: How much of the prefix is locally reusable, estimated with this harness's tokenizer rather than the provider's.
+    reusable_prefix_tokens: int = 0
     #: How many segments the request had, and how many the previous one already carried unchanged.
     segments: int = 0
     shared_segments: int = 0
@@ -269,7 +268,7 @@ TurnEventUnion = Union[
     TextChunk,
     ToolCall,
     ToolResult,
-    Mcp,
+    MCPEvent,
     Usage,
     Done,
     Suspended,
@@ -284,3 +283,6 @@ TurnEventUnion = Union[
     GoalReviewProgress,
     GoalReviewFinished,
 ]
+
+# Retry requests are consumed into a suspension before they leave the runtime stream.
+ToolExecutionEvent = TurnEventUnion | RetryRequested

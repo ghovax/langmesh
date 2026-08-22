@@ -9,9 +9,15 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from langmesh.base.confinement.paths import configuration_file_path
-from langmesh.base.configuration import Configuration, MCPConfiguration, RemoteAgentsConfiguration
+from langmeshd.commons.paths import configuration_file_path
+from langmesh.base.configuration import Configuration
 from langmeshd.commons import configuration_file
+from langmeshd.commons.configuration_locations import (
+    bundled_agents_root,
+    home_agents_root,
+    mcp_configuration,
+    remote_agents_configuration,
+)
 
 
 PACKAGED_CONFIGURATION_PATH = Path(__file__).resolve().parent / "configuration.yaml"
@@ -24,12 +30,10 @@ def packaged_configuration_yaml() -> str:
 
 def seed_home_agents() -> list[str]:
     """Seed ``~/.agents`` with editable copies, filling only what is missing so a person's edits survive."""
-    from langmesh.base.configuration.configuration import BUNDLED_DOTAGENTS_ROOT
-
-    home_root = Path(Configuration.HOME_AGENTS_ROOT_DIRECTORY).expanduser()
+    home_root = home_agents_root()
     seeded: list[str] = []
     for kind in ("agents", "skills"):
-        source_root = BUNDLED_DOTAGENTS_ROOT / kind
+        source_root = bundled_agents_root() / kind
         if not source_root.is_dir():
             continue
         target_root = home_root / kind
@@ -62,20 +66,18 @@ def load_configuration(*, seed: bool = True) -> Configuration:
     if not path.exists():
         if not seed:
             return Configuration()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(packaged_configuration_yaml())
+        configuration_file.seed(packaged_configuration_yaml())
     data = configuration_file.load()
-    configuration = Configuration(**(data or {}))
-    configuration.mcp = MCPConfiguration.from_dotagents_roots(
-        configuration.agents_root_directories()
-    )
-    configuration.remote_agents = RemoteAgentsConfiguration.from_dotagents_roots(
-        configuration.agents_root_directories()
-    )
+    invalid = configuration_file.rejects(data)
+    if invalid:
+        raise ValueError(f"invalid configuration: {invalid}")
+    configuration = Configuration.model_validate(configuration_file.library_document(data or {}))
+    configuration.mcp = mcp_configuration("")
+    configuration.remote_agents = remote_agents_configuration("")
     return configuration
 
 
-def save_api_keys(
+def save_configuration_changes(
     *,
     exa_api_key: str | None = None,
     jina_api_key: str | None = None,
@@ -84,11 +86,12 @@ def save_api_keys(
     permission_mode: str | None = None,
     sandbox: dict | None = None,
     worktree_strategy: str | None = None,
+    attachments: dict | None = None,
     compaction: dict | None = None,
     user_context_enabled: bool | None = None,
     computer_control_enabled: bool | None = None,
     toolbox_enabled: bool | None = None,
-    tuning: dict | None = None,
+    tuning_limits: dict | None = None,
     provider_keys: dict[str, str] | None = None,
     provider_base_urls: dict[str, str] | None = None,
 ) -> None:
@@ -107,10 +110,12 @@ def save_api_keys(
         data.setdefault("sandbox", {}).update(sandbox)
     if worktree_strategy is not None:
         data.setdefault("workspace", {})["strategy"] = worktree_strategy
+    if attachments is not None:
+        data.setdefault("attachments", {}).update(attachments)
     if compaction is not None:
         data.setdefault("compaction", {}).update(compaction)
-    if tuning is not None:
-        data.setdefault("tuning", {}).update(tuning)
+    if tuning_limits is not None:
+        data.setdefault("tuning", {})["limits"] = tuning_limits
     if user_context_enabled is not None:
         data.setdefault("user_context", {})["enabled"] = user_context_enabled
     if computer_control_enabled is not None:
@@ -129,7 +134,15 @@ def save_api_keys(
             providers_section[provider_id] = entry
     if permission_mode is not None:
         data.setdefault("agent", {})["permission_mode"] = permission_mode
+    invalid = configuration_file.rejects(data)
+    if invalid:
+        raise ValueError(f"invalid configuration change: {invalid}")
     configuration_file.save(data)
 
 
-__all__ = ["load_configuration", "packaged_configuration_yaml", "save_api_keys", "seed_home_agents"]
+__all__ = [
+    "load_configuration",
+    "packaged_configuration_yaml",
+    "save_configuration_changes",
+    "seed_home_agents",
+]

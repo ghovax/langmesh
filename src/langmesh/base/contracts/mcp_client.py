@@ -163,9 +163,7 @@ class MCPServerManager:
     async def _close_connection(connection: Any) -> None:
         try:
             await connection.aclose()
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except BaseException:
+        except Exception:
             pass
 
     async def list_resources(self, server: str = "") -> dict[str, Any]:
@@ -280,9 +278,7 @@ class _StatefulStdioSession:
         self, event_callback: MCPServerEventCallback | None = None
     ) -> AsyncIterator[ClientSession]:
         # Bounded like the startup connect, so an endpoint that never completes its handshake cannot hold the caller.
-        session = await asyncio.wait_for(
-            self._connect(), timeout=current_limits().mcp_connect
-        )
+        session = await asyncio.wait_for(self._connect(), timeout=current_limits().mcp_connect)
         async with self._operation_lock:
             if event_callback is not None:
                 self._callbacks.add(event_callback)
@@ -359,9 +355,7 @@ class _StatefulStreamableHTTPSession:
         self, event_callback: MCPServerEventCallback | None = None
     ) -> AsyncIterator[ClientSession]:
         # Bounded like the startup connect, so an endpoint that never completes its handshake cannot hold the caller.
-        session = await asyncio.wait_for(
-            self._connect(), timeout=current_limits().mcp_connect
-        )
+        session = await asyncio.wait_for(self._connect(), timeout=current_limits().mcp_connect)
         async with self._operation_lock:
             if event_callback is not None:
                 self._callbacks.add(event_callback)

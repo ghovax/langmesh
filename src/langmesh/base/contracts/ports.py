@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import copy
+from dataclasses import dataclass, field, replace
 from datetime import datetime
+import uuid
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -18,15 +20,27 @@ from typing import (
 
 if TYPE_CHECKING:  # pragma: no cover - import only for typing; `base` stays free of langchain
     from langchain_core.language_models.chat_models import BaseChatModel
-    from pathlib import Path
-
-    from langmesh.base.content.attachments import AttachmentInput
+    from langmesh.base.content.attachments import Attachment, ComposedAttachments
+    from langmesh.runtime.session_control import SessionCheckpoint
 
     # The model seam as a type: every provider and every mock in that ecosystem already implements it.
     ChatModel = BaseChatModel
 
 
 # Who decides whether a gated tool call proceeds.
+
+
+@runtime_checkable
+class DurableModelCache(Protocol):
+    """Persists provider-native cache continuity beside the session checkpoint."""
+
+    def model_cache_snapshot(self) -> object:
+        """Return typed cache state owned by this model and session."""
+        ...
+
+    def restore_model_cache(self, snapshot: object) -> None:
+        """Restore a prior snapshot or ignore one that does not belong to this model route."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -135,37 +149,122 @@ class GoalReviewJournal(Protocol):
 class Checkpoints(Protocol):
     """Where a session's resumable state lives, which is what makes it survive the process that ran it."""
 
-    async def save(self, session_id: str, state: Mapping[str, Any]) -> None: ...
+    async def save(self, session_id: str, checkpoint: SessionCheckpoint) -> None: ...
 
-    async def load(self, session_id: str) -> Optional[Mapping[str, Any]]:
-        """The last saved state, or ``None`` for a session that has never been saved."""
+    async def load(self, session_id: str) -> Optional[SessionCheckpoint]:
+        """The last checkpoint, or ``None`` for a session that has never been saved."""
         ...
 
 
 @runtime_checkable
 class Attachments(Protocol):
-    """Composes application-owned paths into one model-facing turn input."""
+    """Composes application-owned attachment values into one model-facing turn input."""
 
     def compose(
         self,
         message: str,
-        attachments: Sequence[Path],
+        attachments: Sequence[Attachment],
         model_identifier: str,
         inline_image_bytes: int,
-    ) -> AttachmentInput: ...
+    ) -> ComposedAttachments: ...
+
+
+@dataclass(frozen=True)
+class ArtifactReference:
+    """The stable public identity and metadata of application-accessible tool output."""
+
+    identifier: str
+    name: str
+    media_type: str
+    size: int = 0
+
+
+@runtime_checkable
+class ArtifactWriter(Protocol):
+    """Incrementally accepts one artifact without prescribing its storage medium."""
+
+    @property
+    def reference(self) -> ArtifactReference: ...
+
+    async def write(self, data: bytes) -> None: ...
+
+    async def close(self) -> ArtifactReference: ...
+
+
+@runtime_checkable
+class Artifacts(Protocol):
+    """Stores complete tool outputs and lets the embedding retrieve their bytes."""
+
+    async def create(
+        self, name: str, media_type: str, *, identifier: str = ""
+    ) -> ArtifactWriter: ...
+
+    async def read(self, identifier: str) -> bytes | None: ...
+
+
+class _MemoryArtifactWriter:
+    def __init__(self, store: "MemoryArtifacts", reference: ArtifactReference) -> None:
+        self._store = store
+        self._reference = reference
+        self._content = bytearray()
+        self._closed = False
+
+    @property
+    def reference(self) -> ArtifactReference:
+        return self._reference
+
+    async def write(self, data: bytes) -> None:
+        if self._closed:
+            raise RuntimeError("artifact writer is closed")
+        self._content.extend(data)
+
+    async def close(self) -> ArtifactReference:
+        if not self._closed:
+            self._closed = True
+            content = bytes(self._content)
+            self._store._commit(self._reference.identifier, content)
+            self._reference = replace(self._reference, size=len(content))
+        return self._reference
+
+
+class MemoryArtifacts:
+    """Complete tool outputs held in memory and exposed through the artifact port."""
+
+    def __init__(self) -> None:
+        self._values: dict[str, bytes] = {}
+        self._active: set[str] = set()
+
+    async def create(self, name: str, media_type: str, *, identifier: str = "") -> ArtifactWriter:
+        reference = ArtifactReference(
+            identifier=identifier or f"artifact-{uuid.uuid4()}",
+            name=name,
+            media_type=media_type,
+        )
+        if reference.identifier in self._values or reference.identifier in self._active:
+            raise FileExistsError(f"Artifact already exists: {reference.identifier}")
+        self._active.add(reference.identifier)
+        return _MemoryArtifactWriter(self, reference)
+
+    def _commit(self, identifier: str, content: bytes) -> None:
+        self._values[identifier] = content
+        self._active.discard(identifier)
+
+    async def read(self, identifier: str) -> bytes | None:
+        return self._values.get(identifier)
 
 
 class MemoryCheckpoints:
     """Checkpoints in a dictionary: the default, so a library session can resume without a store."""
 
     def __init__(self) -> None:
-        self._states: dict[str, Mapping[str, Any]] = {}
+        self._states: dict[str, SessionCheckpoint] = {}
 
-    async def save(self, session_id: str, state: Mapping[str, Any]) -> None:
-        self._states[session_id] = dict(state)
+    async def save(self, session_id: str, checkpoint: SessionCheckpoint) -> None:
+        self._states[session_id] = type(checkpoint).from_data(checkpoint.to_data())
 
-    async def load(self, session_id: str) -> Optional[Mapping[str, Any]]:
-        return self._states.get(session_id)
+    async def load(self, session_id: str) -> Optional[SessionCheckpoint]:
+        checkpoint = self._states.get(session_id)
+        return type(checkpoint).from_data(checkpoint.to_data()) if checkpoint is not None else None
 
 
 # Where background jobs are recorded so one survives a restart.
@@ -185,7 +284,7 @@ class JobStore(Protocol):
         kind: str,
         arguments: Mapping[str, Any],
         tool_call_id: str = "",
-    ) -> None: ...
+    ) -> bool: ...
 
     def record_process_group(self, job_id: str, process_group: int) -> None: ...
 
@@ -221,8 +320,9 @@ class MemoryJobStore:
         kind: str,
         arguments: Mapping[str, Any],
         tool_call_id: str = "",
-    ) -> None:
-        # The same keys the SQLite store writes, so a reader cannot tell the two apart.
+    ) -> bool:
+        if job_id in self._jobs:
+            return False
         self._jobs[job_id] = {
             "job_id": job_id,
             "session_id": session_id,
@@ -234,26 +334,30 @@ class MemoryJobStore:
             "result": "",
             "process_group": 0,
         }
+        return True
 
     def record_process_group(self, job_id: str, process_group: int) -> None:
         if job_id in self._jobs:
             self._jobs[job_id]["process_group"] = process_group
 
     def record_finished(self, job_id: str, result: str, *, status: str = "completed") -> None:
-        if job_id in self._jobs:
+        if job_id in self._jobs and self._jobs[job_id]["status"] == "running":
             self._jobs[job_id].update(result=result, status=status)
 
     def mark_delivered(self, job_id: str) -> None:
-        if job_id in self._jobs:
+        if job_id in self._jobs and self._jobs[job_id]["status"] in {
+            "completed",
+            "abandoned",
+        }:
             self._jobs[job_id]["status"] = "delivered"
 
     def mark_abandoned(self, job_id: str, result: str) -> None:
-        if job_id in self._jobs:
+        if job_id in self._jobs and self._jobs[job_id]["status"] == "running":
             self._jobs[job_id].update(result=result, status="abandoned")
 
     def running_jobs(self, agent_name: str | None = None) -> Sequence[Mapping[str, Any]]:
         return [
-            job
+            copy.deepcopy(job)
             for job in self._jobs.values()
             if job["status"] == "running"
             and (agent_name is None or job["agent_name"] == agent_name)
@@ -265,7 +369,7 @@ class MemoryJobStore:
 
     def undelivered_jobs(self, session_id: str, agent_name: str) -> Sequence[Mapping[str, Any]]:
         return [
-            job
+            copy.deepcopy(job)
             for job in self._jobs.values()
             if job["status"] in {"completed", "abandoned"}
             and job["session_id"] == session_id
@@ -334,16 +438,32 @@ class MemoryTranscript:
 
 
 @runtime_checkable
-class Credentials(Protocol):
-    """Where an account provider's OAuth tokens are kept, rather than a fixed path under the user's home."""
+class CredentialStore(Protocol):
+    """Stores OAuth tokens by provider without prescribing persistence."""
 
-    def load(self) -> Any:
+    def load(self, provider_identifier: str) -> Any:
         """The stored tokens, or ``None`` when nothing is signed in."""
         ...
 
-    def save(self, tokens: Any) -> None: ...
+    def save(self, provider_identifier: str, tokens: Any) -> None: ...
 
-    def clear(self) -> None: ...
+    def clear(self, provider_identifier: str) -> None: ...
+
+
+class MemoryCredentialStore:
+    """Keeps provider credentials in memory for storage-neutral embeddings."""
+
+    def __init__(self) -> None:
+        self._tokens: dict[str, Any] = {}
+
+    def load(self, provider_identifier: str) -> Any:
+        return copy.deepcopy(self._tokens.get(provider_identifier))
+
+    def save(self, provider_identifier: str, tokens: Any) -> None:
+        self._tokens[provider_identifier] = copy.deepcopy(tokens)
+
+    def clear(self, provider_identifier: str) -> None:
+        self._tokens.pop(provider_identifier, None)
 
 
 # Where the prompt's material comes from.
@@ -387,7 +507,7 @@ class CompactionSummaryState:
     """The older turns being replaced, oldest first."""
 
     system_prompt: str
-    """The cache-stable system prompt the session runs with, so the summary matches its voice."""
+    """The cache-stable instructions the session runs with, so the summary matches its voice."""
 
 
 @runtime_checkable
@@ -418,40 +538,26 @@ class CompactionPreparation(Protocol):
 class ContinuationPolicy(Protocol):
     """Decides whether unfinished goals and tracked tasks may open another autonomous turn."""
 
-    def continue_goal(self, goal: Any, completed_turns: int) -> bool: ...
+    def continue_goal(self, goal: Any) -> bool: ...
 
-    def continue_tasks(
-        self,
-        unfinished_tasks: Sequence[Mapping[str, Any]],
-        completed_turns: int,
-    ) -> bool: ...
-
-
-@runtime_checkable
-class BeforeModelHook(Protocol):
-    """May transform the request assembled for one model call."""
-
-    async def before_model(self, messages: list) -> list:
-        ...
+    def continue_tasks(self, unfinished_tasks: Sequence[Mapping[str, Any]]) -> bool: ...
 
 
 @runtime_checkable
 class BeforeToolsHook(Protocol):
     """May narrow the already-approved tool batch before execution."""
 
-    async def before_tools(self, calls: list[dict]) -> list[dict]:
-        ...
+    async def before_tools(self, calls: list[dict]) -> list[dict]: ...
 
 
 @runtime_checkable
 class AfterTurnHook(Protocol):
     """Observes the immutable summary after one turn ends."""
 
-    async def after_turn(self, summary: TurnSummary) -> None:
-        ...
+    async def after_turn(self, summary: TurnSummary) -> None: ...
 
 
-TurnHook = BeforeModelHook | BeforeToolsHook | AfterTurnHook
+TurnHook = BeforeToolsHook | AfterTurnHook
 
 
 @dataclass
@@ -500,16 +606,13 @@ class FileLeases(Protocol):
     def release(self, token: str) -> None: ...
 
 
-@runtime_checkable
-class WorkspaceManager(Protocol):
-    """Prepares the directory in which a session's tools execute."""
+class FileLeaseConflict(RuntimeError):
+    """A requested mutation overlaps a lease held by another session."""
 
-    async def prepare(
-        self,
-        session_id: str,
-        source_working_directory: str,
-        strategy: str,
-    ) -> Any: ...
+    def __init__(self, message: str, *, owner_session_id: str = "", path: str = "") -> None:
+        super().__init__(message)
+        self.owner_session_id = owner_session_id
+        self.path = path
 
 
 @runtime_checkable
@@ -578,6 +681,10 @@ class CatalogueLike(Protocol):
         """One rendered prompt template, or ``""`` when this catalogue has no such template."""
         ...
 
+    def prompt_revision(self) -> str:
+        """A content identity that changes exactly when prompt-visible catalogue values change."""
+        ...
+
 
 @dataclass(frozen=True)
 class PromptLayer:
@@ -610,19 +717,25 @@ def describe_unmet(port: type, candidate: Any) -> str:
 __all__ = [
     "Approval",
     "Approvals",
+    "ArtifactReference",
+    "ArtifactWriter",
+    "Artifacts",
     "Attachments",
     "AfterTurnHook",
-    "BeforeModelHook",
     "BeforeToolsHook",
     "CatalogueLike",
     "Checkpoints",
-    "Credentials",
+    "CredentialStore",
+    "DurableModelCache",
     "GoalReviewContext",
     "GoalReviewJournal",
     "GoalReviewOutcome",
     "FileLeases",
+    "FileLeaseConflict",
     "JobStore",
     "MemoryCheckpoints",
+    "MemoryArtifacts",
+    "MemoryCredentialStore",
     "MemoryJobStore",
     "MemoryTranscript",
     "MCPServers",
@@ -644,6 +757,5 @@ __all__ = [
     "TurnHook",
     "Transcript",
     "TurnSummary",
-    "WorkspaceManager",
     "describe_unmet",
 ]

@@ -25,9 +25,7 @@ class HostServices(Protocol):
 
     # A session's own control-plane verbs (peer composition).
     def peer_call(self, session_id: str, method: str, params: dict) -> Awaitable[dict]: ...
-    def peer_refuse(
-        self, caller: str, method: str, params: dict
-    ) -> Optional[Exception]: ...
+    def peer_refuse(self, caller: str, method: str, params: dict) -> Optional[Exception]: ...
 
     # Durability writes, performed by the host because it is the sole database writer.
     def ingest_call(self, session_id: str, method: str, params: dict) -> Awaitable[Any]: ...
@@ -60,9 +58,7 @@ class NullHostServices:
     async def peer_call(self, session_id: str, method: str, params: dict) -> dict:
         raise RuntimeError(f"no host to serve {method!r} in a library-only embedding")
 
-    def peer_refuse(
-        self, caller: str, method: str, params: dict
-    ) -> Optional[Exception]:
+    def peer_refuse(self, caller: str, method: str, params: dict) -> Optional[Exception]:
         return None
 
     async def ingest_call(self, session_id: str, method: str, params: dict) -> Any:

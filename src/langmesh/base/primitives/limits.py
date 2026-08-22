@@ -8,6 +8,7 @@ poll live here too.
 
 from __future__ import annotations
 
+import contextvars
 import os
 import time
 from dataclasses import dataclass
@@ -52,10 +53,6 @@ class Limits:
     open_url: float = 5.0
     model_silence_give_up: float = 180.0
 
-    # Autonomous continuation budgets, in turns
-    goal_continuation_turns: int = 16
-    task_continuation_turns: int = 16
-
     # Surface settling, in seconds and reads
     settle_poll_seconds: float = 0.05
     settle_give_up_seconds: float = 1.5
@@ -95,42 +92,42 @@ class Limits:
     card_resolve: float = 20.0
 
 
-#: The current limits, set once by whoever loads the configuration.
-_current: Limits = Limits()
+#: The process default, with an optional task-local override for concurrent embedded sessions.
+_default = Limits()
+_bound: contextvars.ContextVar[Limits | None] = contextvars.ContextVar(
+    "langmesh_limits", default=None
+)
 
 
 def set_limits(limits: Limits) -> None:
-    """Adopt the limits the loaded configuration asks for."""
-    global _current
-    _current = limits
+    """Adopt the process-wide limits the host configuration asks for."""
+    global _default
+    _default = limits
+
+
+def bind_limits(limits: Limits) -> contextvars.Token[Limits | None]:
+    """Override limits in the current context until the returned token is reset."""
+    return _bound.set(limits)
+
+
+def reset_limits(token: contextvars.Token[Limits | None]) -> None:
+    """Restore the limits binding represented by ``token``."""
+    _bound.reset(token)
 
 
 def current_limits() -> Limits:
     """The limits in force, defaulting to the shipped values when none were loaded."""
-    return _current
+    return _bound.get() or _default
 
 
 def limits_from_configuration(policy: object) -> Limits:
     """The limits a configuration section asks for, with plain overrides by field name."""
-    values: dict[str, object] = {}
-    overrides = getattr(policy, "defaults", None)
-    if isinstance(overrides, dict):
-        values.update({key: value for key, value in overrides.items() if hasattr(Limits, key)})
-    # The percentages size the headline budgets only when the configuration names no explicit value.
-    context_share = getattr(policy, "context_share", None)
-    if context_share is not None:
-        text = getattr(context_share, "text", None)
-        if isinstance(text, (int, float)) and "output_tokens" not in values:
-            values["output_tokens"] = int(16_384 * float(text) / 0.25)
-        results = getattr(context_share, "results", None)
-        if isinstance(results, (int, float)) and "web_search_maximum" not in values:
-            values["web_search_maximum"] = int(16 * float(results) / 0.15)
-    timeout_multiplier = getattr(policy, "timeout_multiplier", None)
-    if isinstance(timeout_multiplier, (int, float)):
-        base = Limits()
-        for name in base.__dataclass_fields__:
-            if name.endswith("_timeout") or name.endswith("_window") or name == "sigterm_grace":
-                values.setdefault(name, float(getattr(base, name)) * float(timeout_multiplier))
+    configured = getattr(policy, "limits", None)
+    values = (
+        {key: value for key, value in configured.items() if hasattr(Limits, key)}
+        if isinstance(configured, dict)
+        else {}
+    )
     return Limits(**cast(dict[str, Any], values))
 
 
@@ -207,10 +204,12 @@ def settle(
 
 __all__ = [
     "Limits",
+    "bind_limits",
     "clip_to_tokens",
     "count_tokens",
     "current_limits",
     "limits_from_configuration",
+    "reset_limits",
     "set_limits",
     "settle",
 ]

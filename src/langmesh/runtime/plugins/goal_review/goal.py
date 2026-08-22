@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated, Any, ClassVar
 
-from pydantic import BaseModel, StringConstraints, model_validator
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 
 NonBlankText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -26,7 +26,7 @@ class Goal(BaseModel):
     #: What that end state is for, which is what lets a closed route be told apart from a lost goal.
     purpose: NonBlankText | None = None
     #: The minimum conditions that must hold for the goal to be met, each one checkable.
-    requirements: list[NonBlankText] = []
+    requirements: list[NonBlankText] = Field(default_factory=list)
     status: str = "active"
     #: What is in the way, written by the review when it accepts that nothing here can pass it.
     blocker: NonBlankText | None = None
@@ -37,6 +37,9 @@ class Goal(BaseModel):
     review_id: NonBlankText | None = None
     #: How many turns have been opened since a person last spoke, and deliberately not shown to the model.
     continuations: int = 0
+    #: The non-active status the agent just marked for itself, awaiting the secondary review
+    #: that either confirms it or reverts it. Empty once the review has decided.
+    pending_review: str | None = None
 
     #: Being worked, so the session keeps going on its own.
     ACTIVE: ClassVar[str] = "active"
@@ -61,6 +64,11 @@ class Goal(BaseModel):
     def is_open(self) -> bool:
         """Whether this goal is still being worked, as opposed to waiting on a person."""
         return self.status == self.ACTIVE
+
+    @property
+    def is_parked(self) -> bool:
+        """Whether this goal is set aside waiting for its person, which is what a resume lifts."""
+        return self.status == self.PARKED
 
     def updated(self, **changes: Any) -> Goal:
         """Make a validated replacement so linked goal fields cannot diverge."""
@@ -88,4 +96,5 @@ class Goal(BaseModel):
             "status": self.status,
             "blocker": self.blocker,
             "evidence": self.evidence,
+            "pending_review": self.pending_review,
         }

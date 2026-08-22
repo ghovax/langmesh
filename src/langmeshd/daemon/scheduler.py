@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any, Awaitable, Callable
 
 from langmeshd.commons.services import schedules as schedule_service
 from langmesh.base.primitives.errors import log_fields
@@ -14,13 +15,14 @@ logger = logging.getLogger(__name__)
 TICK_SECONDS = 30
 
 
-async def _fire(record) -> None:
-    """Run one schedule: mint a session, send it the prompt, write down what happened."""
-    from langmeshd.daemon import api
+SessionCall = Callable[[dict[str, Any]], Awaitable[dict]]
 
+
+async def fire(record: Any, *, create_session: SessionCall, send_message: SessionCall) -> None:
+    """Run one schedule: mint a session, send it the prompt, write down what happened."""
     session_id = ""
     try:
-        created = await api._session_create(
+        created = await create_session(
             {
                 "agent": record.agent,
                 "working_directory": record.working_directory,
@@ -32,7 +34,7 @@ async def _fire(record) -> None:
         )
         session_id = str(created.get("id") or "")
         # The same shape a typed message uses, so a scheduled turn and a typed one arrive the same way.
-        await api._session_send(
+        await send_message(
             {
                 "id": session_id,
                 "parts": [{"kind": "text", "text": record.prompt}],
@@ -51,14 +53,18 @@ async def _fire(record) -> None:
     await asyncio.to_thread(schedule_service.record_run, record.id, session_id=session_id)
 
 
-async def run() -> None:
+async def run(*, create_session: SessionCall, send_message: SessionCall) -> None:
     """Wake, fire what is due, sleep, catching every failure so one bad row cannot take the loop down."""
     logger.info("scheduler: watching for due schedules every %ds", TICK_SECONDS)
     while True:
         try:
             due = await asyncio.to_thread(schedule_service.due_now)
             for record in due:
-                await _fire(record)
+                await fire(
+                    record,
+                    create_session=create_session,
+                    send_message=send_message,
+                )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001

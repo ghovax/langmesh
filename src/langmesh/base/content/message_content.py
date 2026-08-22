@@ -21,12 +21,10 @@ class MessageContentDelta:
     text: str
 
 
-def _block_identifier(block: ContentBlock) -> str:
-    identifier = block.get("id")
+def _block_identifier(message: BaseMessage, block: ContentBlock, position: int) -> str:
+    identifier = block.get("id") or message.id or "message"
     index = block.get("index")
-    if identifier is None or index is None:
-        raise ValueError("Model content blocks must carry both an id and an index.")
-    return f"{block['type']}:{identifier}:{index}"
+    return f"{block['type']}:{identifier}:{position if index is None else index}"
 
 
 def content_block_metadata(block_identifier: str) -> dict[str, dict[str, str]]:
@@ -53,18 +51,24 @@ def content_blocks_to_message_content(
 
 def message_content_deltas(message: BaseMessage) -> list[MessageContentDelta]:
     deltas: list[MessageContentDelta] = []
-    for block in message.content_blocks:
+    for position, block in enumerate(message.content_blocks):
         block_type = block.get("type")
         if block_type == "text":
             text_block = cast(TextContentBlock, block)
             text = text_block["text"]
             if text:
-                deltas.append(MessageContentDelta("text", _block_identifier(block), text))
+                deltas.append(
+                    MessageContentDelta("text", _block_identifier(message, block, position), text)
+                )
         elif block_type == "reasoning":
             reasoning_block = cast(ReasoningContentBlock, block)
             reasoning = reasoning_block.get("reasoning", "")
             if reasoning:
-                deltas.append(MessageContentDelta("reasoning", _block_identifier(block), reasoning))
+                deltas.append(
+                    MessageContentDelta(
+                        "reasoning", _block_identifier(message, block, position), reasoning
+                    )
+                )
     return deltas
 
 

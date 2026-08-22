@@ -1,6 +1,6 @@
 "use client";
 
-import { expected } from "@/lib/swallowed";
+import { expected } from "@/lib/faults";
 
 // The desktop hands cues to macOS; elsewhere two quiet Web Audio motifs stand in.
 

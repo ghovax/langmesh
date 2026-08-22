@@ -225,7 +225,7 @@ def _read(element: Any) -> Optional[dict[str, Any]]:
     if error != 0 or values is None:
         return None
     attributes: dict[str, Any] = {}
-    for name, value in zip(BATCH_ATTRIBUTES, values):
+    for name, value in zip(BATCH_ATTRIBUTES, values, strict=False):
         if value is None:
             attributes[name] = None
             continue
@@ -799,9 +799,7 @@ def snapshot_app(
         seeds = [(node, 0, (index,)) for index, node in enumerate(roots) if node is not None]
 
     budget = (
-        budget_seconds
-        if budget_seconds is not None
-        else current_limits().accessibility_walk_budget
+        budget_seconds if budget_seconds is not None else current_limits().accessibility_walk_budget
     )
     elements, visited, exhausted = _collect(seeds, window_rect, budget)
     return Snapshot(

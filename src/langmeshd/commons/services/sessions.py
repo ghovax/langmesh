@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from fastapi import HTTPException
-from langmesh.base.persistence.worktrees import SessionWorktree, WorktreeStrategy
+from langmeshd.daemon.persistence.worktrees import SessionWorktree, WorktreeStrategy
 from pathlib import Path
 from typing import Any, cast
 from langmeshd.commons import state
