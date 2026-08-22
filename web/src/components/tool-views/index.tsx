@@ -753,10 +753,10 @@ function SubmitGoalReviewCallView({ args }: { args: Record<string, unknown> }) {
         : "standingUnmet";
   const contract = asString(args.goal_contract);
   const assessment = asString(args.assessment).trim();
-  const unmet = asArray(args.unmet).map(asString).filter(Boolean);
-  const evidence = asString(args.evidence).trim();
-  const blocker = asString(args.blocker).trim();
-  const message = asString(args.message).trim();
+  const unmet = standing === "satisfied" ? [] : asArray(args.unmet).map(asString).filter(Boolean);
+  const evidence = standing === "satisfied" ? asString(args.evidence).trim() : "";
+  const blocker = standing === "blocked" ? asString(args.blocker).trim() : "";
+  const message = standing === "unmet" ? asString(args.message).trim() : "";
   return (
     <FieldList>
       <InlineField label={translation("fieldStanding")}>

@@ -37,9 +37,9 @@ from langmesh.runtime.plugins.compaction.ports import (
 )
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.internals import (
+    await_interruptible,
     conversation_tokens,
     message_tokens,
-    race_interrupt,
 )
 from langmesh.runtime.turn_events import (
     CompactionDone,
@@ -659,9 +659,9 @@ class Compaction(Feature):
                                 streamed["last_usage"] = _event
 
                 stream_task = asyncio.create_task(_consume())
-                if await race_interrupt(stream_task, self._host.turn.abort_event):
-                    summarizer.abort()
-                await stream_task
+                await await_interruptible(
+                    stream_task, self._host.turn.abort_event, summarizer.abort
+                )
                 last_usage = streamed["last_usage"]
                 if last_usage is not None:
                     logger.info(

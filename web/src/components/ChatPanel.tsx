@@ -49,7 +49,7 @@ import {
 } from "react";
 import { useChat } from "@/lib/use-chat";
 import { ChatMessageItem, ChatToolGroup, UserMessageCard } from "./ChatMessage";
-import { ActivityStatus } from "./ActivityStatus";
+import { TranscriptWaitRow } from "./ToolGroup";
 import { TOP_BAR_HEIGHT } from "@/components/ui/Panel";
 import { ChatInput } from "./ChatInput";
 import { QuestionOverlay } from "./QuestionOverlay";
@@ -97,7 +97,7 @@ import {
   type SandboxEnforce,
   type WorktreeStrategy,
 } from "@/lib/api";
-import { scrollFade, scrollFadeTopBottom } from "@/lib/scroll-fade";
+import { hideHorizontalScrollbar, scrollFade, scrollFadeTopBottom } from "@/lib/scroll-fade";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { playAttentionSound, playTurnEndSound } from "@/lib/sounds";
 import {
@@ -108,7 +108,7 @@ import {
 import { reportError } from "@/lib/faults";
 import { errorMessage } from "@/lib/errors";
 import { isCompactViewport } from "@/lib/viewport";
-import { timelineItems } from "@/lib/chat-timeline";
+import { timelineItems, turnHasVisibleOutput } from "@/lib/chat-timeline";
 
 // A Chakra Box that is also a motion component, so the right region can animate open and closed without losing its flex props.
 const MotionBox = motion.create(Box);
@@ -245,6 +245,7 @@ export function ChatPanel({
     tokenUsage,
     queuedMessages,
     handedMessages,
+    awaitingModel,
     sessionId,
     isStreaming,
     isHistoryLoading,
@@ -500,27 +501,18 @@ export function ChatPanel({
     () => sessions.find((entry) => entry.sessionId === sessionId)?.goal ?? null,
     [sessions, sessionId],
   );
-  // The unbounded verdict work: which of it is running now, or parked waiting for its restart.
-  const summarizing = useMemo(
-    () =>
-      messages.some(
-        (message) => message.role === "compaction" && message.meta?.status === "running",
-      ),
-    [messages],
-  );
-  const reviewChecking = activeGoal?.status === "active" && activeGoal.review_phase === "checking";
-  const verdictActivity: "review" | "compaction" | "parked" | null = reviewChecking
-    ? "review"
-    : summarizing
-      ? "compaction"
-      : activeGoal?.status === "parked"
-        ? "parked"
-        : null;
   const handleClearGoal = useCallback(() => {
     if (!sessionId) return;
     // The bar clears when the daemon says it cleared, since whether the goal was still there is the session's answer.
     clearSessionGoal(sessionId).catch((caught) =>
       reportError({ component: "chat-panel", operation: "call off the goal" }, caught),
+    );
+  }, [sessionId]);
+
+  const handleResumeGoal = useCallback(() => {
+    if (!sessionId) return;
+    resumeSessionGoal(sessionId).catch((caught) =>
+      reportError({ component: "chat-panel", operation: "restart the parked goal" }, caught),
     );
   }, [sessionId]);
 
@@ -634,15 +626,9 @@ export function ChatPanel({
   const currentCompactionerName =
     folderDisplayName(workingDirectory) || translation("thisCompactioner");
   const renderedTimeline = useMemo(() => timelineItems(messages), [messages]);
-  const actedSinceLastUser = useMemo(() => {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index];
-      if (message.role === "user") return false;
-      if (message.role === "tool_call") return true;
-    }
-    return false;
-  }, [messages]);
-  const awaitingProvider = isStreaming && !actedSinceLastUser && messages.length > 0;
+  // The daemon's awaiting_model status, only before this turn has a visible row: repeating it
+  // between tool calls flashes the layout.
+  const awaitingProvider = isStreaming && awaitingModel && !turnHasVisibleOutput(messages);
   const visibleHandedMessages = useMemo(() => {
     if (handedMessages.length === 0) return handedMessages;
     const presentIds = new Set(
@@ -969,39 +955,22 @@ export function ChatPanel({
                 <LuMessageSquare size={14} />
               </Box>
             )}
-            <Text textStyle="panelTitle" fontWeight="medium" truncate minW={0} flex={1}>
+            <Flex
+              align="center"
+              gap={2}
+              flex={1}
+              minW={0}
+              overflowX="auto"
+              css={hideHorizontalScrollbar}
+            >
+            <Text textStyle="panelTitle" fontWeight="medium" whiteSpace="nowrap" flexShrink={0}>
               {sessionId
                 ? sessionTitle || translation("untitledConversation")
                 : translation("newConversation")}
             </Text>
-            {/* The unbounded asks — a goal review or a compaction summary being reminded until it
-                submits — are said out loud here, with the stop and the restart at hand. */}
-            {verdictActivity ? (
-              <ActivityStatus
-                label={
-                  verdictActivity === "review"
-                    ? translation("goalReviewChecking")
-                    : verdictActivity === "compaction"
-                      ? translation("compactionSummarizing")
-                      : translation("goalParked")
-                }
-                cancelLabel={translation("stopActivity")}
-                retryLabel={translation("resumeGoal")}
-                onCancel={abort}
-                onRetry={
-                  verdictActivity === "parked" && sessionId
-                    ? () =>
-                        resumeSessionGoal(sessionId).catch((caught) =>
-                          reportError(
-                            { component: "chat-panel", operation: "restart the parked goal" },
-                            caught,
-                          ),
-                        )
-                    : undefined
-                }
-              />
-            ) : null}
-            <GitStatusBar status={directoryStatus} />
+            <Box flexShrink={0}>
+              <GitStatusBar status={directoryStatus} />
+            </Box>
             <Flex align="center" gap={1} flexShrink={0}>
               {/* What this workspace's conversations have handed to other sessions, with a dot only when something has. */}
               <ToolbarAction
@@ -1079,6 +1048,7 @@ export function ChatPanel({
                   <Box flex={1}>{translation("deleteSession")}</Box>
                 </Menu.Item>
               </DropdownMenu>
+            </Flex>
             </Flex>
           </Flex>
           <Box position="relative" flex={1} minH={0} display="flex" flexDirection="column">
@@ -1241,21 +1211,9 @@ export function ChatPanel({
                         {renderedTimeline.map((item, itemIndex) => {
                           const isLastItem = itemIndex === renderedTimeline.length - 1;
                           const key = item.kind === "tool_group" ? item.id : item.message.id;
-                          // A tools-less group stays as a persistent Thinking row, so it is skipped only when it carries neither tools nor thinking.
-                          if (
-                            item.kind === "tool_group" &&
-                            item.messages.length === 0 &&
-                            item.thinkingTurns === 0
-                          ) {
-                            return null;
-                          }
                           const inner =
                             item.kind === "tool_group" ? (
-                              <ChatToolGroup
-                                messages={item.messages}
-                                thinkingTurns={item.thinkingTurns}
-                                keepOpen={isStreaming && isLastItem}
-                              />
+                              <ChatToolGroup messages={item.messages} />
                             ) : (
                               <ChatMessageItem
                                 message={item.message}
@@ -1342,16 +1300,11 @@ export function ChatPanel({
                             }}
                           />
                         ))}
-                        {/* The daemon's own word that the request is with the provider, before the
-                            agent has acted: one ephemeral tool-shaped row in the run of calls, in
-                            the same language as the thinking row rather than a line bolted on. */}
+                        {/* The daemon's awaiting_model status: one wait row, not a spinning last tool group. */}
                         {awaitingProvider ? (
-                          <ChatToolGroup
+                          <TranscriptWaitRow
                             key="awaiting-provider"
-                            messages={[]}
-                            thinkingTurns={0}
-                            keepOpen
-                            pendingLabel={translation("sendingRequestToProvider")}
+                            label={translation("sendingRequestToProvider")}
                           />
                         ) : null}
                       </VStack>
@@ -1431,6 +1384,7 @@ export function ChatPanel({
                   <GoalBar
                     goal={activeGoal}
                     onClear={handleClearGoal}
+                    onResume={activeGoal.status === "parked" ? handleResumeGoal : undefined}
                     onOpenReview={openCurrentReview}
                   />
                 )}

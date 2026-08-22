@@ -239,11 +239,6 @@
     "queuedForDecision": "Waiting for your decision",
     "queuedForCompaction": "Waiting for compaction retry",
     "queuedRetry": "Retry",
-    "goalParked": "Goal paused — resume when ready",
-    "goalReviewChecking": "Secondary goal review running…",
-    "compactionSummarizing": "Summarizing for compaction…",
-    "stopActivity": "Stop",
-    "resumeGoal": "Resume",
     "queuedUnreachable": "Couldn't reach the session",
     "readOnly": "Read-only",
     "reasonAccessRequest": "{count, plural, one {This call asks to reach a path outside what the session may touch.} other {This call asks to reach paths outside what the session may touch.}}",
@@ -334,7 +329,8 @@
     "waitingForBackground": "Waiting for background work",
     "waiting": "Waiting for you",
     "working": "Working toward",
-    "viewReview": "View review"
+    "viewReview": "View review",
+    "resume": "Resume"
   },
   "LocationForm": {
     "local": "Local",
@@ -1051,7 +1047,6 @@
   },
   "ToolDisplay": {},
   "ToolGroup": {
-    "thinking": "Thinking",
     "failed": "Error returned",
     "failedCount": "{count, plural, other {# errors returned}}",
     "runningDetached": "Running detached",
@@ -1205,22 +1200,12 @@
     "yes": "Yes"
   },
   "GoalReviewPanel": {
-    "blocked": "Blocked",
-    "canceled": "Canceled",
     "collapse": "Collapse goal reviews",
-    "completed": "Completed",
     "emptyDescription": "Independent reviews will appear here as they inspect the work.",
     "emptyTitle": "No goal reviews yet",
-    "failed": "Failed",
-    "resumeGoal": "Resume",
-    "reviewNumber": "Review {number}",
     "reviewRunning": "Secondary goal review running…",
-    "reviewing": "Inspecting the work",
-    "satisfied": "Satisfied",
-    "stop": "Stop",
-    "title": "Goal reviews",
-    "unmet": "More work needed",
-    "working": "Checking"
+    "sendingRequestToProvider": "Sending request to the provider…",
+    "title": "Goal reviews"
   },
   "WorkspaceLocationsPanel": {
     "loadError": "Could not load workspace environments",

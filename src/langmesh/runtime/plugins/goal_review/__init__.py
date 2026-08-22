@@ -24,7 +24,7 @@ from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.contracts.ports import GoalReviewContext, GoalReviewOutcome
 from langmesh.base.primitives.identifiers import new_id
 from langmesh.base.primitives.serialization import compact
-from langmesh.runtime.internals import race_interrupt
+from langmesh.runtime.internals import await_interruptible
 from langmesh.runtime.cache_trace import cache_lane
 from langmesh.runtime.plugins.goal_review.goal import Goal
 from langmesh.runtime.turn_events import (
@@ -286,9 +286,9 @@ class GoalReviewFeature(Feature):
 
         review_turn = asyncio.create_task(run())
         try:
-            if await race_interrupt(review_turn, self._host.turn.abort_event):
-                reviewer.abort()
-                await review_turn
+            if await await_interruptible(
+                review_turn, self._host.turn.abort_event, reviewer.abort
+            ):
                 return False
             return True
         finally:

@@ -239,11 +239,6 @@
     "queuedForDecision": "あなたの判断を待っています",
     "queuedForCompaction": "圧縮の再試行を待っています",
     "queuedRetry": "再試行",
-    "goalParked": "ゴールは一時停止中 — 再開できます",
-    "goalReviewChecking": "二次ゴールレビューを実行中…",
-    "compactionSummarizing": "圧縮用の要約を作成中…",
-    "stopActivity": "停止",
-    "resumeGoal": "再開",
     "queuedUnreachable": "セッションに接続できませんでした",
     "readOnly": "読み取り専用",
     "reasonAccessRequest": "この呼び出しは、セッションが触れられる範囲の外にあるパスへのアクセスを求めています。",
@@ -334,7 +329,8 @@
     "waitingForBackground": "バックグラウンド処理の完了待ち",
     "waiting": "確認待ち",
     "working": "取り組み中",
-    "viewReview": "レビューを見る"
+    "viewReview": "レビューを見る",
+    "resume": "再開"
   },
   "LocationForm": {
     "local": "ローカル",
@@ -1051,7 +1047,6 @@
   },
   "ToolDisplay": {},
   "ToolGroup": {
-    "thinking": "思考中",
     "failed": "エラーが返されました",
     "failedCount": "{count, plural, other {# 件エラー}}",
     "runningDetached": "分離して実行中",
@@ -1205,22 +1200,12 @@
     "yes": "はい"
   },
   "GoalReviewPanel": {
-    "blocked": "ブロック中",
-    "canceled": "キャンセル済み",
     "collapse": "目標レビューを折りたたむ",
-    "completed": "完了",
     "emptyDescription": "独立したレビューが作業を確認すると、ここに表示されます。",
     "emptyTitle": "目標レビューはまだありません",
-    "failed": "失敗",
-    "resumeGoal": "再開",
-    "reviewNumber": "レビュー {number}",
     "reviewRunning": "二次ゴールレビューを実行中…",
-    "reviewing": "作業を検証中",
-    "satisfied": "達成済み",
-    "stop": "停止",
-    "title": "目標レビュー",
-    "unmet": "追加作業が必要",
-    "working": "確認中"
+    "sendingRequestToProvider": "プロバイダーにリクエストを送信中…",
+    "title": "目標レビュー"
   },
   "WorkspaceLocationsPanel": {
     "loadError": "ワークスペースの環境を読み込めませんでした",
