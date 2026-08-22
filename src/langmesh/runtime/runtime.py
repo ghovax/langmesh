@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence, cast
 
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     messages_to_dict,
@@ -15,48 +16,29 @@ from langchain_core.tools import BaseTool
 from pydantic import SecretStr
 
 from langmesh.base import confinement as _confinement
-from langmesh.base.confinement import Grant, Profile
 from langmesh.base.configuration import (
     AgentConfiguration,
     Configuration,
     PermissionEvaluator,
     SandboxConfiguration,
 )
-from langchain_core.language_models.chat_models import BaseChatModel
-from langmesh.runtime.models.litellm import ChatLiteLLMModel
-from langmesh.runtime.models.codex import ChatCodexModel
-from langmesh.runtime.models.cursor import ChatCursorModel
-from langmesh.base.content.models import find_model, resolve_litellm
-from langmesh.base.contracts.tools import as_tool_grants
-from langmesh.base.contracts.catalogue import project_catalogue
-from langmesh.runtime.tools.arguments import with_shared_fields
-from langmesh.runtime.tools.execution import Tool, ToolServices, invoke_supplied
-from langmesh.runtime.tools import registry as tools_registry
-from langmesh.runtime.tools.handlers import HANDLERS
-from langmesh.base.contracts.ports import Observation
-from langmesh.runtime.tools.context import ToolContext
-
 from langmesh.base.configuration.permission_mode import PermissionMode
-
-from langmesh.runtime.turn_events import (
-    TurnEvent,
-    Usage,
-)
-
-from langmesh.runtime.turn import (
-    _RunsTurns,
-)
-
-from langmesh.base.primitives.serialization import compact
-from langmesh.base.content.toolbox import toolbox_for
+from langmesh.base.confinement import Grant, Profile
+from langmesh.base.content.models import find_model, resolve_litellm
+from langmesh.base.contracts.catalogue import project_catalogue
+from langmesh.base.contracts.ports import Artifacts, MemoryArtifacts, Observation, describe_unmet
+from langmesh.base.primitives.serialization import content_address
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
+from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.features import (
-    BoundaryView,
+    BackgroundCapability,
     BookkeepingView,
+    BoundaryView,
     ConversationView,
     PluginBus,
     PluginContext,
     PluginHost,
+    LocationsCapability,
     ToolsView,
     TurnView,
     WindowView,
@@ -64,10 +46,25 @@ from langmesh.runtime.features import (
     feature_prompts,
 )
 from langmesh.runtime.hooks import HookRunner
-from langmesh.runtime.pipeline import ToolPipeline
 from langmesh.runtime.internals import (
     _utc_timestamp,
     conversation_tokens,
+)
+from langmesh.runtime.models.codex import ChatCodexModel
+from langmesh.runtime.models.cursor import ChatCursorModel
+from langmesh.runtime.models.litellm import ChatLiteLLMModel
+from langmesh.runtime.pipeline import ToolPipeline
+from langmesh.runtime.session_control import PendingInput, RenderedPrompt, SessionSnapshot
+from langmesh.runtime.tools import registry as tools_registry
+from langmesh.runtime.tools.arguments import with_shared_fields
+from langmesh.runtime.tools.context import ToolContext
+from langmesh.runtime.tools.execution import Tool, ToolServices, invoke_supplied
+from langmesh.runtime.tools.handlers import HANDLERS
+from langmesh.runtime.turn import (
+    _RunsTurns,
+)
+from langmesh.runtime.turn_events import (
+    Usage,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,7 +79,7 @@ async def _drain_observer(pending) -> None:
 
 
 class _CataloguePrompts:
-    """A `PromptLoader`-shaped view of a catalogue, so the template seam cost one adapter rather than a rewrite."""
+    """A prompt-template view of a catalogue, so the template seam costs one adapter."""
 
     def __init__(self, catalogue: Any) -> None:
         self._catalogue = catalogue
@@ -168,12 +165,11 @@ def _build_tool_context(
     session_access: Any = None,
     conversation_snapshot: Optional[Callable[[], list[dict[str, Any]]]] = None,
     mcp_server_manager: Any = None,
+    toolbox: Any = None,
 ) -> ToolContext:
     """The session-shaped state this runtime's tools read, derived from configuration rather than installed."""
     # The session's own tools, and the one widening that goes with them: it cannot install where it may not write.
-    toolbox = toolbox_for(session_id, enabled=global_configuration.toolbox.enabled)
     if toolbox is not None:
-        toolbox.prepare()
         sandbox = sandbox.with_grant(
             _confinement.approved(
                 _confinement.AccessRequest(mutates=True, writes=(str(toolbox.root),)),
@@ -246,77 +242,66 @@ class AgentRuntime(_RunsTurns):
     def __init__(
         self,
         profile: RuntimeProfile,
-        components: RuntimeComponents = RuntimeComponents(),
+        components: RuntimeComponents | None = None,
         *,
         conversation: Optional[list] = None,
     ):
-        agent_configuration = profile.agent
-        global_configuration = profile.configuration
-        session_id = profile.session_id
-        working_directory = profile.working_directory
-        project_directory = profile.project_directory
-        session_access = components.sessions
-        mcp_server_manager = components.mcp_servers
-        model = components.model
-        observer = components.observer
-        approvals = components.approvals
-        catalogue = components.catalogue
-        transcript = components.transcript
-        tools = components.tools
-        permissions = components.permissions
-        toolset = components.toolset
+        if components is None:
+            components = RuntimeComponents()
 
         self._components = components
+        self._environment = components.environment or RuntimeEnvironment()
         self._prompt_composer = components.prompt_composer
         self._hooks = HookRunner(components.hooks)
         self._pipeline = ToolPipeline(components.middleware)
-        self._resource_sync = components.synchronize_resources
-        self._session_id = session_id
+        self._session_id = profile.session_id
         # The session that created this one, empty when a person did. Reporting back needs its id.
         self._parent_session = profile.parent_session
         # What every child is confined to, held so a configuration edit cannot widen a live session.
 
         # Normalised once, because callers hand this three different shapes.
         self._sandbox = _as_profile(profile.sandbox)
-        self._agent_configuration = agent_configuration
-        self._global_configuration = global_configuration
-        self._working_directory = working_directory or str(Path.home())
-        self._project_directory = project_directory or self._working_directory
+        self._agent_configuration = profile.agent
+        self._global_configuration = profile.configuration
+        self._working_directory = profile.working_directory
+        self._project_directory = profile.project_directory or self._working_directory
         # The host already resolved the session mode; a direct library caller falls back to the profile.
         self._permission_mode = PermissionMode.resolve(
-            profile.permission_mode, agent_configuration.permission_default
+            profile.permission_mode, profile.agent.permission_default
         )
 
-        model_identifier = agent_configuration.model_identifier
+        model_identifier = profile.agent.model_identifier
         # Only a runtime that must build a client needs to be told which one.
-        if not model_identifier and model is None:
+        if not model_identifier and components.model is None:
             raise ValueError(
-                f"Agent '{agent_configuration.identifier}' names no model. Set `provider` and `model` in its profile, pass `model_identifier=\"provider/model\"` to `langmesh.Session`, or hand the runtime a `model=` of your own."
+                f"Agent '{profile.agent.identifier}' names no model. Set `provider` and `model` in its profile, pass `model_identifier=\"provider/model\"` to `langmesh.Session`, or hand the runtime a `model=` of your own."
             )
 
         # A caller's own model wins, since accepting `BaseChatModel` is the whole of the model seam.
         self._model = (
-            model
-            if model is not None
+            components.model
+            if components.model is not None
             else build_chat_model(
                 model_identifier or "",
-                global_configuration,
-                agent_configuration,
+                profile.configuration,
+                profile.agent,
                 self._working_directory,
-                session_id,
+                profile.session_id,
             )
         )
 
         self._file_lease_manager = components.file_leases
-        # The caller's tools, granted to this session. A grant is dispatchable and its description is appended to the conversation as a message, so the bound schema — and the provider cache prefix — never changes. A grant may therefore be added at creation or at any later moment; both are append-only.
-        self._tool_grants = tuple(as_tool_grants(tools))
+        # Caller-supplied tools join the initial provider schema, while a later grant deliberately changes that schema once.
+        supplied_tools = tuple(components.application_tools)
         # What a caller's tool is gated at: asking by default, so adding one cannot silently widen a session.
         self._tool_gate = components.tool_gate
-        # The session's tools are composed by the caller, never forced: the complete roster comes from `toolset`, additions from `tools`/`grant_tool`, and nothing is injected by default.
-        configured_tools = list(toolset) if toolset is not None else []
+        # The caller supplies the complete roster and any application replacements, while later grants change it explicitly.
+        configured_tools = (
+            list(components.available_tools) if components.available_tools is not None else []
+        )
         # Every tool a session runs carries the shared `explanation` field, added here once.
         configured_tools = [with_shared_fields(tool) for tool in configured_tools]
-        # The dispatchable units: every tool the session runs, assembled from the caller's set and the caller's own tools. A caller's tool of the same name replaces a built-in's execution. The model binds the configured schemas; grants ride as appended messages and only change who executes, keeping the cache prefix untouched.
+        # The dispatchable units: every tool the session runs, assembled from the configured set and caller-supplied replacements.
         units: dict[str, Tool] = {}
         for tool in configured_tools:
             # A built-in keeps its event-rich handler only when it is the registry's own schema; a caller's tool of the same name is theirs to run through the generic invoke path.
@@ -331,35 +316,37 @@ class AgentRuntime(_RunsTurns):
                 description=tool.description or "",
                 handler=handler,
             )
-        for grant in self._tool_grants:
-            units[grant.tool.name] = Tool(
-                name=grant.tool.name,
-                schema=grant.tool,
-                description=(grant.tool.description or ""),
+        for tool in supplied_tools:
+            units[tool.name] = Tool(
+                name=tool.name,
+                schema=tool,
+                description=(tool.description or ""),
                 handler=invoke_supplied,
             )
         self._tool_units = units
         # The caller's own tools, for the gate and for replacing a built-in's execution.
-        self._supplied_tool_names = {grant.tool.name for grant in self._tool_grants}
+        self._supplied_tool_names = {tool.name for tool in supplied_tools}
         # Executable set (for gating, validation and direct invocation): configured plus grants, grants win.
         self._tools = [
             tool for tool in configured_tools if tool.name not in self._supplied_tool_names
-        ] + [grant.tool for grant in self._tool_grants]
-        self._model_tools = list(configured_tools)
+        ] + list(supplied_tools)
+        self._model_tools = list(self._tools)
         self._tool_schemas: dict[str, Any] = {tool.name: tool.args_schema for tool in self._tools}
-        self._bound_model = self._model.bind_tools(self._model_tools)
+        self._bound_model = self._bind_model_tools(self._model_tools)
         # The evaluator's own `tools_enabled` gate refuses what the profile did not declare.
         self._permissions = (
-            permissions if permissions is not None else PermissionEvaluator(agent_configuration)
+            components.permissions
+            if components.permissions is not None
+            else PermissionEvaluator(profile.agent)
         )
         # Where the audit trail goes, and who answers a gate. Both absent by default.
-        self._observer = observer
-        self._approvals = approvals
-        self._transcript = transcript
+        self._observer = components.observer
+        self._approvals = components.approvals
+        self._transcript = components.transcript
         # The conversation and the prompt this runtime runs with.
 
         self._conversation: list = conversation if conversation is not None else []
-        self._system_prompt = agent_configuration.system_prompt
+        self._system_prompt = profile.agent.system_prompt
         # Files read this session, by location and path with their hash, so a stale edit is rejected.
         self._abort_event = asyncio.Event()
         # A stop is owed until a genuinely fresh turn clears it; steering must not erase it.
@@ -370,22 +357,21 @@ class AgentRuntime(_RunsTurns):
             "output_tokens": 0,
             "total_tokens": 0,
             "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
             # What a cache could have returned, since the read alone has no honest denominator.
-            "reachable_tokens": 0,
+            "reusable_prefix_tokens": 0,
             "reasoning_tokens": 0,
             "model_calls": 0,
         }
 
         # Where the prompt's material comes from, supplied rather than found by walking hardcoded paths.
         # The library default discovers no skills or instruction files on disk: they are voluntary, injected by the caller.
-        if catalogue is None:
-            catalogue = project_catalogue()
-        self._catalogue = catalogue
-        self._prompt_loader = _CataloguePrompts(catalogue)
+        self._catalogue = components.catalogue or project_catalogue()
+        self._prompt_loader = _CataloguePrompts(self._catalogue)
         # Creation-time grants are described from the first turn: their messages sit at the head of the conversation, before any user message, and are stable for the session's life.
-        for grant in self._tool_grants:
-            self._conversation.append(self._tool_grant_message(grant.tool))
         self._cached_system_prompt: str | None = None
+        self._rendered_prompt: RenderedPrompt | None = None
+        self._pending_input: PendingInput | None = None
         self._session_revision = 0
         self._persisted_session_revision = 0
         self._execution_history: list[dict] = []
@@ -393,6 +379,9 @@ class AgentRuntime(_RunsTurns):
         self._a2a_turn_id: str = ""
         # Reads another task by id from the shared store, so context-aware agents can coordinate.
         self._turn_reader: Optional[Callable] = components.related_turns
+        self._artifacts = components.artifacts or MemoryArtifacts()
+        if unmet := describe_unmet(Artifacts, self._artifacts):
+            raise TypeError(f"artifacts: {unmet}")
         # Steering is a plain FIFO drained at the model boundary, never a queue raced against the stream.
         self._pending_steering: list[tuple[str, str, str, asyncio.Future[bool]]] = []
         self._active_tool_tasks: dict[str, asyncio.Task] = {}
@@ -411,13 +400,14 @@ class AgentRuntime(_RunsTurns):
         self._turn_failure_root: str | None = None
         # What the module-level tools read at call time, built from this runtime's own configuration and conversation.
         self._tool_context = _build_tool_context(
-            global_configuration,
+            profile.configuration,
             sandbox=self._sandbox,
             workspace=self._working_directory,
             session_id=self._session_id,
-            session_access=session_access,
+            session_access=components.sessions,
             conversation_snapshot=self._peer_conversation_snapshot,
-            mcp_server_manager=mcp_server_manager,
+            mcp_server_manager=components.mcp_servers,
+            toolbox=components.toolbox,
         )
         # What was approved beyond the configured profile. The boundary is the core's; only the permission plugin adds to it, so other plugins never need to know that plugin exists.
         self._access_grants: list[Grant] = []
@@ -443,9 +433,8 @@ class AgentRuntime(_RunsTurns):
             ),
             boundary=BoundaryView(
                 sandbox=self._sandbox,
-                resolve_execution=lambda tool_name, arguments: self._features.invoke(
-                    "resolve_execution", tool_name, arguments
-                ),
+                writes_anywhere=self.writes_anywhere,
+                resolve_execution=self._resolve_execution,
                 call_policy=self._call_policy,
                 granted_profile=self._granted_profile,
                 access_grants=lambda: self._access_grants,
@@ -466,7 +455,7 @@ class AgentRuntime(_RunsTurns):
                 set_latest_context_tokens=lambda value: setattr(
                     self, "_latest_context_tokens", value
                 ),
-                refresh_cached_prompt=lambda: setattr(self, "_cached_system_prompt", None),
+                refresh_cached_prompt=self.refresh_system_prompt,
             ),
             turn=TurnView(
                 abort_event=self._abort_event,
@@ -491,11 +480,9 @@ class AgentRuntime(_RunsTurns):
             services=components.services,
         )
         self._features = build_features(components.features, self._plugin_context, plugin_host)
-        # Features may contribute tools of their own (bash, computer use, ...); bind them to the
-        # model and make them executable alongside the configured roster. A feature that answers
-        # the `tool_handler` capability supplies the tool's event-rich handler; the generic path
-        # runs the rest. The core never names a tool's owning feature.
+        # Features may contribute tools and event-rich handlers without the core naming their owners.
         contributed = [with_shared_fields(tool) for tool in self._features.contributed_tools()]
+        contributed_handlers = self._features.contributed_tool_handlers()
         if contributed:
             contributed_names = {tool.name for tool in contributed}
             self._tools = [
@@ -506,14 +493,14 @@ class AgentRuntime(_RunsTurns):
             ] + list(contributed)
             self._tool_schemas.update({tool.name: tool.args_schema for tool in contributed})
             for tool in contributed:
-                handler = self._features.invoke("tool_handler", tool.name) or invoke_supplied
+                handler = contributed_handlers.get(tool.name, invoke_supplied)
                 self._tool_units[tool.name] = Tool(
                     name=tool.name,
                     schema=tool,
                     description=tool.description or "",
                     handler=handler,
                 )
-            self._bound_model = self._model.bind_tools(self._model_tools)
+            self._bound_model = self._bind_model_tools(self._model_tools)
         self._apply_contributed_schema_fields()
         # The services bundle every tool handler runs against: the tool's only view of the runtime.
         # Plugin capabilities are reached through the opaque features handle, never by class.
@@ -533,6 +520,11 @@ class AgentRuntime(_RunsTurns):
             pipeline=self._pipeline,
             tools=lambda: self._tools,
             project_directory=self._project_directory or "",
+            plugin_services=components.services,
+            artifacts=self._artifacts,
+            abort_tool=self.abort_tool,
+            model_identifier=self.model_identifier,
+            inline_image_bytes=self.inline_image_bytes,
         )
 
     def note_attachments(self, paths: Sequence[str]) -> None:
@@ -543,7 +535,45 @@ class AgentRuntime(_RunsTurns):
 
     def refresh_system_prompt(self) -> None:
         """Rebuild catalogue-derived prompt material at the next model-call boundary."""
+        if self._cached_system_prompt is None and self._rendered_prompt is None:
+            return
         self._cached_system_prompt = None
+        self._rendered_prompt = None
+        self._note_session_changed()
+
+    def _system_prompt_revision(self) -> str:
+        """Identify every stable construction input while excluding mutable session state."""
+        tools = []
+        for tool in self._model_tools:
+            schema = getattr(tool, "args_schema", None)
+            model_json_schema = getattr(schema, "model_json_schema", None)
+            tools.append(
+                {
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "schema": model_json_schema() if callable(model_json_schema) else {},
+                }
+            )
+        user_context = getattr(self._global_configuration, "user_context", None)
+        return content_address(
+            {
+                "agent": {
+                    "name": self._agent_configuration.name,
+                    "skills": self._agent_configuration.skills,
+                    "system_prompt": self._system_prompt,
+                },
+                "catalogue": self._catalogue.prompt_revision(),
+                "components": self._components.prompt_revision,
+                "features": self._features.prompt_revision(),
+                "user_context_enabled": bool(user_context and user_context.enabled),
+                "prompt_composer": (
+                    f"{type(self._prompt_composer).__module__}.{type(self._prompt_composer).__qualname__}"
+                    if self._prompt_composer is not None
+                    else ""
+                ),
+                "tools": tools,
+            }
+        )
 
     def _apply_contributed_schema_fields(self) -> None:
         """Add each plugin's extra argument fields to the tools they extend, and rebind.
@@ -576,13 +606,15 @@ class AgentRuntime(_RunsTurns):
                 self._tool_units[tool.name] = dataclasses.replace(unit, schema=extended)
             extended_any = True
         if extended_any:
-            self._bound_model = self._model.bind_tools(self._model_tools)
+            self._bound_model = self._bind_model_tools(self._model_tools)
+
+    def _bind_model_tools(self, tools: Sequence[BaseTool]) -> Any:
+        """Bind a nonempty tool roster while leaving an ordinary chat model untouched for a plain turn."""
+        return self._model.bind_tools(list(tools)) if tools else self._model
 
     def _canonical_working_directory(self, working_directory: str | None = None) -> str:
         return str(
-            Path(working_directory or self._working_directory or Path.home())
-            .expanduser()
-            .resolve(strict=False)
+            Path(working_directory or self._working_directory).expanduser().resolve(strict=False)
         )
 
     async def _acquire_filesystem_lease(
@@ -625,25 +657,29 @@ class AgentRuntime(_RunsTurns):
     @property
     def _background(self):
         """This runtime's background-job runner, owned by whatever plugin answers for it."""
-        return self._features.invoke("background")
+        capability = self._features.capability(BackgroundCapability)
+        return capability.runner if capability is not None else None
+
+    def _resolve_execution(self, tool_name: str, arguments: dict) -> Any:
+        """Resolve a feature-owned execution target without naming the feature that owns it."""
+        capability = self._features.capability(LocationsCapability)
+        return (
+            capability.resolve_execution(tool_name, arguments) if capability is not None else None
+        )
 
     def constrained_tool_named(self, tool_name: str):
         """One tool of a given name from the executable set, for a sub-session being bound down to its verdict tool."""
         return [tool for tool in self._tools if tool.name == tool_name]
 
-    def constrain_toolset(self, only: Sequence[BaseTool]) -> None:
+    def retain_tools(self, only: Sequence[BaseTool]) -> None:
         """Bind the session down to exactly the given tools, as a reviewer or summarizer's one verdict tool."""
         self._tools = list(only)
         self._tool_schemas = {tool.name: tool.args_schema for tool in only}
         self._model_tools = list(only)
-        self._bound_model = self._model.bind_tools(list(only))
+        self._bound_model = self._bind_model_tools(only)
 
     def grant_tool(self, tool: BaseTool) -> None:
-        """Grant a tool to this session at any moment: dispatchable now, described to the model
-        by an appended message, so the bound schema — and the provider cache prefix — is untouched.
-        A grant of a name the session already runs replaces that tool's implementation."""
-        if tool.name in self._supplied_tool_names:
-            return
+        """Grant or replace a provider-visible tool, intentionally changing the next request's schema."""
         tool = with_shared_fields(tool)
         self._supplied_tool_names.add(tool.name)
         self._tool_units[tool.name] = Tool(
@@ -653,35 +689,18 @@ class AgentRuntime(_RunsTurns):
             handler=invoke_supplied,
         )
         self._tools = [existing for existing in self._tools if existing.name != tool.name] + [tool]
+        self._model_tools = [
+            existing for existing in self._model_tools if existing.name != tool.name
+        ] + [tool]
         self._tool_schemas[tool.name] = tool.args_schema
-        self._conversation.append(self._tool_grant_message(tool))
+        self._bound_model = self._bind_model_tools(self._model_tools)
         self._note_session_changed()
-
-    def _tool_grant_message(self, tool: BaseTool):
-        """The conversation message that describes a granted tool, schema included, so the model
-        can construct a call without the tool being bound into the provider schema."""
-        schema: dict[str, Any] = {}
-        args_schema = getattr(tool, "args_schema", None)
-        if args_schema is not None:
-            try:
-                schema = args_schema.model_json_schema()
-            except Exception:  # noqa: BLE001 — a malformed schema still leaves the description useful
-                schema = {}
-        content = self._prompt_loader.load(
-            "tool_grant",
-            {
-                "tool_name": tool.name,
-                "description": (tool.description or "").strip(),
-                "schema": compact(schema),
-            },
-        )
-        return self._reminder_message(content, marks={"tool_grant": True, "tool_name": tool.name})
 
     @property
     def token_usage(self) -> dict[str, int]:
         return dict(self._token_usage)
 
-    def _accumulate_usage(self, response: AIMessage) -> TurnEvent | None:
+    def _accumulate_usage(self, response: AIMessage) -> Usage | None:
         """Accumulate one call's usage into the session total and answer a USAGE event, or ``None`` when none was reported."""
         usage = getattr(response, "usage_metadata", None)
         if not usage:
@@ -690,18 +709,20 @@ class AgentRuntime(_RunsTurns):
         output_tokens = int(usage.get("output_tokens", 0) or 0)
         total_tokens = int(usage.get("total_tokens", 0) or 0) or (input_tokens + output_tokens)
         cache_read = int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0)
+        cache_write = int((usage.get("input_token_details") or {}).get("cache_creation", 0) or 0)
         reasoning = int((usage.get("output_token_details") or {}).get("reasoning", 0) or 0)
         if not (input_tokens or output_tokens or total_tokens):
             return None
         # What the adapter worked out about this request's prefix, read before the totals below.
         cache_trace = response.additional_kwargs.get("cache_trace") or {}
         # What could have been served, which is never less than what was, and zero on a session's first call.
-        reachable = max(int(cache_trace.get("reachable_tokens", 0) or 0), cache_read)
+        reachable = max(int(cache_trace.get("reusable_prefix_tokens", 0) or 0), cache_read)
         self._token_usage["input_tokens"] += input_tokens
         self._token_usage["output_tokens"] += output_tokens
         self._token_usage["total_tokens"] += total_tokens
         self._token_usage["cache_read_tokens"] += cache_read
-        self._token_usage["reachable_tokens"] += reachable
+        self._token_usage["cache_write_tokens"] += cache_write
+        self._token_usage["reusable_prefix_tokens"] += reachable
         self._token_usage["reasoning_tokens"] += reasoning
         self._token_usage["model_calls"] += 1
         # The latest call's input is the whole prompt, so it says how full the context is.
@@ -718,12 +739,13 @@ class AgentRuntime(_RunsTurns):
             output_tokens=output_tokens,
             total_tokens=total_tokens,
             cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
             reasoning_tokens=reasoning,
             context_window=context_window,
             context_window_estimated=self._context_window_estimated,
             cumulative=dict(self._token_usage),
-            prefix_intact=bool(cache_trace.get("prefix_intact", False)),
-            reachable_tokens=reachable,
+            cache_prefix_reusable=cache_trace.get("cache_prefix_reusable"),
+            reusable_prefix_tokens=reachable,
             segments=int(cache_trace.get("segments", 0) or 0),
             shared_segments=int(cache_trace.get("shared_segments", 0) or 0),
             divergence=cache_trace.get("divergence"),
@@ -790,15 +812,16 @@ class AgentRuntime(_RunsTurns):
             task.cancel()
 
     def abort_tool(self, tool_call_identifier: str) -> bool:
+        """Stop one live tool call: plugins close their side effects first, then the dispatch task."""
+        handled = self._features.terminate_tool_call(tool_call_identifier)
         task = self._active_tool_tasks.get(tool_call_identifier)
-        aborted = False
         if task is not None and not task.done():
             task.cancel()
-            aborted = True
+            handled = True
         runner = self._background
-        return bool(
-            (runner is not None and runner.cancel_by_tool_call(tool_call_identifier)) or aborted
-        )
+        if runner is not None and runner.cancel_by_tool_call(tool_call_identifier):
+            handled = True
+        return handled
 
     def enqueue_steering(
         self, message: str, message_id: str = "", peer_sender: str = ""
@@ -834,23 +857,39 @@ class AgentRuntime(_RunsTurns):
         """Install the reader `read_turn` uses to fetch related turns from the store."""
         self._turn_reader = task_reader
 
-    def session_snapshot(self) -> dict:
+    def session_snapshot(self) -> SessionSnapshot:
         """The durable non-conversation state the features own, plus the core's own recovery flag."""
-        return {
-            **self._features.snapshot(),
-            "turn_recovery": self._turn_recovery,
-            "turn_failure_root": self._turn_failure_root,
-        }
+        cache_snapshot = getattr(self._model, "model_cache_snapshot", None)
+        return SessionSnapshot(
+            features=self._features.snapshot(),
+            permission_mode=str(self._permission_mode),
+            turn_recovery="retryable" if self._turn_recovery != "none" else "none",
+            turn_failure_root=self._turn_failure_root,
+            model_cache=cache_snapshot() if callable(cache_snapshot) else None,
+            system_prompt=self._rendered_prompt,
+            pending_input=self._pending_input,
+        )
 
-    def restore_session(self, snapshot: dict) -> None:
+    def restore_session(self, snapshot: SessionSnapshot) -> None:
         """Rehydrate the features' durable state and the core's recovery flag."""
-        self._features.restore(snapshot)
-        recovery = str(snapshot.get("turn_recovery") or "none")
-        # A process that died after claiming the retry still owes that retry after restart.
-        self._turn_recovery = "retryable" if recovery == "retrying" else recovery
-        if self._turn_recovery not in {"none", "retryable"}:
-            self._turn_recovery = "none"
-        self._turn_failure_root = snapshot.get("turn_failure_root") or None
+        if not isinstance(snapshot, SessionSnapshot):
+            raise TypeError("snapshot must be a SessionSnapshot value")
+        if snapshot.permission_mode:
+            self._permission_mode = PermissionMode.resolve(snapshot.permission_mode)
+        self._features.restore(snapshot.features)
+        restore_model_cache = getattr(self._model, "restore_model_cache", None)
+        if callable(restore_model_cache):
+            restore_model_cache(snapshot.model_cache)
+        prompt = snapshot.system_prompt
+        if prompt is not None and prompt.revision == self._system_prompt_revision():
+            self._cached_system_prompt = prompt.instructions
+            self._rendered_prompt = prompt
+        else:
+            self._cached_system_prompt = None
+            self._rendered_prompt = None
+        self._pending_input = snapshot.pending_input
+        self._turn_recovery = snapshot.turn_recovery
+        self._turn_failure_root = snapshot.turn_failure_root
         if self._turn_recovery != "retryable":
             self._turn_failure_root = None
 
@@ -905,7 +944,7 @@ class AgentRuntime(_RunsTurns):
     def _record_grant(self, grant: Grant) -> None:
         self._access_grants.append(grant)
 
-    def dirty_session_snapshot(self) -> Optional[dict]:
+    def dirty_session_snapshot(self) -> Optional[SessionSnapshot]:
         """Return state newer than the last persisted revision without acknowledging it."""
         return (
             self.session_snapshot()

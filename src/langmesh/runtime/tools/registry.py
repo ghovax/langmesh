@@ -10,22 +10,26 @@ from langchain_core.tools import StructuredTool
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.execution import current_tool_services
+from langmesh.runtime.background import current_tool_call_id
+from langmesh.runtime.tools.ingest import ingest_paths
 from langmesh.base.content.skills import enabled_skills
 from langmesh.runtime.internals import _background_handle_kind
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 
 # What each tool and shared field tells the model, read from `descriptions/*.md` at import rather than inlined here.
 logger = logging.getLogger(__name__)
 
 # What an element id looks like on both surfaces, so one can be told from a description of an element.
-_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "descriptions")
+_DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "descriptions")
+
 
 def _require_mcp_server_manager():
     manager = tool_context.current().mcp_server_manager
     if manager is None:
         raise RuntimeError("No MCP server is configured.")
     return manager
+
 
 @tool
 async def list_mcp_tools(*, server: str = "") -> str:
@@ -37,6 +41,7 @@ async def list_mcp_tools(*, server: str = "") -> str:
         return compact(
             {"code": "mcp_list_tools_error", "status": "error", "message": str(exception)}
         )
+
 
 @tool
 async def call_mcp_server_tool(
@@ -54,6 +59,7 @@ async def call_mcp_server_tool(
             {"code": "mcp_server_tool_call_error", "status": "error", "message": str(exception)}
         )
 
+
 async def call_mcp_server_tool_with_events(
     server: str,
     tool_name: str,
@@ -67,6 +73,7 @@ async def call_mcp_server_tool_with_events(
         event_callback=event_callback,
     )
 
+
 @tool
 async def list_mcp_resources(*, server: str = "") -> str:
     """List a configured MCP server's resources."""
@@ -77,6 +84,7 @@ async def list_mcp_resources(*, server: str = "") -> str:
         return compact(
             {"code": "mcp_list_resources_error", "status": "error", "message": str(exception)}
         )
+
 
 @tool
 async def read_mcp_resource(*, server: str, uri: str) -> str:
@@ -89,6 +97,7 @@ async def read_mcp_resource(*, server: str, uri: str) -> str:
             {"code": "mcp_read_resource_error", "status": "error", "message": str(exception)}
         )
 
+
 @tool
 async def read_turn(*, turn_id: str = "") -> str:
     """Read a sibling turn; described in descriptions/read_turn.md."""
@@ -96,13 +105,23 @@ async def read_turn(*, turn_id: str = "") -> str:
     requested_turn_id = turn_id
     background_kind = _background_handle_kind(requested_turn_id)
     if services.turn_reader is None:
-        result = {"code": "read_turn_unavailable", "message": "Reading turns is not available in this session."}
+        result = {
+            "code": "read_turn_unavailable",
+            "message": "Reading turns is not available in this session.",
+        }
     elif background_kind is not None:
-        result = {"code": "not_a_readable_turn", "turn_id": requested_turn_id, "job_kind": background_kind}
+        result = {
+            "code": "not_a_readable_turn",
+            "turn_id": requested_turn_id,
+            "job_kind": background_kind,
+        }
     else:
         task = await services.turn_reader(requested_turn_id)
-        result = task if task is not None else {"code": "turn_not_found", "turn_id": requested_turn_id}
+        result = (
+            task if task is not None else {"code": "turn_not_found", "turn_id": requested_turn_id}
+        )
     return compact(result)
+
 
 @tool
 async def load_skill(*, name: str) -> str:
@@ -112,15 +131,42 @@ async def load_skill(*, name: str) -> str:
     match = next((skill for skill in all_skills if skill.identifier == name), None)
     if match is None:
         return compact({"code": "skill_missing", "error": f"No enabled skill named '{name}'."})
-    return compact({
-        "code": "skill_loaded",
-        "name": match.identifier,
-        "title": match.display_title,
-        "path": match.path,
-        "content": match.body,
-    })
+    return compact(
+        {
+            "code": "skill_loaded",
+            "name": match.identifier,
+            "title": match.display_title,
+            "path": match.path,
+            "content": match.body,
+        }
+    )
+
+
+@tool
+async def stop_tool_call(*, tool_call_id: str) -> str:
+    """Stop another live tool call; described in descriptions/stop_tool_call.md."""
+    identifier = str(tool_call_id or "").strip()
+    if not identifier:
+        return compact({"code": "tool_call_id_required"})
+    if identifier == current_tool_call_id():
+        return compact({"code": "cannot_stop_self", "tool_call_id": identifier})
+    abort = current_tool_services().abort_tool
+    if abort is None:
+        return compact({"code": "stop_unavailable", "tool_call_id": identifier})
+    if abort(identifier):
+        return compact({"code": "tool_call_stopped", "tool_call_id": identifier})
+    return compact({"code": "tool_call_not_running", "tool_call_id": identifier})
+
+
+@tool
+async def read_paths(*, paths: list[str]) -> str:
+    """Ingest files at the given paths; described in descriptions/read_paths.md."""
+    result, _blocks = ingest_paths(list(paths or []))
+    return compact(result)
+
 
 # Background jobs are cancelled by whoever owns the process, since a library configures nothing unasked.
+
 
 def tool_description(tool_name: str) -> str:
     """One tool's model-facing description, for a tool built too late to be given one at import."""
@@ -130,6 +176,7 @@ def tool_description(tool_name: str) -> str:
             f"No description file in runtime/tools/descriptions for the {tool_name!r} tool."
         )
     return text
+
 
 def _apply_descriptions() -> None:
     """Give every built-in its model-facing description, and fail at import rather than ship one
@@ -149,5 +196,6 @@ def _apply_descriptions() -> None:
             "These tools have no description file in runtime/tools/descriptions: "
             + ", ".join(sorted(missing))
         )
+
 
 _apply_descriptions()

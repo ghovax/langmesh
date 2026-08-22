@@ -14,9 +14,7 @@ WEB_ROOT = REPOSITORY_ROOT / "web"
 COMPOSER_DOCUMENT = WEB_ROOT / "src-tauri" / "LangMesh.icon"
 TAURI_MASTER = WEB_ROOT / "src-tauri" / "app-icon.png"
 MACOS_ICON = WEB_ROOT / "src-tauri" / "icons" / "icon.icns"
-ICON_COMPOSER_TOOL = Path(
-    "/Applications/Icon Composer.app/Contents/Executables/ictool"
-)
+ICON_COMPOSER_TOOL = Path("/Applications/Icon Composer.app/Contents/Executables/ictool")
 MACOS_CANVAS_SIZE = 1024
 MACOS_ICON_SIZES = (16, 32, 64, 128, 256, 512, 1024)
 
@@ -79,8 +77,7 @@ def _extended_srgb_fill(fill_description: str) -> tuple[int, int, int, int]:
         raise ValueError(f"Unsupported icon fill: {fill_description}")
 
     red_channel, green_channel, blue_channel, alpha_channel = (
-        round(float(color_component) * 255)
-        for color_component in color_components
+        round(float(color_component) * 255) for color_component in color_components
     )
     return red_channel, green_channel, blue_channel, alpha_channel
 
@@ -97,11 +94,7 @@ def render_tiled_icon() -> Image.Image:
 
     for group_configuration in configuration["groups"]:
         for layer_configuration in group_configuration["layers"]:
-            artwork_path = (
-                COMPOSER_DOCUMENT
-                / "Assets"
-                / layer_configuration["image-name"]
-            )
+            artwork_path = COMPOSER_DOCUMENT / "Assets" / layer_configuration["image-name"]
             with Image.open(artwork_path) as artwork_image:
                 artwork = artwork_image.convert("RGBA")
             position = layer_configuration.get("position", {})

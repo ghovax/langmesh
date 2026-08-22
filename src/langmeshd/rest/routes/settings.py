@@ -3,7 +3,7 @@
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 import langmesh.base.confinement as _confinement
-import langmesh.base.content.toolbox as _toolbox
+import langmeshd.commons.toolboxes as _toolbox
 import langmesh.base.configuration as _configuration
 from langmesh.base.identity import cursor_subscription
 from langmesh.base.content.models import available_models, list_models, ModelDefinition
@@ -23,6 +23,8 @@ from langmesh.protocol.dtos import (
     SandboxUpdateRequest,
     UserContextUpdateRequest,
 )
+from langmesh.base.identity.credential_store import bind_credential_store, reset_credential_store
+from langmeshd.daemon.persistence.credentials import file_credential_store
 from langmeshd.commons import state
 from langmeshd.commons.services.broadcast import _publish_broadcast
 from langmeshd.commons.services.sessions import (
@@ -87,11 +89,16 @@ async def list_models_endpoint(refresh: bool = False):
     if refresh:
         clear_subscription_models_cache()
         cursor_subscription.clear_subscription_models_cache()
-    # The subscription providers list a static superset, so both accounts' live catalogs are fetched at once to grey the rest.
-    live_chatgpt, live_cursor = await asyncio.gather(
-        fetch_subscription_models(),
-        cursor_subscription.fetch_subscription_models(),
-    )
+    # Request tasks do not always inherit the daemon's bound store, so bind it for this listing.
+    bound = bind_credential_store(file_credential_store())
+    try:
+        # The subscription providers list a static superset, so both accounts' live catalogs are fetched at once to grey the rest.
+        live_chatgpt, live_cursor = await asyncio.gather(
+            fetch_subscription_models(),
+            cursor_subscription.fetch_subscription_models(),
+        )
+    finally:
+        reset_credential_store(bound)
     catalog = list_models()
     # Live models the static list has not caught are appended, filtered to what this harness can actually route.
     catalog.extend(
@@ -226,11 +233,12 @@ async def update_settings(request: AppSettingsUpdateRequest):
             configuration.agent.permission_mode = _normalize_permission_mode(
                 request.permission_mode
             )
-            await state.reset_runtimes()
         if request.exa_api_key is not None:
             configuration.exa.api_key = request.exa_api_key
         if request.composio_api_key is not None:
-            await asyncio.to_thread(_persist_app_section, "composio", {"api_key": request.composio_api_key})
+            await asyncio.to_thread(
+                _persist_app_section, "composio", {"api_key": request.composio_api_key}
+            )
             state.composio_configuration.api_key = request.composio_api_key
         if request.jina_api_key is not None:
             configuration.jina.api_key = request.jina_api_key
@@ -250,21 +258,20 @@ async def update_settings(request: AppSettingsUpdateRequest):
             for identifier, credential in configuration.providers.items()
         }
         for provider_identifier, api_key in (request.provider_keys or {}).items():
-            existing = (
-                merged_providers.get(provider_identifier)
-                or _configuration.ProviderCredential.model_validate({})
-            )
+            existing = merged_providers.get(
+                provider_identifier
+            ) or _configuration.ProviderCredential.model_validate({})
             merged_providers[provider_identifier] = existing.model_copy(update={"api_key": api_key})
         for provider_identifier, base_url in (request.provider_base_urls or {}).items():
-            existing = (
-                merged_providers.get(provider_identifier)
-                or _configuration.ProviderCredential.model_validate({})
-            )
+            existing = merged_providers.get(
+                provider_identifier
+            ) or _configuration.ProviderCredential.model_validate({})
             merged_providers[provider_identifier] = existing.model_copy(
                 update={"base_url": base_url}
             )
         configuration.providers = merged_providers
         await _apply_live_credentials()
+        await state.reset_runtimes()
     _publish_broadcast({"type": "settings_changed"})
     return {"status": "saved"}
 
@@ -273,7 +280,10 @@ async def update_settings(request: AppSettingsUpdateRequest):
 async def settings_schema():
     """Every setting there is, with what it holds and what it is set to, as one endpoint for the whole file."""
     from langmeshd.commons import configuration_file
-    from langmesh.base.configuration.configuration_schema import KIND_SECTION, settings as all_settings
+    from langmesh.base.configuration.configuration_schema import (
+        KIND_SECTION,
+        settings as all_settings,
+    )
 
     document = await asyncio.to_thread(configuration_file.load)
     sections: dict[str, dict] = {}
@@ -388,7 +398,7 @@ async def update_user_context(request: UserContextUpdateRequest):
 
 @router.post("/settings/computer-control")
 async def update_computer_control(request: ComputerControlUpdateRequest):
-    """Persist and apply the computer-use toggle, dropping cached runtimes since the tool set is built per turn."""
+    """Persist and apply the computer-use toggle, dropping cached runtimes since their tool set is fixed at construction."""
     assert state.global_configuration is not None
     async with state.configuration_lock:
         await _persist_configuration(computer_control_enabled=request.enabled)

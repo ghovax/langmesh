@@ -39,16 +39,23 @@ def main() -> None:
 
     # iOS and the general icon: full-bleed blue, the mark centred, corners left to the platform.
     for name, size in (("icon.png", 1024), ("favicon.png", 96)):
-        write(centred(Image.new("RGBA", (size, size), BRAND_BLUE), mark(int(size * IOS_MARK_SCALE))), name)
+        write(
+            centred(Image.new("RGBA", (size, size), BRAND_BLUE), mark(int(size * IOS_MARK_SCALE))),
+            name,
+        )
 
     # Android's adaptive pair, plus the monochrome layer themed icons are tinted from.
     write(Image.new("RGBA", (1024, 1024), BRAND_BLUE), "android-icon-background.png")
     write(
-        centred(Image.new("RGBA", (1024, 1024), (0, 0, 0, 0)), mark(int(1024 * ANDROID_MARK_SCALE))),
+        centred(
+            Image.new("RGBA", (1024, 1024), (0, 0, 0, 0)), mark(int(1024 * ANDROID_MARK_SCALE))
+        ),
         "android-icon-foreground.png",
     )
     write(
-        centred(Image.new("RGBA", (1024, 1024), (0, 0, 0, 0)), mark(int(1024 * ANDROID_MARK_SCALE))),
+        centred(
+            Image.new("RGBA", (1024, 1024), (0, 0, 0, 0)), mark(int(1024 * ANDROID_MARK_SCALE))
+        ),
         "android-icon-monochrome.png",
     )
 

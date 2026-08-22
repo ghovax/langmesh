@@ -2,7 +2,7 @@
 
 A built-in or caller-supplied tool is a single `Tool`: its model-facing schema, its description,
 and the handler that runs it. The runtime holds only a set of these units and calls
-`tool.handler(services, ...)` for every call, so a tool can be added, replaced, or disabled
+`tool.handler(execution)` for every call, so a tool can be added, replaced, or disabled
 without touching the runtime. The handler is parameterized by an explicit `ToolServices` bundle
 rather than reaching into the runtime, and the bundle also rides in a context variable so a
 schema tool invoked directly (`.ainvoke`) is still fully functional.
@@ -17,16 +17,24 @@ from typing import Any, AsyncIterator, Callable, Sequence
 from langchain_core.tools import BaseTool
 
 from langmesh.base.contracts.ports import ToolInvocation
-from langmesh.runtime.turn_events import Error, ToolResult
+from langmesh.runtime.turn_events import Error, ToolExecutionEvent, ToolResult
 from langmesh.runtime.values import ToolStatus
 
 
-#: What one tool call is handed when it runs: the services, name, arguments, call id, decision,
-#: policy, and resolved location. Each handler yields the events that become the transcript.
-ToolHandler = Callable[
-    [Any, str, dict, str, Any, Any, Any],
-    AsyncIterator[Any],
-]
+@dataclass(frozen=True)
+class ToolExecution:
+    """Every resolved value a handler receives for one tool call."""
+
+    services: ToolServices
+    name: str
+    arguments: dict
+    call_id: str
+    decision: Any
+    policy: Any
+    location: Any = None
+
+
+ToolHandler = Callable[[ToolExecution], AsyncIterator[ToolExecutionEvent]]
 
 
 @dataclass(frozen=True)
@@ -58,6 +66,11 @@ class ToolServices:
     pipeline: Any = None
     tools: Any = None
     project_directory: str = ""
+    plugin_services: Any = None
+    artifacts: Any = None
+    abort_tool: Callable[[str], bool] | None = None
+    model_identifier: str = ""
+    inline_image_bytes: int = 0
 
 
 # The services bound around the current dispatch, so a schema tool invoked directly (`.ainvoke`) resolves the same handler the runtime's generic dispatch uses.
@@ -99,43 +112,36 @@ def current_tool_decision() -> Any:
     return _current_tool_decision.get()
 
 
-async def invoke_supplied(
-    services: ToolServices,
-    tool_name: str,
-    tool_arguments: dict,
-    tool_call_identifier: str,
-    decision: Any,
-    policy: Any,
-    resolved_location: Any,
-) -> AsyncIterator[Any]:
+async def invoke_supplied(execution: ToolExecution) -> AsyncIterator[ToolExecutionEvent]:
     """Run a caller-supplied tool through LangChain's own invocation, wrapped by the middleware pipeline."""
+    services = execution.services
     tool = None
     if services.tools is not None:
         for candidate in services.tools():
-            if getattr(candidate, "name", "") == tool_name:
+            if getattr(candidate, "name", "") == execution.name:
                 tool = candidate
                 break
     if tool is None:
         yield Error(
-            id=tool_call_identifier,
-            message=f"Unknown tool '{tool_name}'",
-            tool=tool_name,
+            id=execution.call_id,
+            message=f"Unknown tool '{execution.name}'",
+            tool=execution.name,
         )
         return
     try:
         if services.pipeline is None:
-            result = await tool.ainvoke(tool_arguments)
+            result = await tool.ainvoke(execution.arguments)
         else:
             result = await services.pipeline.run(
-                ToolInvocation(name=tool_name, arguments=tool_arguments),
+                ToolInvocation(name=execution.name, arguments=execution.arguments),
                 lambda made: tool.ainvoke(made.arguments),
             )
     except Exception as error:  # noqa: BLE001 — a caller's tool failing is a tool result
-        yield Error(id=tool_call_identifier, message=str(error), tool=tool_name)
+        yield Error(id=execution.call_id, message=str(error), tool=execution.name)
         return
     yield ToolResult(
-        id=tool_call_identifier,
-        name=tool_name,
+        id=execution.call_id,
+        name=execution.name,
         result=result,
         status=ToolStatus.OK.value,
     )
@@ -143,6 +149,7 @@ async def invoke_supplied(
 
 __all__ = [
     "Tool",
+    "ToolExecution",
     "ToolHandler",
     "ToolServices",
     "bind_tool_decision",

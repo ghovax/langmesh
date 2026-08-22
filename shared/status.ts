@@ -20,7 +20,7 @@ export const STATUS_PALETTE: Record<StatusKind, string> = {
   failed: "red",
   input_required: "yellow",
   canceled: "gray",
-  background: "purple",
+  background: "teal",
   blocked: "yellow",
   pending: "gray",
   unknown: "gray",

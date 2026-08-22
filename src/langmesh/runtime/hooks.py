@@ -36,22 +36,6 @@ class HookRunner:
     def empty(self) -> bool:
         return not self._hooks
 
-    async def before_model(self, messages: list) -> list:
-        for hook in self._hooks:
-            method = getattr(hook, "before_model", None)
-            if method is None:
-                continue
-            try:
-                returned = await method(messages)
-            except Exception:  # noqa: BLE001 — a hook must not fail the turn
-                logger.warning(
-                    "%s.before_model raised; skipping it", type(hook).__name__, exc_info=True
-                )
-                continue
-            if isinstance(returned, list):
-                messages = returned
-        return messages
-
     async def before_tools(self, calls: list[dict]) -> list[dict]:
         for hook in self._hooks:
             method = getattr(hook, "before_tools", None)

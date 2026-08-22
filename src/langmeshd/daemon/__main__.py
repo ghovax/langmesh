@@ -57,16 +57,11 @@ def _free_port() -> int:
 
 def _write_handshake(token: str, port: int) -> None:
     """Publish where the daemon is and what proves you may talk to it, both 0600 so file permissions are the access control."""
-    token_path = daemon_token_path()
-    token_path.write_text(token)
-    token_path.chmod(0o600)
-    port_path = daemon_port_path()
-    port_path.write_text(str(port))
-    port_path.chmod(0o600)
-    # The pid is how a stop signal reaches a daemon that has stopped answering.
-    pidfile = daemon_pid_path()
-    pidfile.write_text(str(os.getpid()))
-    pidfile.chmod(0o600)
+    from langmeshd.commons.atomic_file import write_text
+
+    write_text(daemon_token_path(), token)
+    write_text(daemon_port_path(), str(port))
+    write_text(daemon_pid_path(), str(os.getpid()))
 
 
 def _clear_handshake() -> None:
@@ -159,6 +154,28 @@ def _announcing_server_class():
     return AnnouncingServer
 
 
+def _session_route_allowed(scope: dict) -> bool:
+    """Whether an attributed session may reach a route that performs its own subtree authorization."""
+    if scope["type"] != "http":
+        return False
+    method = scope.get("method", "")
+    path = str(scope.get("path") or "")
+    if method == "POST" and path == "/rpc":
+        return True
+    if method != "GET":
+        return False
+    segments = path.strip("/").split("/")
+    return (
+        len(segments) == 3
+        and segments[2] == "attach"
+        and segments[0]
+        in {
+            "sessions",
+            "goal-reviews",
+        }
+    )
+
+
 def build_app() -> FastAPI:
     from langmeshd.daemon import state
     from langmeshd.daemon.api import RpcError
@@ -174,6 +191,13 @@ def build_app() -> FastAPI:
         """The same error shape whether it was raised under `/rpc` or a plain route, so a stream failure still says why."""
         return JSONResponse(
             {"error": {"code": error.code, "message": error.message}}, status_code=error.status_code
+        )
+
+    @app.exception_handler(Exception)
+    async def _unhandled(_request: Request, error: Exception) -> JSONResponse:
+        """JSON inside CORS, because uvicorn's bare 500 is opaque to a browser on another origin."""
+        return JSONResponse(
+            {"detail": str(error) or error.__class__.__name__}, status_code=500
         )
 
     # Pure ASGI rather than a decorated middleware, whose response pumping would break this daemon's long-lived streams.
@@ -213,6 +237,8 @@ def build_app() -> FastAPI:
             if presented and secrets.compare_digest(presented, state.daemon_token):
                 # The daemon token says you may drive this daemon and nothing about who is asking, so a session stays itself.
                 scope["state"]["calling_session"] = peer_session or ""
+                if peer_session and not _session_route_allowed(scope):
+                    return await self._refuse(scope, receive, send, forbidden=True)
                 return await self.application(scope, receive, send)
             # A session's own token identifies which session is calling, which is what lets its control-plane calls be attributed to it.
             caller = (
@@ -224,17 +250,26 @@ def build_app() -> FastAPI:
                 return await self._refuse(scope, receive, send)
             # The kernel's answer wins over the token's, so a session holding another's token is still itself.
             scope["state"]["calling_session"] = peer_session or caller.id
+            if not _session_route_allowed(scope):
+                return await self._refuse(scope, receive, send, forbidden=True)
             return await self.application(scope, receive, send)
 
         @staticmethod
-        async def _refuse(scope, receive, send) -> None:
+        async def _refuse(scope, receive, send, *, forbidden: bool = False) -> None:
             """Say no in the shape the caller's transport understands, refusing a handshake rather than accepting and closing."""
             if scope["type"] == "websocket":
-                # 1008 is "policy violation", which is the closest the protocol has to a 401.
+                # 1008 is the websocket protocol's policy-violation refusal.
                 return await WebSocketClose(code=1008)(scope, receive, send)
             response = JSONResponse(
-                {"error": {"code": "unauthorized", "message": "Bad or missing token."}},
-                status_code=401,
+                {
+                    "error": {
+                        "code": "forbidden" if forbidden else "unauthorized",
+                        "message": "This session token cannot access that route."
+                        if forbidden
+                        else "Bad or missing token.",
+                    }
+                },
+                status_code=403 if forbidden else 401,
             )
             return await response(scope, receive, send)
 
@@ -263,7 +298,7 @@ async def _serve() -> int:
     import uvicorn
 
     from langmesh.base import confinement
-    from langmesh.base.persistence.background_store import reap_orphaned_process_groups
+    from langmeshd.daemon.persistence.background_jobs import reap_orphaned_process_groups
     from langmeshd.commons.configuration_io import load_configuration
     from langmeshd.daemon import state
     from langmeshd.commons import state as commons_state
@@ -285,10 +320,10 @@ async def _serve() -> int:
         DaemonConfiguration,
         DictationConfiguration,
     )
-    from langmeshd.commons.configuration_file import load as load_config_document
+    from langmeshd.commons.configuration_file import load as load_configuration_document
 
     try:
-        _document = load_config_document() or {}
+        _document = load_configuration_document() or {}
     except OSError:
         _document = {}
     commons_state.daemon_configuration = DaemonConfiguration.model_validate(
@@ -302,7 +337,7 @@ async def _serve() -> int:
     )
     if commons_state.global_configuration.user_context.enabled:
         # Built here, in the background, so the first message of a conversation never waits on it.
-        from langmesh.runtime.prompt_environment import warm_user_context
+        from langmeshd.daemon.machine_environment import warm_user_context
 
         warm_user_context(commons_state.global_configuration.user_context.refresh_hours)
     # Ask once at boot whether this machine can enforce a profile, on macOS by running one rather than by looking for the binary.
@@ -365,9 +400,9 @@ async def _serve() -> int:
         commons_state.global_configuration,
     )
     # The two places a workspace change has a supervision consequence, filled in only where there is a control plane to tell.
-    from langmeshd.daemon.pending_input import settle_and_reap
+    from langmeshd.daemon.pending_input import retire_session
 
-    commons_state.on_session_deleted = settle_and_reap
+    commons_state.on_session_deleted = retire_session
     commons_state.reset_live_session_runtimes = state.reset_live_session_runtimes
     commons_state.refresh_live_session_locations = state.refresh_workspace_locations
 
@@ -440,7 +475,7 @@ async def _serve() -> int:
         )
         sys.stdout.flush()
         # Rebind rather than close: the starter still sees EOF, and libraries that print keep a writable stream.
-        sys.stdout = open(os.devnull, "w")
+        sys.stdout = await asyncio.to_thread(open, os.devnull, "w")
     logger.info(
         "langmeshd listening on %s and %s:%d",
         state.daemon_socket,
@@ -449,7 +484,7 @@ async def _serve() -> int:
     )
 
     async def resume_pending_sessions() -> None:
-        from langmesh.base.persistence.background_store import get_background_job_store
+        from langmeshd.daemon.persistence.background_jobs import get_background_job_store
 
         assert state.registry is not None
         assert state.lifecycle is not None
@@ -486,7 +521,7 @@ async def _open_stores() -> None:
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy.orm import sessionmaker
 
-    from langmesh.base.confinement.paths import database_file_path
+    from langmeshd.commons.paths import database_file_path
     from langmeshd.commons import state as commons_state
     from langmeshd.commons.database import create_history_schema
     from langmeshd.daemon.persistence.turn_store import AppendOnlyTaskStore
@@ -494,16 +529,30 @@ async def _open_stores() -> None:
     database_path = database_file_path()
     sync_engine = create_engine(f"sqlite:///{database_path}")
 
-    @event.listens_for(sync_engine, "connect")
-    def _pragmas(dbapi_connection, _record):  # noqa: ANN001
+    def _configure_sqlite(dbapi_connection) -> None:  # noqa: ANN001
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA synchronous=FULL")
+        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA wal_autocheckpoint=1000")
         cursor.close()
+
+    @event.listens_for(sync_engine, "connect")
+    def _pragmas(dbapi_connection, _record):  # noqa: ANN001
+        _configure_sqlite(dbapi_connection)
 
     def _initialize() -> None:
         create_history_schema(sync_engine)
+        with sync_engine.connect() as connection:
+            integrity = str(connection.exec_driver_sql("PRAGMA quick_check").scalar() or "")
+            if integrity.lower() != "ok":
+                raise RuntimeError(f"The session database failed its integrity check: {integrity}")
+            foreign_key_errors = connection.exec_driver_sql("PRAGMA foreign_key_check").all()
+            if foreign_key_errors:
+                raise RuntimeError(
+                    f"The session database has {len(foreign_key_errors)} foreign-key violation(s)."
+                )
 
     await asyncio.to_thread(_initialize)
     commons_state.session_factory = sessionmaker(bind=sync_engine)
@@ -513,11 +562,7 @@ async def _open_stores() -> None:
 
     @event.listens_for(commons_state.async_engine.sync_engine, "connect")
     def _async_pragmas(dbapi_connection, _record):  # noqa: ANN001
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA busy_timeout=30000")
-        cursor.close()
+        _configure_sqlite(dbapi_connection)
 
     commons_state.turn_store = AppendOnlyTaskStore(commons_state.async_engine)
     await commons_state.turn_store.initialize()

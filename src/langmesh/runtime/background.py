@@ -8,13 +8,14 @@ import weakref
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from langmesh.base.primitives.identifiers import new_id
 from langmesh.base.primitives.serialization import compact
-from langmesh.base.persistence.background_store import STATUS_COMPLETED, STATUS_DELIVERED
 from langmesh.base.contracts.ports import JobStore, MemoryJobStore
+
+STATUS_COMPLETED = "completed"
+STATUS_DELIVERED = "delivered"
 
 
 # Per-kind presentation: how a completed job is announced and how in-flight ones are grouped in the turn context.
@@ -51,7 +52,6 @@ class _BackgroundJobRecord:
     identifier: str
     kind: str
     task: asyncio.Task
-    output_path: Path | None = None
     cancel_callback: Callable[[], None] | None = None
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     tool_call_identifier: str = ""
@@ -72,7 +72,6 @@ class BackgroundCompletion:
     started_at: datetime
     completed_at: datetime
     tool_call_identifier: str
-    output_path: Path | None
 
 
 # Weak references to every live runner, so exit handlers can cancel outstanding work without owning the tasks.
@@ -87,13 +86,16 @@ class BackgroundJobs:
         session_id: str = "",
         agent_name: str = "",
         store: JobStore | None = None,
+        note_state_changed: Callable[[], None] | None = None,
     ) -> None:
         self._jobs: dict[str, _BackgroundJobRecord] = {}
+        self._pending_deliveries: set[str] = set()
         # Identity for the durable mirror; without a context, durability is simply skipped.
         self._session_id = session_id
         self._agent_name = agent_name
         # Where durability goes, supplied rather than found, so a library session writes no database of its own.
         self._store: JobStore = store if store is not None else MemoryJobStore()
+        self._note_state_changed = note_state_changed or (lambda: None)
         _active_job_runners.add(self)
 
     @property
@@ -107,7 +109,6 @@ class BackgroundJobs:
         coroutine: Coroutine[Any, Any, str],
         *,
         identifier: str | None = None,
-        output_path: Path | None = None,
         cancel_callback: Callable[[], None] | None = None,
         arguments: dict[str, Any] | None = None,
         tool_call_identifier: str = "",
@@ -116,26 +117,31 @@ class BackgroundJobs:
         """Start `coroutine` as a background job and return its identifier."""
         if identifier is None:
             identifier = new_id(_KIND_IDENTIFIER_PREFIX.get(kind, kind))
+        if self._session_id:
+            try:
+                recorded = self._store.record_started(
+                    job_id=identifier,
+                    session_id=self._session_id,
+                    agent_name=self._agent_name,
+                    kind=kind,
+                    arguments=arguments or {},
+                    tool_call_id=tool_call_identifier,
+                )
+                if not recorded:
+                    raise ValueError(f"Background job {identifier!r} already exists.")
+            except Exception:
+                coroutine.close()
+                raise
         task = asyncio.create_task(coroutine)
         self._jobs[identifier] = _BackgroundJobRecord(
             identifier=identifier,
             kind=kind,
             task=task,
-            output_path=output_path,
             cancel_callback=cancel_callback,
             tool_call_identifier=tool_call_identifier,
             arguments=arguments or {},
             detached=detached,
         )
-        if self._session_id:
-            self._store.record_started(
-                job_id=identifier,
-                session_id=self._session_id,
-                agent_name=self._agent_name,
-                kind=kind,
-                arguments=arguments or {},
-                tool_call_id=tool_call_identifier,
-            )
         # Persist the finished result the moment the task completes, so a restart sees it undelivered.
         task.add_done_callback(
             lambda _task, job_identifier=identifier: self._persist_finished(job_identifier)
@@ -145,7 +151,9 @@ class BackgroundJobs:
     def _persist_finished(self, identifier: str) -> None:
         record = self._jobs.get(identifier)
         if record is not None and self._session_id:
-            self._store.record_finished(identifier, self._result_string(record), status=STATUS_COMPLETED)
+            self._store.record_finished(
+                identifier, self._result_string(record), status=STATUS_COMPLETED
+            )
 
     def bind_tool_call(self, identifier: str, tool_call_identifier: str) -> None:
         """Correlate a job with the tool call that started it, so its completion can reference that call."""
@@ -213,8 +221,7 @@ class BackgroundJobs:
         if not self._jobs:
             return
         waiters = [
-            asyncio.ensure_future(asyncio.shield(record.task))
-            for record in self._jobs.values()
+            asyncio.ensure_future(asyncio.shield(record.task)) for record in self._jobs.values()
         ]
         for wake_event in wake_events:
             waiters.append(asyncio.ensure_future(wake_event.wait()))
@@ -251,8 +258,7 @@ class BackgroundJobs:
         if not record.task.done():
             return None
         self._jobs.pop(identifier, None)
-        if self._session_id:
-            self._store.mark_delivered(identifier)
+        self._stage_delivery(identifier)
         return self._build_completion(record)
 
     def drain_completed(self) -> list[BackgroundCompletion]:
@@ -262,10 +268,33 @@ class BackgroundJobs:
             if not record.task.done():
                 continue
             self._jobs.pop(identifier, None)
-            if self._session_id:
-                self._store.mark_delivered(identifier)
+            self._stage_delivery(identifier)
             completions.append(self._build_completion(record))
         return completions
+
+    @property
+    def pending_deliveries(self) -> tuple[str, ...]:
+        """The results represented in memory but not yet acknowledged in their durable store."""
+        return tuple(sorted(self._pending_deliveries))
+
+    def stage_delivery(self, identifier: str) -> None:
+        """Defer a restored result's acknowledgement until its conversation checkpoint commits."""
+        self._stage_delivery(identifier)
+
+    def _stage_delivery(self, identifier: str) -> None:
+        if identifier not in self._pending_deliveries:
+            self._pending_deliveries.add(identifier)
+            self._note_state_changed()
+
+    def acknowledge_deliveries(self) -> None:
+        """Mark only results whose model-visible conversation checkpoint has committed."""
+        acknowledged = bool(self._pending_deliveries)
+        for identifier in tuple(self._pending_deliveries):
+            if self._session_id:
+                self._store.mark_delivered(identifier)
+            self._pending_deliveries.discard(identifier)
+        if acknowledged:
+            self._note_state_changed()
 
     def cancel_all(self) -> None:
         for record in list(self._jobs.values()):
@@ -367,7 +396,6 @@ class BackgroundJobs:
             started_at=record.started_at,
             completed_at=datetime.now(timezone.utc),
             tool_call_identifier=record.tool_call_identifier,
-            output_path=record.output_path,
         )
 
 

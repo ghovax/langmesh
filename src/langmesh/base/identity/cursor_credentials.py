@@ -6,13 +6,11 @@ import asyncio
 import base64
 import hashlib
 import json
-import os
 import secrets
 import time
 import urllib.parse
 import uuid as uuid_module
-from dataclasses import asdict, dataclass
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Optional
 
 import httpx
@@ -24,8 +22,8 @@ from tenacity import (
     wait_exponential,
 )
 
-from langmesh.base.confinement.paths import oauth_token_path
-
+from langmesh.base.contracts.ports import CredentialStore
+from langmesh.base.identity.credential_store import credential_store
 from langmesh.base.primitives.limits import current_limits
 
 
@@ -59,38 +57,25 @@ class CursorTokens:
     account: str
     expires_at: float
 
-    def is_expired(
-        self, leeway_seconds: float | None = None
-    ) -> bool:
+    def is_expired(self, leeway_seconds: float | None = None) -> bool:
         if leeway_seconds is None:
             leeway_seconds = current_limits().credential_refresh_leeway
         return time.time() >= (self.expires_at - leeway_seconds)
 
 
-def auth_file_path() -> Path:
-    return oauth_token_path(PROVIDER)
+def load_tokens(store: CredentialStore | None = None) -> Optional[CursorTokens]:
+    """Load tokens from the caller-owned store, or return ``None`` when signed out."""
+    tokens = (store or credential_store()).load(PROVIDER)
+    return tokens if isinstance(tokens, CursorTokens) else None
 
 
-def load_tokens() -> Optional[CursorTokens]:
-    """Load the stored tokens, or `None` when signed out; synchronous file IO."""
-    path = auth_file_path()
-    if not path.exists():
-        return None
-    try:
-        return CursorTokens(**json.loads(path.read_text()))
-    except (OSError, ValueError, TypeError):
-        return None
+def save_tokens(tokens: CursorTokens, store: CredentialStore | None = None) -> None:
+    """Place tokens in the caller-owned credential store."""
+    (store or credential_store()).save(PROVIDER, tokens)
 
 
-def save_tokens(tokens: CursorTokens) -> None:
-    """Persist tokens with owner-only permissions (they are password-equivalent)."""
-    path = auth_file_path()
-    path.write_text(json.dumps(asdict(tokens), separators=(",", ":")))
-    os.chmod(path, 0o600)
-
-
-def clear_tokens() -> None:
-    auth_file_path().unlink(missing_ok=True)
+def clear_tokens(store: CredentialStore | None = None) -> None:
+    (store or credential_store()).clear(PROVIDER)
 
 
 def is_signed_in() -> bool:
@@ -140,12 +125,20 @@ def _expiry_of(access_token: str) -> float:
     return float(exp) if isinstance(exp, (int, float)) else time.time() + 3600.0
 
 
+def _is_display_account(value: str) -> bool:
+    """Whether a claim is fit to show: an email or a name, never an Auth0 `provider|id` subject."""
+    text = value.strip()
+    if not text or "|" in text:
+        return False
+    return True
+
+
 def _account_of(access_token: str) -> str:
     claims = _decode_jwt_claims(access_token)
-    for claim in ("email", "sub"):
+    for claim in ("email", "email_address", "name", "preferred_username", "authId"):
         value = claims.get(claim)
-        if isinstance(value, str) and value:
-            return value
+        if isinstance(value, str) and _is_display_account(value):
+            return value.strip()
     return ""
 
 
@@ -209,7 +202,8 @@ async def valid_tokens() -> CursorTokens:
 class CursorLoginFlow:
     """One browser sign-in, polled rather than redirected because Cursor's flow has no callback."""
 
-    def __init__(self) -> None:
+    def __init__(self, store: CredentialStore | None = None) -> None:
+        self._store = store or credential_store()
         self._verifier = _generate_verifier()
         self._uuid = str(uuid_module.uuid4())
         self._cancelled = False
@@ -225,6 +219,10 @@ class CursorLoginFlow:
         }
         return f"{LOGIN_URL}?{urllib.parse.urlencode(parameters)}"
 
+    async def start(self) -> None:
+        """Cursor's sign-in is polled, so there is no loopback callback server to bind."""
+        return
+
     async def _ask(self, client: httpx.AsyncClient) -> CursorTokens:
         """One ask of whether the browser has finished, distinguishing pending from refused from unreachable."""
         if self._cancelled:
@@ -237,7 +235,7 @@ class CursorLoginFlow:
         if not response.is_success:
             raise CursorAuthError(f"Cursor refused the sign-in poll (HTTP {response.status_code}).")
         tokens = _tokens_from_payload(response.json())
-        await asyncio.to_thread(save_tokens, tokens)
+        await asyncio.to_thread(save_tokens, tokens, self._store)
         return tokens
 
     async def wait(self) -> CursorTokens:

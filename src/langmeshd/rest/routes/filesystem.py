@@ -6,7 +6,6 @@ from sse_starlette.sse import EventSourceResponse
 from typing import cast
 from watchfiles import awatch
 import asyncio
-import subprocess
 from contextlib import suppress
 from langmesh.protocol.dtos import (
     DirectoryRevealRequest,
@@ -92,10 +91,16 @@ async def reveal_directory(request: DirectoryRevealRequest):
     if not path:
         raise HTTPException(status_code=400, detail="Path is required.")
     try:
-        subprocess.Popen(["open", "-R", path])
+        await asyncio.create_subprocess_exec(
+            "open",
+            "-R",
+            path,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
         return {"revealed": True}
-    except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error))
+    except OSError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
 
 
 # The macOS application name to open a browser's own remote-debugging settings page in.
@@ -109,10 +114,17 @@ async def open_browser_remote_debugging(browser_name: str = "chrome"):
 
     app_name = _BROWSER_APP_NAMES.get(browser_name, _BROWSER_APP_NAMES["chrome"])
     try:
-        subprocess.Popen(["open", "-a", app_name, REMOTE_DEBUGGING_URL])
+        await asyncio.create_subprocess_exec(
+            "open",
+            "-a",
+            app_name,
+            REMOTE_DEBUGGING_URL,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
         return {"opened": True}
-    except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error))
+    except OSError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
 
 
 @router.post("/directory/browse")

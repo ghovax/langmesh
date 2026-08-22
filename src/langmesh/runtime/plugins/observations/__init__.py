@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.features.events import MemoryHandoffFailed, MemoryHandoffVerified
@@ -16,7 +14,6 @@ class ObservationMemory(Feature):
     to the memory panel; a changed failure is queued as request-local feedback so the next model
     opening hears about it exactly once, without it becoming user history.
     """
-
 
     def __init__(self) -> None:
         self._metadata: dict = {}
@@ -70,30 +67,30 @@ class ObservationMemory(Feature):
         tools = getattr(getattr(self._host, "tools", None), "model_tools", None) or []
         return any(getattr(tool, "name", None) == "bash" for tool in tools)
 
-    def prepare_request(self, messages: list) -> list:
-        """The memory panel's metadata and any pending registry failure ride as their own notes."""
-        notes: list[Any] = []
+    def compose_prompt(self, variables: dict[str, str]) -> None:
+        """Place the current metadata in the cached prompt until an explicit refresh adopts a newer revision."""
         if self._metadata:
-            notes.append(
-                self._prompts.load("observational_memory", {"metadata": compact(self._metadata)})
-            )
-        if not self._host.turn.maintenance_active():
-            feedback = self.take_feedback()
-            if feedback:
-                notes.append(
-                    self._prompts.load(
-                        "observation_registry_error"
-                        if self._has_shell()
-                        else "observation_registry_error_unrepairable",
-                        {"error": feedback},
-                    )
-                )
-        if not notes:
-            return messages
-        return [
-            *messages,
-            *(
-                self._host.turn.reminder_message(note.strip())
-                for note in notes
-            ),
-        ]
+            variables["observational_memory"] = self._prompts.load(
+                "observational_memory", {"metadata": compact(self._metadata)}
+            ).strip()
+
+    def prepare_request(self) -> None:
+        """Append a changed registry failure durably at the request boundary where the model first sees it."""
+        if self._host.turn.maintenance_active():
+            return
+        feedback = self.take_feedback()
+        if not feedback:
+            return
+        note = self._prompts.load(
+            "observation_registry_error"
+            if self._has_shell()
+            else "observation_registry_error_unrepairable",
+            {"error": feedback},
+        )
+        reminder = self._host.turn.reminder_message(note.strip())
+        self._host.conversation.messages.append(reminder)
+        self._host.bookkeeping.note_state_changed()
+
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """The registry picture is not a live call to tear down."""
+        return False

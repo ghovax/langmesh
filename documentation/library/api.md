@@ -28,7 +28,7 @@
 
 ::: langmesh.base.contracts.tools
 
-`Session(..., tools=[...])` accepts bare LangChain tools or `ToolGrant` values; `Session.grant_tool(...)` adds one at any later moment. Both are append-only. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
+`Session(..., tools=[...])` binds ordinary LangChain tools into the initial stable provider schema; `Session.grant_tool(...)` adds or replaces one later and intentionally changes the next request's schema. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 
 ## Extension ports
 
@@ -37,7 +37,7 @@
       members: true
       show_root_heading: false
 
-`PromptComposer` receives `PromptLayer` values, while `BeforeModelHook` receives the final provider message list.
+`PromptComposer` receives `PromptLayer` values only when the static prompt is constructed. The public hook surface cannot rewrite the final provider message list.
 
 ## The plugin seam
 
@@ -51,19 +51,19 @@
 
 ## Resources and locations
 
-::: langmesh.base.content.attachments.AttachmentInput
+::: langmesh.base.content.attachments.ComposedAttachments
 
-::: langmesh.base.content.attachments.PathAttachments
+::: langmesh.base.content.attachments.AttachmentComposer
 
-::: langmesh.base.persistence.resources.WorkspaceResources
-    options:
-      members: true
+::: langmesh.base.contracts.ports.ArtifactReference
 
-::: langmesh.base.persistence.resources.OverlayResources
-    options:
-      members: true
+::: langmesh.base.contracts.ports.ArtifactWriter
 
-::: langmesh.base.persistence.observations.ObservationRegistry
+::: langmesh.base.contracts.ports.Artifacts
+
+::: langmesh.base.contracts.ports.MemoryArtifacts
+
+::: langmesh.base.persistence.checkpoints.SQLiteCheckpoints
     options:
       members: true
 

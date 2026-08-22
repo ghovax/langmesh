@@ -1,14 +1,19 @@
-"""Mcp routes."""
+"""MCP routes."""
 
 from __future__ import annotations
 from fastapi import APIRouter
-import langmesh.base.configuration as _configuration
 from langmesh.protocol.dtos import (
     MCPResourceReadRequest,
     MCPServerToolCallRequest,
 )
 from langmeshd.commons import state
 from langmeshd.commons.brokers.mcp_servers import _ensure_mcp_servers_for
+from langmeshd.commons.configuration_locations import (
+    home_agents_root,
+    load_mcp_configuration,
+    mcp_configuration,
+    project_agents_root,
+)
 
 router = APIRouter()
 
@@ -21,21 +26,17 @@ async def mcp_tools(server: str = "", working_directory: str = ""):
     project_server_names: set[str] = set()
     if working_directory:
         await _ensure_mcp_servers_for(working_directory)
-        allowed = set(state.global_configuration.mcp_configuration_for(working_directory).servers)
+        allowed = set(mcp_configuration(working_directory).servers)
         allowed.update(state.composio_servers)
         configured = {
             name: configuration
             for name, configuration in state.global_configuration.mcp.servers.items()
             if name in allowed
         }
-        home_root = state.global_configuration.home_agents_root().resolve()
-        project_root = state.global_configuration.project_agents_root_for(
-            working_directory
-        ).resolve()
+        home_root = home_agents_root().resolve()
+        project_root = project_agents_root(working_directory).resolve()
         if project_root != home_root:
-            project_server_names = set(
-                _configuration.MCPConfiguration.from_dotagents_roots([project_root]).servers
-            )
+            project_server_names = set(load_mcp_configuration([project_root]).servers)
     else:
         configured = state.global_configuration.mcp.servers
     tools_by_server: dict[str, list] = {}

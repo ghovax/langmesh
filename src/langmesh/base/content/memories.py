@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 import re
-from pathlib import Path
+from pathlib import PurePath
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from langmesh.base.persistence.file_cache import parsed_file
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)", re.DOTALL)
 
@@ -19,28 +17,24 @@ class Memory(BaseModel):
     title: str = ""
     description: str = ""
     importance: str = ""
-    tags: list[str] = []
+    tags: list[str] = Field(default_factory=list)
     body: str = ""
     path: str = ""
 
 
-def _as_directories(directories: str | Path | Iterable[str | Path]) -> list[Path]:
-    if isinstance(directories, (str, Path)):
-        return [Path(directories).expanduser()]
-    return [Path(directory).expanduser() for directory in directories]
-
-
-def _parse_memory(path: Path) -> Memory:
-    content = parsed_file(path, lambda each: each.read_text()) or ""
+def parse_memory(content: str, *, source: str = "", default_name: str = "") -> Memory:
+    """Parse one caller-supplied memory document into a value."""
+    source_path = PurePath(source) if source else PurePath(default_name)
+    inferred_name = default_name or source_path.stem
     match = _FRONTMATTER.match(content)
     if not match:
         first_line = next((line.strip() for line in content.splitlines() if line.strip()), "")
         return Memory(
-            name=path.stem,
-            title=path.stem,
+            name=inferred_name,
+            title=inferred_name,
             description=first_line[:240],
             body=content.strip(),
-            path=str(path),
+            path=source,
         )
     frontmatter = yaml.safe_load(match.group(1)) or {}
     raw_tags = frontmatter.get("tags", [])
@@ -49,25 +43,14 @@ def _parse_memory(path: Path) -> Memory:
     else:
         tags = [str(tag) for tag in raw_tags]
     return Memory(
-        name=str(frontmatter.get("name") or path.stem),
-        title=str(frontmatter.get("title") or path.stem),
+        name=str(frontmatter.get("name") or inferred_name),
+        title=str(frontmatter.get("title") or inferred_name),
         description=str(frontmatter.get("description") or ""),
         importance=str(frontmatter.get("importance", "")),
         tags=tags,
         body=match.group(2).strip(),
-        path=str(path),
+        path=source,
     )
-
-
-def load_memories(memory_directories: str | Path | Iterable[str | Path]) -> list[Memory]:
-    memories: dict[str, Memory] = {}
-    for directory in _as_directories(memory_directories):
-        if not directory.is_dir():
-            continue
-        for path in sorted(directory.glob("*.md")):
-            memory = _parse_memory(path)
-            memories[memory.name] = memory
-    return [memories[identifier] for identifier in sorted(memories)]
 
 
 def memories_payload(memories: list[Memory]) -> list[dict]:

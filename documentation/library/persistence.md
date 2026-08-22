@@ -46,7 +46,7 @@ The `Compaction` feature rejects a strategy that reclaims no messages, restores 
 
 With the built-in strategy, the runtime appends one private compaction instruction to the existing conversation and asks the model to answer with a `submit_compaction_summary` tool call. That request is the system prompt, the whole existing conversation, and one appended instruction, so the provider-cache prefix is preserved and only the new tail is uncached. The collected summary then continues the session as the system prompt, the summary, and the newest turns in that order. The summary sits as the first message after the system prompt, becomes part of the cached leading block, and is never a user-visible chat row.
 
-The verdict tool is carried on every request, alongside the other internal verdict tools, so the schema — and therefore the cache prefix — never changes. It exists only in the summarizer's lane: it is granted to that hidden session as a `ToolGrant`, so outside a compaction instruction there is nothing to call and no no-op verdict to enforce. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
+The verdict tool exists only in the summarizer's lane and is bound into that hidden session's provider schema, so the working session never carries a no-op verdict tool. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 
 The summary is best-effort by construction. A provider error, an empty reply, or a model that writes prose instead of calling the tool falls back to the plain tail compaction, which never blocks the session. Supply your own distillation through the `Compaction` feature's `summarizer` port to replace the model call:
 
@@ -79,92 +79,78 @@ Keep the summary request as real messages rather than a rendered string, so the 
 ```python
 from langmesh.runtime.plugins.continuation import Continuation, DefaultContinuationPolicy
 
-# The shipped policy reads the goal and task allowances from the current limits.
+# The shipped policy keeps open goals and unfinished tasks going on their own.
 components = SessionComponents(features=[Continuation(policy=DefaultContinuationPolicy())])
 ```
 
-The standard policy reads the independent goal and task allowances (`goal_continuation_turns`, `task_continuation_turns`) from the current limits. A goal is reviewed before its continuation message is accepted, and when goal and task work are both due, LangMesh composes them into one next turn so the obligations do not race or consume each other's allowance.
+The standard policy keeps an open goal and unfinished tracked tasks going on their own, with no hard turn cap. Each plugin that has a next obligation contributes its own message — the goal its reminder or review prose, tracked tasks their note — staged as separate messages within one next turn, so the obligations never race or open competing turns.
 
-A new user message restores both allowances. Clearing a goal goes through the goal feature (`update_goal` sets it; the review that closes it is separate).
+A new user message resumes a parked goal. Clearing a goal goes through the goal feature (`update_goal` sets it; the review that closes it is separate).
 
-## Resources and persistence
+## Persistence adapters
 
-### Workspace resources
-
-`WorkspaceResourcesLike` owns the location's files, instructions, skills, MCP server declaration, attachments, and observational memory. Local resources expose their path directly. Other fsspec backends are materialized once for path-native tools and synchronized after completed tool batches and at close.
-
-```python
-from langmesh import Session, WorkspaceResources
-
-
-resources = WorkspaceResources.memory(
-    {
-        "README.md": "# Review target",
-        ".agents/instructions/review.md": "Cite every finding.",
-    }
-)
-
-async with Session(agent, resources=resources) as session:
-    await session.ask("Add a concise usage section.")
-
-updated = await resources.read("README.md")
-```
-
-`OverlayResources(base, writable=upper)` composes read layers with one writable upper layer. Remote adapters may supply a push-based `ResourceChangeSource`; LangMesh does not poll when watching is unsupported.
-
-Call `refresh_resources()` at an idle boundary to adopt external changes, and `sync_resources()` to publish materialized changes immediately.
-
-### Observational memory
-
-`session.observations` is a configured `ObservationRegistry` over the same resources. `describe()` returns bounded metadata, `load()` returns the validated current snapshot, and `watch()` yields committed revisions without polling.
-
-```python
-descriptor = await session.observations.describe()
-snapshot = await session.observations.load()
-
-async for changed in session.observations.watch():
-    ...  # A complete validated snapshot with the same revision/entries shape as load().
-```
-
-These APIs are read-only. `load()` returns a mapping: `entries` maps the ledger names (`observations`, `directives`) to lists of validated entry dicts — an observation entry carries `id` and `updated_at` plus the validated fields (`category`, `claim`, `detail`, `evidence`, `standing`, `files`), a directive entry carries `id`, `updated_at`, `kind`, `summary`, `detail`, `occasion`, and `files`. The agent changes `.agents/observations.sqlite` through the documented atomic Bash protocol in the `observational-memory` skill.
+The library never selects a user file, walks a home directory, or starts its own database. `SessionComponents` accepts structural interfaces for checkpoints, artifacts, background jobs, transcripts, credentials, file leases, peer sessions, attachments, and other application-owned behavior. The defaults are memory implementations where a neutral default is meaningful; the daemon supplies its own durable adapters at its composition root.
 
 ### Checkpoints
 
-`Checkpoints` stores the conversation, goal, tasks, compaction control, retry state, and any suspended `PendingTurn`.
+`Checkpoints.save()` and `Checkpoints.load()` exchange a typed `SessionCheckpoint`, not an undocumented mapping. Its `conversation`, `session`, and `pending` fields are explicit. `SessionSnapshot` in turn exposes the live permission mode, typed feature values, retry state, provider cache state, the exact stable instructions with their construction revision, and any accepted `PendingInput` that has not yet joined the conversation. Dynamic session context is an ordinary marked message in `conversation`, so a changed value appends rather than mutating the restored prefix.
 
 ```python
+import sqlite3
+from langmesh import Session, SessionComponents, SQLiteCheckpoints
+
+connection = sqlite3.connect("sessions.sqlite")
+components = SessionComponents(checkpoints=SQLiteCheckpoints(connection))
+session = Session(agent, session_id="review-1", directory="/srv/checkout", components=components)
+```
+
+The connection is caller-owned, so `sqlite3.connect(":memory:")` and a file connection use the same adapter and lifecycle. `SQLiteCheckpoints` performs each replacement in an explicit transaction. `MemoryCheckpoints` makes defensive typed copies so its behavior matches a serialized adapter rather than leaking mutable aliases.
+
+A remote adapter implements the same protocol and uses `to_data()` and `from_data()` only at its transport boundary:
+
+```python
+from langmesh import SessionCheckpoint
+
 class RedisCheckpoints:
-    async def save(self, session_id, state):
-        await redis.set(f"langmesh:{session_id}", json.dumps(state))
+    async def save(self, session_id: str, checkpoint: SessionCheckpoint) -> None:
+        await redis.set(f"langmesh:{session_id}", json.dumps(checkpoint.to_data()))
 
-    async def load(self, session_id):
+    async def load(self, session_id: str) -> SessionCheckpoint | None:
         value = await redis.get(f"langmesh:{session_id}")
-        return json.loads(value) if value else None
+        return SessionCheckpoint.from_data(json.loads(value)) if value else None
 ```
 
-Pass the same session id and store to resume in another `Session` instance.
+### Artifacts
 
-### Transcript and audit
-
-`Transcript` records one `TurnSummary` per completed or cancelled turn. It is not an A2A task store; the daemon translates core events into its product transcript through adapters.
-
-`Observer` receives transient audit `Observation` values. It may return an awaitable, but its failure is logged and cannot fail the turn.
-
-### Background jobs
-
-`BackgroundJobsFeature` records detached work through a `JobStore` (`MemoryJobStore` is process-local; a durable implementation enables restart recovery). Completion is delivered to the model through the normal turn path, and the daemon replays undelivered results across a restart.
-
-### Workspaces and file leases
-
-`SessionWorktreeManager` is the standard opt-in workspace implementation:
+`Artifacts.create()` returns an incremental `ArtifactWriter`; closing it yields a typed `ArtifactReference`, and `Artifacts.read()` gives the embedding the bytes by identifier. The default `MemoryArtifacts` performs no filesystem I/O. Tools return artifact identifiers instead of inventing output paths, including `download`, fetched-page overflow, and Bash logs.
 
 ```python
-from langmesh import Session, SessionComponents
-from langmesh.base.persistence.worktrees import SessionWorktreeManager
+from langmesh import MemoryArtifacts, SessionComponents
 
-components = SessionComponents(workspace=SessionWorktreeManager())
+artifacts = MemoryArtifacts()
+components = SessionComponents(artifacts=artifacts)
 session = Session(agent, directory="/srv/checkout", components=components)
-runtime_directory = await session.prepare_worktree("worktree")
+
+writer = await session.artifacts.create("report.txt", "text/plain")
+await writer.write(b"application-owned output")
+reference = await writer.close()
+content = await session.artifacts.read(reference.identifier)
 ```
 
-Prepare the workspace before the runtime is built; the strategy is `none`, `branch`, or `worktree`. `FileLeases` coordinates mutations across sessions; `FileLeaseManager` is the standard implementation.
+The daemon's `FileArtifacts` adapter chooses a daemon-owned directory, serializes concurrent writes, flushes file and directory metadata, and publishes a completed artifact with an atomic replace. A different application can store the same stream in object storage, a database, or another process without changing a tool.
+
+### Write-ahead boundaries
+
+An accepted input is checkpointed as `PendingInput` before the daemon publishes working state. The runtime then checkpoints before every provider request, before executing an announced tool batch, after tool results, and after appending a background result. A live permission-mode change commits before it reaches execution. A result's job record is marked delivered only after the conversation checkpoint that contains it commits. Restart replay is therefore idempotent: an input or result is either absent and replayable, or present and acknowledged, never acknowledged but missing.
+
+The daemon's SQLite connections use WAL, `synchronous=FULL`, foreign-key enforcement, a bounded busy timeout, explicit SQLAlchemy transactions, and startup integrity checks. SQLite already provides atomicity, consistency, isolation, and durability through transactions; these settings choose the strongest ordinary local durability instead of relying on ambient defaults. Cache-only in-memory indexes are advanced only after their SQL transaction exits successfully.
+
+Checkpoint decoders reject malformed enums, missing typed fields, and invalid collection shapes instead of silently dropping corrupt state. Memory adapters recursively detach nested values so a caller cannot mutate a saved checkpoint through an alias. `Session.aclose()` restores before saving when necessary and discards the runtime only after that save commits, which makes the ordinary act/save/close/reload cycle lossless and makes a close failure retryable.
+
+LangGraph checkpointers solve graph-superstep persistence. LangMesh does not execute a `StateGraph`, so installing a second checkpointer would duplicate and potentially disagree with the runtime's provider, tool, suspension, and background-job boundaries. The `Checkpoints` port deliberately provides the same application-level choice of in-memory or durable storage without coupling the turn loop to LangGraph.
+
+### Transcript, audit, and background jobs
+
+`Transcript` records one `TurnSummary` per completed or cancelled turn. `Observer` receives transient audit `Observation` values and cannot fail a turn. `BackgroundJobsFeature` records detached work through `JobStore`; `MemoryJobStore` is process-local, while a durable implementation enables restart recovery. Duplicate job identifiers are rejected before their coroutine starts, preventing an idempotent retry from repeating an external effect.
+
+Filesystem mutation is never an implicit persistence behavior of these interfaces. An explicit tool may of course modify a path the caller authorized, and the library reads its own shipped prompt assets as package resources. Project catalogues, observation databases, configuration files, worktrees, uploads, and daemon state remain application-layer concerns.

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import yaml as _yaml
-
 from langmeshd.commons.brokers.composio import composio_mcp_servers
-from langmeshd.commons.configuration_io import load_configuration, save_api_keys
-from langmesh.base.confinement.paths import configuration_file_path
+from langmeshd.commons import configuration_file
+from langmeshd.commons.configuration_io import load_configuration, save_configuration_changes
+from langmeshd.commons.paths import configuration_file_path
 from langmesh.base.contracts.mcp_client import MCPServerManager
 from langmesh.base.primitives.serialization import compact
 from typing import Optional
@@ -17,13 +16,12 @@ from langmeshd.commons import state
 
 def _persist_app_section(section: str, changes: dict) -> None:
     """Write one of the app's own configuration-file sections, preserving the rest of the file."""
-    path = configuration_file_path()
-    document = {}
-    if path.exists():
-        document = _yaml.safe_load(path.read_text()) or {}
+    document = configuration_file.load()
     document.setdefault(section, {}).update(changes)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_yaml.safe_dump(document, sort_keys=False))
+    invalid = configuration_file.rejects(document)
+    if invalid:
+        raise ValueError(f"invalid app configuration change: {invalid}")
+    configuration_file.save(document)
 
 
 async def _apply_live_credentials() -> None:
@@ -69,7 +67,7 @@ def _configuration_digest() -> Optional[str]:
 
 async def _persist_configuration(**changes) -> None:
     """Write configuration changes to disk and remember the digest, so the watcher does not read our own save as an edit."""
-    await asyncio.to_thread(save_api_keys, **changes)
+    await asyncio.to_thread(save_configuration_changes, **changes)
     state.last_written_configuration_digest = await asyncio.to_thread(_configuration_digest)
 
 

@@ -75,10 +75,10 @@ def configure(
     )
     meter = MeterProvider(resource=resource, metric_readers=[reader]).get_meter("langmesh")
     _token_counter = meter.create_counter(
-        "gen_ai.client.token.usage", unit="{token}", description="LLM tokens used"
+        "gen_ai.client.token.usage", unit="{token}", description="model tokens used"
     )
     _call_counter = meter.create_counter(
-        "gen_ai.client.operation.count", unit="{call}", description="LLM model calls"
+        "gen_ai.client.operation.count", unit="{call}", description="model calls"
     )
     logger.info("telemetry enabled, exporting traces and metrics to %s", endpoint)
 

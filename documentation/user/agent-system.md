@@ -43,7 +43,7 @@ tools_enabled:
   - update_goal
   - search_web
   - fetch_url
-  - download_file
+  - download
   - list_mcp_tools
   - call_mcp_server_tool
   - list_mcp_resources
@@ -101,7 +101,7 @@ Bundled skills:
 
 `.agents/memories/*.md` are passages the user records. Only their metadata is injected into the prompt; the agent reads a memory's body **on demand**, so context stays small while knowledge accumulates across sessions.
 
-Observational memory is separate. `.agents/observations.sqlite` is current workspace knowledge maintained deliberately by an agent through Bash. It holds only current rows; Git provides history. The system prompt carries only a compact descriptor (resolved path, revision, per-ledger counts, timestamp extent) and a stable instruction to retrieve a relevant slice when prior work may matter. Exact retrieval uses SQLite; semantic retrieval exports minified JSONL into a fresh disposable Semble index. The `observational-memory` skill defines the retrieval and atomic write protocols; `consolidate-observations` runs only when the user explicitly invokes it.
+Observational memory is separate. `.agents/observations.sqlite` is current workspace knowledge maintained deliberately by an agent through Bash. It holds only current rows; Git provides history. Append-only session context carries a compact descriptor (resolved path, revision, per-ledger counts, timestamp extent, and a `status` of `ok`, `missing`, or `broken`), while stable instructions explain how to retrieve a relevant slice when prior work may matter. A missing or broken registry is reported through that descriptor, never read as empty — the agent is told the state and can repair it. Exact retrieval uses SQLite; semantic retrieval exports minified JSONL into a fresh disposable Semble index. The `observational-memory` skill defines the retrieval and atomic write protocols; `consolidate-observations` runs only when the user explicitly invokes it.
 
 ### MCP servers
 
@@ -157,7 +157,7 @@ A session can also install what it does not have. Where the machine has Nix, eac
 | --------------- | ------------ |
 | `search_web`    | Search the web with Exa. Arguments: `query`, `result_count` (1–10, default 5). |
 | `fetch_url`     | Fetch a page's content as `markdown`, `text`, or `html`, through a tiered engine: Jina, then Firecrawl, then direct. Arguments: `url`, `format`, `timeout`, `hard_deadline`, `background`. |
-| `download_file` | Download a file from a URL to a path, keeping raw bytes. Arguments: `url`, `path`, `timeout`, `hard_deadline`, `background`. |
+| `download`      | Download raw bytes into the caller-owned artifact store. Arguments: `url`, `timeout`, `hard_deadline`, `background`. |
 
 A search or download that runs longer than its inline window moves to the background and its result arrives on its own; the agent never polls it.
 
@@ -173,7 +173,7 @@ A search or download that runs longer than its inline window moves to the backgr
 
 A goal is not a longer task list. The task list is the steps; the goal is the outcome the steps are for. When a turn ends with actionable tracked tasks unfinished, the harness opens a hidden reminder turn that asks the session to reassess the user's requests, add any omitted work, and continue instead of merely describing it. Explicitly blocked tasks wait for the person, and a bounded continuation allowance prevents a stale list from running forever.
 
-An open goal keeps going through its independent review machinery (see [Goals](../internal/architecture.md#goals)). The goal plugin also offers `self_managed` mode, which skips the reviewer and simply re-prompts the agent on the goal itself. See [Configuration](configuration.md#conversation-compaction).
+An open goal keeps going through its own status machinery. The agent owns the goal's `status` through `update_goal`: staying `active` while working, marking `satisfied` or `blocked` when it believes the work or a blockage is real, or `parked`/`cleared` to set it aside. A `satisfied` or `blocked` mark is settled by the independent secondary review (see [Goals](../internal/architecture.md#goals)), which confirms it only on evidence and overrides a mark the work does not support; an open goal a turn ends on without a mark is re-opened with a light continuation reminder. See [Configuration](configuration.md#conversation-compaction).
 
 ### Peer sessions
 
@@ -198,14 +198,14 @@ The peer starts with a copy of its parent's model-facing conversation, while kee
 
 **The hidden verdict tools**
 
-Three tools exist only in internal lanes and never in a working session's roster: `submit_goal_review` for the goal reviewer, `submit_compaction_summary` for the compaction summarizer, and `permission_decision` for the automatic permission reviewer. Each is granted to its hidden session as a `ToolGrant`, so outside that instruction there is nothing to call and no inert verdict to enforce.
+Three tools exist only in internal lanes and never in a working session's roster: `submit_goal_review` for the goal reviewer, `submit_compaction_summary` for the compaction summarizer, and `permission_decision` for the automatic permission reviewer. Each is bound only in its hidden session, so outside that instruction there is nothing to call and no inert verdict to enforce.
 
 ### Where the definitions live
 
 A built-in tool is one `Tool` unit: its schema, description, and handler joined at registration, with the shared `explanation` and `access_request` fields injected on every schema.
 
 - **Core schemas and execution:** `src/langmesh/runtime/tools/registry.py` (the MCP bridge and `read_turn`/`load_skill`) and `src/langmesh/runtime/tools/sessions.py` (the peer-session and remote-agent tools), with event-rich handlers in `src/langmesh/runtime/tools/handlers.py`.
-- **Plugin tools and their handlers:** `src/langmesh/runtime/plugins/<name>/` — `bash`, `web` (`search_web`, `fetch_url`, `download_file`), `interaction` (`ask_user`), `continuation` (`set_tasks`/`update_tasks`), `goal_review` (`update_goal`), `computer_use` (`control_screen`).
+- **Plugin tools and their handlers:** `src/langmesh/runtime/plugins/<name>/` — `bash`, `web` (`search_web`, `fetch_url`, `download`), `interaction` (`ask_user`), `continuation` (`set_tasks`/`update_tasks`), `goal_review` (`update_goal`), `computer_use` (`control_screen`).
 - **Descriptions the model reads:** one markdown file per tool — `src/langmesh/runtime/tools/descriptions/` for the core tools, and each plugin's `prompts/` directory for plugin tools.
 - **Dispatch (permission, validation, policy) and the batch runner:** `src/langmesh/runtime/tools/dispatch.py`.
 - **Model-facing message templates:** `src/langmesh/runtime/prompts/`.

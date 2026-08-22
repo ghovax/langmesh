@@ -14,6 +14,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from langmesh.base.confinement import Grant, Profile
 from langmesh.runtime.locations import CallExecutionPolicy
+from langmesh.runtime.session_control import SessionSnapshot
 from langmesh.runtime.tools.context import ToolContext
 
 
@@ -30,9 +31,14 @@ class BoundaryView:
     """The confinement a feature is held to, and the reach approved so far."""
 
     sandbox: Profile  #: The configured confinement the operating system will enforce.
-    resolve_execution: Callable[[str, dict], Any]  #: A call's opaque execution target, from the features; ``None`` means local.
+    writes_anywhere: bool  #: Whether the configured confinement permits any filesystem writes.
+    resolve_execution: Callable[
+        [str, dict], Any
+    ]  #: A call's opaque execution target, from the features; ``None`` means local.
     call_policy: Callable[[Any], CallExecutionPolicy]  #: One call's policy.
-    granted_profile: Callable[[], Profile]  #: The confinement with every standing grant compacted in.
+    granted_profile: Callable[
+        [], Profile
+    ]  #: The confinement with every standing grant compacted in.
     access_grants: Callable[[], list[Grant]]  #: The standing grants approved for this session.
     record_grant: Callable[[Grant], None]  #: Records an approved widening on the boundary.
     attached_files: dict  #: The files the person attached this session.
@@ -47,7 +53,9 @@ class ToolsView:
     tool_schemas: dict  #: The argument schemas by tool name, used to validate and coerce calls.
     supplied_tool_names: set  #: The tools the caller supplied, whose rules are the caller's.
     tool_gate: str  #: Whether a supplied tool is asked about or runs freely.
-    turn_reader: Callable | None  #: ``(task_id) -> Task``, reading a related task from the shared store.
+    turn_reader: (
+        Callable | None
+    )  #: ``(task_id) -> Task``, reading a related task from the shared store.
 
 
 @dataclass(frozen=True)
@@ -71,7 +79,9 @@ class TurnView:
     refuse_if_over_window: Callable[[list], None]  #: Raises before an oversized request leaves.
     reminder_message: Callable[..., Any]  #: A harness note to the model.
     maintenance_active: Callable[[], bool]  #: Whether any feature is currently holding the loop.
-    feature_classes: Callable[..., list[type]]  #: The installed features' classes, minus exclusions, for sub-sessions.
+    feature_classes: Callable[
+        ..., list[type]
+    ]  #: The installed features' classes, minus exclusions, for sub-sessions.
 
 
 @dataclass(frozen=True)
@@ -80,8 +90,10 @@ class BookkeepingView:
 
     note_state_changed: Callable[[], None]  #: Advances the durable-state revision after a mutation.
     record_event: Callable[[str, dict], None]  #: Appends to the audit trail.
-    session_snapshot: Callable[[], dict]  #: The durable state to persist beside the checkpoint.
-    restore_session: Callable[[dict], None]  #: Rehydrates the durable state.
+    session_snapshot: Callable[
+        [], SessionSnapshot
+    ]  #: The durable state to persist beside the checkpoint.
+    restore_session: Callable[[SessionSnapshot], None]  #: Rehydrates the durable state.
 
 
 @dataclass(frozen=True)
@@ -94,7 +106,9 @@ class PluginHost:
     window: WindowView
     turn: TurnView
     bookkeeping: BookkeepingView
-    services: Any = None  #: The host's opaque plugin bundle: what the composer chose to hand its plugins.
+    services: Any = (
+        None  #: The host's opaque plugin bundle: what the composer chose to hand its plugins.
+    )
 
 
 __all__ = [

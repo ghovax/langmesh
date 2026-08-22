@@ -1,6 +1,6 @@
 "use client";
 
-import { swallowed } from "@/lib/swallowed";
+import { reportError } from "@/lib/faults";
 
 // System notifications for calls awaiting a decision, degrading gracefully by platform capability.
 
@@ -90,7 +90,7 @@ export async function notifyPermissionRequest({
     await registration
       .showNotification(title, options)
       .catch((caught) =>
-        swallowed(
+        reportError(
           { component: "notifications", operation: "show a permission notification" },
           caught,
         ),

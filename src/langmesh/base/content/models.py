@@ -259,7 +259,7 @@ def find_model(model_identifier: str) -> ModelDefinition | None:
     return None
 
 
-def provider_and_suffix(model_identifier: str) -> tuple[str, str] | None:
+def split_model_identifier(model_identifier: str) -> tuple[str, str] | None:
     """Split a model id into its provider and suffix, on the first slash only."""
     if "/" not in model_identifier:
         return None
@@ -292,7 +292,7 @@ def resolve_litellm(
     configured_bases: dict[str, str],
 ) -> ResolvedLiteLLM:
     """Translate a provider-qualified model into LiteLLM call parameters."""
-    split = provider_and_suffix(model_identifier)
+    split = split_model_identifier(model_identifier)
     if split is None:
         raise ValueError(f"Model id has no provider prefix: {model_identifier!r}")
     provider_identifier, suffix = split

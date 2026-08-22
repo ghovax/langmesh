@@ -1,53 +1,24 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-import json
+from collections.abc import Iterable
 import logging
 import os
 from langmesh.base.confinement import environment_variables
 import re
 from fnmatch import fnmatch
-import sys
-from pathlib import Path
-from typing import Any, Callable, ClassVar, Literal, Optional
+from typing import ClassVar, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from langmesh.base.confinement.paths import configuration_file_path, database_file_path  # noqa: F401 — re-exported
 from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base import confinement
-from langmesh.base.persistence.observation_store import OBSERVATIONS_FILENAME
-from langmesh.base.persistence.file_cache import parsed_file
 
 
 logger = logging.getLogger(__name__)
 
 
-# Where state lives is the placement layer's business, resolved in `langmesh.base.confinement.paths`.
-
-def _bundled_dotagents_root() -> Path:
-    """The ``.agents`` directory shipped with the harness, so every folder sees the base profiles."""
-    if getattr(sys, "frozen", False):
-        bundle_root = Path(getattr(sys, "_MEIPASS", sys.executable))
-        if (bundle_root / ".agents" / "agents").is_dir():
-            return bundle_root / ".agents"
-    here = Path(__file__).resolve().parent
-    installed = here.parent / "_bundled" / ".agents"
-    if (installed / "agents").is_dir():
-        return installed
-    for candidate in (here, *here.parents):
-        if (candidate / ".agents" / "agents").is_dir():
-            return candidate / ".agents"
-    return here.parents[2] / ".agents"
-
-
-BUNDLED_DOTAGENTS_ROOT = _bundled_dotagents_root()
-
-
-class Section(BaseModel):
+class Section(BaseModel, extra="forbid"):
     """A part of the configuration file, refusing every key it does not define so a typo is an error."""
-
-    model_config = {"extra": "forbid"}
 
 
 class ExaConfiguration(Section):
@@ -104,7 +75,7 @@ class FilesystemConfiguration(Section):
     """Which paths a tool's child may read and write. The system stays readable; the home is closed."""
 
     readable: list[str] = Field(
-        default=[
+        default_factory=lambda: [
             # Where a person's own agents, skills and workflows live, which a screen script imports from.
             "~/.agents",
             "~/.config",
@@ -124,10 +95,10 @@ class FilesystemConfiguration(Section):
         ],
     )
     writable: list[str] = Field(
-        default=["$WORKSPACE", "$TMPDIR", "/tmp", "$XDG_CACHE_HOME", "~/.cache"]
+        default_factory=lambda: ["$WORKSPACE", "$TMPDIR", "/tmp", "$XDG_CACHE_HOME", "~/.cache"]
     )
     # `/tmp` beside `$TMPDIR` because on macOS they are not the same place, and nothing personal lives there.
-    grantable: list[str] = Field(default=[])
+    grantable: list[str] = Field(default_factory=list)
     deny: list[str] = Field(default_factory=list)
 
 
@@ -138,7 +109,7 @@ class SandboxConfiguration(Section):
     filesystem: FilesystemConfiguration = Field(default_factory=FilesystemConfiguration)
     network: bool = Field(default=False)
     limits: dict[str, int] = Field(
-        default={
+        default_factory=lambda: {
             "RLIMIT_CORE": 0,
             "RLIMIT_FSIZE": 8 * 1024 * 1024 * 1024,
             "RLIMIT_NPROC": 2048,
@@ -171,21 +142,16 @@ class WorkspaceConfiguration(Section):
 
 
 class CompactionConfiguration(Section):
-    """Context compacting thresholds. Observational memory is a separate, user-managed concern."""
+    """Context compacting thresholds. Observational memory is a separate, user-managed concern.
+
+    The hidden summarizer is asked again until it submits its summary — emitting the tool call
+    correctly is the model's own job, so nothing caps how often it may be reminded.
+    """
 
     automatic: bool = Field(default=True)
     reclaim_at_fraction: float = Field(default=0.85)
     output_reserve_fraction: float = Field(default=0.1)
     recent_working_set_fraction: float = Field(default=0.15)
-    # How many times the hidden summarizer may be asked again after reviewing but not submitting.
-    summary_attempts: int = Field(default=3)
-
-    @field_validator("summary_attempts")
-    @classmethod
-    def _summary_attempts(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("summary_attempts must be at least 1")
-        return value
 
     @field_validator(
         "reclaim_at_fraction",
@@ -200,26 +166,13 @@ class CompactionConfiguration(Section):
 
 
 class GoalReviewConfiguration(Section):
-    """How an independent goal review is driven, including how hard it is pushed to submit.
+    """How the secondary goal review settles an agent-marked goal.
 
-    ``mode`` chooses between the two goal-driving strategies the plugin ships: ``review`` runs
-    an independent reviewer session after a turn whose goal is still open, while
-    ``self_managed`` skips the reviewer and simply re-prompts the agent, which owns the goal
-    through the ``update_goal`` tool.
+    The agent owns its goal's status; a marked ``satisfied`` or ``blocked`` is settled by an
+    independent reviewer that either confirms the mark or overrides it, while an open, unmarked
+    goal is re-opened with a light continuation reminder. The reviewer is asked again until it
+    submits — modelling correctly is the model's own job, so nothing caps how often.
     """
-
-    # How the goal is driven after a turn that leaves it open: "review" or "self_managed".
-    mode: Literal["review", "self_managed"] = Field(default="review")
-
-    # How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset.
-    maximum_attempts: int = Field(default=3)
-
-    @field_validator("maximum_attempts")
-    @classmethod
-    def _maximum_attempts(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("goal_review.maximum_attempts must be at least 1")
-        return value
 
 
 class AttachmentsConfiguration(Section):
@@ -233,35 +186,26 @@ class AttachmentsConfiguration(Section):
         return max(0, int(self.inline_image_megabytes * 1024 * 1024))
 
 
-class ContextShareConfiguration(Section):
-    """What proportion of a budget the configured defaults assume, read as plain percentages."""
-
-    text: float = Field(default=0.25)
-    results: float = Field(default=0.15)
-
-
 class TuningConfiguration(Section):
-    """How large, how many and how patient the tools are, as plain values with no scaling."""
+    """Explicit size, count, and timing limits for tools."""
 
-    context_share: ContextShareConfiguration = Field(default_factory=ContextShareConfiguration)
-    timeout_multiplier: float = Field(default=1.0)
-    defaults: dict[str, float] = Field(default_factory=dict)
+    limits: dict[str, int | float] = Field(default_factory=dict)
 
-    @field_validator("defaults")
+    @field_validator("limits")
     @classmethod
-    def _known_defaults(cls, value: dict[str, float]) -> dict[str, float]:
+    def _known_limits(cls, value: dict[str, int | float]) -> dict[str, int | float]:
         from langmesh.base.primitives.limits import Limits
 
         unknown = sorted(name for name in value if not hasattr(Limits, name))
         if unknown:
             raise ValueError(
-                f"unknown limits default(s): {', '.join(unknown)}. The names that exist are the fields of `langmesh.base.primitives.limits.Limits`; the settings panel lists them with their defaults."
+                f"unknown limit(s): {', '.join(unknown)}. The names that exist are the fields of `langmesh.base.primitives.limits.Limits`; the settings panel lists them with their shipped values."
             )
         return value
 
 
 class UserContextConfiguration(Section):
-    """Opt-in snapshot of how the user works on this machine, compacted into the system prompt."""
+    """Opt-in snapshot of how the user works on this machine, appended as session context."""
 
     enabled: bool = Field(default=False)
     refresh_hours: float = Field(default=6.0, gt=0)
@@ -296,37 +240,21 @@ class MCPServerConfiguration(BaseModel):
     transport: Literal["stdio", "streamable_http"] = "stdio"
     stateful: bool = True
     command: str = ""
-    args: list[str] = []
-    env: dict[str, str] = {}
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
     cwd: str = ""
     url: str = ""
-    headers: dict[str, str] = {}
+    headers: dict[str, str] = Field(default_factory=dict)
     timeout_seconds: float = 30
 
 
 class MCPConfiguration(Section):
     """The MCP servers available to a session, from ``mcp.json`` rather than the configuration file."""
 
-    servers: dict[str, MCPServerConfiguration] = Field(default={})
+    servers: dict[str, MCPServerConfiguration] = Field(default_factory=dict)
 
     def enabled_servers(self) -> dict[str, MCPServerConfiguration]:
         return {name: server for name, server in self.servers.items() if server.enabled}
-
-    @classmethod
-    def from_dotagents_roots(cls, roots: Iterable[Path]) -> MCPConfiguration:
-        servers: dict[str, MCPServerConfiguration] = {}
-        for root in roots:
-            path = root / "mcp.json"
-            if not path.exists():
-                continue
-            data = json.loads(path.read_text())
-            raw_servers = data.get("mcpServers", data.get("servers", {}))
-            for name, raw_configuration in raw_servers.items():
-                configuration = dict(raw_configuration)
-                if "type" in configuration and "transport" not in configuration:
-                    configuration["transport"] = configuration.pop("type")
-                servers[name] = MCPServerConfiguration(**configuration)
-        return cls(servers=servers)
 
 
 class RemoteAgentAuthConfiguration(BaseModel):
@@ -339,7 +267,7 @@ class RemoteAgentAuthConfiguration(BaseModel):
     token_url: str = ""
     client_id: str = ""
     client_secret: str = ""
-    scopes: list[str] = []
+    scopes: list[str] = Field(default_factory=list)
 
 
 class RemoteAgentServerConfiguration(BaseModel):
@@ -347,45 +275,25 @@ class RemoteAgentServerConfiguration(BaseModel):
 
     enabled: bool = True
     card_url: str = ""
-    auth: RemoteAgentAuthConfiguration = RemoteAgentAuthConfiguration()
+    auth: RemoteAgentAuthConfiguration = Field(default_factory=RemoteAgentAuthConfiguration)
     card_ttl_seconds: int = 3600
     # Hostnames allowed beyond the card_url origin (the origin is always allowed).
-    allowed_hosts: list[str] = []
+    allowed_hosts: list[str] = Field(default_factory=list)
     # Permit private/loopback targets (e.g. a LangMesh-to-LangMesh loopback).
     allow_private: bool = False
     # Which local agent profiles may delegate to this remote agent. Empty = all profiles.
-    allowed_profiles: list[str] = []
+    allowed_profiles: list[str] = Field(default_factory=list)
 
 
 class RemoteAgentsConfiguration(Section):
     """The external agents the harness may delegate to, from ``remote-agents.json``."""
 
-    agents: dict[str, RemoteAgentServerConfiguration] = Field(default={})
+    agents: dict[str, RemoteAgentServerConfiguration] = Field(default_factory=dict)
 
     def enabled_agents(self) -> dict[str, RemoteAgentServerConfiguration]:
         return {
             name: agent for name, agent in self.agents.items() if agent.enabled and agent.card_url
         }
-
-    @classmethod
-    def from_dotagents_roots(cls, roots: Iterable[Path]) -> RemoteAgentsConfiguration:
-        agents: dict[str, RemoteAgentServerConfiguration] = {}
-        for root in roots:
-            path = root / "remote-agents.json"
-            if not path.exists():
-                continue
-            data = json.loads(path.read_text())
-            raw_agents = data.get("agents", {})
-            for name, raw_configuration in raw_agents.items():
-                configuration = dict(raw_configuration)
-                raw_auth = dict(configuration.get("auth") or {})
-                for secret_field in ("token", "client_secret", "client_id"):
-                    if isinstance(raw_auth.get(secret_field), str):
-                        raw_auth[secret_field] = os.path.expandvars(raw_auth[secret_field])
-                if raw_auth:
-                    configuration["auth"] = raw_auth
-                agents[name] = RemoteAgentServerConfiguration(**configuration)
-        return cls(agents=agents)
 
 
 class TelemetryExporterConfiguration(Section):
@@ -393,7 +301,7 @@ class TelemetryExporterConfiguration(Section):
 
     endpoint: str = Field(default="")
     protocol: Literal["http/protobuf", "grpc"] = Field(default="http/protobuf")
-    headers: dict[str, str] = Field(default={})
+    headers: dict[str, str] = Field(default_factory=dict)
 
 
 class TelemetryConfiguration(Section):
@@ -421,16 +329,9 @@ class AgentDefaults(Section):
 
 
 class Configuration(Section):
-    # The configuration file is shared with the host app, which owns sections the library does not
-    # model (dictation, composio, ...). Unknown top-level sections are tolerated, never rejected.
-    model_config = {"extra": "allow"}
+    """The library-owned configuration surface, with every unknown field rejected."""
 
-    HOME_AGENTS_ROOT_DIRECTORY: ClassVar[str] = "~/.agents"
-    AGENTS_ROOT_DIRECTORY: ClassVar[str] = ".agents"
-    AGENTS_DIRECTORY: ClassVar[str] = ".agents/agents"
-    SKILLS_DIRECTORY: ClassVar[str] = ".agents/skills"
-
-    providers: dict[str, ProviderCredential] = Field(default={})
+    providers: dict[str, ProviderCredential] = Field(default_factory=dict)
     exa: ExaConfiguration = Field(default_factory=ExaConfiguration)
     jina: JinaConfiguration = Field(default_factory=JinaConfiguration)
     firecrawl: FirecrawlConfiguration = Field(default_factory=FirecrawlConfiguration)
@@ -467,134 +368,11 @@ class Configuration(Section):
             if credential.base_url
         }
 
-    def agents_root_directories(self) -> list[Path]:
-        return _dedupe_paths(
-            [
-                Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser(),
-                Path(self.AGENTS_ROOT_DIRECTORY),
-            ]
-        )
-
-    def agent_directories(self) -> list[Path]:
-        return _dedupe_paths(
-            [
-                # Bundled agents are the base layer; home and project profiles override one of the same id.
-                BUNDLED_DOTAGENTS_ROOT / "agents",
-                Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser() / "agents",
-                Path(self.AGENTS_ROOT_DIRECTORY) / "agents",
-                Path(self.AGENTS_DIRECTORY),
-            ]
-        )
-
-    def skill_directories(self) -> list[Path]:
-        return _dedupe_paths(
-            [
-                # Bundled skills are the base layer, exactly like agents.
-                BUNDLED_DOTAGENTS_ROOT / "skills",
-                Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser() / "skills",
-                Path(self.AGENTS_ROOT_DIRECTORY) / "skills",
-                Path(self.SKILLS_DIRECTORY),
-            ]
-        )
-
-    def memory_directories(self) -> list[Path]:
-        return _dedupe_paths(
-            [
-                Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser() / "memories",
-                Path(self.AGENTS_ROOT_DIRECTORY) / "memories",
-            ]
-        )
-
-    # Project-relative roots resolve against the session's working directory, not the harness's CWD.
-
-    def _local_base(self, working_directory: str) -> Path:
-        """What project-relative ``.agents`` roots resolve against, falling back to the harness's CWD."""
-        return Path(working_directory).expanduser() if working_directory else Path.cwd()
-
-    def _resolve_local(self, working_directory: str, directory: str) -> Path:
-        path = Path(directory).expanduser()
-        return path if path.is_absolute() else self._local_base(working_directory) / path
-
-    def home_agents_root(self) -> Path:
-        """The global ``~/.agents`` root — the scope shared by every folder."""
-        return Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser()
-
-    def project_agents_root_for(self, working_directory: str) -> Path:
-        """The working directory's own ``.agents`` root, which equals the home root when they are the same place."""
-        return self._resolve_local(working_directory, self.AGENTS_ROOT_DIRECTORY)
-
-    def observation_database_for(self, working_directory: str) -> Path:
-        """The workspace-owned observation database beside that workspace's `mcp.json`."""
-        return self.project_agents_root_for(working_directory) / OBSERVATIONS_FILENAME
-
-    def agents_root_directories_for(self, working_directory: str) -> list[Path]:
-        return _dedupe_paths(
-            [
-                self.home_agents_root(),
-                self.project_agents_root_for(working_directory),
-            ]
-        )
-
-    def agent_directories_for(self, working_directory: str) -> list[Path]:
-        return _dedupe_paths(
-            [
-                # Bundled agents are the base layer; home and project profiles override one of the same id.
-                BUNDLED_DOTAGENTS_ROOT / "agents",
-                Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser() / "agents",
-                self._resolve_local(working_directory, self.AGENTS_ROOT_DIRECTORY) / "agents",
-                self._resolve_local(working_directory, self.AGENTS_DIRECTORY),
-            ]
-        )
-
-    def skill_directories_for(self, working_directory: str) -> list[Path]:
-        return _dedupe_paths(
-            [
-                # Bundled skills are the base layer, exactly like agents.
-                BUNDLED_DOTAGENTS_ROOT / "skills",
-                Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser() / "skills",
-                self._resolve_local(working_directory, self.AGENTS_ROOT_DIRECTORY) / "skills",
-                self._resolve_local(working_directory, self.SKILLS_DIRECTORY),
-            ]
-        )
-
-    def memory_directories_for(self, working_directory: str) -> list[Path]:
-        return _dedupe_paths(
-            [
-                Path(self.HOME_AGENTS_ROOT_DIRECTORY).expanduser() / "memories",
-                self._resolve_local(working_directory, self.AGENTS_ROOT_DIRECTORY) / "memories",
-            ]
-        )
-
-    def mcp_configuration_for(self, working_directory: str) -> MCPConfiguration:
-        """The MCP servers declared for a working directory: home plus its own, deduped, the folder winning."""
-        return MCPConfiguration.from_dotagents_roots(
-            self.agents_root_directories_for(working_directory)
-        )
-
-    def remote_agents_configuration_for(self, working_directory: str) -> RemoteAgentsConfiguration:
-        """The external agents declared for a working directory: home plus its own."""
-        return RemoteAgentsConfiguration.from_dotagents_roots(
-            self.agents_root_directories_for(working_directory)
-        )
-
-
-def _dedupe_paths(paths: Iterable[Path]) -> list[Path]:
-    result: list[Path] = []
-    seen: set[Path] = set()
-    for path in paths:
-        resolved = path.expanduser()
-        key = resolved.resolve() if resolved.exists() else resolved.absolute()
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(resolved)
-    return result
-
 
 class NamedToolPermissions(BaseModel):
     """Per-call permission rules for a tool whose calls have a name."""
 
-    permissions: dict[str, str] = {}
+    permissions: dict[str, str] = Field(default_factory=dict)
 
     def decide(self, subject: str, unmatched: str = "ask") -> str:
         """The configured decision for ``subject``, or ``unmatched`` when no pattern names it."""
@@ -610,7 +388,7 @@ class NamedToolPermissions(BaseModel):
 class BashToolConfiguration(BaseModel):
     # Policy only: which tools an agent uses is `tools_enabled`, not this block.
     background_allowed: bool = True
-    permissions: dict[str, str] = {}
+    permissions: dict[str, str] = Field(default_factory=dict)
 
     _SHELL_SPLIT = re.compile(r"\s*(?:&&|\|\||[;|])\s*")
     _SUBSHELL = re.compile(r"\$\((.+?)\)|`(.+?)`")
@@ -681,7 +459,9 @@ class BashToolConfiguration(BaseModel):
         parts = segment.split()
         if not parts or parts[0] != "rm" or len(parts) < 2:
             return segment
-        flag_tokens = [part for part in parts[1:] if part.startswith("-") and not part.startswith("--")]
+        flag_tokens = [
+            part for part in parts[1:] if part.startswith("-") and not part.startswith("--")
+        ]
         if not flag_tokens:
             return segment
         flags = "".join(part.lstrip("-") for part in flag_tokens)
@@ -690,7 +470,9 @@ class BashToolConfiguration(BaseModel):
         canonical = "".join(dict.fromkeys(flags.lower()))
         if "r" in canonical and "f" in canonical:
             canonical = "rf"
-        rest = [part for part in parts[1:] if not (part.startswith("-") and not part.startswith("--"))]
+        rest = [
+            part for part in parts[1:] if not (part.startswith("-") and not part.startswith("--"))
+        ]
         return " ".join(["rm", f"-{canonical}", *rest])
 
     @staticmethod
@@ -712,21 +494,21 @@ class ToolsConfiguration(BaseModel):
     `disabled` here, so a tool's presence has exactly one source.
     """
 
-    bash: BashToolConfiguration = BashToolConfiguration()
-    mcp: NamedToolPermissions = NamedToolPermissions()
-    screen: NamedToolPermissions = NamedToolPermissions()
+    bash: BashToolConfiguration = Field(default_factory=BashToolConfiguration)
+    mcp: NamedToolPermissions = Field(default_factory=NamedToolPermissions)
+    screen: NamedToolPermissions = Field(default_factory=NamedToolPermissions)
 
 
 class AgentConfiguration(BaseModel):
     name: str = ""
     title: str = ""
-    aliases: list[str] = []
+    aliases: list[str] = Field(default_factory=list)
     color: str = ""
     description: str = ""
     role: str = ""
     enabled: bool = True
     # The skills this agent may use; empty offers every available one.
-    skills: list[str] = []
+    skills: list[str] = Field(default_factory=list)
     # The model and its provider are separate fields, recombined into an identifier where one is wanted.
     model: Optional[str] = None
     provider: Optional[str] = None
@@ -736,8 +518,8 @@ class AgentConfiguration(BaseModel):
 
     # An agent's own confinement, narrowing the global one. Unset means whatever the machine says.
     sandbox: Optional[SandboxConfiguration] = None
-    tools: ToolsConfiguration = ToolsConfiguration()
-    tools_enabled: list[str] = []
+    tools: ToolsConfiguration = Field(default_factory=ToolsConfiguration)
+    tools_enabled: list[str] = Field(default_factory=list)
     system_prompt: str = ""
 
     @property
@@ -775,87 +557,3 @@ class PermissionEvaluator:
 
 class PermissionDenied(RuntimeError):
     """A tool call refused by policy rather than by the operating system, and named apart from the builtin."""
-
-
-class PromptLoader:
-    def __init__(
-        self,
-        prompts_directory: str | Path,
-        extension: str = "md",
-        *,
-        overrides: Optional[Callable[[str], Optional[str]]] = None,
-        fallback: Optional[Any] = None,
-    ):
-        """A template directory, an override hook consulted first, and an optional fallback loader.
-
-        The override hook answers a template name with a template already in hand, so a caller's
-        catalogue can supply one without touching this directory. The fallback lets a plugin chain
-        its own templates behind the shared ones when a name is not its own.
-        """
-        self._directory = Path(prompts_directory)
-        self._extension = extension
-        self._overrides = overrides
-        self._fallback = fallback
-
-    def load(self, template_name: str, variables: Mapping[str, object]) -> str:
-        """A template rendered with these variables, read from disk only when the file has changed."""
-        if self._overrides is not None:
-            override = self._overrides(template_name)
-            if override is not None:
-                return self._replace_variables(override, variables, template_name)
-        path = self._directory / f"{template_name}.{self._extension}"
-        content = parsed_file(path, lambda each: each.read_text())
-        if content is None:
-            return self._fallback.load(template_name, variables) if self._fallback is not None else ""
-        return self._replace_variables(content, variables, template_name)
-
-    @classmethod
-    def render(cls, template: str, variables: Mapping[str, object], template_name: str = "") -> str:
-        """Render a template already in hand, for a catalogue that carries its prompts in memory."""
-        return cls._replace_variables(template, variables, template_name)
-
-    @staticmethod
-    def _replace_variables(
-        template: str, variables: Mapping[str, object], template_name: str = ""
-    ) -> str:
-        """Substitute ``{{ name }}`` placeholders strictly: a missing variable or a malformed brace raises."""
-        where = f" in prompt '{template_name}'" if template_name else ""
-        placeholder = re.compile(r"\{\{\s*(\w+)\s*\}\}")
-        unsupported_directive = re.search(r"\{[%#]|[%#]\}", template)
-        if unsupported_directive is not None:
-            raise ValueError(
-                f"Unsupported template directive {unsupported_directive.group(0)!r}{where}; prompts support only '{{{{ name }}}}' placeholders."
-            )
-
-        def drop_if_empty(match: re.Match[str]) -> str:
-            name = match.group(1)
-            supplied = variables.get(name)
-            return "" if supplied is not None and not str(supplied).strip() else match.group(0)
-
-        # The placeholder's own line, plus one blank line after it if there is one.
-        own_line = r"^[ \t]*\{\{\s*(\w+)\s*\}\}[ \t]*"
-        template = re.sub(own_line + r"\n(?:[ \t]*\n)?", drop_if_empty, template, flags=re.M)
-
-        # A placeholder alone on a line contributes its content only, since the template's newline already ends it.
-        sections = set(re.findall(own_line + r"$", template, flags=re.M))
-        variables = {
-            name: str(value).strip() if name in sections else value
-            for name, value in variables.items()
-        }
-
-        # A malformed brace is a template bug, caught before substitution so it is not read as stray output.
-        malformed = re.search(r"\{\{.*?\}\}", placeholder.sub("", template), re.DOTALL)
-        if malformed is not None:
-            raise ValueError(f"Malformed placeholder {malformed.group(0)!r}{where}.")
-
-        def replacer(match: re.Match[str]) -> str:
-            variable_name = match.group(1)
-            if variable_name not in variables:
-                raise ValueError(
-                    f"Unresolved placeholder '{{{{ {variable_name} }}}}'{where}: no value was provided (given: {sorted(variables)})."
-                )
-            # Rendered rather than required to be a string, so an `int` does not raise out of `re.sub`.
-            return str(variables[variable_name])
-
-        # Accept both the spaced ({{ name }}) and unspaced ({{name}}) forms.
-        return placeholder.sub(replacer, template)

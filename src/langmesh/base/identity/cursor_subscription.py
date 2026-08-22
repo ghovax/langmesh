@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import logging
 import os
 import re
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 import httpx
@@ -18,9 +19,14 @@ from langmesh.base.identity.cursor_credentials import (
     API_BASE_URL,
     CursorAuthError,
     CursorTokens,
+    _account_of,
+    _is_display_account,
+    save_tokens,
     valid_tokens,
 )
 from langmesh.base.primitives.limits import current_limits
+
+logger = logging.getLogger(__name__)
 
 
 RUN_PATH = "/agent.v1.AgentService/RunSSE"
@@ -30,11 +36,13 @@ AGENT_PRIVACY_URL = "https://agent.api5.cursor.sh"
 AGENT_OPEN_URL = "https://agentn.api5.cursor.sh"
 RUN_HOSTS = (API_BASE_URL, AGENT_PRIVACY_URL, AGENT_OPEN_URL)
 # The two model endpoints, each knowing half the answer: which models a plan serves, and how large each window is.
+# AgentService/GetUsableModels is what current Cursor CLI clients (oh-my-pi, pi-cursor) call for discovery.
 USABLE_MODELS_URL = f"{API_BASE_URL}/agent.v1.AgentService/GetUsableModels"
 AVAILABLE_MODELS_URL = f"{API_BASE_URL}/aiserver.v1.AiService/AvailableModels"
+GET_ME_URL = f"{API_BASE_URL}/aiserver.v1.DashboardService/GetMe"
 
 # A real Cursor client build, the newest any working client is known to send.
-CLIENT_VERSION = "cli-2026.01.09-231024f"
+CLIENT_VERSION = "cli-2026.02.13-41ac335"
 CLIENT_TYPE = "cli"
 
 # The gRPC status codes worth naming: spent usage, and an unauthenticated call.
@@ -220,6 +228,38 @@ def _variant_for(model_id: str, variants: dict[str, _Variant]) -> Optional[_Vari
     return variants[max(candidates, key=len)] if candidates else None
 
 
+def _entries_from_usable(listing: dict[str, Any]) -> list[dict[str, Any]]:
+    return [entry for entry in listing.get("models") or [] if isinstance(entry, dict)]
+
+
+def _entries_from_variants(variants: dict[str, _Variant]) -> list[dict[str, Any]]:
+    """AvailableModels names, used when GetUsableModels is empty or refuses JSON."""
+    return [{"modelId": name, "displayName": name} for name in variants]
+
+
+def _result_from_entries(
+    entries: list[dict[str, Any]], variants: dict[str, _Variant]
+) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        model_id = entry.get("modelId") or entry.get("displayModelId")
+        if not model_id:
+            continue
+        variant = _variant_for(str(model_id), variants)
+        result[str(model_id)] = {
+            "name": _display_name(entry, str(model_id)),
+            "context": variant.context if variant else 0,
+            "variant": None
+            if variant is None
+            else {
+                "server_model": variant.server_model,
+                "maximum_mode": variant.maximum_mode,
+                "parameters": variant.parameters,
+            },
+        }
+    return result
+
+
 async def fetch_subscription_models() -> dict[str, dict[str, Any]]:
     """The account's live model list, from the two endpoints that each know half of it."""
     global _models_cache
@@ -232,33 +272,61 @@ async def fetch_subscription_models() -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
         try:
             tokens = await valid_tokens()
-            listing = await _connect_json(USABLE_MODELS_URL, {}, tokens)
+            entries: list[dict[str, Any]] = []
+            try:
+                listing = await _connect_json(
+                    USABLE_MODELS_URL, {"customModelIds": []}, tokens
+                )
+                entries = _entries_from_usable(listing)
+            except (httpx.HTTPError, ValueError, TypeError) as error:
+                logger.warning("Cursor GetUsableModels failed: %s", error)
             try:
                 variants = await _fetch_variants(tokens)
-            except (httpx.HTTPError, ValueError, TypeError):
-                variants = {}  # a listing without windows or routing still beats no listing
-            for entry in listing.get("models") or []:
-                if not isinstance(entry, dict):
-                    continue
-                model_id = entry.get("modelId") or entry.get("displayModelId")
-                if not model_id:
-                    continue
-                variant = _variant_for(model_id, variants)
-                result[model_id] = {
-                    "name": _display_name(entry, model_id),
-                    "context": variant.context if variant else 0,
-                    "variant": None
-                    if variant is None
-                    else {
-                        "server_model": variant.server_model,
-                        "maximum_mode": variant.maximum_mode,
-                        "parameters": variant.parameters,
-                    },
-                }
-        except (CursorAuthError, httpx.HTTPError, ValueError, KeyError, TypeError):
+            except (httpx.HTTPError, ValueError, TypeError) as error:
+                logger.warning("Cursor AvailableModels failed: %s", error)
+                variants = {}
+            if not entries:
+                entries = _entries_from_variants(variants)
+            result = _result_from_entries(entries, variants)
+        except CursorAuthError as error:
+            logger.info("Cursor models unavailable: %s", error)
             result = {}
         _models_cache = (time.monotonic(), result)
         return result
+
+
+def _email_from_profile(payload: dict[str, Any]) -> str:
+    """An address from Dashboard GetMe, walking the few shapes that endpoint has used."""
+    for key in ("email", "userEmail", "cachedEmail"):
+        value = payload.get(key)
+        if isinstance(value, str) and _is_display_account(value):
+            return value.strip()
+    user = payload.get("user")
+    if isinstance(user, dict):
+        value = user.get("email")
+        if isinstance(value, str) and _is_display_account(value):
+            return value.strip()
+    return ""
+
+
+async def display_account(tokens: CursorTokens) -> str:
+    """A label fit for the sign-in row, preferring an email over an Auth0 subject."""
+    current = tokens.account if _is_display_account(tokens.account) else _account_of(
+        tokens.access_token
+    )
+    if current:
+        if current != tokens.account:
+            await asyncio.to_thread(save_tokens, replace(tokens, account=current))
+        return current
+    try:
+        profile = await _connect_json(GET_ME_URL, {}, tokens)
+        email = _email_from_profile(profile)
+    except (httpx.HTTPError, ValueError, TypeError) as error:
+        logger.info("Cursor GetMe failed: %s", error)
+        return ""
+    if email:
+        await asyncio.to_thread(save_tokens, replace(tokens, account=email))
+    return email
 
 
 def cached_subscription_models() -> dict[str, dict[str, Any]]:

@@ -81,6 +81,11 @@
     "agentPlaceholder": "Choose an agent",
     "attachFiles": "Attach files",
     "cacheReads": "Cache reads",
+    "cacheWrites": "Cache writes",
+    "cachePrefix": "Reusable prefix",
+    "cachePrefixIntact": "Intact",
+    "cachePrefixMoved": "Moved",
+    "cachePrefixUnknown": "Unknown",
     "compact": "Compact",
     "compactBody": "The agent first preserves durable workspace knowledge, then discards older conversation while keeping the most recent work verbatim. This frees room in the conversation, but discarded dialogue can no longer be recalled.",
     "compactConfirm": "Compact now",
@@ -190,7 +195,7 @@
     "warnings": {
       "image_metadata_only": {
         "title": "Images sent as file references",
-        "body": "{count, plural, =1 {One image was not inlined} other {# images were not inlined}} because {model, select, '' {the session model} other {{model}}} does not advertise image support. The agent can still inspect the file with its tools."
+        "body": "{count, plural, =1 {One image was not inlined} other {# images were not inlined}} for {model, select, '' {the session model} other {{model}}}. The model may lack image support, the file may exceed the inline limit, or the file may be unreadable; the agent can still inspect its path with tools."
       }
     },
     "openReview": "Open review",
@@ -241,6 +246,7 @@
     "reconnecting": "Reconnecting",
     "reload": "Reload",
     "retry": "Retry",
+    "sendingRequestToProvider": "Sending request to the provider…",
     "sessionOptions": "Session options",
     "settings": "Settings",
     "showConversations": "Show conversations",
@@ -302,7 +308,6 @@
     "unstaged": "Unstaged",
     "untracked": "Untracked",
     "conflicted": "Conflicted",
-    "uncommittedChanges": "Uncommitted changes",
     "linesChanged": "Lines added and removed in working-tree changes",
     "aheadOfUpstream": "{count} ahead of upstream",
     "behindUpstream": "{count} behind upstream"
@@ -323,7 +328,8 @@
     "waitingForBackground": "Waiting for background work",
     "waiting": "Waiting for you",
     "working": "Working toward",
-    "viewReview": "View review"
+    "viewReview": "View review",
+    "resume": "Resume"
   },
   "LocationForm": {
     "local": "Local",
@@ -331,7 +337,7 @@
     "removeLocation": "Remove environment",
     "host": "Host",
     "noHosts": "No hosts in ~/.ssh/config. Add one there.",
-    "baseDirectory": "Compactioner path",
+    "baseDirectory": "Base path",
     "addLocation": "Add environment",
     "loadingLocations": "Loading workspace environments",
     "conflictSameDirectory": "Two entries use the same folder {directory}. Remove one or choose a different folder.",
@@ -550,11 +556,6 @@
     "computer_control": {
       "_": "Screen control",
       "enabled": "Let the agent drive the screen",
-      "settle": {
-        "_": "Settling",
-        "poll_seconds": "Re-check interval (seconds)",
-        "give_up_seconds": "Give up after (seconds)"
-      },
       "retrieval": {
         "_": "Ranking the screen",
         "multilingual_rank_model": "Multilingual ranking model",
@@ -631,13 +632,8 @@
     },
     "tuning": {
       "_": "Tuning",
-      "context_share": {
-        "_": "Context share",
-        "text": "Text budgets (percentages)",
-        "results": "Result budgets (percentages)"
-      },
-      "timeout_multiplier": "Timeout multiplier",
-      "defaults": {
+      "limits": {
+        "_": "Limits",
         "accessibility_messaging": "Accessibility message timeout",
         "accessibility_prewarm_interval": "Accessibility prewarm interval",
         "accessibility_ready_backoff": "Accessibility readiness backoff",
@@ -664,8 +660,6 @@
         "find_rephrasing_similarity": "Rephrasing similarity",
         "focus_settle": "Focus settle",
         "frame_resolve_timeout": "Frame resolve timeout",
-        "goal_continuation_turns": "Goal continuation turns",
-        "task_continuation_turns": "Task continuation turns",
         "mcp_connect": "MCP connect",
         "model_catalogue_ttl": "Model catalogue lifetime",
         "model_silence_give_up": "Model silence give up",
@@ -718,13 +712,10 @@
       "automatic": "Compact automatically",
       "reclaim_at_fraction": "Compact at (share of window)",
       "output_reserve_fraction": "Reserved for the answer (share)",
-      "recent_working_set_fraction": "Kept verbatim (share)",
-      "summary_attempts": "Summary retry attempts"
+      "recent_working_set_fraction": "Kept verbatim (share)"
     },
     "goal_review": {
-      "_": "Goal review",
-      "maximum_attempts": "Maximum review attempts",
-      "mode": "Goal driving mode"
+      "_": "Goal review"
     }
   },
   "SettingsAbout": {
@@ -747,11 +738,6 @@
     "computer_control": {
       "_": "Driving the screen.",
       "enabled": "Let the agent drive native applications and your browser. It also needs Accessibility granted in System Settings.",
-      "settle": {
-        "_": "How long a screen surface is given to stop changing after an action.",
-        "poll_seconds": "How often to re-check whether the surface has settled.",
-        "give_up_seconds": "The longest to wait before reading it anyway."
-      },
       "retrieval": {
         "_": "Which models rank a screen, and when a query's spelling stops being evidence.",
         "multilingual_rank_model": "The static embedding that ranks by meaning across languages. Also the model whose plain cosine backs the relevance floor, so clearing it disables that floor. Empty turns it off.",
@@ -826,14 +812,8 @@
     },
     "tuning": {
       "_": "How large, how many, and how patient the tools are.",
-      "context_share": {
-        "_": "What proportion of the live context window one result may fill.",
-        "text": "Share one result's text may fill — output, fetched pages.",
-        "results": "Share a set of results may fill — matches, lines, records."
-      },
-      "timeout_multiplier": "Multiplier on every wait. 2.0 doubles them for a slow machine; 1.0 is neutral.",
-      "defaults": {
-        "_": "Override one tunable by its own name — see the settings panel. Every duration is in seconds. An override replaces the shipped default, so context_share and timeout_multiplier still apply on top.",
+      "limits": {
+        "_": "Set any tunable by its own name. Every duration is in seconds and every value is used exactly as written.",
         "accessibility_messaging": "How long one accessibility message to an application waits, so a hung application costs a moment rather than the whole action.",
         "accessibility_prewarm_interval": "Pause between pre-warming the frontmost application's accessibility tree.",
         "accessibility_ready_backoff": "Ceiling on the widening pause between accessibility readiness probes.",
@@ -844,13 +824,8 @@
         "browser_authorization": "How long attaching waits for the user to approve Chrome's prompt.",
         "card_resolve": "How long fetching a remote agent's card waits.",
         "click_interval": "Pause between successive synthesized clicks.",
-        "connect_timeout": "How long attaching to a browser waits.",
-        "control_plane_call": "How long one call to the daemon waits.",
         "control_script": "How long one screen-control script may run.",
         "credential_refresh_leeway": "How far ahead of its expiry an access token is refreshed.",
-        "daemon_probe_connect": "How long one connect to a daemon socket waits before it counts as unanswered.",
-        "daemon_probe_interval": "Pause between asks of whether another process's daemon socket answers yet, or whether a daemon being replaced has finally exited.",
-        "daemon_startup": "How long a command waits for a daemon it just started to become reachable.",
         "drag_step_interval": "Pause between the interpolated steps of a drag.",
         "drag_steps": "Segments a drag is split into, so it looks like a hand moved it.",
         "drag_timeout": "How long a drag between two elements waits.",
@@ -865,12 +840,6 @@
         "find_rephrasing_similarity": "How alike two screen queries must be, as a cosine in the retrieval model's own space, before a second one landing on the same element counts as the first asked again.",
         "focus_settle": "Pause after focusing a field, before typing into it.",
         "frame_resolve_timeout": "How long resolving a frame reference waits. Deliberately well below the action timeout: a frame that has gone waits out its budget rather than erroring, and listing every frame would otherwise stall on the one that left.",
-        "glob_results": "Paths one glob returns.",
-        "goal_continuation_turns": "How many turns in a row a session may open for its own goal before it stops and waits for the person. The goal review can end a run earlier than this; nothing can carry one past it.",
-        "task_continuation_turns": "How many turns in a row unfinished tracked tasks may reopen automatically before the session waits for the person. A new user message restores the allowance.",
-        "grep_per_file": "Matches one search returns from any single file.",
-        "grep_results": "Total matches one search returns.",
-        "maximum_line_chars": "Characters of a single over-long line kept before it is clipped, so one minified blob cannot fill a result on its own.",
         "mcp_connect": "How long connecting to one MCP server waits.",
         "model_catalogue_ttl": "How long the list of available models is cached.",
         "model_silence_give_up": "How long a model may hold a stream open saying nothing at all before the turn is ended. Long, because a model weighing a hard problem is silent and still working.",
@@ -881,17 +850,8 @@
         "open_url": "How long handing a URL to the system browser waits.",
         "output_tokens": "Tokens of inline output one tool may return before the rest overflows to a file.",
         "permission_reviewer_attempts": "How many times the permission reviewer is asked before its silence counts as a refusal.",
-        "read_lines": "Lines a file read returns when no explicit limit is given.",
         "read_text_timeout": "How long reading a page's text waits.",
-        "remote_command": "How long a command on another machine may run.",
-        "remote_connect": "How long opening an SSH connection waits.",
-        "remote_control_persist": "How long a shared SSH connection lingers after its last use, so the next command reuses it.",
-        "remote_listing": "Paths listed on a remote machine before glob matching is applied locally.",
-        "ripgrep": "How long one content search may run.",
-        "screencapture": "How long capturing the screen waits.",
-        "screenshot_timeout": "How long capturing a page screenshot waits.",
         "scroll_amount_pixels": "Pixels one scroll step moves a native window.",
-        "session_idle_sleep": "How long a session keeps its process after its last turn before it sleeps.",
         "session_title_attempts": "How many times a session asks the model to name itself before giving up.",
         "settle_stable_reads": "Identical consecutive reads that count a surface as having stopped changing.",
         "settle_poll_seconds": "How often to re-check whether a screen surface has settled after an action.",
@@ -899,7 +859,6 @@
         "sigterm_grace": "How long a cancelled command or a reaped session has after SIGTERM before SIGKILL.",
         "slow_tool_sync_window": "The same inline window for fetching a URL or downloading a file.",
         "snapshot_timeout": "How long an accessibility snapshot of a page waits.",
-        "stamped_image_side": "Longest side, in pixels, of a screenshot annotated with element labels.",
         "subscription_resume_ttl": "How long a subscription provider's server-side conversation state stays worth resuming from before the whole conversation is resent instead.",
         "surface_guard_margin": "How far above the script's own limit the machinery waiting on it sits, so raising that limit can never make the guard fire first and leave the surface half-dead.",
         "type_chunk_interval": "Pause between typed chunks.",
@@ -913,8 +872,8 @@
       }
     },
     "user_context": {
-      "_": "Whether the system prompt describes how you work on this machine.",
-      "enabled": "Include a snapshot of how you work — your editor, your habits, your machine — in the system prompt.",
+      "_": "Whether model-facing session context describes how you work on this machine.",
+      "enabled": "Include a snapshot of how you work — your editor, your habits, your machine — in session context.",
       "refresh_hours": "How old the snapshot may get before it is rebuilt. The rebuild runs in the background, so no message ever waits for it."
     },
     "web_fetch": {
@@ -933,13 +892,10 @@
       "automatic": "Compact on its own as the conversation fills. Manual compaction works either way.",
       "reclaim_at_fraction": "Recommended preparation boundary within the usable window. The agent records durable knowledge before older history is discarded, so the reserved space remains available for that final segment.",
       "output_reserve_fraction": "Safety buffer kept outside the usable window for the current answer and the pre-compaction recording segment.",
-      "recent_working_set_fraction": "Share of the usable window kept verbatim after older history is discarded. It is measured in tokens because one turn may contain hundreds of tool results.",
-      "summary_attempts": "How many times the hidden summarizer may be asked again after reviewing but not submitting. Once exhausted, the compaction stops and the conversation is left unchanged until it is retried."
+      "recent_working_set_fraction": "Share of the usable window kept verbatim after older history is discarded. It is measured in tokens because one turn may contain hundreds of tool results."
     },
     "goal_review": {
-      "_": "How the independent goal review is driven.",
-      "maximum_attempts": "How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset before the goal carries unchanged.",
-      "mode": "How the goal is driven after a turn leaves it open: by an independent reviewer, or by the session's own agent."
+      "_": "How the secondary review settles an agent-marked goal. A reviewer that stops without a verdict is asked again until it submits."
     }
   },
   "SettingsChoices": {
@@ -969,12 +925,6 @@
           "http/protobuf": "HTTP (protobuf)",
           "grpc": "gRPC"
         }
-      }
-    },
-    "goal_review": {
-      "mode": {
-        "review": "Independent reviewer",
-        "self_managed": "Agent self-managed"
       }
     }
   },
@@ -1096,7 +1046,6 @@
   },
   "ToolDisplay": {},
   "ToolGroup": {
-    "thinking": "Thinking",
     "failed": "Error returned",
     "failedCount": "{count, plural, other {# errors returned}}",
     "runningDetached": "Running detached",
@@ -1175,6 +1124,28 @@
     "goalActive": "Now working toward this",
     "goalPurpose": "So that",
     "goalRequirements": "Minimum conditions",
+    "goalReviewPending": "Secondary review pending",
+    "goalStatusActive": "Working toward",
+    "goalStatusParked": "Waiting for you",
+    "goalStatusCleared": "Called off",
+    "fieldAction": "Decision",
+    "fieldRisk": "Risk",
+    "fieldBackground": "Background",
+    "permissionAllow": "Allow",
+    "permissionDeny": "Deny",
+    "riskLow": "Low",
+    "riskMedium": "Medium",
+    "riskHigh": "High",
+    "controlActionFindOne": "Find one",
+    "controlActionFindMany": "Find many",
+    "controlActionClick": "Click",
+    "controlActionType": "Type",
+    "controlActionPress": "Press",
+    "controlActionScroll": "Scroll",
+    "controlActionDrag": "Drag",
+    "controlActionSelect": "Select",
+    "controlActionCaret": "Caret",
+    "controlActionRead": "Read",
     "include": "Include",
     "language": "Language",
     "limit": "Limit",
@@ -1249,19 +1220,12 @@
     "yes": "Yes"
   },
   "GoalReviewPanel": {
-    "blocked": "Blocked",
-    "canceled": "Canceled",
     "collapse": "Collapse goal reviews",
-    "completed": "Completed",
     "emptyDescription": "Independent reviews will appear here as they inspect the work.",
     "emptyTitle": "No goal reviews yet",
-    "failed": "Failed",
-    "reviewNumber": "Review {number}",
-    "reviewing": "Inspecting the work",
-    "satisfied": "Satisfied",
-    "title": "Goal reviews",
-    "unmet": "More work needed",
-    "working": "Checking"
+    "reviewRunning": "Secondary goal review running…",
+    "sendingRequestToProvider": "Sending request to the provider…",
+    "title": "Goal reviews"
   },
   "WorkspaceLocationsPanel": {
     "loadError": "Could not load workspace environments",

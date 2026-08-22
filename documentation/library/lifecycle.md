@@ -65,7 +65,7 @@ await session.steer("Check the migration too.")
 await session.set_permission_mode("automatic")
 ```
 
-`set_permission_mode()` changes the next tool decision and reconsiders unanswered suspended gates, returning the updated state. The modes are `ask`, `automatic`, and `allow`; see [Permission modes](../user/configuration.md#permission-modes). Changing mode preserves the existing conversation prefix.
+`set_permission_mode()` checkpoints the new mode before the runtime adopts it, changes the next tool decision, and reconsiders unanswered suspended gates, returning the updated state. The modes are `ask`, `automatic`, and `allow`; see [Permission modes](../user/configuration.md#permission-modes). Changing mode preserves the existing conversation prefix and survives an immediate restart.
 
 ## Failure and retry
 
@@ -83,7 +83,7 @@ except Exception:
 
 ## Session close
 
-`aclose()` cancels only this session's background jobs, releases its resource lease, closes MCP server connections it opened, and unbinds its credentials and tracer. It does not shut down process-global runners owned by another session.
+`aclose()` stops live in-process work as a restart boundary, waits for the active turn to leave its lock, restores an existing checkpoint first when necessary, writes the final typed checkpoint, and only then releases the runtime. If the save fails, the runtime remains available and the error is returned to the caller. Supplied MCP servers, checkpoint connections, artifact stores, credentials, and tracers remain caller-owned and are never closed implicitly.
 
 ## Events and driving patterns
 
@@ -96,7 +96,7 @@ except Exception:
 | `Thinking` / `ThinkingDone` | Reasoning delta and boundary | Update a collapsible reasoning region |
 | `ToolCall` | Partial or complete tool request | Create or update one tool card by id |
 | `ToolResult` | Tool completion | Close the matching card |
-| `Mcp` | An MCP server event (connect, progress, log) | Update the MCP surface |
+| `MCPEvent` | An MCP server event (connect, progress, log) | Update the MCP surface |
 | `Suspended` | Durable permission or question batch | Collect decisions, call `respond()`, then `resume()` |
 | `PermissionReviewing` | Automatic-mode gates the reviewer is weighing | Show the call before the verdict |
 | `Steering` | Mid-turn user message accepted | Reconcile optimistic UI by message id |
@@ -106,7 +106,6 @@ except Exception:
 | `GoalReviewStarted` / `GoalReviewProgress` / `GoalReviewFinished` | Independent goal review | Render review status separately from assistant prose |
 | `Error` | Structured turn or tool failure | Render its code and parameters |
 | `DeniedInjection` | A steered-in message was refused | Match the failed injection |
-| `RetryRequested` | A refused command offered a broader retry | Present the option if your client does |
 | `Done` | One model turn completed | Read final text and stop this stream |
 
 `Done` ends a turn, not the session. Autonomous goal or task continuation can produce several `Done` events inside one `Session.stream()` call. The session returns to `idle` only after continuation policy stops.
@@ -165,19 +164,21 @@ components = SessionComponents(model=application_model)
 session = Session(agent_without_provider, directory="/srv/checkout", components=components)
 ```
 
-The model must implement `bind_tools()` and streaming. LangMesh binds one stable ordered tool schema when the runtime is constructed.
+The model must implement `bind_tools()` and streaming. LangMesh binds one stable ordered tool schema when the runtime is constructed. A custom adapter with provider-native checkpoints or local cache diagnostics may additionally satisfy `DurableModelCache`: `model_cache_snapshot()` returns JSON-safe state and `restore_model_cache(snapshot)` validates and adopts it. `Session` then persists that state beside its conversation without knowing the provider's representation.
 
 ### Preserve provider caches
 
-The static system prompt and tool schema form the reusable prefix. LangMesh preserves that prefix by construction:
+Stable instructions and the tool schema form the reusable prefix. LangMesh preserves that prefix by construction:
 
 - `SessionComponents` is frozen and snapshots sequence fields.
 - Prior conversation messages are append-only until an explicit compaction.
+- Session identity, paths, confinement, machine and user snapshots, feature state, and background events are a marked conversation message; a changed digest appends a replacement instead of rebuilding the stable instructions.
 - The goal and permission reviewers inherit the main conversation and stable tool schema, then append their private instructions.
-- A tool granted to a session is described by an appended conversation message, not a schema change, so the prefix holds at any moment. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
+- Tools supplied before the first call stay fixed in the reusable schema. A live `grant_tool()` is an explicit capability change and therefore an intentional one-call divergence at the tools segment. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 - Steering appends at a provider boundary; it never edits an earlier message.
 - Permission-mode changes apply during execution without rewriting model history.
+- Session checkpoints include bounded request baselines, rolling Claude anchors, and account-scoped Cursor resumptions, so rebuilding a runtime does not make an otherwise reusable request locally unknowable.
 
-`PromptComposer` runs only when the cached system prompt is built. Call `Session.refresh_prompt()` after changing an external source that the composer reads; that explicit refresh invalidates the static prompt cache. A `BeforeModelHook` runs on every request and can intentionally change the prefix, so cache-sensitive hooks should leave the first system message untouched.
+`PromptComposer` runs only when the stable instructions are built. Call `Session.refresh_prompt()` after changing an application-owned source that the composer reads; that explicit refresh invalidates the instructions cache. The exact instructions and their construction revision are checkpointed, while dynamic context lives in the checkpointed conversation. The hook surface cannot rewrite provider requests, so reload reconstructs the same prefix by construction.
 
-Usage events expose provider-reported cache reads, the reachable prefix, and the first divergence from the preceding request (`prefix_intact`, `reachable_tokens`, `segments`, `shared_segments`, `divergence`). Use these values to verify a custom model adapter instead of inferring cache behavior from latency alone.
+Usage events expose provider-reported cache reads and writes, the reusable prefix, and the first divergence from the preceding request (`cache_read_tokens`, `cache_write_tokens`, `cache_prefix_reusable`, `reusable_prefix_tokens`, `segments`, `shared_segments`, `divergence`). Local reuse means the previously sent eligible prefix stayed byte-identical; an actual provider hit still depends on minimum token thresholds, retention TTL, routing, account identity, and whether an earlier concurrent request finished warming the entry. Use these values together to verify a custom model adapter instead of inferring cache behavior from latency alone.

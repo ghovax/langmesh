@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from langmesh.runtime.plugins.locations.resolver import host_is_defined, location_uri_for, LocationAddress
+from langmesh.runtime.plugins.locations.location_uri import format_local, format_remote
+from langmesh.runtime.plugins.locations.resolver import LocationAddress
 from langmesh.protocol.dtos import LocationInput
 from itertools import combinations
 from pathlib import Path
 from typing import Any
 import uuid
 from langmeshd.commons import state
+from langmeshd.commons.ssh_hosts import host_is_defined, resolve_host
 from langmeshd.commons.database import LocationRecord, WorkspaceRecord, SessionRecord
 
 
@@ -23,10 +25,21 @@ def _location_address(record: LocationRecord) -> LocationAddress:
     )
 
 
+def _location_uri(address: LocationAddress) -> str:
+    if address.kind == "local":
+        return format_local(address.base_directory)
+    if address.kind != "remote" or not address.host_alias:
+        raise ValueError(f"Invalid location: {address!r}")
+    host = resolve_host(address.host_alias)
+    if host is None:
+        return format_remote(address.host_alias, address.base_directory)
+    return format_remote(host.hostname, address.base_directory, user=host.user, port=host.port)
+
+
 def _serialize_location(record: LocationRecord) -> dict[str, Any]:
     """A location for the API: its generated URI, derived name, connection and execution policy."""
     try:
-        uri = location_uri_for(_location_address(record))
+        uri = _location_uri(_location_address(record))
     except Exception:
         uri = ""
     host_known = record.kind == "local" or (
@@ -200,7 +213,7 @@ def _resolve_session_locations(session_id: str) -> list[dict[str, Any]] | None:
         resolved: list[dict[str, Any]] = []
         for location in locations:
             try:
-                uri = location_uri_for(_location_address(location))
+                uri = _location_uri(_location_address(location))
             except Exception:
                 uri = ""
             resolved.append(

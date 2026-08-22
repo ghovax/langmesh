@@ -1,4 +1,4 @@
-The exact message shown in the chat with the goal-review label and used to open the working session's next turn. Required when the standing is `unmet` and `null` otherwise.
+The exact message shown in the chat with the goal-review label and used to open the working session's next turn. Required when the standing is `unmet`. When standing is not `unmet`, omit this field (`null`); the standing code is what says it does not apply.
 
 Write directly to the working session in the person's language and second person. This field is relayed verbatim: no template adds context later, so include which minimum condition is unproven, what is already established, the concrete next action, the result that would prove it, and any constraint at risk of being lost. Be specific enough that the message could not describe a different goal.
 

@@ -94,7 +94,7 @@ class SandboxUpdateRequest(BaseModel):
 
 
 class UserContextUpdateRequest(BaseModel):
-    """Opt-in/out of the personal user-context snapshot in the system prompt."""
+    """Opt-in/out of the personal snapshot appended as session context."""
 
     enabled: bool
 
@@ -129,13 +129,12 @@ class CompactionUpdateRequest(BaseModel):
     reclaim_at_fraction: float | None = None
     output_reserve_fraction: float | None = None
     recent_working_set_fraction: float | None = None
-    summary_attempts: int | None = None
 
 
 class MCPServerToolCallRequest(BaseModel):
     server: str
     tool_name: str
-    arguments: dict = {}
+    arguments: dict = Field(default_factory=dict)
 
 
 class MCPResourceReadRequest(BaseModel):

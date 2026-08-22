@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from langmesh.base.persistence.observation_store import SQLiteObservationStore
+from langmeshd.daemon.persistence.observation_registry import SQLiteObservationStore
 from langmesh.runtime.plugins.compaction import ObservationCompactionPreparation
 from langmesh.runtime.plugins.background import BackgroundJobsFeature
 from langmesh.runtime.plugins.bash import Bash
@@ -26,14 +26,22 @@ from langmesh.runtime.plugins.titling import TitleAssignment
 from langmesh.runtime.plugins.web import Web
 from langmesh.runtime.plugins.work_habits import WorkHabits
 from langmesh.runtime.tools.arguments import with_shared_fields
+from langmeshd.daemon.machine_environment import _shell_command_usage
+from langmeshd.commons.configuration_locations import observation_database
+from langmeshd.daemon.workflow_catalogue import FilesystemWorkflowCatalogue
+from langmeshd.daemon.browser import browser_endpoint, save_browser_download
+from langmeshd.daemon.scratch import FilesystemScratchSpaces
+from langmeshd.commons.paths import runtime_directory
+
+
+_WORKFLOWS = FilesystemWorkflowCatalogue()
+_SCRATCH_SPACES = FilesystemScratchSpaces(runtime_directory() / "scratch")
 
 
 def _compaction_preparation(global_configuration: Any, runtime_directory: str) -> Any:
     """The compaction preparation the daemon owns, from the observation store."""
     return ObservationCompactionPreparation(
-        SQLiteObservationStore(
-            global_configuration.observation_database_for(runtime_directory)
-        )
+        SQLiteObservationStore(observation_database(runtime_directory))
     )
 
 
@@ -41,7 +49,25 @@ def _session_locations(session_id: str) -> list[dict[str, Any]] | None:
     """The workspace's locations for a session, resolved by the daemon's own services."""
     from langmeshd.commons.services.locations import _resolve_session_locations
 
-    return _resolve_session_locations(session_id)
+    return attach_location_executors(_resolve_session_locations(session_id))
+
+
+def attach_location_executors(
+    locations: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    """Attach daemon-owned executors to serialized workspace locations."""
+    from langmesh.runtime.plugins.locations.resolver import LocationAddress, executor_for
+    from langmeshd.commons.paths import ssh_control_directory
+
+    for location in locations or []:
+        address = LocationAddress(
+            kind=str(location.get("kind") or "local"),
+            base_directory=str(location.get("base_directory") or ""),
+            host_alias=str(location.get("host_alias") or ""),
+        )
+        location["executor"] = executor_for(address, control_directory=ssh_control_directory())
+    return locations
+
 
 def compose_plugins(
     *,
@@ -70,7 +96,7 @@ def compose_plugins(
         Continuation(policy=None),
         ObservationMemory(),
         BackgroundJobsFeature(store=job_store),
-        WorkHabits(),
+        WorkHabits(_shell_command_usage()),
         TitleAssignment(),
         # The locations plugin is opt-in: it is composed only when the workspace has locations.
         *([Locations()] if locations else []),
@@ -87,6 +113,10 @@ def compose_plugins(
     services: dict[str, Any] = {
         "goal_review_journal": goal_review_journal,
         "compaction_preparation": preparation,
+        "workflows": _WORKFLOWS,
+        "scratch_spaces": _SCRATCH_SPACES,
+        "browser_endpoint": browser_endpoint,
+        "browser_download": save_browser_download,
     }
     if locations:
         services["locations"] = locations
@@ -94,6 +124,7 @@ def compose_plugins(
         "features": features,
         "services": services,
     }
+
 
 def contributed_tools() -> dict[str, Any]:
     """Every tool the composed plugins contribute, keyed by name."""
@@ -115,7 +146,7 @@ def contributed_tools() -> dict[str, Any]:
     ]
     tools: dict[str, Any] = {}
     for feature in features:
-        for tool in (feature.contribute_tools() if hasattr(feature, "contribute_tools") else []):
+        for tool in feature.contribute_tools() if hasattr(feature, "contribute_tools") else []:
             name = getattr(tool, "name", "")
             if name:
                 tools[name] = with_shared_fields(tool)

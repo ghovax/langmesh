@@ -59,6 +59,7 @@ main_loop: Any = None
 
 # Fan-out to every attached client: "something you are looking at changed".
 broadcaster = Broadcaster()
+_auth_tasks: set[asyncio.Task[Any]] = set()
 
 
 # Where a workspace change has a supervision consequence, with `None` meaning there is no control plane.
@@ -91,6 +92,7 @@ async def workspace_locations_changed(workspace_id: str) -> None:
 __all__ = [
     "Broadcaster",
     "_awaiting_input_contexts",
+    "_auth_tasks",
     "_running_contexts",
     "_session_goals",
     "agent_cards",

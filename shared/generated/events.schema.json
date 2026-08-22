@@ -76,6 +76,10 @@
           "default": 0,
           "type": "integer"
         },
+        "cache_write_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
         "input_tokens": {
           "default": 0,
           "type": "integer"
@@ -88,11 +92,11 @@
           "default": 0,
           "type": "integer"
         },
-        "reachable_tokens": {
+        "reasoning_tokens": {
           "default": 0,
           "type": "integer"
         },
-        "reasoning_tokens": {
+        "reusable_prefix_tokens": {
           "default": 0,
           "type": "integer"
         },
@@ -140,13 +144,19 @@
             "server_error",
             "turn_failed",
             "turn_interrupted",
-            "tool_error"
+            "tool_error",
+            "tool_failed",
+            "tool_interrupted"
           ],
           "type": "string"
         },
         "kind": {
           "const": "error",
           "default": "error",
+          "type": "string"
+        },
+        "message_id": {
+          "default": "",
           "type": "string"
         },
         "parameters": {
@@ -213,7 +223,7 @@
       ],
       "type": "object"
     },
-    "McpEvent": {
+    "MCPEvent": {
       "additionalProperties": false,
       "properties": {
         "event": {
@@ -580,7 +590,22 @@
     "TokenUsageEvent": {
       "additionalProperties": false,
       "properties": {
+        "cache_prefix_reusable": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "cache_read_tokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "cache_write_tokens": {
           "default": 0,
           "type": "integer"
         },
@@ -619,15 +644,11 @@
           "default": 0,
           "type": "integer"
         },
-        "prefix_intact": {
-          "default": false,
-          "type": "boolean"
-        },
-        "reachable_tokens": {
+        "reasoning_tokens": {
           "default": 0,
           "type": "integer"
         },
-        "reasoning_tokens": {
+        "reusable_prefix_tokens": {
           "default": 0,
           "type": "integer"
         },
@@ -822,15 +843,9 @@
     },
     "TurnContext": {
       "additionalProperties": false,
-      "description": "Session context captured in the cache-stable system prompt.",
+      "description": "Session context appended as immutable conversation state.\n\nOnly the core's own fields are declared here. The plugins contribute their own\ncontext through ``compose_context``, which merges it into the context dict; the\ncore never names a plugin's context.",
       "properties": {
-        "background": {
-          "tsType": "Record<string, unknown>"
-        },
         "confinement": {
-          "tsType": "Record<string, unknown>"
-        },
-        "goal": {
           "tsType": "Record<string, unknown>"
         },
         "locations": {
@@ -839,22 +854,9 @@
           },
           "type": "array"
         },
-        "now": {
-          "default": "",
-          "type": "string"
-        },
         "pwd": {
           "default": "",
           "type": "string"
-        },
-        "screen": {
-          "tsType": "Record<string, unknown>"
-        },
-        "tasks": {
-          "items": {
-            "tsType": "Record<string, unknown>"
-          },
-          "type": "array"
         }
       },
       "type": "object"
@@ -891,7 +893,7 @@
           "done": "#/$defs/DoneEvent",
           "error": "#/$defs/ErrorEvent",
           "inbound_message": "#/$defs/InboundMessageEvent",
-          "mcp_event": "#/$defs/McpEvent",
+          "mcp_event": "#/$defs/MCPEvent",
           "permission_request": "#/$defs/PermissionRequestEvent",
           "question": "#/$defs/QuestionEvent",
           "retry": "#/$defs/RetryEvent",
@@ -923,7 +925,7 @@
           "$ref": "#/$defs/ToolResultEvent"
         },
         {
-          "$ref": "#/$defs/McpEvent"
+          "$ref": "#/$defs/MCPEvent"
         },
         {
           "$ref": "#/$defs/StatusEvent"

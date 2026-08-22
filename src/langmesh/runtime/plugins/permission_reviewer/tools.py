@@ -7,14 +7,14 @@ from typing import Any
 
 from langchain_core.tools import StructuredTool
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.locations import PermissionDecision
 from langmesh.runtime.tools.execution import current_tool_services
 from langmesh.runtime.values import ToolStatus
 
 #: The tool's model-facing description, read from this plugin's own prompts directory.
-_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
+_DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 
 
 async def _permission_decision(**arguments: Any) -> str:

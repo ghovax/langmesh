@@ -4,28 +4,15 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
-from langmesh.base.primitives.limits import current_limits
-
 
 class DefaultContinuationPolicy:
-    """The plain goal and task allowances, read from the current limits."""
+    """Open goals and unfinished tasks both keep going; nothing is a hard-turn-capped allowance."""
 
-    def continue_goal(self, goal: Any, completed_turns: int) -> bool:
-        return bool(
-            goal is not None
-            and goal.is_open
-            and completed_turns < current_limits().goal_continuation_turns
-        )
+    def continue_goal(self, goal: Any) -> bool:
+        return bool(goal is not None and goal.is_open)
 
-    def continue_tasks(
-        self,
-        unfinished_tasks: Sequence[Mapping[str, Any]],
-        completed_turns: int,
-    ) -> bool:
-        return bool(
-            unfinished_tasks
-            and completed_turns < current_limits().task_continuation_turns
-        )
+    def continue_tasks(self, unfinished_tasks: Sequence[Mapping[str, Any]]) -> bool:
+        return bool(unfinished_tasks)
 
 
 __all__ = ["DefaultContinuationPolicy"]

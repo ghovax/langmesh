@@ -13,12 +13,13 @@ import base64
 import contextlib
 import json
 import logging
-import os
 import secrets
 import socket
 import sys
 from pathlib import Path
 from typing import Callable, Optional
+
+import segno
 
 # Requests whose bodies are streamed, and headers that describe a connection ending here rather than at the daemon.
 _DROPPED_REQUEST_HEADERS = frozenset(
@@ -65,23 +66,12 @@ _REPLAYABLE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "DELETE"})
 
 def reach_token() -> str:
     """The door's durable pairing token, minted once and kept beside the daemon's own state."""
-    from langmesh.base.confinement.paths import reach_token_path
+    from langmeshd.commons.paths import reach_token_path
+    from langmeshd.daemon.persistence.secrets import ensure_private_value
 
-    path = reach_token_path()
-    try:
-        existing = path.read_text().strip()
-    except OSError:
-        existing = ""
-    if existing:
-        return existing
-    token = secrets.token_urlsafe(48)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(token, encoding="utf-8")
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
-    return token
+    return ensure_private_value(
+        reach_token_path(), lambda: secrets.token_urlsafe(48).encode()
+    ).decode("ascii")
 
 
 def pairing_link(endpoint: str, token: str) -> str:
@@ -92,6 +82,12 @@ def pairing_link(endpoint: str, token: str) -> str:
     )
     encoded = base64.urlsafe_b64encode(payload.encode("utf-8")).rstrip(b"=").decode("ascii")
     return f"langmesh://pair#{encoded}"
+
+
+def print_pairing_code(link: str) -> None:
+    """Print a compact QR code when the command is attached to a terminal."""
+    if sys.stderr.isatty():
+        segno.make_qr(link).terminal(out=sys.stderr, compact=True)
 
 
 def interface_directory() -> Optional[Path]:
@@ -177,7 +173,12 @@ def build_application(
     async def runtime(request) -> Response:
         if not _reach_authorized(request):
             return JSONResponse(
-                {"error": {"code": "unauthorized", "message": "This door is paired; present its token."}},
+                {
+                    "error": {
+                        "code": "unauthorized",
+                        "message": "This door is paired; present its token.",
+                    }
+                },
                 status_code=401,
             )
         # An empty base is the whole message: address the daemon relative to this origin.
@@ -214,11 +215,16 @@ def build_application(
             response.set_cookie(_REACH_COOKIE, reach_token, httponly=True, samesite="strict")
         return response
 
-    async def serve_or_proxy(request) -> Response:
+    async def dispatch_request(request) -> Response:
         """A real file wins and everything else is the daemon's, which cannot be two routes."""
         if not _reach_authorized(request):
             return JSONResponse(
-                {"error": {"code": "unauthorized", "message": "This door is paired; present its token."}},
+                {
+                    "error": {
+                        "code": "unauthorized",
+                        "message": "This door is paired; present its token.",
+                    }
+                },
                 status_code=401,
             )
         if interface is not None and _wants_interface(request.url.path):
@@ -384,7 +390,7 @@ def build_application(
             WebSocketRoute("/_next/{path:path}", proxy_interface_websocket),
             Route(
                 "/{path:path}",
-                serve_or_proxy,
+                dispatch_request,
                 methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
             ),
         ]
@@ -435,9 +441,7 @@ def run(arguments) -> int:
     ensure_daemon()
     try:
         started_daemon_process_id = (
-            int(daemon_pid_path().read_text().strip())
-            if started_the_daemon
-            else None
+            int(daemon_pid_path().read_text().strip()) if started_the_daemon else None
         )
     except (OSError, ValueError):
         started_daemon_process_id = None
@@ -447,9 +451,7 @@ def run(arguments) -> int:
         if started_daemon_process_id is None:
             return
         try:
-            current_daemon_process_id = int(
-                daemon_pid_path().read_text().strip()
-            )
+            current_daemon_process_id = int(daemon_pid_path().read_text().strip())
         except (OSError, ValueError):
             return
         if current_daemon_process_id != started_daemon_process_id:
@@ -480,6 +482,7 @@ def run(arguments) -> int:
         endpoint = _tailnet_endpoint() or address
         link = pairing_link(endpoint, reach_token_value)
         logger.info("langmesh: pairing link: %s", link)
+        print_pairing_code(link)
         if not _tailnet_endpoint():
             logger.info(
                 "langmesh: this door is on loopback; a phone needs the tailnet address — run tailscale serve and re-pair with its https://<machine>.ts.net address."
@@ -497,7 +500,9 @@ def run(arguments) -> int:
         reach_token=reach_token_value,
     )
     if reach:
-        logger.info("langmesh: serving the paired door at the address above; this door is for your devices only.")
+        logger.info(
+            "langmesh: serving the paired door at the address above; this door is for your devices only."
+        )
         logger.info(
             "langmesh: pair a phone by scanning or pasting the pairing link below; it carries the token, so keep it to your devices."
         )
@@ -559,7 +564,7 @@ def _open_when_listening(address: str) -> None:
     parsed = urllib.parse.urlparse(address)
     host, port = parsed.hostname or "127.0.0.1", parsed.port or 80
 
-    def wait_and_open() -> None:
+    def open_when_ready() -> None:
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             with socket.socket() as probe:
@@ -574,4 +579,4 @@ def _open_when_listening(address: str) -> None:
         except Exception:  # noqa: BLE001 — no browser is not an error, the address is printed
             pass
 
-    threading.Thread(target=wait_and_open, name="langmesh-web-open", daemon=True).start()
+    threading.Thread(target=open_when_ready, name="langmesh-web-open", daemon=True).start()

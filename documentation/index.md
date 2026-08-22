@@ -20,7 +20,7 @@ Everything beyond a plain model turn — the tools, goal review, compaction, per
 - A `Session` has one structural phase: idle, running, suspended, compacting, or retrying.
 - A suspended tool batch is checkpointed with its plans and decisions, so process restart cannot repeat completed side effects.
 - Tool policy runs before hooks; hooks may remove approved calls but cannot add calls.
-- Model-visible history is append-only; granting a tool appends a description instead of rewriting the schema, so the provider-cache prefix never moves.
+- Model-visible history is append-only and the initial tool schema is stable; a live tool grant is the explicit capability change that intentionally starts a new reusable schema.
 - The library forces no tools and no plugins. A session runs exactly what you compose, and the product composes its own bundle.
 
 Start with the [library quickstart](library/index.md) when embedding LangMesh, or [installation](user/installation.md) when using the product.
