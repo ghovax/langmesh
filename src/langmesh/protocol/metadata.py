@@ -28,6 +28,9 @@ INPUT_RESPONSE_KIND = "input_response"
 
 # Opens a turn for a goal that is still unfinished, kept distinct because it carries the goal itself.
 GOAL_CONTINUATION_KIND = "goal_continuation"
+# A hidden system reminder for an open goal that changed nothing last turn. Sent behind the scenes,
+# never as a user-visible message, so the transcript stays honest about what the person actually said.
+GOAL_REMINDER_KIND = "goal_reminder"
 # Opens a hidden turn because the agent left tracked work unfinished.
 TASK_CONTINUATION_KIND = "task_continuation"
 
@@ -52,6 +55,7 @@ class Metadata:
     RETRY_TURN = "retryTurn"
     REPORT_REMINDER = "reportReminder"
     GOAL_CONTINUATION = "goalContinuation"
+    GOAL_REMINDER = "goalReminder"
     # Also decorates a goal continuation when one turn carries both independent obligations.
     TASK_CONTINUATION = "taskContinuation"
     GOAL_REVIEW_ID = "goalReviewId"

@@ -201,6 +201,7 @@ class _TurnMode(StrEnum):
     RETRY = "retry"
     REPORT_REMINDER = "report_reminder"
     GOAL_CONTINUATION = "goal_continuation"
+    GOAL_REMINDER = "goal_reminder"
     TASK_CONTINUATION = "task_continuation"
 
 
@@ -213,12 +214,15 @@ def _turn_mode(metadata: dict) -> _TurnMode:
         (_TurnMode.RETRY, Metadata.RETRY_TURN),
         (_TurnMode.REPORT_REMINDER, Metadata.REPORT_REMINDER),
         (_TurnMode.GOAL_CONTINUATION, Metadata.GOAL_CONTINUATION),
+        (_TurnMode.GOAL_REMINDER, Metadata.GOAL_REMINDER),
         (_TurnMode.TASK_CONTINUATION, Metadata.TASK_CONTINUATION),
     ]
     selected = [mode for mode, key in candidates if metadata.get(key)]
-    # A goal-review instruction may carry the independent task reminder in the same serialized turn.
+    # A goal-review instruction or hidden reminder may carry the independent task reminder in the same serialized turn.
     if set(selected) == {_TurnMode.GOAL_CONTINUATION, _TurnMode.TASK_CONTINUATION}:
         return _TurnMode.GOAL_CONTINUATION
+    if set(selected) == {_TurnMode.GOAL_REMINDER, _TurnMode.TASK_CONTINUATION}:
+        return _TurnMode.GOAL_REMINDER
     if len(selected) > 1:
         raise ValueError("A turn cannot request multiple execution modes.")
     return selected[0] if selected else _TurnMode.STANDARD
@@ -490,10 +494,15 @@ class _TurnRunner:
             # A goal turn carries prose somebody has to be able to read, so it is not compacted in with the wakes.
             TurnKind.GOAL
             if ingested.mode is _TurnMode.GOAL_CONTINUATION
-            # The reminder is harness-initiated like a wake, and differs only in having nothing to deliver.
+            # Hidden reminders are harness-initiated like wakes, and differ only in having nothing to deliver.
             else TurnKind.AUTONOMOUS
             if ingested.mode
-            in {_TurnMode.AUTONOMOUS, _TurnMode.REPORT_REMINDER, _TurnMode.TASK_CONTINUATION}
+            in {
+                _TurnMode.AUTONOMOUS,
+                _TurnMode.REPORT_REMINDER,
+                _TurnMode.GOAL_REMINDER,
+                _TurnMode.TASK_CONTINUATION,
+            }
             else TurnKind.COMPACTION
             if ingested.mode
             in {
@@ -620,7 +629,10 @@ class _TurnRunner:
     async def _reconcile_goal(self, prepared: _Prepared) -> object | None:
         """Settle the goal against what opened this turn, now the runtime is built and the goal restored."""
         runtime = prepared.runtime
-        if prepared.resolved.ingested.mode is _TurnMode.GOAL_CONTINUATION:
+        if prepared.resolved.ingested.mode in (
+            _TurnMode.GOAL_CONTINUATION,
+            _TurnMode.GOAL_REMINDER,
+        ):
             goal = _features.goal(runtime)
             if goal is None or not goal.is_open:
                 if not prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
@@ -674,6 +686,7 @@ class _TurnRunner:
             _TurnMode.AUTONOMOUS,
             _TurnMode.REPORT_REMINDER,
             _TurnMode.GOAL_CONTINUATION,
+            _TurnMode.GOAL_REMINDER,
             _TurnMode.TASK_CONTINUATION,
         }
         if mode in {_TurnMode.COMPACTION_RESUME, _TurnMode.COMPACTION_PREPARE, _TurnMode.RETRY}:
@@ -683,6 +696,13 @@ class _TurnRunner:
             # The goal's own segment stays visible, and every other pending obligation contributes
             # its own separate staged message — never pieces merged into one text.
             segments = [self._user_text]
+            if prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
+                segments.append(_features.task_continuation_message(runtime))
+            self._turn_messages = tuple(_features.continuation_messages(runtime, segments=segments))
+            self._turn_input = self._turn_messages[0] if self._turn_messages else ""
+        elif mode is _TurnMode.GOAL_REMINDER:
+            # Hidden system reminder — never shown as a user message, only as a model-facing note.
+            segments = [_features.goal_continuation_message(runtime)]
             if prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
                 segments.append(_features.task_continuation_message(runtime))
             self._turn_messages = tuple(_features.continuation_messages(runtime, segments=segments))
@@ -909,8 +929,8 @@ class _TurnRunner:
         sink = self._sink
         if sink is None:
             return _ContinuationPlan()
-        # A goal-continuation turn that produced neither prose nor tool work answered the review with nothing; immediately re-reviewing would only spin the review loop, so the goal parks instead and waits for a person.
-        if self._mode is _TurnMode.GOAL_CONTINUATION and not (
+        # A goal-continuation or hidden reminder that produced neither prose nor tool work answered the review with nothing; immediately re-reviewing would only spin the review loop, so the goal parks instead and waits for a person.
+        if self._mode in (_TurnMode.GOAL_CONTINUATION, _TurnMode.GOAL_REMINDER) and not (
             sink.final_text.strip() or sink.tool_results
         ):
             return _ContinuationPlan()

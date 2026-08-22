@@ -78,23 +78,25 @@ async def update_goal(
         current = goals.goal
         # A mark the agent sets for itself earns a secondary review only when it is a
         # completion or blockage claim worth auditing; a deferral or a clear is administrative.
+        # A claim is not a verdict: the goal stays active while the review checks it.
         pending_review = status_text if status_text in (Goal.SATISFIED, Goal.BLOCKED) else None
+        effective_status = Goal.ACTIVE if pending_review is not None else status_text
         goals.write(
             Goal(
                 text=goal_text,
                 purpose=purpose_text,
                 requirements=requirement_lines,
-                status=status_text,
+                status=effective_status,
                 pending_review=pending_review,
                 continuations=current.continuations if current is not None else 0,
             ),
         )
         result = {
-            "code": "goal_active" if status_text == Goal.ACTIVE else "goal_status",
+            "code": "goal_active" if effective_status == Goal.ACTIVE else "goal_status",
             "goal": goal_text,
             "purpose": purpose_text,
             "requirements": requirement_lines,
-            "status": status_text,
+            "status": effective_status,
         }
         if pending_review is not None:
             result["pending_review"] = pending_review

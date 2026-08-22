@@ -13,6 +13,9 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from tree_sitter import Language, Parser
+import tree_sitter_bash
+
 from langmesh.base import confinement as _confinement
 from langmesh.base.confinement import parse_access_request
 from langmesh.base.contracts.ports import FileLeaseConflict
@@ -29,6 +32,20 @@ from langmesh.runtime.internals import _maybe_json
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.execution import ToolExecution
 from langmesh.runtime.turn_events import Error, RetryRequested, ToolResult
+
+_bash_language = Language(tree_sitter_bash.language())
+_bash_parser = Parser(_bash_language)
+
+
+def _is_valid_bash_command(command: str) -> bool:
+    """Use the official bash parser to check if the command is syntactically valid shell."""
+    if not command or not command.strip():
+        return False
+    try:
+        tree = _bash_parser.parse(bytes(command, "utf8"))
+        return not tree.root_node.has_error
+    except Exception:
+        return False
 
 
 def _inspect_local_directory(directory: str) -> tuple[Path, bool, bool]:
@@ -142,6 +159,15 @@ async def handle_bash(execution: ToolExecution) -> AsyncIterator[Any]:
                 tool=tool_name,
             )
             return
+
+    if not _is_valid_bash_command(raw_command):
+        yield Error(
+            id=tool_call_identifier,
+            code="invalid_command",
+            message="Your `bash` command is not valid shell syntax. Use a real shell command string, not a natural-language description.",
+            tool=tool_name,
+        )
+        return
 
     lease_token = ""
     if not declared_read_only and call_site is None:
