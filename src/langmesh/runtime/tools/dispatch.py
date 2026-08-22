@@ -32,6 +32,7 @@ from langmesh.runtime.internals import (
     _tool_timing_metadata,
     _utc_timestamp,
 )
+from langmesh.runtime.background import bind_tool_call_id, unbind_tool_call_id
 from langmesh.runtime.features import BackgroundCapability, LocationsCapability
 from langmesh.runtime.locations import CallExecutionPolicy, ExecutionTarget
 from langmesh.runtime.tools import context as tool_context
@@ -156,6 +157,7 @@ class _DispatchesTools:
         background_job_id: str | None = None
         denied_commands: list[str] = []
         model_guidance: list[str] = []
+        content_blocks: list[dict] = []
         tool_failed = False
 
         tool_span = _telemetry.start_span("tool.execute", {"tool.name": tool_name})
@@ -165,6 +167,9 @@ class _DispatchesTools:
             ):
                 yield event
                 if isinstance(event, ToolResult):
+                    blocks = event.extra.get("content_blocks")
+                    if isinstance(blocks, list) and blocks:
+                        content_blocks.extend(block for block in blocks if isinstance(block, dict))
                     if event.model_guidance:
                         model_guidance.append(event.model_guidance)
                     result_str = event.result
@@ -244,6 +249,7 @@ class _DispatchesTools:
             "background_job_id": background_job_id,
             "denied_commands": denied_commands,
             "model_guidance": model_guidance,
+            "content_blocks": content_blocks,
             "metadata": timing_metadata,
         }
 
@@ -418,6 +424,15 @@ class _DispatchesTools:
             guidance_notes.extend(
                 (tool_call_identifier, note) for note in outcome.get("model_guidance", []) if note
             )
+            media_blocks = outcome.get("content_blocks") or []
+            if media_blocks:
+                self._conversation.append(
+                    self._reminder_message(
+                        self._prompt_loader.load("read_paths_media", {}),
+                        image_blocks=list(media_blocks),
+                        marks={"tool_call_id": tool_call_identifier, "media": True},
+                    )
+                )
             background_job_id = outcome.get("background_job_id")
             if background_job_id:
                 background = self._features.require(BackgroundCapability)
@@ -546,6 +561,7 @@ class _DispatchesTools:
         # A handler that invokes a schema tool directly (`.ainvoke`) resolves the same services and the resolved decision.
         services_token = bind_tool_services(self._services)
         decision_token = bind_tool_decision(decision)
+        call_token = bind_tool_call_id(tool_call_identifier)
         try:
             execution = ToolExecution(
                 services=self._services,
@@ -559,5 +575,6 @@ class _DispatchesTools:
             async for event in unit.handler(execution):
                 yield event
         finally:
+            unbind_tool_call_id(call_token)
             unbind_tool_decision(decision_token)
             unbind_tool_services(services_token)

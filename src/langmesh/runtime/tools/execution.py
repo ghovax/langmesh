@@ -68,6 +68,9 @@ class ToolServices:
     project_directory: str = ""
     plugin_services: Any = None
     artifacts: Any = None
+    abort_tool: Callable[[str], bool] | None = None
+    model_identifier: str = ""
+    inline_image_bytes: int = 0
 
 
 # The services bound around the current dispatch, so a schema tool invoked directly (`.ainvoke`) resolves the same handler the runtime's generic dispatch uses.

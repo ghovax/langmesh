@@ -47,6 +47,14 @@ class PermissionReviewer(Feature):
         """The reviewer's own verdict tool."""
         return [permission_decision_tool]
 
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """A live automatic review is cancelled when its task is still held for this call."""
+        task = getattr(self, "_live_reviews", {}).get(tool_call_id)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
+
     async def review(self, gate: _PreflightGate) -> PermissionDecision:
         """The reviewer's verdict on one gate. Takes a gate, so it cannot reach a call that raised none."""
         # The person's standing instructions, so the reviewer can judge a request against what they asked for.

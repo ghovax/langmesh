@@ -57,6 +57,10 @@ class Interaction(Feature):
         declared = getattr(context.agent_configuration, "tools_enabled", None)
         return [ask_user] if declared is not None and "ask_user" in declared else []
 
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """ask_user waits on a permission gate, not a process; there is no extra teardown."""
+        return False
+
 
 # The tool's model-facing description is this plugin's own file, applied once at import.
 ask_user.description = _DESCRIPTIONS.load("ask_user", {}).strip() or ask_user.description

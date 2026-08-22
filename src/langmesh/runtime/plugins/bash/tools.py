@@ -29,6 +29,29 @@ from langmesh.runtime.tools.execution import current_tool_services
 #: The tool's model-facing description, read from this plugin's own prompts directory.
 _DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 
+#: Live bash process holders keyed by tool-call id, so a stop can SIGTERM the group.
+_live_bash: dict[str, dict[str, Any]] = {}
+
+
+def terminate_bash_call(tool_call_id: str) -> bool:
+    """SIGTERM the process group for a live bash call, if this plugin still holds it."""
+    holder = _live_bash.get(tool_call_id)
+    if holder is None:
+        return False
+    process = holder.get("process")
+    if process is None or process.returncode is not None:
+        return False
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return False
+    except Exception:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            return False
+    return True
+
 
 @tool
 async def bash(
@@ -45,6 +68,9 @@ async def bash(
     artifacts = current_tool_services().artifacts
     artifact_identifier = f"{job_id}-output"
     process_holder: dict[str, Any] = {}
+    call_id = current_tool_call_id()
+    if call_id:
+        _live_bash[call_id] = process_holder
 
     def cancel_process() -> None:
         process = process_holder.get("process")
@@ -60,7 +86,7 @@ async def bash(
             except ProcessLookupError:
                 return
 
-    async def run() -> str:
+    async def _run_command() -> str:
         # The session's own tools ride in the environment the confinement builds, already on `PATH`.
         spawn = _confinement.spawn_recipe(
             _confinement.first_attempt(profile, workspace=workspace),
@@ -190,6 +216,13 @@ async def bash(
         }
         return compact(result)
 
+    async def run() -> str:
+        try:
+            return await _run_command()
+        finally:
+            if call_id:
+                _live_bash.pop(call_id, None)
+
     jobs = current_background_jobs()
     jobs.spawn(
         "bash",
@@ -225,4 +258,4 @@ async def bash(
 # The tool's model-facing description is this plugin's own file, applied once at import.
 bash.description = _DESCRIPTIONS.load("bash", {}).strip() or bash.description
 
-__all__ = ["bash"]
+__all__ = ["bash", "terminate_bash_call"]

@@ -178,6 +178,13 @@ class Compaction(Feature):
         self._host = host
         self._prompts = context.prompts("compaction")
 
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Stop a tool still running inside the live summarizer session, if any."""
+        live = getattr(self, "_live_summarizer_runtime", None)
+        if live is None:
+            return False
+        return bool(live.abort_tool(tool_call_id))
+
     @property
     def control(self) -> CompactionControl:
         return self._control

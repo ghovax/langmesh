@@ -43,5 +43,19 @@ class Web(Feature):
         """Require the runner that owns slow searches, fetches, and downloads."""
         return (BackgroundCapability,)
 
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Stop the search, fetch, or download for this call.
+
+        The coroutine lives on the background runner this plugin requires; cancelling that
+        job is how an in-flight HTTP call is torn down.
+        """
+        from langmesh.runtime.background import current_background_jobs
+
+        try:
+            runner = current_background_jobs()
+        except RuntimeError:
+            return False
+        return runner.cancel_by_tool_call(tool_call_id)
+
 
 __all__ = ["Web"]

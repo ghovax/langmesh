@@ -120,6 +120,10 @@ class Locations(Feature):
             for entry in self._locations.values()
         ]
 
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Do not tear down the multiplexed SSH master; a bash stop already kills that call's ssh child."""
+        return False
+
     def _resolve(self, location_value: str) -> dict[str, Any] | None:
         """The location named by URI or name, or ``None`` when unknown."""
         return self._locations.get(location_value) or self._locations_by_name.get(location_value)

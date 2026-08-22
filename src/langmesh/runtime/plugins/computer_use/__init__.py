@@ -33,6 +33,7 @@ from langmesh.computer.surface import message_loader
 from langmesh.runtime.features import Feature
 from langmesh.runtime.plugins.permissions import MUTATING_SCREEN_PRIMITIVES
 from langmesh.runtime.tools import context as tool_context
+from langmesh.runtime.background import current_tool_call_id
 from langmesh.runtime.tools.execution import current_tool_decision, current_tool_services
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,26 @@ _DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 # The queries this plugin has already asked the screen, so it can tell a rephrasing from a fresh
 # question. The plugin owns its own history; the core never carries a screen-control concept.
 _asked_queries: list[tuple[Any, str]] = []
+
+#: Live control-screen children keyed by tool-call id.
+_live_control: dict[str, Any] = {}
+
+
+def terminate_control_call(tool_call_id: str) -> bool:
+    """Kill the screen-control child still running for this call."""
+    process = _live_control.get(tool_call_id)
+    if process is None or process.returncode is not None:
+        return False
+    try:
+        process.kill()
+    except ProcessLookupError:
+        return False
+    except Exception:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            return False
+    return True
 
 # What an element id looks like on both surfaces, so one can be told from a description of an element.
 _ELEMENT_ID = re.compile(r"(?:f\d+)?e\d+|req\d+|ws\d+|\d+(?:\.\d+)+")
@@ -412,6 +433,12 @@ async def control_screen(
     scratch = await scratch_spaces.create("screen") if scratch_spaces is not None else ""
     project_directory = services.project_directory or active.workspace or ""
     targets_before = target_registry.list_targets()
+    call_id = current_tool_call_id()
+
+    def on_started(process: Any) -> None:
+        if call_id:
+            _live_control[call_id] = process
+
     try:
         result = await control.run_control_script(
             script,
@@ -430,8 +457,11 @@ async def control_screen(
                 workflows.library_roots(project_directory) if workflows is not None else None
             ),
             scratch=scratch,
+            on_started=on_started,
         )
     finally:
+        if call_id:
+            _live_control.pop(call_id, None)
         if scratch_spaces is not None and scratch:
             await scratch_spaces.release(scratch)
     if isinstance(result, dict):
@@ -509,6 +539,10 @@ class ComputerUse(Feature):
             context["screen"] = block
         except Exception:
             context["screen"] = {}
+
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Kill the control-screen child still running for this call."""
+        return terminate_control_call(tool_call_id)
 
 
 # The tool's model-facing description is this plugin's own file, applied once at import.
