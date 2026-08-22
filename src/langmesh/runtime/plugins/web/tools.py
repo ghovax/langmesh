@@ -92,6 +92,7 @@ async def search_web(
         },
         # A search outliving the turn keeps running, so its result still lands and wakes the agent.
         detached=True,
+        tool_call_identifier=current_tool_call_id(),
     )
     # A short inline window, so the common case returns results rather than a pending handle.
     settled = await jobs.settle_inline(job_id, current_limits().web_search_sync_window)

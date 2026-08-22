@@ -173,6 +173,15 @@ class Feature:
     def acknowledge_checkpoint(self) -> None:
         """Acknowledge side records only after their matching conversation snapshot commits."""
 
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Tear down live work this feature owns for ``tool_call_id``.
+
+        Every installed feature is asked, not first-wins, so each plugin can close its own
+        side effects (a process group, a screen-control child, a background search). Return
+        ``True`` when this feature handled that live call.
+        """
+        return False
+
 
 class Features:
     """The installed features of one runtime, and the dispatch the core calls at each point.
@@ -381,6 +390,14 @@ class Features:
             if reason:
                 return reason
         return None
+
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Ask every feature to tear down live work for this call. Every plugin is notified."""
+        handled = False
+        for feature in self._instances:
+            if feature.terminate_tool_call(tool_call_id):
+                handled = True
+        return handled
 
 
 def feature_prompts(name: str, catalogue: Any) -> PromptTemplates:

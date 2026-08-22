@@ -10,6 +10,8 @@ from langchain_core.tools import StructuredTool
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.execution import current_tool_services
+from langmesh.runtime.background import current_tool_call_id
+from langmesh.runtime.tools.ingest import ingest_paths
 from langmesh.base.content.skills import enabled_skills
 from langmesh.runtime.internals import _background_handle_kind
 
@@ -138,6 +140,29 @@ async def load_skill(*, name: str) -> str:
             "content": match.body,
         }
     )
+
+
+@tool
+async def stop_tool_call(*, tool_call_id: str) -> str:
+    """Stop another live tool call; described in descriptions/stop_tool_call.md."""
+    identifier = str(tool_call_id or "").strip()
+    if not identifier:
+        return compact({"code": "tool_call_id_required"})
+    if identifier == current_tool_call_id():
+        return compact({"code": "cannot_stop_self", "tool_call_id": identifier})
+    abort = current_tool_services().abort_tool
+    if abort is None:
+        return compact({"code": "stop_unavailable", "tool_call_id": identifier})
+    if abort(identifier):
+        return compact({"code": "tool_call_stopped", "tool_call_id": identifier})
+    return compact({"code": "tool_call_not_running", "tool_call_id": identifier})
+
+
+@tool
+async def read_paths(*, paths: list[str]) -> str:
+    """Ingest files at the given paths; described in descriptions/read_paths.md."""
+    result, _blocks = ingest_paths(list(paths or []))
+    return compact(result)
 
 
 # Background jobs are cancelled by whoever owns the process, since a library configures nothing unasked.

@@ -88,6 +88,8 @@ _REVIEWER_TOOLS = frozenset(
         "read_session",
         "read_turn",
         "search_web",
+        "stop_tool_call",
+        "read_paths",
     }
 )
 
@@ -100,6 +102,7 @@ class GoalReviewFeature(Feature):
         self._goal: Optional[Goal] = None
         self._listener: Optional[Callable[[Optional[Goal]], None]] = None
         self._submitted: Optional[GoalReview] = None
+        self._live_reviewer: Any = None
 
     def attach(self, context: PluginContext, host: PluginHost) -> None:
         self._context = context
@@ -127,6 +130,13 @@ class GoalReviewFeature(Feature):
     def contribute_tools(self) -> list:
         """The goal and review tools this plugin owns."""
         return [update_goal, submit_goal_review]
+
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Stop a tool still running inside the live reviewer session, if any."""
+        reviewer = self._live_reviewer
+        if reviewer is None:
+            return False
+        return bool(reviewer.abort_tool(tool_call_id))
 
     def snapshot(self) -> GoalReviewState:
         return GoalReviewState(self.goal.model_copy(deep=True) if self.goal is not None else None)
@@ -407,6 +417,7 @@ class GoalReviewFeature(Feature):
                 )
 
         reviewer = self._goal_reviewer()
+        self._live_reviewer = reviewer
         try:
             from langmesh.runtime.verdict import drive_verdict_session
 
@@ -451,6 +462,7 @@ class GoalReviewFeature(Feature):
             await finish_transcript("failed")
             raise
         finally:
+            self._live_reviewer = None
             reviewer.abort()
             background = reviewer.features.capability(BackgroundCapability)
             runner = background.runner if background is not None else None
