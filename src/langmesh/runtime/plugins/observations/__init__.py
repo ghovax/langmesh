@@ -90,3 +90,7 @@ class ObservationMemory(Feature):
         reminder = self._host.turn.reminder_message(note.strip())
         self._host.conversation.messages.append(reminder)
         self._host.bookkeeping.note_state_changed()
+
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """The registry picture is not a live call to tear down."""
+        return False

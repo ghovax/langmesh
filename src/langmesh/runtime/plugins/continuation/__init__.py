@@ -79,6 +79,10 @@ class Continuation(Feature):
         """The task-list tools this plugin owns."""
         return [set_tasks, update_tasks]
 
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """The task list is durable state, not a live call to tear down."""
+        return False
+
     def compose_prompt(self, variables: dict[str, str]) -> None:
         """Place stable task guidance in the session prompt once so later calls remain append-only."""
         variables["task_guidance"] = self._prompts.load("task_guidance", {}).strip()

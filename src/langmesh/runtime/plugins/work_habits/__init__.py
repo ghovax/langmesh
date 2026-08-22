@@ -26,5 +26,9 @@ class WorkHabits(Feature):
         """The habitual commands as the model sees them, under ``work_habits``."""
         context["work_habits"] = self._habits
 
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Habitual commands are context, not a live call to tear down."""
+        return False
+
 
 __all__ = ["WorkHabits"]

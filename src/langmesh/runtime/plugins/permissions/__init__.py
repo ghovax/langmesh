@@ -95,6 +95,10 @@ class PermissionReview(Feature):
         """The session's confinement with every standing grant compacted in. What an escape is measured against."""
         return self._host.boundary.granted_profile()
 
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Gates wait for an answer; they are not a process this plugin owns to kill."""
+        return False
+
     async def review(self, gate: _PreflightGate) -> PermissionDecision:
         """The verdict on one gate, from the injected automatic reviewer or a denial when absent."""
         if self._reviewer is None:

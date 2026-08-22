@@ -84,11 +84,24 @@ def image_attachment_records(
     return _attachments_with_mime(structured_payloads, INLINE_IMAGE_MIME_PREFIX)
 
 
-def _model_supports_vision(model_identifier: str) -> bool:
+def model_supports_vision(model_identifier: str) -> bool:
+    """Whether ``model_identifier`` can ingest image blocks, treating an unknown model as capable."""
     if not model_identifier:
         return True
     model = find_model(model_identifier)
     return model is None or model.vision
+
+
+def _model_supports_vision(model_identifier: str) -> bool:
+    return model_supports_vision(model_identifier)
+
+
+def image_url_block(mime_type: str, raw: bytes, inline_image_bytes: int) -> dict | None:
+    """An ``image_url`` content block when ``raw`` fits the inline budget."""
+    if not raw or len(raw) > inline_image_bytes:
+        return None
+    encoded = base64.b64encode(raw).decode("ascii")
+    return {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}}
 
 
 def _image_content_block(
@@ -106,8 +119,7 @@ def _image_content_block(
         return None
     if len(raw) > inline_image_bytes:
         return None
-    encoded = base64.b64encode(raw).decode("ascii")
-    return {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}}
+    return image_url_block(mime_type, raw, inline_image_bytes)
 
 
 def compose_attachment_content(
@@ -170,4 +182,6 @@ __all__ = [
     "Attachment",
     "AttachmentComposer",
     "ComposedAttachments",
+    "image_url_block",
+    "model_supports_vision",
 ]

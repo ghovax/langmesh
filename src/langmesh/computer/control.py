@@ -58,6 +58,7 @@ async def run_control_script(
     dependency_roots: Optional[list[str]] = None,
     library_roots: Optional[list[str]] = None,
     scratch: str = "",
+    on_started: Optional[Callable[[Any], None]] = None,
 ) -> dict:
     """Execute `script` in a child process, servicing its primitive calls, and return the child's result."""
     timeout = timeout if timeout is not None else _script_ceiling()
@@ -106,6 +107,8 @@ async def run_control_script(
         # Its own scratch directory, since the narrowing has just taken the inherited working directory out of its readable set.
         cwd=scratch or None,
     )
+    if on_started is not None:
+        on_started(process)
     # The parent keeps only its own ends; the child holds the others.
     os.close(request_write)
     os.close(reply_read)

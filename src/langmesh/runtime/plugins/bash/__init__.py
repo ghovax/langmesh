@@ -6,7 +6,7 @@ from typing import Any
 
 from langmesh.runtime.features import BackgroundCapability, Feature
 from langmesh.runtime.plugins.bash.handlers import handle_bash
-from langmesh.runtime.plugins.bash.tools import bash
+from langmesh.runtime.plugins.bash.tools import bash, terminate_bash_call
 
 
 class Bash(Feature):
@@ -30,6 +30,10 @@ class Bash(Feature):
     def required_capabilities(self) -> tuple[type, ...]:
         """Require the runner used for both foreground settling and detached commands."""
         return (BackgroundCapability,)
+
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """SIGTERM the process group still running for this call."""
+        return terminate_bash_call(tool_call_id)
 
 
 __all__ = ["Bash", "bash"]

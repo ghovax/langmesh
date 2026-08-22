@@ -522,6 +522,9 @@ class AgentRuntime(_RunsTurns):
             project_directory=self._project_directory or "",
             plugin_services=components.services,
             artifacts=self._artifacts,
+            abort_tool=self.abort_tool,
+            model_identifier=self.model_identifier,
+            inline_image_bytes=self.inline_image_bytes,
         )
 
     def note_attachments(self, paths: Sequence[str]) -> None:
@@ -809,15 +812,16 @@ class AgentRuntime(_RunsTurns):
             task.cancel()
 
     def abort_tool(self, tool_call_identifier: str) -> bool:
+        """Stop one live tool call: plugins close their side effects first, then the dispatch task."""
+        handled = self._features.terminate_tool_call(tool_call_identifier)
         task = self._active_tool_tasks.get(tool_call_identifier)
-        aborted = False
         if task is not None and not task.done():
             task.cancel()
-            aborted = True
+            handled = True
         runner = self._background
-        return bool(
-            (runner is not None and runner.cancel_by_tool_call(tool_call_identifier)) or aborted
-        )
+        if runner is not None and runner.cancel_by_tool_call(tool_call_identifier):
+            handled = True
+        return handled
 
     def enqueue_steering(
         self, message: str, message_id: str = "", peer_sender: str = ""

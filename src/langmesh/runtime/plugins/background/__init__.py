@@ -141,6 +141,13 @@ class BackgroundJobsFeature(Feature):
         self._runner.acknowledge_deliveries()
         self._checkpointed_deliveries.clear()
 
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Cancel the background job still associated with this tool call."""
+        runner = getattr(self, "_runner", None)
+        if runner is None:
+            return False
+        return runner.cancel_by_tool_call(tool_call_id)
+
     def inject_stored_result(
         self, *, kind: str, identifier: str, tool_call_identifier: str, result: str
     ) -> None:
