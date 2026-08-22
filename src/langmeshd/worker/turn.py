@@ -247,13 +247,19 @@ class _Prepared:
 
 @dataclass(frozen=True)
 class _ComposedTurn:
-    """The model-facing input for this segment, produced by ``_compose_turn_input``."""
+    """The model-facing input for this segment, produced by ``_compose_turn_input``.
+
+    ``turn_messages`` is the continuation path: each pending obligation contributes its own
+    separate staged message, in order, rather than pieces merged into one text.
+    """
 
     prepared: _Prepared
     turn_input: Any
     as_system_note: bool
     # Whether the note begins a unit of work the record is written for, which a bare wake does not.
     opens_exchange: bool
+    # Separate messages, staged one by one; empty for every ordinary single-input turn.
+    turn_messages: tuple[str, ...] = ()
 
 
 class _TurnRunner:
@@ -276,6 +282,8 @@ class _TurnRunner:
         self._track_context_activity = False
         self._track_steerable_turn = False
         self._turn_has_images = False
+        # Separate staged messages for the continuation modes; empty otherwise.
+        self._turn_messages: tuple[str, ...] = ()
         # Set only when the turn closed as completed: a failed or parked turn never got there.
         self._completed = False
         self._lifecycle = AsyncExitStack()
@@ -628,10 +636,8 @@ class _TurnRunner:
                     self._updater, TaskState.completed, final=True
                 )
                 return self._DONE
-            _features.note_task_continuation(runtime)
         if prepared.resolved.ingested.from_outside:
             _features.restore_goal_allowance(runtime)
-            _features.restore_task_allowance(runtime)
         return None
 
     async def _run_maintenance_turn(self, prepared: _Prepared) -> object | None:
@@ -674,14 +680,20 @@ class _TurnRunner:
             # The accepted user message is already the conversation tail. This turn merely resumes the model call that the failed compaction prevented.
             self._turn_input = ""
         elif mode is _TurnMode.GOAL_CONTINUATION:
-            # The goal's own segment stays visible, and every other pending obligation appends
-            # its own segment into the single continuation request rather than opening its own turn.
+            # The goal's own segment stays visible, and every other pending obligation contributes
+            # its own separate staged message — never pieces merged into one text.
             segments = [self._user_text]
             if prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
                 segments.append(_features.task_continuation_message(runtime))
-            self._turn_input = _features.continuation_content(runtime, segments=segments)
+            self._turn_messages = tuple(_features.continuation_messages(runtime, segments=segments))
+            self._turn_input = self._turn_messages[0] if self._turn_messages else ""
         elif mode is _TurnMode.TASK_CONTINUATION:
-            self._turn_input = _features.task_continuation_message(runtime)
+            self._turn_messages = tuple(
+                _features.continuation_messages(
+                    runtime, segments=[_features.task_continuation_message(runtime)]
+                )
+            )
+            self._turn_input = self._turn_messages[0] if self._turn_messages else ""
         elif mode is _TurnMode.REPORT_REMINDER:
             # A reminder, never user prose: this is the harness speaking, not the person the session works for.
             self._turn_input = _PROMPTS.load(
@@ -720,17 +732,28 @@ class _TurnRunner:
             turn_input=self._turn_input,
             as_system_note=self._as_system_note,
             opens_exchange=mode is _TurnMode.GOAL_CONTINUATION,
+            turn_messages=self._turn_messages,
         )
         if not prepared.resolved.is_resume and mode not in {
             _TurnMode.COMPACTION_RESUME,
             _TurnMode.COMPACTION_PREPARE,
             _TurnMode.RETRY,
         }:
-            runtime.stage_input(
-                composed.turn_input,
-                as_system_note=composed.as_system_note,
-                opens_exchange=composed.opens_exchange,
-            )
+            if composed.turn_messages:
+                # Each obligation's own message, staged in order; the exchange-opening mark rides
+                # on the first, which is the prose a reader sees rather than a hidden reminder.
+                for index, segment in enumerate(composed.turn_messages):
+                    runtime.stage_input(
+                        segment,
+                        as_system_note=composed.as_system_note,
+                        opens_exchange=composed.opens_exchange and index == 0,
+                    )
+            else:
+                runtime.stage_input(
+                    composed.turn_input,
+                    as_system_note=composed.as_system_note,
+                    opens_exchange=composed.opens_exchange,
+                )
             await self._save_runtime_conversation()
         await self._announce_persisted_work(prepared)
         return composed

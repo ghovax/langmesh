@@ -1,9 +1,10 @@
-"""Asking a model until it returns structured data, with one shared shape and an attempts cap.
+"""Asking a model until it returns structured data, with one shared shape.
 
 Two places need the same answer: the goal reviewer and the compaction summarizer each drive a
 hidden session until it submits its one verdict tool; the permission reviewer and the session
-titler each ask a single call for a structured tool call. Both shapes, and their attempts caps,
-live here once, so no caller reimplements the loop.
+titler each ask a single call for a structured tool call. Both shapes live here once, so no
+caller reimplements the loop. A driven session is asked again until it submits — emitting the
+verdict correctly is the model's own job, so nothing caps how often it may be reminded.
 """
 
 from __future__ import annotations
@@ -80,29 +81,29 @@ def _first_arguments(response: Any, tool_name: str) -> Any:
 
 async def drive_verdict_session(
     *,
-    attempts: int,
-    reason: str,
     run_turn: Callable[[str], Awaitable[bool]],
     submitted: Callable[[], Any],
     require_submission: Callable[[], None],
     missing_instruction: Callable[[], str],
     aborted: Callable[[], bool] = lambda: False,
     initial_instruction: str = "",
-    on_empty: Callable[[int, int], Any] | None = None,
-    on_exhausted: Callable[[], Any] | None = None,
+    on_empty: Callable[[int], Any] | None = None,
     on_success: Callable[[Any], Any] | None = None,
 ) -> Any | None:
-    """Drive a hidden session until it submits its one verdict tool, capped at ``attempts``.
+    """Drive a hidden session until it submits its one verdict tool.
 
     Each attempt streams the session's turn with the current instruction, which starts at
     ``initial_instruction`` and is replaced by ``missing_instruction`` after each empty turn.
-    A turn that ends without a submission is one failed attempt: ``require_submission``
-    constrains the session down to its verdict tool. A cancelled or aborted turn returns
-    ``None`` immediately; so does exhausting the attempts, after ``on_exhausted`` has a
-    chance to return the terminal value. The callbacks may be synchronous or awaitable.
+    A turn that ends without a submission is one empty attempt: ``require_submission``
+    constrains the session down to its verdict tool, and it is asked again — there is no cap,
+    because emitting the verdict correctly is the model's own job. A cancelled or aborted
+    turn returns ``None`` immediately. ``on_empty`` receives the attempt number. The
+    callbacks may be synchronous or awaitable.
     """
     instruction = initial_instruction
-    for attempt in range(1, attempts + 1):
+    attempt = 0
+    while True:
+        attempt += 1
         if aborted():
             return None
         if not await _maybe_await(run_turn(instruction)):
@@ -113,15 +114,9 @@ async def drive_verdict_session(
                 await _maybe_await(on_success(verdict))
             return verdict
         if on_empty is not None:
-            await _maybe_await(on_empty(attempt, attempts))
-        if attempt >= attempts:
-            break
+            await _maybe_await(on_empty(attempt))
         require_submission()
         instruction = missing_instruction()
-    if on_exhausted is not None:
-        return await _maybe_await(on_exhausted())
-    logger.warning("%s gave up after %d attempts", reason, attempts)
-    return None
 
 
 async def _maybe_await(value: Any) -> Any:

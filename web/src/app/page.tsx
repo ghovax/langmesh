@@ -1,8 +1,8 @@
 "use client";
 
 import { Box, Flex } from "@chakra-ui/react";
-import { SessionsSidebar, type SessionSort } from "@/components/sessions-sidebar";
-import type { SessionActivity, SessionEntry } from "@/components/session-row";
+import { SessionsSidebar, type SessionSort } from "@/components/SessionsSidebar";
+import type { SessionActivity, SessionEntry } from "@/components/SessionRow";
 import { AnimatePresence, motion } from "motion/react";
 import {
   Suspense,
@@ -46,10 +46,10 @@ import {
   type ProviderOption,
   type SandboxEnforce,
 } from "@/lib/api";
-import { ChatPanel, type SidePanelKey } from "@/components/chat-panel";
+import { ChatPanel, type SidePanelKey } from "@/components/ChatPanel";
 import { useTray } from "@/lib/use-tray";
 import { playAttentionSound, playTurnEndSound, primeSounds } from "@/lib/sounds";
-import { swallowed } from "@/lib/swallowed";
+import { reportError } from "@/lib/faults";
 import { usePreferences } from "@/lib/preferences";
 import { isCompactViewport, useCompactViewport } from "@/lib/viewport";
 
@@ -147,7 +147,7 @@ function Workspace() {
       } catch (caught) {
         // A workspace read failure is no reason to leave conversation restoration pending forever.
         if (!cancelled) setRememberedSession("");
-        swallowed({ component: "workspace-page", operation: "resolve the workspace" }, caught);
+        reportError({ component: "workspace-page", operation: "resolve the workspace" }, caught);
       }
     };
     void resolveWorkspace();
@@ -218,7 +218,7 @@ function Workspace() {
     fetchAgentCards(workingDirectoryRef.current)
       .then(setAgentCards)
       .catch((caught) =>
-        swallowed({ component: "workspace-page", operation: "list the workspaces" }, caught),
+        reportError({ component: "workspace-page", operation: "list the workspaces" }, caught),
       );
   }, []);
   const loadAgents = useCallback(() => {
@@ -242,7 +242,7 @@ function Workspace() {
         setModelProviders(catalog.providers);
       })
       .catch((caught) =>
-        swallowed({ component: "workspace-page", operation: "list the models" }, caught),
+        reportError({ component: "workspace-page", operation: "list the models" }, caught),
       );
   }, []);
 
@@ -277,7 +277,7 @@ function Workspace() {
       merged = mapSessions(await fetchSessions({ all: true }));
     } catch (caught) {
       // A transient failure keeps what we already have rather than blanking the list.
-      swallowed({ component: "workspace-page", operation: "list the sessions" }, caught);
+      reportError({ component: "workspace-page", operation: "list the sessions" }, caught);
       return;
     }
     // Reuse the previous object for any unchanged session, so an equal refetch does not re-render the list.
@@ -384,7 +384,7 @@ function Workspace() {
           setWorktreeStrategy(settings.worktree_strategy);
         })
         .catch((caught) =>
-          swallowed({ component: "workspace-page", operation: "list the agents" }, caught),
+          reportError({ component: "workspace-page", operation: "list the agents" }, caught),
         );
     };
     // Arm the audio cues on the first user interaction, since browsers keep audio suspended until a gesture.
@@ -396,13 +396,13 @@ function Workspace() {
     fetchRecentModels()
       .then(setRecentModels)
       .catch((caught) =>
-        swallowed({ component: "workspace-page", operation: "list the agent cards" }, caught),
+        reportError({ component: "workspace-page", operation: "list the agent cards" }, caught),
       );
     // Home is the default workspace for a brand-new chat, applied by the restoration effect rather than forced here.
     fetchHomeDirectory()
       .then(setHomeWorkspace)
       .catch((caught) =>
-        swallowed({ component: "workspace-page", operation: "read the settings" }, caught),
+        reportError({ component: "workspace-page", operation: "read the settings" }, caught),
       );
 
     // Live reload: refresh agents when they change on disk, and the session list when a title is generated.
@@ -420,7 +420,7 @@ function Workspace() {
         fetchRecentModels()
           .then(setRecentModels)
           .catch((caught) =>
-            swallowed({ component: "workspace-page", operation: "read the recent models" }, caught),
+            reportError({ component: "workspace-page", operation: "read the recent models" }, caught),
           );
       }
     });
@@ -476,7 +476,7 @@ function Workspace() {
         if (!cancelled) setActiveSessionDraft(draft);
       })
       .catch((caught) =>
-        swallowed(
+        reportError(
           { component: "workspace-page", operation: "read the accessibility state" },
           caught,
         ),
@@ -526,7 +526,7 @@ function Workspace() {
 
   const refreshSessions = useCallback(() => {
     loadSessions().catch((caught) =>
-      swallowed({ component: "workspace-page", operation: "save the settings" }, caught),
+      reportError({ component: "workspace-page", operation: "save the settings" }, caught),
     );
   }, [loadSessions]);
 
@@ -687,12 +687,12 @@ function Workspace() {
       fetchRecentModels()
         .then(setRecentModels)
         .catch((caught) =>
-          swallowed({ component: "workspace-page", operation: "read a workspace" }, caught),
+          reportError({ component: "workspace-page", operation: "read a workspace" }, caught),
         );
       loadAgents();
     } catch (caught) {
       // Reloading the agents puts the real value back on screen, which is the only signal the user gets.
-      swallowed({ component: "workspace-page", operation: "save the agent's model" }, caught);
+      reportError({ component: "workspace-page", operation: "save the agent's model" }, caught);
       loadAgents();
     }
   }
@@ -704,7 +704,7 @@ function Workspace() {
       await setSandboxEnforce(enforce);
     } catch (caught) {
       // Roll the toggle back so it reflects the daemon rather than the click.
-      swallowed(
+      reportError(
         { component: "workspace-page", operation: "change the sandbox enforcement" },
         caught,
       );
@@ -726,7 +726,7 @@ function Workspace() {
         worktree_strategy: strategy,
       });
     } catch (caught) {
-      swallowed({ component: "workspace-page", operation: "change the worktree strategy" }, caught);
+      reportError({ component: "workspace-page", operation: "change the worktree strategy" }, caught);
       setWorktreeStrategy(previous);
     }
   }
@@ -783,7 +783,7 @@ function Workspace() {
         setWorkingDirectory(local?.base_directory || homeWorkspace?.path || "");
       })
       .catch((caught) =>
-        swallowed({ component: "workspace-page", operation: "list the sessions" }, caught),
+        reportError({ component: "workspace-page", operation: "list the sessions" }, caught),
       );
     return () => {
       cancelled = true;

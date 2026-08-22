@@ -191,23 +191,15 @@ compaction:
   reclaim_at_fraction: 0.85
   output_reserve_fraction: 0.1
   recent_working_set_fraction: 0.15
-  summary_attempts: 3
-
-goal_review:
-  mode: review
-  maximum_attempts: 3
 ```
 
-When a conversation reaches its recommended preparation threshold, LangMesh appends one private pre-compaction notice inside the reserved context buffer. The segment exposes only local Bash. The agent must atomically bring the active workspace's `.agents/observations.sqlite` up to date and advance `registry_meta.revision`, including a revision-only acknowledgement when nothing durable changed. LangMesh verifies that the revision advanced, then asks the model for the summary through `submit_compaction_summary`; once collected, the older turns are dropped and the session continues with the system prompt, the summary, and the recent working set word for word.
+When a conversation reaches its recommended preparation threshold, LangMesh appends one private pre-compaction notice inside the reserved context buffer. The segment exposes only local Bash. The agent must atomically bring the active workspace's `.agents/observations.sqlite` up to date and advance `registry_meta.revision`, including a revision-only acknowledgement when nothing durable changed. LangMesh verifies that the revision advanced, then asks the model for the summary through `submit_compaction_summary`; once collected, the older turns are dropped and the session continues with the system prompt, the summary, and the recent working set word for word. A summarizer that stops without submitting is reminded until it does — emitting the tool call correctly is the model's own responsibility, and only the person's stop ends the wait.
 
 - `output_reserve_fraction` is held back for the answer the model is about to write; everything else here is a share of what remains.
 - `reclaim_at_fraction` is the recommended preparation boundary, not a hard cutoff.
 - `recent_working_set_fraction` is how much stays verbatim, measured in tokens rather than turns.
-- `summary_attempts` is how many times the hidden summarizer may be asked again after reviewing but not submitting; once exhausted, the compaction stops and the conversation is left unchanged until it is retried.
 
-`goal_review` governs the secondary review that settles a goal the agent marked. The agent owns its goal's `status` through the `update_goal` tool (`active`, `satisfied`, `blocked`, `parked`, `cleared`). A `satisfied` or `blocked` mark is not final by itself: after the working turn ends, an independent reviewer inspects the work and either confirms the mark or overrides it (an unsupported `satisfied` becomes `unmet`, sending the goal back to work). `parked` and `cleared` are administrative and apply directly. A goal left `active` and unmarked is simply re-opened with a light continuation reminder, and the goal stops automatically once its continuation allowance is spent.
-
-`goal_review.maximum_attempts` is the bound for the reviewer: after a reviewer that investigated but never submitted, it is asked again on a narrowed toolset up to this many times, then the goal parks and waits for a person.
+`goal_review` governs the secondary review that settles a goal the agent marked. The agent owns its goal's `status` through the `update_goal` tool (`active`, `satisfied`, `blocked`, `parked`, `cleared`). A `satisfied` or `blocked` mark is not final by itself: after the working turn ends, an independent reviewer inspects the work and either confirms the mark or overrides it (an unsupported `satisfied` becomes `unmet`, sending the goal back to work). `parked` and `cleared` are administrative and apply directly. A goal left `active` and unmarked is simply re-opened with a light continuation reminder until it is reached or the person stops it. The reviewer is asked again until it submits a verdict — modelling correctly is the model's own responsibility, and nothing puts a price on honesty.
 
 Observations are workspace-owned current state and explicit. Agents retrieve and maintain them through Bash using the `observational-memory` skill. The daemon watches each active location's registry through native filesystem notifications and shares one watcher across its sessions. A committed revision broadcasts a complete validated snapshot to the memory panel. The append-only session context receives only progressive-disclosure metadata, never observation rows. A registry that is missing or no longer matches its schema is itself reported as metadata (`status: missing|broken` with a problem message), so an agent hears about the state and repairs it rather than silently working without memory; the pre-columnar JSON-schema format is never read or migrated.
 
@@ -352,15 +344,10 @@ How conversation history is compacted as it grows.
 | `compaction.reclaim_at_fraction`         | number  | `0.85` | Recommended preparation boundary. A private local-Bash segment first updates the current observational registry and advances its revision; compaction follows only after validation succeeds. |
 | `compaction.output_reserve_fraction`     | number  | `0.1` | Share held back as safety space for the preparation segment and the answer. |
 | `compaction.recent_working_set_fraction` | number  | `0.15` | Share of the usable window kept verbatim after older history is discarded. Sized in tokens rather than turns. |
-| `compaction.summary_attempts`            | integer | `3` | How many times the hidden summarizer may be asked again after reviewing but not submitting; once exhausted, the compaction stops and the conversation is left unchanged until it is retried. |
 
 ### Goal review
 
-How an open goal is assessed and continued.
-
-| Setting                                | Type    | Default  | What it is for |
-| -------------------------------------- | ------- | -------- | -------------- |
-| `goal_review.maximum_attempts`         | integer | `3`      | How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset before the goal parks and waits for a person. |
+How an agent-marked goal is settled. It has no settings: the reviewer confirms or overrides a `satisfied` or `blocked` mark, and is asked again until it submits a verdict.
 
 ### Attachments
 
@@ -495,7 +482,6 @@ How large, how many, and how patient the tools are: the fields of `langmesh.base
 | `surface_guard_margin`                      | `30.0`    | How far above the script's own limit the machinery waiting on it sits. |
 | `open_url`                                  | `5.0`     | How long handing a URL to the system browser waits. |
 | `model_silence_give_up`                     | `180.0`   | How long a model stream may make no meaningful progress before the turn fails. |
-| `task_continuation_turns`                   | `16`      | How many turns in a row unfinished tracked tasks may reopen automatically before the session waits for the person. |
 | `settle_poll_seconds`                       | `0.05`    | How often a surface is re-checked until it stops changing. |
 | `settle_give_up_seconds`                    | `1.5`     | The longest to wait before reading it anyway. |
 | `settle_stable_reads`                       | `2`       | Identical consecutive reads that count a surface as having stopped changing. |

@@ -11,21 +11,22 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 
-def _by(runtime, feature_type):
+def _resolve_feature(runtime, feature_type):
+    """The installed feature of this class, or ``None`` when the profile ships without it."""
     return runtime.features.by_type(feature_type)
 
 
 def goal(runtime):
     from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 
-    feature = _by(runtime, GoalReviewFeature)
+    feature = _resolve_feature(runtime, GoalReviewFeature)
     return feature.goal if feature is not None else None
 
 
 def set_goal_listener(runtime, listener) -> None:
     from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 
-    feature = _by(runtime, GoalReviewFeature)
+    feature = _resolve_feature(runtime, GoalReviewFeature)
     if feature is not None:
         feature.set_listener(listener)
 
@@ -33,7 +34,7 @@ def set_goal_listener(runtime, listener) -> None:
 def write_goal(runtime, value) -> None:
     from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 
-    feature = _by(runtime, GoalReviewFeature)
+    feature = _resolve_feature(runtime, GoalReviewFeature)
     if feature is not None:
         feature.write(value)
 
@@ -41,7 +42,7 @@ def write_goal(runtime, value) -> None:
 def note_goal_continuation(runtime) -> None:
     from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 
-    feature = _by(runtime, GoalReviewFeature)
+    feature = _resolve_feature(runtime, GoalReviewFeature)
     if feature is not None:
         feature.note_continuation()
 
@@ -49,7 +50,7 @@ def note_goal_continuation(runtime) -> None:
 def restore_goal_allowance(runtime) -> None:
     from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 
-    feature = _by(runtime, GoalReviewFeature)
+    feature = _resolve_feature(runtime, GoalReviewFeature)
     if feature is not None:
         feature.restore_allowance()
 
@@ -57,7 +58,7 @@ def restore_goal_allowance(runtime) -> None:
 def park_goal(runtime) -> None:
     from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 
-    feature = _by(runtime, GoalReviewFeature)
+    feature = _resolve_feature(runtime, GoalReviewFeature)
     if feature is not None:
         feature.park()
 
@@ -65,14 +66,14 @@ def park_goal(runtime) -> None:
 def review_goal(runtime, publish=None):
     from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 
-    feature = _by(runtime, GoalReviewFeature)
+    feature = _resolve_feature(runtime, GoalReviewFeature)
     return feature.review(publish) if feature is not None else None
 
 
 def apply_goal_review(runtime, review):
     from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 
-    feature = _by(runtime, GoalReviewFeature)
+    feature = _resolve_feature(runtime, GoalReviewFeature)
     if feature is None:
         return goal(runtime)
     return feature.apply(review)
@@ -81,21 +82,21 @@ def apply_goal_review(runtime, review):
 def should_continue_goal(runtime) -> bool:
     from langmesh.runtime.plugins.continuation import Continuation
 
-    feature = _by(runtime, Continuation)
+    feature = _resolve_feature(runtime, Continuation)
     return bool(feature is not None and feature.should_continue_goal(goal(runtime)))
 
 
 def should_continue_tasks(runtime) -> bool:
     from langmesh.runtime.plugins.continuation import Continuation
 
-    feature = _by(runtime, Continuation)
+    feature = _resolve_feature(runtime, Continuation)
     return bool(feature is not None and feature.should_continue_tasks(feature.actionable()))
 
 
 def task_continuation_message(runtime) -> str:
     from langmesh.runtime.plugins.continuation import Continuation
 
-    feature = _by(runtime, Continuation)
+    feature = _resolve_feature(runtime, Continuation)
     if feature is None:
         return ""
     return feature.task_continuation_message(feature.unfinished())
@@ -104,104 +105,81 @@ def task_continuation_message(runtime) -> str:
 def goal_continuation_message(runtime) -> str:
     from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 
-    feature = _by(runtime, GoalReviewFeature)
+    feature = _resolve_feature(runtime, GoalReviewFeature)
     if feature is None:
         return ""
     return feature.goal_continuation_message(goal(runtime))
 
 
-def continuation_content(runtime, *, segments: Sequence[str] = ()) -> str:
+def continuation_messages(runtime, *, segments: Sequence[str] = ()) -> list[str]:
     from langmesh.runtime.plugins.continuation import Continuation
 
-    feature = _by(runtime, Continuation)
+    feature = _resolve_feature(runtime, Continuation)
     if feature is None:
-        return "\n\n".join(segment.strip() for segment in segments if segment.strip())
-    return feature.continuation_content(segments=segments)
-
-
-def task_continuations(runtime) -> int:
-    from langmesh.runtime.plugins.continuation import Continuation
-
-    feature = _by(runtime, Continuation)
-    return feature.task_continuations if feature is not None else 0
-
-
-def note_task_continuation(runtime) -> None:
-    from langmesh.runtime.plugins.continuation import Continuation
-
-    feature = _by(runtime, Continuation)
-    if feature is not None:
-        feature.note_task_continuation()
-
-
-def restore_task_allowance(runtime) -> None:
-    from langmesh.runtime.plugins.continuation import Continuation
-
-    feature = _by(runtime, Continuation)
-    if feature is not None:
-        feature.restore_task_allowance()
+        return [segment.strip() for segment in segments if segment.strip()]
+    return feature.continuation_messages(segments=segments)
 
 
 def unfinished_tasks(runtime) -> list:
     from langmesh.runtime.plugins.continuation import Continuation
 
-    feature = _by(runtime, Continuation)
+    feature = _resolve_feature(runtime, Continuation)
     return feature.unfinished() if feature is not None else []
 
 
 def has_actionable_tasks(runtime) -> bool:
     from langmesh.runtime.plugins.continuation import Continuation
 
-    feature = _by(runtime, Continuation)
+    feature = _resolve_feature(runtime, Continuation)
     return bool(feature is not None and feature.actionable())
 
 
 def compaction_failure(runtime):
     from langmesh.runtime.plugins.compaction import Compaction
 
-    feature = _by(runtime, Compaction)
+    feature = _resolve_feature(runtime, Compaction)
     return feature.failure if feature is not None else None
 
 
 def retry_compaction(runtime):
     from langmesh.runtime.plugins.compaction import Compaction
 
-    feature = _by(runtime, Compaction)
+    feature = _resolve_feature(runtime, Compaction)
     return feature.retry() if feature is not None else None
 
 
 def begin_compaction_preparation(runtime) -> bool:
     from langmesh.runtime.plugins.compaction import Compaction
 
-    feature = _by(runtime, Compaction)
+    feature = _resolve_feature(runtime, Compaction)
     return bool(feature is not None and feature.begin_explicit())
 
 
 def resumes_after_compaction(runtime) -> bool:
     from langmesh.runtime.plugins.compaction import Compaction
 
-    feature = _by(runtime, Compaction)
+    feature = _resolve_feature(runtime, Compaction)
     return bool(feature is not None and feature.control.resume_after)
 
 
 def pending_compaction_reason(runtime) -> str:
     from langmesh.runtime.plugins.compaction import Compaction
 
-    feature = _by(runtime, Compaction)
+    feature = _resolve_feature(runtime, Compaction)
     return feature.control.reason if feature is not None else "manual"
 
 
 def awaiting_compaction_recording(runtime) -> bool:
     from langmesh.runtime.plugins.compaction import Compaction
 
-    feature = _by(runtime, Compaction)
+    feature = _resolve_feature(runtime, Compaction)
     return bool(feature is not None and feature.control.waiting)
 
 
 async def compact(runtime, reason: str = "manual"):
     from langmesh.runtime.plugins.compaction import Compaction
 
-    feature = _by(runtime, Compaction)
+    feature = _resolve_feature(runtime, Compaction)
     if feature is None:
         return
     async for event in feature.compact(reason):
@@ -211,7 +189,7 @@ async def compact(runtime, reason: str = "manual"):
 def reconsider_gate(runtime, gate):
     from langmesh.runtime.plugins.permissions import PermissionReview
 
-    feature = _by(runtime, PermissionReview)
+    feature = _resolve_feature(runtime, PermissionReview)
     if feature is None:
         return {}
     return feature.reconsider_gate(gate)
@@ -220,7 +198,7 @@ def reconsider_gate(runtime, gate):
 def note_observation_registry(runtime, metadata: dict, error: str | None = None) -> None:
     from langmesh.runtime.plugins.observations import ObservationMemory
 
-    feature = _by(runtime, ObservationMemory)
+    feature = _resolve_feature(runtime, ObservationMemory)
     if feature is not None:
         feature.note(metadata, error)
 
@@ -228,7 +206,7 @@ def note_observation_registry(runtime, metadata: dict, error: str | None = None)
 def background_jobs(runtime):
     from langmesh.runtime.plugins.background import BackgroundJobsFeature
 
-    feature = _by(runtime, BackgroundJobsFeature)
+    feature = _resolve_feature(runtime, BackgroundJobsFeature)
     return feature.runner if feature is not None else None
 
 
@@ -251,7 +229,7 @@ async def wait_for_jobs(runtime) -> None:
 def inject_stored_background_result(runtime, **kwargs) -> None:
     from langmesh.runtime.plugins.background import BackgroundJobsFeature
 
-    feature = _by(runtime, BackgroundJobsFeature)
+    feature = _resolve_feature(runtime, BackgroundJobsFeature)
     if feature is not None:
         feature.inject_stored_result(**kwargs)
 
@@ -274,7 +252,7 @@ __all__ = [
     "begin_compaction_preparation",
     "compact",
     "compaction_failure",
-    "continuation_content",
+    "continuation_messages",
     "goal",
     "goal_continuation_message",
     "has_actionable_tasks",
@@ -283,13 +261,11 @@ __all__ = [
     "inject_stored_background_result",
     "note_goal_continuation",
     "note_observation_registry",
-    "note_task_continuation",
     "park_goal",
     "pending_compaction_reason",
     "reconsider_gate",
     "resumes_after_compaction",
     "restore_goal_allowance",
-    "restore_task_allowance",
     "retry_compaction",
     "review_goal",
     "send_tool_to_background",
@@ -297,7 +273,6 @@ __all__ = [
     "should_continue_goal",
     "should_continue_tasks",
     "task_continuation_message",
-    "task_continuations",
     "unfinished_tasks",
     "wait_for_jobs",
     "write_goal",

@@ -239,6 +239,11 @@
     "queuedForDecision": "Waiting for your decision",
     "queuedForCompaction": "Waiting for compaction retry",
     "queuedRetry": "Retry",
+    "goalParked": "Goal paused — resume when ready",
+    "goalReviewChecking": "Secondary goal review running…",
+    "compactionSummarizing": "Summarizing for compaction…",
+    "stopActivity": "Stop",
+    "resumeGoal": "Resume",
     "queuedUnreachable": "Couldn't reach the session",
     "readOnly": "Read-only",
     "reasonAccessRequest": "{count, plural, one {This call asks to reach a path outside what the session may touch.} other {This call asks to reach paths outside what the session may touch.}}",
@@ -246,6 +251,7 @@
     "reconnecting": "Reconnecting",
     "reload": "Reload",
     "retry": "Retry",
+    "sendingRequestToProvider": "Sending request to the provider…",
     "sessionOptions": "Session options",
     "settings": "Settings",
     "showConversations": "Show conversations",
@@ -659,7 +665,6 @@
         "find_rephrasing_similarity": "Rephrasing similarity",
         "focus_settle": "Focus settle",
         "frame_resolve_timeout": "Frame resolve timeout",
-        "task_continuation_turns": "Task continuation turns",
         "mcp_connect": "MCP connect",
         "model_catalogue_ttl": "Model catalogue lifetime",
         "model_silence_give_up": "Model silence give up",
@@ -712,13 +717,10 @@
       "automatic": "Compact automatically",
       "reclaim_at_fraction": "Compact at (share of window)",
       "output_reserve_fraction": "Reserved for the answer (share)",
-      "recent_working_set_fraction": "Kept verbatim (share)",
-      "summary_attempts": "Summary retry attempts"
+      "recent_working_set_fraction": "Kept verbatim (share)"
     },
     "goal_review": {
-      "_": "Goal review",
-      "maximum_attempts": "Maximum review attempts",
-      "mode": "Goal driving mode"
+      "_": "Goal review"
     }
   },
   "SettingsAbout": {
@@ -843,7 +845,6 @@
         "find_rephrasing_similarity": "How alike two screen queries must be, as a cosine in the retrieval model's own space, before a second one landing on the same element counts as the first asked again.",
         "focus_settle": "Pause after focusing a field, before typing into it.",
         "frame_resolve_timeout": "How long resolving a frame reference waits. Deliberately well below the action timeout: a frame that has gone waits out its budget rather than erroring, and listing every frame would otherwise stall on the one that left.",
-        "task_continuation_turns": "How many turns in a row unfinished tracked tasks may reopen automatically before the session waits for the person. A new user message restores the allowance.",
         "mcp_connect": "How long connecting to one MCP server waits.",
         "model_catalogue_ttl": "How long the list of available models is cached.",
         "model_silence_give_up": "How long a model may hold a stream open saying nothing at all before the turn is ended. Long, because a model weighing a hard problem is silent and still working.",
@@ -896,12 +897,10 @@
       "automatic": "Compact on its own as the conversation fills. Manual compaction works either way.",
       "reclaim_at_fraction": "Recommended preparation boundary within the usable window. The agent records durable knowledge before older history is discarded, so the reserved space remains available for that final segment.",
       "output_reserve_fraction": "Safety buffer kept outside the usable window for the current answer and the pre-compaction recording segment.",
-      "recent_working_set_fraction": "Share of the usable window kept verbatim after older history is discarded. It is measured in tokens because one turn may contain hundreds of tool results.",
-      "summary_attempts": "How many times the hidden summarizer may be asked again after reviewing but not submitting. Once exhausted, the compaction stops and the conversation is left unchanged until it is retried."
+      "recent_working_set_fraction": "Share of the usable window kept verbatim after older history is discarded. It is measured in tokens because one turn may contain hundreds of tool results."
     },
     "goal_review": {
-      "_": "How the secondary review settles an agent-marked goal.",
-      "maximum_attempts": "How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset before the goal carries unchanged."
+      "_": "How the secondary review settles an agent-marked goal. A reviewer that stops without a verdict is asked again until it submits."
     }
   },
   "SettingsChoices": {
@@ -1213,9 +1212,12 @@
     "emptyDescription": "Independent reviews will appear here as they inspect the work.",
     "emptyTitle": "No goal reviews yet",
     "failed": "Failed",
+    "resumeGoal": "Resume",
     "reviewNumber": "Review {number}",
+    "reviewRunning": "Secondary goal review running…",
     "reviewing": "Inspecting the work",
     "satisfied": "Satisfied",
+    "stop": "Stop",
     "title": "Goal reviews",
     "unmet": "More work needed",
     "working": "Checking"

@@ -65,6 +65,11 @@ class Goal(BaseModel):
         """Whether this goal is still being worked, as opposed to waiting on a person."""
         return self.status == self.ACTIVE
 
+    @property
+    def is_parked(self) -> bool:
+        """Whether this goal is set aside waiting for its person, which is what a resume lifts."""
+        return self.status == self.PARKED
+
     def updated(self, **changes: Any) -> Goal:
         """Make a validated replacement so linked goal fields cannot diverge."""
         return type(self).model_validate({**self.model_dump(), **changes})

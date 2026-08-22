@@ -239,6 +239,11 @@
     "queuedForDecision": "あなたの判断を待っています",
     "queuedForCompaction": "圧縮の再試行を待っています",
     "queuedRetry": "再試行",
+    "goalParked": "ゴールは一時停止中 — 再開できます",
+    "goalReviewChecking": "二次ゴールレビューを実行中…",
+    "compactionSummarizing": "圧縮用の要約を作成中…",
+    "stopActivity": "停止",
+    "resumeGoal": "再開",
     "queuedUnreachable": "セッションに接続できませんでした",
     "readOnly": "読み取り専用",
     "reasonAccessRequest": "この呼び出しは、セッションが触れられる範囲の外にあるパスへのアクセスを求めています。",
@@ -246,6 +251,7 @@
     "reconnecting": "再接続中",
     "reload": "再読み込み",
     "retry": "再試行",
+    "sendingRequestToProvider": "プロバイダーにリクエストを送信中…",
     "sessionOptions": "セッションのオプション",
     "settings": "設定",
     "showConversations": "会話を表示",
@@ -659,7 +665,6 @@
         "find_rephrasing_similarity": "言い換えと見なす類似度",
         "focus_settle": "フォーカス後の待ち時間",
         "frame_resolve_timeout": "フレーム解決のタイムアウト",
-        "task_continuation_turns": "未完了タスクを自動継続するターン数",
         "mcp_connect": "MCP サーバー接続の待ち時間",
         "model_catalogue_ttl": "モデル一覧の保持時間",
         "model_silence_give_up": "モデルの無応答を打ち切るまで",
@@ -712,13 +717,10 @@
       "automatic": "自動で圧縮",
       "reclaim_at_fraction": "圧縮を始める割合",
       "output_reserve_fraction": "回答用に確保する割合",
-      "recent_working_set_fraction": "そのまま残す割合",
-      "summary_attempts": "要約の再試行回数"
+      "recent_working_set_fraction": "そのまま残す割合"
     },
     "goal_review": {
-      "_": "目標レビュー",
-      "maximum_attempts": "最大レビュー試行回数",
-      "mode": "ゴール駆動モード"
+      "_": "目標レビュー"
     }
   },
   "SettingsAbout": {
@@ -843,7 +845,6 @@
         "find_rephrasing_similarity": "2 つの画面クエリが同じ問い直しと見なされる類似度（検索モデル上のコサイン）。",
         "focus_settle": "入力欄にフォーカスしてから入力を始めるまでの待ち。",
         "frame_resolve_timeout": "フレーム参照の解決を待つ時間。操作のタイムアウトより意図的に短くしています。消えたフレームがあっても列挙が止まらないようにするためです。",
-        "task_continuation_turns": "未完了の追跡タスクが人を待たずに自動で再開できる連続ターン数。新しいユーザーメッセージで上限はリセットされます。",
         "mcp_connect": "MCP サーバー 1 台への接続を待つ時間。",
         "model_catalogue_ttl": "利用可能なモデル一覧をキャッシュする時間。",
         "model_silence_give_up": "モデルが何も返さないままストリームを保持できる時間。難問を考えている間は無言なので長めです。",
@@ -896,12 +897,10 @@
       "automatic": "会話が埋まってきたら自動で圧縮します。手動の圧縮はどちらの設定でも使えます。",
       "reclaim_at_fraction": "使用可能なウィンドウ内で準備を始める目安です。古い履歴を破棄する前にエージェントが永続的な知識を記録できるよう、予約領域は最後のセグメントのために残されます。",
       "output_reserve_fraction": "現在の回答と圧縮前の記録セグメントのために、使用可能領域の外側へ確保する安全バッファです。",
-      "recent_working_set_fraction": "古い履歴を破棄した後もそのまま残す、使用可能ウィンドウの割合です。1 ターンに多数のツール結果が含まれることがあるため、トークン量で測ります。",
-      "summary_attempts": "隠れた要約エージェントがレビュー後に提出しなかった場合に再試行する回数。上限に達すると圧縮は停止し、再試行するまで会話は変更されません。"
+      "recent_working_set_fraction": "古い履歴を破棄した後もそのまま残す、使用可能ウィンドウの割合です。1 ターンに多数のツール結果が含まれることがあるため、トークン量で測ります。"
     },
     "goal_review": {
-      "_": "エージェントがマークしたゴールを二次レビューが確定させる方法。",
-      "maximum_attempts": "調査したのに提出しなかったレビュアーに、ツールを絞って再度求める回数。上限に達すると目標は変更されずに継続します。"
+      "_": "エージェントがマークしたゴールを二次レビューが確定させる方法。評決を出さずに止まったレビュアーは、提出するまで再度求められます。"
     }
   },
   "SettingsChoices": {
@@ -1213,9 +1212,12 @@
     "emptyDescription": "独立したレビューが作業を確認すると、ここに表示されます。",
     "emptyTitle": "目標レビューはまだありません",
     "failed": "失敗",
+    "resumeGoal": "再開",
     "reviewNumber": "レビュー {number}",
+    "reviewRunning": "二次ゴールレビューを実行中…",
     "reviewing": "作業を検証中",
     "satisfied": "達成済み",
+    "stop": "停止",
     "title": "目標レビュー",
     "unmet": "追加作業が必要",
     "working": "確認中"

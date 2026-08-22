@@ -44,17 +44,12 @@ from langmesh.runtime.internals import (
 from langmesh.runtime.turn_events import (
     CompactionDone,
     CompactionStarted,
-    Done,
     TurnEvent,
     Usage,
 )
 from langmesh.runtime.cache_trace import cache_lane, cache_prefix_label
 
 logger = logging.getLogger(__name__)
-
-
-class CompactionSummaryExhausted(RuntimeError):
-    """The summarizer never submitted within its configured attempts; the fold cannot proceed without it."""
 
 
 @dataclass
@@ -580,23 +575,7 @@ class Compaction(Feature):
             )
             return
         older = compactable[: len(compactable) - len(kept)]
-        try:
-            summary = await self._summarize_compacted(older, compactable) if older else None
-        except CompactionSummaryExhausted as error:
-            # The summary is the durable memory the tail resumes from: without it the fold must not proceed, and the session stays blocked until the user retries the compaction.
-            self._host.conversation.messages[:] = original
-            self._host.window.set_latest_context_tokens(tokens_before)
-            self.fail_compaction(str(error))
-            yield CompactionDone(
-                reason=reason,
-                ok=False,
-                messages_before=messages_before,
-                messages_after=len(self._host.conversation.messages),
-                tokens_before=tokens_before,
-                tokens_after=self._host.window.latest_context_tokens,
-                error_code="compaction_summary_failed",
-            )
-            return
+        summary = await self._summarize_compacted(older, compactable) if older else None
         if self._host.turn.abort_event.is_set():
             # The person stopped the fold mid-summary; report a terminal, non-blocking cancellation.
             yield CompactionDone(
@@ -668,20 +647,14 @@ class Compaction(Feature):
         try:
             from langmesh.runtime.verdict import drive_verdict_session
 
-            summary_attempts = self._context.global_configuration.compaction.summary_attempts
-            last_text = ""
-
             async def _run_turn(current_instruction: str) -> bool:
-                nonlocal last_text
-                streamed: dict[str, Any] = {"last_text": "", "last_usage": None}
+                streamed: dict[str, Any] = {"last_usage": None}
 
                 async def _consume() -> None:
                     with cache_lane("compaction-summary"):
                         async for _event in summarizer.stream(
                             current_instruction, as_system_note=False, opens_exchange=True
                         ):
-                            if isinstance(_event, Done):
-                                streamed["last_text"] = _event.text
                             if isinstance(_event, Usage):
                                 streamed["last_usage"] = _event
 
@@ -689,7 +662,6 @@ class Compaction(Feature):
                 if await race_interrupt(stream_task, self._host.turn.abort_event):
                     summarizer.abort()
                 await stream_task
-                last_text = streamed["last_text"] or last_text
                 last_usage = streamed["last_usage"]
                 if last_usage is not None:
                     logger.info(
@@ -709,26 +681,15 @@ class Compaction(Feature):
                 feature = summarizer._features.by_type(Compaction)
                 return feature.submitted_summary if feature is not None else None
 
-            def _on_empty(attempt: int, maximum: int) -> None:
+            def _on_empty(attempt: int) -> None:
                 logger.warning(
-                    "the compaction summarizer stopped without submitting its summary (attempt %d/%d); continuing it",
+                    "the compaction summarizer stopped without submitting its summary (attempt %d); continuing it",
                     attempt,
-                    maximum,
                 )
 
-            def _on_exhausted():
-                logger.error(
-                    "compaction summarizer did not submit after %d attempts; last text: %r",
-                    summary_attempts,
-                    last_text,
-                )
-                raise CompactionSummaryExhausted(
-                    f"The compaction summarizer did not submit a summary after {summary_attempts} attempts, so the conversation was not compacted."
-                )
-
+            # No cap: the summarizer is reminded until it submits, and emitting the tool call
+            # correctly is the model's own job. Only a person's stop ends the wait.
             submitted = await drive_verdict_session(
-                attempts=summary_attempts,
-                reason="compaction summary",
                 run_turn=_run_turn,
                 submitted=_submitted,
                 require_submission=lambda: self._require_summary_submission(summarizer),
@@ -736,12 +697,9 @@ class Compaction(Feature):
                 aborted=lambda: self._host.turn.abort_event.is_set(),
                 initial_instruction=instruction,
                 on_empty=_on_empty,
-                on_exhausted=_on_exhausted,
             )
             if submitted is not None:
                 return str(submitted.summary or "").strip() or None
-        except CompactionSummaryExhausted:
-            raise
         except Exception as error:  # noqa: BLE001 — a failed summary never blocks the compaction
             logger.exception("compaction summary failed; compacting without one: %s", error)
             return None
@@ -839,7 +797,6 @@ class Compaction(Feature):
 __all__ = [
     "Compaction",
     "CompactionControl",
-    "CompactionSummaryExhausted",
     "CompactionSummary",
     "DirectCompactionPreparation",
     "KeepRecentTurns",

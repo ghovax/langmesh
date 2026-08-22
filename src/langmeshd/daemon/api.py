@@ -445,6 +445,12 @@ async def _session_goal_clear(params: dict) -> dict:
     return await state.wake_then_relay(record, "session/goal-clear", params)
 
 
+async def _session_goal_resume(params: dict) -> dict:
+    """Restart a parked goal; the session re-opens on it and works toward it again."""
+    record = _session(_require(params, "id"))
+    return await state.wake_then_relay(record, "session/goal-resume", params)
+
+
 async def _jobs_list(params: dict) -> dict:
     """What background work a session has in flight, read from the executor hosting it."""
     record = _session(_require(params, "id"))
@@ -697,6 +703,7 @@ METHODS: dict[str, Callable[[dict], Awaitable[dict]]] = {
     "session.compaction": _session_compact,
     "session.retry": _session_retry,
     "session.goal_clear": _session_goal_clear,
+    "session.goal_resume": _session_goal_resume,
     "jobs.list": _jobs_list,
     "jobs.detach": _jobs_detach,
     "session.history": _session_history,

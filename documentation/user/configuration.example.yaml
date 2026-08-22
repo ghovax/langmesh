@@ -123,14 +123,6 @@ compaction:
   # How much recent conversation stays verbatim. Tokens rather than turns, because an unattended
   # run is one instruction and several hundred tool results.
   recent_working_set_fraction: 0.15
-  # How many times the hidden summarizer may be asked again after reviewing but not submitting.
-  summary_attempts: 3
-
-# How a marked goal is settled: the agent owns its goal's status, and a "satisfied" or
-# "blocked" mark is confirmed (or overridden) by an independent secondary review.
-goal_review:
-  # How many times a reviewer that investigated but never submitted is asked again on a narrowed toolset.
-  maximum_attempts: 3
 
 # What a file the person attaches may cost the conversation it rides in
 attachments:
@@ -272,9 +264,6 @@ tuning:
     surface_guard_margin: 30.0
     open_url: 5.0
     model_silence_give_up: 180.0
-
-    # Autonomous continuation budgets, in turns.
-    task_continuation_turns: 16
 
     # Surface settling, in seconds and reads.
     settle_poll_seconds: 0.05
