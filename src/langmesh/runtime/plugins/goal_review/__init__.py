@@ -341,7 +341,7 @@ class GoalReviewFeature(Feature):
             return None
         # A marked status is a claim the secondary review confirms or overrides; it is told
         # what the session asserted so it audits that rather than reviewing in a vacuum.
-        claimed_status = goal.status if goal.pending_review else ""
+        claimed_status = goal.pending_review if goal.pending_review else ""
         instructions = self._prompts.load(
             "goal_review",
             {

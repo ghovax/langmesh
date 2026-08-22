@@ -350,7 +350,23 @@ class _DispatchesTools:
                 if schema_validator is not None:
                     schema_validator(arguments)
             except ValidationError as exception:
-                return ("invalid_tool_arguments", str(exception))
+                try:
+                    schema_json = (
+                        schema.model_json_schema()
+                        if hasattr(schema, "model_json_schema")
+                        else {}
+                    )
+                    detail = self._prompt_loader.load(
+                        "invalid_tool_schema",
+                        {
+                            "tool_name": tool_name,
+                            "error": str(exception),
+                            "schema": compact(schema_json),
+                        },
+                    )
+                except Exception:
+                    detail = str(exception)
+                return ("invalid_tool_arguments", detail)
             # The validated model is kept — see `_with_schema_defaults` — so a documented default actually applies. Validated once here, so a malformed request fails as a tool error rather than becoming a grant.
         if "access_request" in arguments:
             _, complaint = parse_access_request(arguments.get("access_request"))

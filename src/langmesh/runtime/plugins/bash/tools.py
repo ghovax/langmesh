@@ -8,7 +8,10 @@ import signal
 from pathlib import Path
 from typing import Any
 
+from typing import Annotated
+
 from langchain.tools import tool
+from pydantic import Field
 
 from langmesh.base import confinement as _confinement
 from langmesh.base.content.prompts import PackagePromptLoader
@@ -30,9 +33,9 @@ _DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 @tool
 async def bash(
     *,
-    command: str,
-    background: bool = False,
-    timeout: float = 60.0,
+    command: Annotated[str, Field(description="The shell command to run as a single string. Must be an executable shell command, not a natural-language description.")],
+    background: Annotated[bool, Field(description="Run in background when true; the tool returns immediately with a job id.")] = False,
+    timeout: Annotated[float, Field(description="Seconds to wait before moving the command to background.")] = 60.0,
     **kwargs: Any,
 ) -> str:
     """Run a shell command inside the session's confinement; described in descriptions/bash.md."""

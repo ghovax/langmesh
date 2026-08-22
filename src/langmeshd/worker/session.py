@@ -34,6 +34,7 @@ from langmesh.protocol.metadata import (
     COMPACTION_PREPARE_KIND,
     COMPACTION_RESUME_KIND,
     GOAL_CONTINUATION_KIND,
+    GOAL_REMINDER_KIND,
     TASK_CONTINUATION_KIND,
     REPORT_REMINDER_KIND,
     RETRY_TURN_KIND,
@@ -517,16 +518,16 @@ class SessionExecutor(AgentExecutor):
                         metadata_flags={Metadata.TASK_CONTINUATION: True},
                     )
             elif plan.goal and goal is not None and goal.is_open:
-                # The goal is still open and the agent did not mark it: a light reminder to
+                # The goal is still open and the agent did not mark it: a hidden reminder to
                 # keep going or state where it stands, carrying the task obligation with it.
+                # Sent behind the scenes as a system note, never as a user-visible message.
                 await self._drive_self_sent_turn(
                     session_id,
-                    GOAL_CONTINUATION_KIND,
+                    GOAL_REMINDER_KIND,
                     metadata_flags={
-                        Metadata.GOAL_CONTINUATION: True,
+                        Metadata.GOAL_REMINDER: True,
                         **({Metadata.TASK_CONTINUATION: True} if plan.tasks else {}),
                     },
-                    text=_features.goal_continuation_message(runtime),
                 )
             elif plan.tasks:
                 await self._drive_self_sent_turn(
