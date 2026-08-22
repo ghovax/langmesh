@@ -193,6 +193,13 @@ def build_app() -> FastAPI:
             {"error": {"code": error.code, "message": error.message}}, status_code=error.status_code
         )
 
+    @app.exception_handler(Exception)
+    async def _unhandled(_request: Request, error: Exception) -> JSONResponse:
+        """JSON inside CORS, because uvicorn's bare 500 is opaque to a browser on another origin."""
+        return JSONResponse(
+            {"detail": str(error) or error.__class__.__name__}, status_code=500
+        )
+
     # Pure ASGI rather than a decorated middleware, whose response pumping would break this daemon's long-lived streams.
     class Authenticate:
         def __init__(self, application):

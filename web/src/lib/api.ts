@@ -1181,7 +1181,18 @@ export async function fetchCursorAuthStatus(): Promise<CursorAuthStatus> {
 
 // Begin sign-in: no redirect lands here, so completion arrives on a broadcast or by re-polling.
 export async function startCursorLogin(): Promise<{ authorize_url: string }> {
-  const response = await apiFetch(`/auth/cursor/start`, { method: "POST" });
+  let response: Response;
+  try {
+    response = await apiFetch(`/auth/cursor/start`, { method: "POST" });
+  } catch (error) {
+    throw new Error(
+      error instanceof TypeError
+        ? "Could not reach the daemon to start Cursor sign-in."
+        : error instanceof Error
+          ? error.message
+          : "Could not start Cursor sign-in.",
+    );
+  }
   if (!response.ok) {
     const detail = await response.json().catch(() => ({}));
     throw new Error(detail.detail || "Could not start Cursor sign-in.");

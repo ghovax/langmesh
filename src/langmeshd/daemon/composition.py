@@ -50,6 +50,13 @@ async def open_shared_resources() -> None:
     assert commons_state.global_configuration is not None
     configuration = commons_state.global_configuration
 
+    # REST handlers read subscription tokens through the task-local store; without this they
+    # see an empty in-memory store even after a successful sign-in wrote the daemon's files.
+    from langmesh.base.identity.credential_store import bind_credential_store
+    from langmeshd.daemon.persistence.credentials import file_credential_store
+
+    bind_credential_store(file_credential_store())
+
     commons_state.main_loop = asyncio.get_running_loop()
     commons_state.file_lease_manager = FileLeaseManager(on_change=_notify_filesystem_lease_state)
     commons_state.worktree_manager = SessionWorktreeManager()

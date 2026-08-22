@@ -125,12 +125,20 @@ def _expiry_of(access_token: str) -> float:
     return float(exp) if isinstance(exp, (int, float)) else time.time() + 3600.0
 
 
+def _is_display_account(value: str) -> bool:
+    """Whether a claim is fit to show: an email or a name, never an Auth0 `provider|id` subject."""
+    text = value.strip()
+    if not text or "|" in text:
+        return False
+    return True
+
+
 def _account_of(access_token: str) -> str:
     claims = _decode_jwt_claims(access_token)
-    for claim in ("email", "sub"):
+    for claim in ("email", "email_address", "name", "preferred_username", "authId"):
         value = claims.get(claim)
-        if isinstance(value, str) and value:
-            return value
+        if isinstance(value, str) and _is_display_account(value):
+            return value.strip()
     return ""
 
 
@@ -210,6 +218,10 @@ class CursorLoginFlow:
             "redirectTarget": "cli",
         }
         return f"{LOGIN_URL}?{urllib.parse.urlencode(parameters)}"
+
+    async def start(self) -> None:
+        """Cursor's sign-in is polled, so there is no loopback callback server to bind."""
+        return
 
     async def _ask(self, client: httpx.AsyncClient) -> CursorTokens:
         """One ask of whether the browser has finished, distinguishing pending from refused from unreachable."""
