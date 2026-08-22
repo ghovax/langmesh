@@ -7,6 +7,7 @@ import {
   IconButton,
   Input,
   Separator,
+  Span,
   Spinner,
   Text,
   Textarea,
@@ -453,6 +454,47 @@ function ComposerIcon({ draw, children }: { draw: number; children: ReactNode })
   );
 }
 
+// Send and Stop share one control so a narrow screen can square them to the attach button beside them.
+function ComposerActionButton({
+  colorPalette,
+  onClick,
+  busy,
+  disabled,
+  label,
+  tooltip,
+  icon,
+}: {
+  colorPalette: "blue" | "red";
+  onClick: () => void;
+  busy: boolean;
+  disabled: boolean;
+  label: string;
+  tooltip?: string;
+  icon: ReactNode;
+}) {
+  return (
+    <Tooltip
+      content={tooltip ?? label}
+      openDelay={200}
+      positioning={{ placement: "top" }}
+    >
+      <Button
+        data-composer-action=""
+        type="button"
+        onClick={onClick}
+        size="sm"
+        colorPalette={colorPalette}
+        variant="solid"
+        disabled={disabled}
+        aria-label={label}
+      >
+        {busy ? <Spinner boxSize="18px" borderWidth="2px" /> : icon}
+        <Span data-composer-action-label="">{label}</Span>
+      </Button>
+    </Tooltip>
+  );
+}
+
 function StopTurnButton({
   onAbort,
   isCompacting,
@@ -476,23 +518,21 @@ function StopTurnButton({
     window.setTimeout(() => setPending(false), 15_000);
   }
 
+  const label = pending ? translation("stopping") : translation("stop");
   return (
-    <Button
-      onClick={stop}
-      size="sm"
+    <ComposerActionButton
       colorPalette="red"
-      variant="solid"
-      loading={pending}
-      loadingText={translation("stopping")}
-      // Not while the conversation is being compacted, since Stop would describe something the model is not doing.
+      onClick={() => void stop()}
+      busy={pending}
       disabled={pending || isCompacting}
-      title={isCompacting ? translation("stopUnavailableWhileCompacting") : undefined}
-    >
-      <ComposerIcon draw={18}>
-        <LuSquare />
-      </ComposerIcon>
-      {translation("stop")}
-    </Button>
+      label={label}
+      tooltip={isCompacting ? translation("stopUnavailableWhileCompacting") : label}
+      icon={
+        <ComposerIcon draw={18}>
+          <LuSquare />
+        </ComposerIcon>
+      }
+    />
   );
 }
 
@@ -928,7 +968,7 @@ export function ChatInput({
           </Flex>
         ) : null}
         {/* Aligned to the bottom rather than stretched, so a single line of text is centred by construction. */}
-        <Flex align="flex-end" gap={2}>
+        <Flex data-composer-toolbar="" align="flex-end" gap={2}>
           <Box
             ref={dropZoneRef}
             display="flex"
@@ -1055,13 +1095,10 @@ export function ChatInput({
             {isStreaming ? (
               <StopTurnButton onAbort={onAbort} isCompacting={isCompacting} />
             ) : (
-              <Button
-                onClick={() => void handleSubmit()}
-                size="sm"
+              <ComposerActionButton
                 colorPalette="blue"
-                variant="solid"
-                loading={sendPending}
-                loadingText={translation("sending")}
+                onClick={() => void handleSubmit()}
+                busy={sendPending}
                 disabled={
                   sendPending ||
                   composerClosed ||
@@ -1069,12 +1106,13 @@ export function ChatInput({
                   uploadingCount > 0 ||
                   !inputValue.trim()
                 }
-              >
-                <ComposerIcon draw={22}>
-                  <LuArrowUp />
-                </ComposerIcon>
-                {translation("send")}
-              </Button>
+                label={sendPending ? translation("sending") : translation("send")}
+                icon={
+                  <ComposerIcon draw={22}>
+                    <LuArrowUp />
+                  </ComposerIcon>
+                }
+              />
             )}
           </Flex>
         </Flex>

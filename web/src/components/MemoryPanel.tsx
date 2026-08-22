@@ -18,6 +18,7 @@ import {
   LuTriangleAlert,
 } from "react-icons/lu";
 import { PanelBody, PanelCard, PanelEmptyState, PanelHeader } from "@/components/ui/Panel";
+import { FadeSwitch } from "@/components/ui/FadeIn";
 import { RelativeTime } from "@/components/ui/RelativeTime";
 import {
   fetchObservationRecord,
@@ -345,30 +346,40 @@ export function MemoryPanel({
             </Alert.Content>
           </Alert.Root>
         ) : null}
-        {findingEntries.length === 0 && instructionEntries.length === 0 ? (
-          <PanelEmptyState
-            icon={<LuBookMarked />}
-            title={translation(read ? "emptyTitle" : "loading")}
-            description={translation("emptyDescription")}
-          />
-        ) : (
-          <VStack align="stretch" gap={2.5}>
-            {sections.map(([heading, entries]) =>
-              entries.length === 0 ? null : (
-                <VStack key={heading} align="stretch" gap={2}>
-                  <Text textStyle="sectionLabel">{heading}</Text>
-                  {entries.map((entry) => (
-                    <Entry
-                      key={`${entry.id}:${entry.updated_at ?? ""}`}
-                      entry={entry}
-                      labels={labels}
-                    />
-                  ))}
-                </VStack>
-              ),
-            )}
-          </VStack>
-        )}
+        <FadeSwitch
+          childKey={
+            findingEntries.length === 0 && instructionEntries.length === 0
+              ? read
+                ? "empty"
+                : "loading"
+              : "entries"
+          }
+        >
+          {findingEntries.length === 0 && instructionEntries.length === 0 ? (
+            <PanelEmptyState
+              icon={<LuBookMarked />}
+              title={translation(read ? "emptyTitle" : "loading")}
+              description={translation("emptyDescription")}
+            />
+          ) : (
+            <VStack align="stretch" gap={2.5}>
+              {sections.map(([heading, entries]) =>
+                entries.length === 0 ? null : (
+                  <VStack key={heading} align="stretch" gap={2}>
+                    <Text textStyle="sectionLabel">{heading}</Text>
+                    {entries.map((entry) => (
+                      <Entry
+                        key={`${entry.id}:${entry.updated_at ?? ""}`}
+                        entry={entry}
+                        labels={labels}
+                      />
+                    ))}
+                  </VStack>
+                ),
+              )}
+            </VStack>
+          )}
+        </FadeSwitch>
       </PanelBody>
     </PanelCard>
   );

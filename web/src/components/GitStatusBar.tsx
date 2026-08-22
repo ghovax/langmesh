@@ -2,7 +2,7 @@
 
 import { Box, Flex, Separator, Text } from "@chakra-ui/react";
 import { useTranslations } from "next-intl";
-import { LuArrowDown, LuArrowUp, LuFileDiff, LuGitBranch, LuMinus, LuPlus } from "react-icons/lu";
+import { LuArrowDown, LuArrowUp, LuGitBranch, LuMinus, LuPlus } from "react-icons/lu";
 import { Tooltip } from "./ui/Tooltip";
 import { InlineField } from "./ui/Display";
 import { RelativeTime } from "./ui/RelativeTime";
@@ -99,18 +99,6 @@ export function GitStatusBar({ status }: { status: DirectoryStatus }) {
             {branchLabel}
           </Text>
         </Flex>
-        {status.gitDirty && (
-          <Flex
-            align="center"
-            gap={1}
-            flexShrink={0}
-            color="orange.fg"
-            title={translation("uncommittedChanges")}
-          >
-            <LuFileDiff size={12} />
-            {changedCount > 0 && <Text textStyle="fieldLabel">{changedCount}</Text>}
-          </Flex>
-        )}
         {status.gitDirty && (status.gitInsertions > 0 || status.gitDeletions > 0) && (
           <Flex align="center" gap={1} flexShrink={0} title={translation("linesChanged")}>
             <Flex align="center" gap={1} color="green.fg">

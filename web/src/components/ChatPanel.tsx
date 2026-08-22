@@ -33,7 +33,7 @@ import {
   LuTriangleAlert,
 } from "react-icons/lu";
 import { AnimatePresence, motion } from "motion/react";
-import { FadeIn } from "@/components/ui/FadeIn";
+import { FadeIn, fadeSurfaceTransition } from "@/components/ui/FadeIn";
 import { useTranslations } from "next-intl";
 import { toaster } from "@/components/ui/Toaster";
 import { PanelTiles, type TilePanel } from "./PanelTiles";
@@ -97,7 +97,14 @@ import {
   type SandboxEnforce,
   type WorktreeStrategy,
 } from "@/lib/api";
-import { hideHorizontalScrollbar, scrollFade, scrollFadeTopBottom } from "@/lib/scroll-fade";
+import {
+  hideHorizontalScrollbar,
+  FADE_INLINE,
+  fadeOverlayInline,
+  scrollFade,
+  scrollFadeTopBottom,
+  useScrollInlineFade,
+} from "@/lib/scroll-fade";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { playAttentionSound, playTurnEndSound } from "@/lib/sounds";
 import {
@@ -281,8 +288,12 @@ export function ChatPanel({
   const transcriptVisible = chatReady && !isHistoryLoading;
   // The workspace's locations for the terminal picker, refreshed when the workspace configuration changes.
   const [workspaceLocations, setWorkspaceLocations] = useState<Location[]>([]);
+  const [locationsReady, setLocationsReady] = useState(false);
+  const [skillsReady, setSkillsReady] = useState(false);
+  const welcomeReady = locationsReady && skillsReady;
   useEffect(() => {
     let cancelled = false;
+    setLocationsReady(false);
     // Resolving through a promise keeps the state update off the synchronous effect path.
     const load = () => {
       const request = workspaceId ? getWorkspace(workspaceId) : Promise.resolve(null);
@@ -290,9 +301,13 @@ export function ChatPanel({
         .then((workspace) => {
           if (!cancelled) setWorkspaceLocations(workspace?.locations ?? []);
         })
-        .catch((caught) =>
-          reportError({ component: "chat-panel", operation: "read a workspace" }, caught),
-        );
+        .catch((caught) => {
+          reportError({ component: "chat-panel", operation: "read a workspace" }, caught);
+          if (!cancelled) setWorkspaceLocations([]);
+        })
+        .finally(() => {
+          if (!cancelled) setLocationsReady(true);
+        });
     };
     load();
     const unsubscribe = subscribeEvents((event) => {
@@ -829,6 +844,11 @@ export function ChatPanel({
     return () => setPermissionNotificationHandler(null);
   }, [handlePermission]);
 
+  const sessionTranscriptReady =
+    connectionLost ||
+    historyError ||
+    (transcriptVisible && (messages.length > 0 || hasInheritedContext || welcomeReady));
+
   const startSidePanelResize = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       event.preventDefault();
@@ -921,6 +941,12 @@ export function ChatPanel({
       openSidePanels.indexOf(first.key as SidePanelKey) -
       openSidePanels.indexOf(second.key as SidePanelKey),
   );
+  const {
+    containerRef: topBarScrollRef,
+    onScroll: onTopBarScroll,
+    hiddenStart: topBarHiddenStart,
+    hiddenEnd: topBarHiddenEnd,
+  } = useScrollInlineFade();
 
   return (
     // Every profile name is resolved from this one catalogue, so the transcript and the sidebar cannot disagree.
@@ -955,12 +981,14 @@ export function ChatPanel({
                 <LuMessageSquare size={14} />
               </Box>
             )}
+            <Box position="relative" flex={1} minW={0} h="full">
             <Flex
+              ref={topBarScrollRef}
               align="center"
               gap={2}
-              flex={1}
-              minW={0}
+              h="full"
               overflowX="auto"
+              onScroll={onTopBarScroll}
               css={hideHorizontalScrollbar}
             >
             <Text textStyle="panelTitle" fontWeight="medium" whiteSpace="nowrap" flexShrink={0}>
@@ -969,7 +997,19 @@ export function ChatPanel({
                 : translation("newConversation")}
             </Text>
             <Box flexShrink={0}>
-              <GitStatusBar status={directoryStatus} />
+              <AnimatePresence>
+                {directoryStatus.valid && directoryStatus.isGitRepository ? (
+                  <motion.div
+                    key="git-status"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={fadeSurfaceTransition}
+                  >
+                    <GitStatusBar status={directoryStatus} />
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
             </Box>
             <Flex align="center" gap={1} flexShrink={0}>
               {/* What this workspace's conversations have handed to other sessions, with a dot only when something has. */}
@@ -1050,6 +1090,9 @@ export function ChatPanel({
               </DropdownMenu>
             </Flex>
             </Flex>
+            {topBarHiddenStart ? <Box css={fadeOverlayInline("left", FADE_INLINE)} /> : null}
+            {topBarHiddenEnd ? <Box css={fadeOverlayInline("right", FADE_INLINE)} /> : null}
+            </Box>
           </Flex>
           <Box position="relative" flex={1} minH={0} display="flex" flexDirection="column">
             <Box
@@ -1067,6 +1110,20 @@ export function ChatPanel({
             >
               {connectionLost ? (
                 // A lost daemon is a state worth naming, and the only one here whose remedy is a single button.
+                <motion.div
+                  key="disconnected"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={fadeSurfaceTransition}
+                  style={{
+                    width: "100%",
+                    flex: 1,
+                    minHeight: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                  }}
+                >
                 <Flex direction="column" align="center" justify="center" minH="100%" gap={6} px={2}>
                   <EmptyState.Root>
                     <EmptyState.Content>
@@ -1091,9 +1148,24 @@ export function ChatPanel({
                     </EmptyState.Content>
                   </EmptyState.Root>
                 </Flex>
-              ) : !transcriptVisible ? (
+                </motion.div>
+              ) : !sessionTranscriptReady ? (
                 <Flex h="100%" />
               ) : historyError ? (
+                <motion.div
+                  key="history-error"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={fadeSurfaceTransition}
+                  style={{
+                    width: "100%",
+                    flex: 1,
+                    minHeight: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                  }}
+                >
                 <Flex direction="column" align="center" justify="center" minH="100%" gap={6} px={2}>
                   <EmptyState.Root>
                     <EmptyState.Content>
@@ -1114,16 +1186,19 @@ export function ChatPanel({
                     </EmptyState.Content>
                   </EmptyState.Root>
                 </Flex>
+                </motion.div>
               ) : (
                 // The welcome and the timeline cross-fade out of flow, so sending the first message never flashes.
-                <AnimatePresence mode="popLayout" initial={false}>
+                // Locations and capabilities are fetched after mount; keep the centred column unmounted until
+                // both have settled so the heading does not jump as those sections appear.
+                <AnimatePresence mode="popLayout">
                   {messages.length === 0 && !hasInheritedContext ? (
                     <motion.div
                       key="empty"
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      transition={{ duration: 0.15, ease: "easeOut" }}
+                      transition={fadeSurfaceTransition}
                       style={{
                         width: "100%",
                         flex: 1,
@@ -1171,7 +1246,11 @@ export function ChatPanel({
                           </Box>
                         )}
 
-                        <AgentSkills card={agentCard ?? null} workingDirectory={workingDirectory} />
+                        <AgentSkills
+                          card={agentCard ?? null}
+                          workingDirectory={workingDirectory}
+                          onReady={() => setSkillsReady(true)}
+                        />
                       </Flex>
                     </motion.div>
                   ) : (
@@ -1180,7 +1259,7 @@ export function ChatPanel({
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      transition={{ duration: 0.15, ease: "easeOut" }}
+                      transition={fadeSurfaceTransition}
                       style={{ width: "100%", flexShrink: 0 }}
                     >
                       {/* Tight enough that a tool line and the prose around it read as one document, with bubbles marking turns. */}
@@ -1380,14 +1459,24 @@ export function ChatPanel({
             >
               <Box w="full" maxW="80rem" mx="auto">
                 {/* Above the composer, because a session with a goal is one the person typing should see and be able to end. */}
-                {activeGoal && (
-                  <GoalBar
-                    goal={activeGoal}
-                    onClear={handleClearGoal}
-                    onResume={activeGoal.status === "parked" ? handleResumeGoal : undefined}
-                    onOpenReview={openCurrentReview}
-                  />
-                )}
+                <AnimatePresence>
+                  {sessionTranscriptReady && activeGoal ? (
+                    <motion.div
+                      key="goal"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={fadeSurfaceTransition}
+                    >
+                      <GoalBar
+                        goal={activeGoal}
+                        onClear={handleClearGoal}
+                        onResume={activeGoal.status === "parked" ? handleResumeGoal : undefined}
+                        onOpenReview={openCurrentReview}
+                      />
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
                 <ChatInput
                   onSend={handleSend}
                   onAbort={abort}

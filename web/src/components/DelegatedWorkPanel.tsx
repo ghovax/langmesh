@@ -8,6 +8,7 @@ import { useTranslations } from "next-intl";
 import { LuGitBranch } from "react-icons/lu";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { PanelBody, PanelCard, PanelEmptyState, PanelHeader } from "@/components/ui/Panel";
+import { FadeSwitch } from "@/components/ui/FadeIn";
 import { Pill } from "@/components/ui/Pill";
 import type { AgentSummary } from "@/lib/api";
 import { SessionRow, type SessionEntry } from "./SessionRow";
@@ -165,6 +166,7 @@ export function DelegatedWorkPanel({
       />
 
       <PanelBody pt={1}>
+        <FadeSwitch childKey={!root || root.children.length === 0 ? "empty" : "tree"}>
         {!root || root.children.length === 0 ? (
           <PanelEmptyState
             icon={<LuGitBranch />}
@@ -185,6 +187,7 @@ export function DelegatedWorkPanel({
             />
           </VStack>
         )}
+        </FadeSwitch>
       </PanelBody>
 
       <ConfirmDialog

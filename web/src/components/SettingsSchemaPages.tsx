@@ -17,7 +17,7 @@ import {
   LuServer,
   LuShield,
   LuSlidersHorizontal,
-  LuTarget,
+  LuFlag,
   LuUser,
   LuUsers,
 } from "react-icons/lu";
@@ -45,7 +45,7 @@ const SECTION_ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
   toolbox: LuPackage,
   compaction: LuLayers,
   user_context: LuUser,
-  goal_review: LuTarget,
+  goal_review: LuFlag,
   computer_control: LuMonitor,
   dictation: LuMic,
   providers: LuKeyRound,

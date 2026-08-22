@@ -52,6 +52,39 @@ html[data-tauri="true"] {
   padding-block: calc((var(--composer-control-height) - 1lh - 2px) / 2);
 }
 
+/* Send and Stop drop their words when the composer is narrow, so they square to the attach control beside them. */
+[data-composer-toolbar] {
+  container-type: inline-size;
+}
+
+@container (max-width: 47.9975em) {
+  [data-composer-action] {
+    width: var(--composer-control-height);
+    min-width: var(--composer-control-height);
+    padding-inline: 0 !important;
+    justify-content: center;
+    gap: 0;
+  }
+
+  [data-composer-action-label] {
+    display: none;
+  }
+}
+
+@media (max-width: 47.9975em) {
+  [data-composer-action] {
+    width: var(--composer-control-height);
+    min-width: var(--composer-control-height);
+    padding-inline: 0 !important;
+    justify-content: center;
+    gap: 0;
+  }
+
+  [data-composer-action-label] {
+    display: none;
+  }
+}
+
 /* Touch targets: a finger needs more than a pointer, so controls grow on a device without hover. */
 @media (pointer: coarse) {
   :root {
@@ -274,13 +307,10 @@ samp {
 }
 
 [data-fit-control][data-fit-arrow][data-fit-collapsed] {
-  width: calc(var(--control-height) + var(--fit-arrow-column));
-  min-width: calc(var(--control-height) + var(--fit-arrow-column));
-  padding-inline-end: var(--fit-arrow-column) !important;
-}
-
-[data-scope="select"][data-part="root"][data-fit-collapsed] {
-  --fit-arrow-column: 18px;
+  /* Icon column plus the same trailing inset the overlay caret keeps from the edge. */
+  width: calc(var(--control-height) + var(--fit-arrow-column) + var(--chakra-spacing-2));
+  min-width: calc(var(--control-height) + var(--fit-arrow-column) + var(--chakra-spacing-2));
+  padding-inline-end: calc(var(--fit-arrow-column) + var(--chakra-spacing-2)) !important;
 }
 
 /* Everything below belongs to a pointer, and is gated on hover so a finger never triggers it. */
