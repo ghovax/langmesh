@@ -5,8 +5,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { LuClipboardCheck } from "react-icons/lu";
 import { useTranslations } from "next-intl";
 import { ChatMessageItem, ChatToolGroup } from "@/components/ChatMessage";
+import { TranscriptWaitRow } from "@/components/ToolGroup";
 import { PanelBody, PanelCard, PanelEmptyState, PanelHeader } from "@/components/ui/Panel";
-import { timelineItems } from "@/lib/chat-timeline";
+import { timelineItems, turnHasVisibleOutput } from "@/lib/chat-timeline";
 import {
   appendTranscriptPart,
   appendTranscriptDelta,
@@ -17,26 +18,19 @@ import {
 } from "@/lib/use-chat";
 import {
   attachGoalReview,
-  cancelTurn,
   fetchGoalReviews,
-  resumeSessionGoal,
   subscribeEvents,
   type GoalReviewSession,
 } from "@/lib/api";
 import { reportError } from "@/lib/faults";
-import { ActivityStatus } from "./ActivityStatus";
+import { DisclosureLabel, DisclosureRow } from "./ui/DisclosureRow";
 
-function GoalReviewTranscript({
-  review,
-  sessionId,
-}: {
-  review: GoalReviewSession;
-  sessionId: string | null;
-}) {
+function GoalReviewTranscript({ review }: { review: GoalReviewSession }) {
   const translation = useTranslations("GoalReviewPanel");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [running, setRunning] = useState(review.status === "working");
   const [observedStatus, setObservedStatus] = useState(review.status);
+  const [awaitingModel, setAwaitingModel] = useState(false);
   const transcriptRef = useRef<TranscriptState>(createTranscriptState());
   const historyBufferRef = useRef(new TranscriptHistoryBuffer());
   const newestHistorySeenRef = useRef(false);
@@ -53,6 +47,7 @@ function GoalReviewTranscript({
         paintScheduledRef.current = false;
         historyBufferRef.current.drainInto(transcriptRef.current);
         setMessages([...transcriptRef.current.messages]);
+        setAwaitingModel(transcriptRef.current.awaitingModel);
       });
     };
     const attachment = attachGoalReview(
@@ -64,6 +59,7 @@ function GoalReviewTranscript({
           historyBufferRef.current.reset();
           newestHistorySeenRef.current = false;
           setMessages([]);
+          setAwaitingModel(false);
           setRunning(frame.running);
         } else if (frame.kind === "history") {
           if (historyBufferRef.current.append(frame.turn, String(frame.turn.id ?? "review"))) {
@@ -103,60 +99,28 @@ function GoalReviewTranscript({
     };
   }, [review.review_id]);
 
-  const timeline = useMemo(
+  const reviewMessages = useMemo(
     () =>
-      timelineItems(
-        messages.filter(
-          (message) =>
-            message.role !== "user" && message.role !== "peer" && message.role !== "goal",
-        ),
+      messages.filter(
+        (message) => message.role !== "user" && message.role !== "peer" && message.role !== "goal",
       ),
     [messages],
   );
-  const status = review.status === "working" ? observedStatus : review.status;
-  const isRunning = status === "working" && running;
+  const timeline = useMemo(() => timelineItems(reviewMessages), [reviewMessages]);
+  const isRunning = review.status === "working" || running || observedStatus === "working";
+  const awaitingProvider = isRunning && awaitingModel && !turnHasVisibleOutput(reviewMessages);
   return (
     <VStack align="stretch" gap={2.5} px={4} py={3}>
-      {/* The review is asked again until it submits, so the wait is said out loud with the stop
-          and the restart at hand, exactly as the session title bar says it. */}
       {isRunning ? (
-        <ActivityStatus
-          label={translation("reviewRunning")}
-          cancelLabel={translation("stop")}
-          retryLabel={translation("resumeGoal")}
-          onCancel={
-            sessionId
-              ? () =>
-                  cancelTurn(sessionId).catch((caught) =>
-                    reportError(
-                      { component: "goal-review-panel", operation: "stop the goal review" },
-                      caught,
-                    ),
-                  )
-              : undefined
-          }
-          onRetry={
-            sessionId
-              ? () =>
-                  resumeSessionGoal(sessionId).catch((caught) =>
-                    reportError(
-                      { component: "goal-review-panel", operation: "restart the parked goal" },
-                      caught,
-                    ),
-                  )
-              : undefined
-          }
+        <DisclosureRow
+          tone="active"
+          icon={<LuClipboardCheck />}
+          title={<DisclosureLabel shimmer>{translation("reviewRunning")}</DisclosureLabel>}
         />
       ) : null}
       {timeline.map((item, index) =>
         item.kind === "tool_group" ? (
-          <ChatToolGroup
-            key={item.id}
-            messages={item.messages}
-            thinkingTurns={item.thinkingTurns}
-            keepOpen={isRunning && index === timeline.length - 1}
-            pendingLabel={translation("reviewing")}
-          />
+          <ChatToolGroup key={item.id} messages={item.messages} />
         ) : (
           <Box key={item.message.id} display="flex" flexDirection="column">
             <ChatMessageItem
@@ -166,6 +130,9 @@ function GoalReviewTranscript({
           </Box>
         ),
       )}
+      {awaitingProvider ? (
+        <TranscriptWaitRow label={translation("sendingRequestToProvider")} />
+      ) : null}
     </VStack>
   );
 }
@@ -235,11 +202,7 @@ export function GoalReviewPanel({
         ) : (
           <Flex direction="column" minH="100%">
             {selectedReview ? (
-              <GoalReviewTranscript
-                key={selectedReview.review_id}
-                review={selectedReview}
-                sessionId={sessionId}
-              />
+              <GoalReviewTranscript key={selectedReview.review_id} review={selectedReview} />
             ) : null}
           </Flex>
         )}

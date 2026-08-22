@@ -22,6 +22,13 @@ export const fadeOverlay = (edge: "top" | "bottom", height: number) => ({
   zIndex: 1,
   backgroundImage: `linear-gradient(to ${edge === "top" ? "bottom" : "top"}, var(--chakra-colors-bg-panel), transparent)`,
 });
+/** Horizontal overflow without a visible scrollbar, for a top bar that can extend past its slot. */
+export const hideHorizontalScrollbar = {
+  scrollbarWidth: "none",
+  msOverflowStyle: "none",
+  "&::-webkit-scrollbar": { display: "none" },
+} as const;
+
 export const FADE_TOP = TOP;
 export const FADE_BOTTOM = BOTTOM;
 

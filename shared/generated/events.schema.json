@@ -155,6 +155,10 @@
           "default": "error",
           "type": "string"
         },
+        "message_id": {
+          "default": "",
+          "type": "string"
+        },
         "parameters": {
           "tsType": "Record<string, unknown>"
         },

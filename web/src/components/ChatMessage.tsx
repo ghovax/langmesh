@@ -454,7 +454,8 @@ export const ChatMessageItem = memo(function ChatMessageItem({
       );
     }
 
-    // Reasoning is surfaced as a compact live status rather than as a transcript row.
+    case "thinking":
+      return null;
 
     case "tool_call": {
       return (
@@ -528,17 +529,9 @@ export const ChatMessageItem = memo(function ChatMessageItem({
 
 interface ChatToolGroupProps {
   messages: ChatMessage[];
-  thinkingTurns: number;
-  keepOpen?: boolean;
-  pendingLabel?: string;
 }
 
-export const ChatToolGroup = memo(function ChatToolGroup({
-  messages,
-  thinkingTurns,
-  keepOpen,
-  pendingLabel,
-}: ChatToolGroupProps) {
+export const ChatToolGroup = memo(function ChatToolGroup({ messages }: ChatToolGroupProps) {
   // Map the persisted tool-call messages to the shape the shared group renders.
   const tools: ToolEvent[] = messages.map((message) => ({
     name: message.content,
@@ -551,7 +544,6 @@ export const ChatToolGroup = memo(function ChatToolGroup({
     question: message.meta?.question as ToolQuestion | undefined,
   }));
   const readyTools = tools.filter(toolCallReady);
-  if (readyTools.length === 0 && thinkingTurns === 0) return null;
-  if (readyTools.length === 0 && !keepOpen) return null;
-  return <ToolGroup tools={readyTools} keepOpen={keepOpen} pendingLabel={pendingLabel} />;
+  if (readyTools.length === 0) return null;
+  return <ToolGroup tools={readyTools} />;
 });

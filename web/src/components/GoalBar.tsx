@@ -8,6 +8,7 @@ import {
   LuCircleSlash,
   LuClipboardCheck,
   LuDot,
+  LuRotateCw,
   LuSquare,
   LuTarget,
   LuX,
@@ -21,10 +22,12 @@ import type { SessionGoal } from "@/lib/api";
 export function GoalBar({
   goal,
   onClear,
+  onResume,
   onOpenReview,
 }: {
   goal: SessionGoal;
   onClear: () => void;
+  onResume?: () => void;
   onOpenReview: () => void;
 }) {
   const translation = useTranslations("GoalBar");
@@ -189,6 +192,23 @@ export function GoalBar({
             </Span>
           </Button>
         )}
+        {status === "parked" && onResume ? (
+          <Button
+            title={translation("resume")}
+            size="2xs"
+            variant="plain"
+            px={1}
+            gap={1}
+            flexShrink={0}
+            color="blue.fg"
+            onClick={onResume}
+          >
+            <LuRotateCw size={13} />
+            <Span textStyle="xs" display={{ base: "none", sm: "inline" }}>
+              {translation("resume")}
+            </Span>
+          </Button>
+        ) : null}
         {/* Named as well as drawn: the one control here ends the thing the bar is about, so it says which. */}
         <Button
           title={translation(resolved ? "dismiss" : "stop")}

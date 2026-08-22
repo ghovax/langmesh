@@ -605,8 +605,6 @@ export async function refreshRemoteAgent(name: string): Promise<{ health: string
 // The A2A convention: an extension's attributes sit under one URI-namespaced metadata key.
 export const METADATA_KEY = "urn:langmesh:ext:turn:v1";
 export const CONTENT_BLOCK_METADATA_KEY = "urn:langmesh:ext:content-block:v1";
-// On the DataPart that is also a failed turn's terminal message, carrying its message id.
-export const ERROR_MESSAGE_KEY = "urn:langmesh:ext:error-message:v1";
 
 export type PermissionMode = "ask" | "automatic" | "allow";
 export type WorktreeStrategy = "none" | "branch" | "worktree";
