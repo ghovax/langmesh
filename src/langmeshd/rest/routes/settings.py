@@ -23,6 +23,8 @@ from langmesh.protocol.dtos import (
     SandboxUpdateRequest,
     UserContextUpdateRequest,
 )
+from langmesh.base.identity.credential_store import bind_credential_store, reset_credential_store
+from langmeshd.daemon.persistence.credentials import file_credential_store
 from langmeshd.commons import state
 from langmeshd.commons.services.broadcast import _publish_broadcast
 from langmeshd.commons.services.sessions import (
@@ -87,11 +89,16 @@ async def list_models_endpoint(refresh: bool = False):
     if refresh:
         clear_subscription_models_cache()
         cursor_subscription.clear_subscription_models_cache()
-    # The subscription providers list a static superset, so both accounts' live catalogs are fetched at once to grey the rest.
-    live_chatgpt, live_cursor = await asyncio.gather(
-        fetch_subscription_models(),
-        cursor_subscription.fetch_subscription_models(),
-    )
+    # Request tasks do not always inherit the daemon's bound store, so bind it for this listing.
+    bound = bind_credential_store(file_credential_store())
+    try:
+        # The subscription providers list a static superset, so both accounts' live catalogs are fetched at once to grey the rest.
+        live_chatgpt, live_cursor = await asyncio.gather(
+            fetch_subscription_models(),
+            cursor_subscription.fetch_subscription_models(),
+        )
+    finally:
+        reset_credential_store(bound)
     catalog = list_models()
     # Live models the static list has not caught are appended, filtered to what this harness can actually route.
     catalog.extend(
