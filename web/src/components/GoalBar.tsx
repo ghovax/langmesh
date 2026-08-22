@@ -10,7 +10,7 @@ import {
   LuDot,
   LuRotateCw,
   LuSquare,
-  LuTarget,
+  LuFlag,
   LuX,
 } from "react-icons/lu";
 import { Tooltip } from "./ui/Tooltip";
@@ -73,7 +73,7 @@ export function GoalBar({
   const detail = (
     <Box whiteSpace="normal" maxW="360px">
       <Flex align="center" gap={1} mb={1} color="fg">
-        <LuTarget size={12} />
+        <LuFlag size={12} />
         <Text fontWeight="semibold">{statusLabel}</Text>
       </Flex>
       <Box mb={goal.requirements?.length || goal.blocker || goal.evidence ? 2 : 0}>
