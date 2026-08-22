@@ -11,8 +11,21 @@ from typing import Any
 
 import yaml
 
-from langmesh.base.confinement.paths import configuration_file_path
+from langmeshd.commons.atomic_file import write_text
+from langmeshd.commons.paths import configuration_file_path
 from langmesh.base.configuration import Configuration
+
+
+APP_SECTION_MODELS = {
+    "composio": "ComposioConfiguration",
+    "daemon": "DaemonConfiguration",
+    "dictation": "DictationConfiguration",
+}
+
+
+def library_document(data: dict) -> dict:
+    """Return only the sections owned by the library configuration model."""
+    return {name: value for name, value in data.items() if name in Configuration.model_fields}
 
 
 def load() -> dict:
@@ -27,10 +40,13 @@ def load() -> dict:
 
 
 def save(data: dict) -> None:
-    """Write the document back in the order it holds, so a person meets their settings as they wrote them."""
-    path = configuration_file_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(data, sort_keys=False))
+    """Atomically persist the document in the order it holds."""
+    write_text(configuration_file_path(), yaml.safe_dump(data, sort_keys=False))
+
+
+def seed(text: str) -> None:
+    """Atomically persist the packaged first-run document without discarding its comments."""
+    write_text(configuration_file_path(), text)
 
 
 def flatten(data: Any, prefix: str = "") -> list[tuple[str, Any]]:
@@ -104,17 +120,40 @@ def rejects(data: dict) -> str:
     """Why this document would not load, asked before the file is written because it is read at startup."""
     from pydantic import ValidationError
 
-    try:
-        Configuration.model_validate(data)
-    except ValidationError as error:
-        messages = [
-            f"{'.'.join(str(part) for part in entry.get('loc', ()))}: {entry.get('msg', '')}"
-            for entry in error.errors()
-        ]
-        return "; ".join(messages) or str(error).splitlines()[0]
-    except Exception as error:  # noqa: BLE001 — anything else is a single line worth reporting.
-        return str(error).splitlines()[0] or str(error)
+    from langmeshd.commons import configuration as app_configuration
+
+    unknown = set(data) - set(Configuration.model_fields) - set(APP_SECTION_MODELS)
+    if unknown:
+        names = ", ".join(sorted(unknown))
+        return f"unknown top-level configuration section: {names}"
+    validations = [("", Configuration, library_document(data))]
+    validations.extend(
+        (section, getattr(app_configuration, model_name), data.get(section) or {})
+        for section, model_name in APP_SECTION_MODELS.items()
+    )
+    for section, model, value in validations:
+        try:
+            model.model_validate(value)
+        except ValidationError as error:
+            messages = [
+                f"{'.'.join(filter(None, (section, *(str(part) for part in entry.get('loc', ())))))}: {entry.get('msg', '')}"
+                for entry in error.errors()
+            ]
+            return "; ".join(messages) or str(error).splitlines()[0]
+        except Exception as error:  # noqa: BLE001 — any other validation failure is reported.
+            return str(error).splitlines()[0] or str(error)
     return ""
 
 
-__all__ = ["flatten", "load", "parse", "read", "rejects", "remove", "save", "write"]
+__all__ = [
+    "flatten",
+    "library_document",
+    "load",
+    "parse",
+    "read",
+    "rejects",
+    "remove",
+    "save",
+    "seed",
+    "write",
+]

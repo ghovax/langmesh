@@ -9,10 +9,13 @@ from typing import Any, Awaitable, Callable, Sequence
 from langchain_core.tools import BaseTool
 
 from langmesh.base.configuration import AgentConfiguration, Configuration
-from langmesh.base.contracts.tools import ToolGrant
 from langmesh.base.contracts.ports import (
     Approvals,
+    Artifacts,
+    Attachments,
     CatalogueLike,
+    Checkpoints,
+    CredentialStore,
     FileLeases,
     JobStore,
     MCPServers,
@@ -23,6 +26,7 @@ from langmesh.base.contracts.ports import (
     Transcript,
     describe_unmet,
 )
+from langmesh.runtime.environment import RuntimeEnvironment
 
 
 @dataclass(frozen=True)
@@ -54,18 +58,20 @@ class RuntimeComponents:
     jobs: Any = None
     observer: Any = None
     approvals: Any = None
+    artifacts: Any = None
     transcript: Any = None
     sessions: Any = None
     mcp_servers: Any = None
     file_leases: Any = None
     permissions: Any = None
     prompt_composer: Any = None
-    tools: Sequence[BaseTool | ToolGrant] = field(default_factory=tuple)
-    toolset: Sequence[BaseTool] | None = None
+    prompt_revision: str = ""
+    toolbox: Any = None
+    application_tools: Sequence[BaseTool] = field(default_factory=tuple)
+    available_tools: Sequence[BaseTool] | None = None
     tool_gate: str = "ask"
     hooks: Sequence[Any] = field(default_factory=tuple)
     middleware: Sequence[Any] = field(default_factory=tuple)
-    synchronize_resources: Callable[[], Awaitable[None]] | None = None
     related_turns: Callable[[str], Awaitable[Any]] | None = None
     features: Sequence[Any] | None = None
     # The host's opaque plugin bundle: whatever the composing host supplies for its plugins
@@ -76,17 +82,21 @@ class RuntimeComponents:
     # library supplies a minimal platform-only snapshot and no personal context.
     machine_snapshot: dict[str, Any] | None = None
     user_context: dict[str, Any] | None = None
+    environment: RuntimeEnvironment | None = None
 
     def __post_init__(self) -> None:
         if self.tool_gate not in {"ask", "none"}:
             raise ValueError("tool_gate must be 'ask' or 'none'")
-        for name in ("tools", "hooks", "middleware"):
+        for name in ("application_tools", "hooks", "middleware"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
-        if self.toolset is not None:
-            object.__setattr__(self, "toolset", tuple(self.toolset))
+        if self.available_tools is not None:
+            object.__setattr__(self, "available_tools", tuple(self.available_tools))
+        if self.features is not None:
+            object.__setattr__(self, "features", tuple(self.features))
 
         ports = {
             "approvals": Approvals,
+            "artifacts": Artifacts,
             "catalogue": CatalogueLike,
             "file_leases": FileLeases,
             "jobs": JobStore,
@@ -112,16 +122,26 @@ class SessionComponents(RuntimeComponents):
 
     checkpoints: Any = None
     attachments: Any = None
-    credentials: Any = None
-    workspace: Any = None
+    credential_store: Any = None
     tracer_provider: Any = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        for name, port in {
+            "attachments": Attachments,
+            "checkpoints": Checkpoints,
+            "credential_store": CredentialStore,
+        }.items():
+            candidate = getattr(self, name)
+            if candidate is None:
+                continue
+            unmet = describe_unmet(port, candidate)
+            if unmet:
+                raise TypeError(f"{name}: {unmet}")
 
     def for_runtime(self, **updates: Any) -> RuntimeComponents:
         """Project session ownership out, leaving exactly what an ``AgentRuntime`` consumes."""
-        values = {
-            name: getattr(self, name)
-            for name in RuntimeComponents.__dataclass_fields__
-        }
+        values = {name: getattr(self, name) for name in RuntimeComponents.__dataclass_fields__}
         values.update(updates)
         return RuntimeComponents(**values)
 

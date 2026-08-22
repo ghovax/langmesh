@@ -28,7 +28,7 @@ if __name__ == "__main__":
     if "-c" in sys.argv[1:4]:
         marker = sys.argv.index("-c")
         source = sys.argv[marker + 1] if len(sys.argv) > marker + 1 else ""
-        sys.argv = ["-c", *sys.argv[marker + 2:]]
+        sys.argv = ["-c", *sys.argv[marker + 2 :]]
         exec(compile(source, "<string>", "exec"), {"__name__": "__main__"})
         sys.exit(0)
 

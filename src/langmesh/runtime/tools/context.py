@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import contextvars
-import tempfile
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, Sequence
 
-from langmesh.base import confinement as _confinement
 from langmesh.base.confinement import ENFORCE_OFF
 from langmesh.base.confinement import environment_variables
 from langmesh.base.confinement import Grant, Profile
-from langmesh.base.primitives.identifiers import new_id
 
 
 @dataclass(frozen=True)
@@ -48,11 +44,6 @@ class ToolContext:
     # Whether this is a second run: the only thing that can make a command run wider than its session.
     retrying: bool = False
 
-    def spill_path(self, prefix: str) -> "Path":
-        """Where a tool's overflow output lands: somewhere this profile permits, never in the tree being worked in."""
-        scratch = _confinement.temporary_directory(self.sandbox, workspace=self.workspace)
-        return Path(scratch or tempfile.gettempdir()) / f"{new_id(prefix)}.log"
-
     def child_environment(self, inherited: Optional[dict] = None) -> dict:
         """What a child needs beyond the confinement's environment: who it belongs to, and its toolbox."""
         environment = {environment_variables.SESSION_ID: self.session_id} if self.session_id else {}
@@ -84,7 +75,7 @@ class ToolContext:
         )
 
     def for_directory(self, directory: str) -> "ToolContext":
-        """This context with its workspace repointed, as a new value rather than a mutation."""
+        """This context with its execution directory replaced as a new value."""
         return replace(self, workspace=directory)
 
     def for_remote(self) -> "ToolContext":

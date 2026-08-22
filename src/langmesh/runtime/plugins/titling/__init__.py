@@ -72,5 +72,9 @@ class TitleAssignment(Feature):
             return None
         return validated.title.strip()
 
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Titling is a one-shot model call at session start, not a stoppable tool call."""
+        return False
+
 
 __all__ = ["SessionTitle", "TitleAssignment"]

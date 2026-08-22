@@ -4,7 +4,7 @@
 
 import { useEffect, useRef } from "react";
 import { isTauri } from "@/lib/tauri";
-import { swallowed } from "@/lib/swallowed";
+import { reportError } from "@/lib/faults";
 
 export interface TrayRecentItem {
   id: string;
@@ -34,7 +34,7 @@ export function useTray(handlers: TrayHandlers): void {
       await invoke("update_tray_recent", {
         items: JSON.parse(recentsJson) as TrayRecentItem[],
       }).catch((caught) =>
-        swallowed({ component: "tray", operation: "update the recent items" }, caught),
+        reportError({ component: "tray", operation: "update the recent items" }, caught),
       );
     })();
   }, [recentsJson]);

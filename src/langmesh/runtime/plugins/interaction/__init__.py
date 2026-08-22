@@ -11,13 +11,13 @@ from pathlib import Path
 
 from langchain.tools import tool
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.features import Feature, PluginContext
 from langmesh.runtime.tools.execution import current_tool_decision, current_tool_services
 
 #: The tool's model-facing description, read from this plugin's own prompts directory.
-_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
+_DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 
 
 @tool
@@ -32,8 +32,10 @@ async def ask_user(
         result = {
             "code": "user_declined",
             "status": "error",
-            "decision": {"actor": str(answers.get("__actor__") or "person"),
-                         "reason": answers.get("__reason__") or None},
+            "decision": {
+                "actor": str(answers.get("__actor__") or "person"),
+                "reason": answers.get("__reason__") or None,
+            },
         }
         services.abort_event.set()
     else:
@@ -54,6 +56,10 @@ class Interaction(Feature):
             return [ask_user]
         declared = getattr(context.agent_configuration, "tools_enabled", None)
         return [ask_user] if declared is not None and "ask_user" in declared else []
+
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """ask_user waits on a permission gate, not a process; there is no extra teardown."""
+        return False
 
 
 # The tool's model-facing description is this plugin's own file, applied once at import.

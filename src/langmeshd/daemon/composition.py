@@ -5,17 +5,21 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from pathlib import Path
 
-from langmesh.base.configuration import (
-    configuration_file_path,
-)
+from langmeshd.commons.paths import configuration_file_path
 from langmeshd.commons.configuration_io import seed_home_agents
-from langmeshd.daemon.agent_files import list_agent_route_names
-from langmesh.base.content import toolbox
-from langmesh.base.confinement.file_leases import FileLeaseManager
-from langmesh.base.confinement.paths import data_directory
-from langmesh.base.persistence.worktrees import SessionWorktreeManager
+from langmeshd.commons.agent_files import list_agent_route_names
+from langmeshd.commons import toolboxes
+from langmeshd.commons.paths import data_directory
+from langmeshd.commons.configuration_locations import (
+    agent_directories,
+    agents_roots,
+    skill_directories,
+)
+from langmeshd.daemon.persistence.file_leases import FileLeaseManager
+from langmeshd.daemon.persistence.worktrees import SessionWorktreeManager
 from langmeshd.daemon import state
 from langmeshd.commons import state as commons_state
 from langmeshd.commons.services.agents import _reload_agent_cards
@@ -39,11 +43,19 @@ async def open_shared_resources() -> None:
         PersistentPushNotificationConfigurationStore,
         PinnedPushNotificationSender,
     )
-    from langmesh.protocol.files import FileUrlSigner, load_or_create_secret
+    from langmeshd.daemon.attachments import FileUrlSigner
+    from langmeshd.daemon.persistence.secrets import ensure_private_value
     from langmeshd.commons.brokers.terminals import TerminalSessionManager
 
     assert commons_state.global_configuration is not None
     configuration = commons_state.global_configuration
+
+    # REST handlers read subscription tokens through the task-local store; without this they
+    # see an empty in-memory store even after a successful sign-in wrote the daemon's files.
+    from langmesh.base.identity.credential_store import bind_credential_store
+    from langmeshd.daemon.persistence.credentials import file_credential_store
+
+    bind_credential_store(file_credential_store())
 
     commons_state.main_loop = asyncio.get_running_loop()
     commons_state.file_lease_manager = FileLeaseManager(on_change=_notify_filesystem_lease_state)
@@ -64,7 +76,7 @@ async def open_shared_resources() -> None:
     live_sessions = (
         [record.id for record in state.registry.live()] if state.registry is not None else []
     )
-    swept = await asyncio.to_thread(toolbox.sweep, live_sessions)
+    swept = await asyncio.to_thread(toolboxes.sweep, live_sessions)
     if swept:
         logger.info("swept %d toolbox(es) belonging to sessions that are gone", len(swept))
 
@@ -81,7 +93,7 @@ async def open_shared_resources() -> None:
 
     signing_root = data_directory()
     commons_state.file_url_signer = FileUrlSigner(
-        load_or_create_secret(signing_root),
+        ensure_private_value(signing_root / "a2a_file_secret", lambda: os.urandom(32)),
         f"http://127.0.0.1:{commons_state.daemon_port}",
         allowed_root=signing_root / "uploads",
     )
@@ -108,21 +120,33 @@ async def open_shared_resources() -> None:
         state._remote_start_task = asyncio.create_task(commons_state.remote_agent_manager.start())
 
     _reload_agent_cards()
-    from langmeshd.daemon import scheduler
+    from langmeshd.daemon import api, scheduler
 
     state._watchers = [
-        asyncio.create_task(_watch_agents_and_skills()),
+        asyncio.create_task(_watch_catalogue()),
         asyncio.create_task(_watch_configuration()),
         asyncio.create_task(_watch_ssh_hosts()),
         # Recurring prompts, alongside the watchers because they are the same kind of long-lived task.
-        asyncio.create_task(scheduler.run()),
+        asyncio.create_task(
+            scheduler.run(
+                create_session=api._session_create,
+                send_message=api._session_send,
+            )
+        ),
     ]
 
 
 async def close_shared_resources() -> None:
     """Release everything the opener built, ordered and individually guarded."""
+    for name in ("chatgpt_login_flow", "cursor_login_flow"):
+        flow = getattr(commons_state, name, None)
+        if flow is not None:
+            with contextlib.suppress(Exception):
+                await flow.close()
+            setattr(commons_state, name, None)
     for task in [
         *getattr(state, "_watchers", []),
+        *getattr(commons_state, "_auth_tasks", set()),
         state.__dict__.get("_mcp_start_task"),
         state.__dict__.get("_remote_start_task"),
     ]:
@@ -130,6 +154,7 @@ async def close_shared_resources() -> None:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
+    commons_state._auth_tasks.clear()
     if commons_state.terminal_manager is not None:
         with contextlib.suppress(Exception):
             await commons_state.terminal_manager.close_all()
@@ -146,9 +171,9 @@ def _watched_agent_paths() -> list[str]:
     """Every directory whose contents define what agents and skills exist, watched recursively."""
     assert commons_state.global_configuration is not None
     candidates = [
-        *commons_state.global_configuration.agents_root_directories(),
-        *commons_state.global_configuration.agent_directories(),
-        *commons_state.global_configuration.skill_directories(),
+        *agents_roots(),
+        *agent_directories(),
+        *skill_directories(),
     ]
     watched: list[str] = []
     seen: set[Path] = set()
@@ -163,7 +188,7 @@ def _watched_agent_paths() -> list[str]:
     return watched
 
 
-async def _watch_agents_and_skills() -> None:
+async def _watch_catalogue() -> None:
     """Pick up agents, skills, MCP servers, and remote peers as they change on disk."""
     from watchfiles import awatch
 
@@ -219,12 +244,12 @@ async def _watch_ssh_hosts() -> None:
     """Broadcast when the SSH host registry changes, filtered to the configuration file alone."""
     from watchfiles import awatch
 
-    ssh_config = Path("~/.ssh/config").expanduser()
-    if not ssh_config.parent.exists():
+    ssh_configuration = await asyncio.to_thread(_available_ssh_configuration)
+    if ssh_configuration is None:
         return
     try:
         async for _changes in awatch(
-            str(ssh_config.parent),
+            str(ssh_configuration.parent),
             recursive=False,
             watch_filter=lambda _change, changed: Path(changed).name == "config",
             stop_event=commons_state.shutting_down,
@@ -236,10 +261,15 @@ async def _watch_ssh_hosts() -> None:
         logger.exception("the SSH host watcher stopped")
 
 
+def _available_ssh_configuration() -> Path | None:
+    path = Path("~/.ssh/config").expanduser()
+    return path if path.parent.exists() else None
+
+
 def known_agent_names() -> list[str]:
     """Every agent profile a session could be created with, from the configured roots."""
     assert commons_state.global_configuration is not None
-    return list_agent_route_names(commons_state.global_configuration.agent_directories())
+    return list_agent_route_names(agent_directories())
 
 
 __all__ = [

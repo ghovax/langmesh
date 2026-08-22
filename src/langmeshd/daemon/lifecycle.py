@@ -15,12 +15,6 @@ from langmesh.protocol.metadata import Metadata
 logger = logging.getLogger(__name__)
 
 
-def _daemon_token() -> str:
-    from langmeshd.daemon import state
-
-    return state.daemon_token
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -54,9 +48,7 @@ class SessionLifecycle:
 
     async def start(self, record: SessionRecord) -> bool:
         """Give a record a live executor, which costs about what building the object costs."""
-        started = await self._host.start(
-            record, daemon_token=_daemon_token()
-        )
+        started = await self._host.start(record)
         if not started:
             self._registry.end(
                 record.id,
@@ -116,10 +108,10 @@ class SessionLifecycle:
             record for record in self._registry.descendants_of(session_id) if record.is_live
         ]
         # The goal is durable beside the checkpoint, so it stays on the record once the session is gone.
-        from langmesh.base.content import toolbox
+        from langmeshd.commons import toolboxes
 
         for ending in ([] if skip_self else [record]) + descendants:
-            toolbox.discard(ending.id)
+            toolboxes.discard(ending.id)
         for descendant in descendants:
             self._registry.end(
                 descendant.id,
@@ -170,3 +162,4 @@ class SessionLifecycle:
     async def aclose(self) -> None:
         """Sleep every hosted session; the records outlive the daemon and are what a restart reads."""
         await self.sleep_all()
+        await self._registry.aclose()

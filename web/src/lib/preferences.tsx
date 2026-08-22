@@ -10,7 +10,7 @@ import {
   subscribeEvents,
   type InterfacePreferences,
 } from "@/lib/api";
-import { swallowed } from "@/lib/swallowed";
+import { reportError } from "@/lib/faults";
 
 interface PreferencesContextValue {
   preferences: InterfacePreferences;
@@ -33,7 +33,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
         })
         .catch((caught) => {
           if (!cancelled) setPreferences(DEFAULT_INTERFACE_PREFERENCES);
-          swallowed(
+          reportError(
             { component: "preferences", operation: "read the interface preferences" },
             caught,
           );
@@ -55,7 +55,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     void savePreferences(changes)
       .then(setPreferences)
       .catch((caught) =>
-        swallowed({ component: "preferences", operation: "save an interface preference" }, caught),
+        reportError({ component: "preferences", operation: "save an interface preference" }, caught),
       );
   }, []);
 

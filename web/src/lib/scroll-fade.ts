@@ -12,7 +12,11 @@ const topBottomGradient = `linear-gradient(to bottom, transparent 0, #000 ${TOP}
 export const scrollFade = { maskImage: topGradient, WebkitMaskImage: topGradient } as const;
 
 /** The fade as an overlay: painted above the scroller, so it cannot alter the layout it sits on. */
-export const fadeOverlay = (edge: "top" | "bottom", height: number) => ({
+export const fadeOverlay = (
+  edge: "top" | "bottom",
+  height: number,
+  color = "var(--chakra-colors-bg-panel)",
+) => ({
   position: "absolute" as const,
   left: 0,
   right: 0,
@@ -20,8 +24,36 @@ export const fadeOverlay = (edge: "top" | "bottom", height: number) => ({
   height: `${height}px`,
   pointerEvents: "none" as const,
   zIndex: 1,
-  backgroundImage: `linear-gradient(to ${edge === "top" ? "bottom" : "top"}, var(--chakra-colors-bg-panel), transparent)`,
+  backgroundImage: `linear-gradient(to ${edge === "top" ? "bottom" : "top"}, ${color}, transparent)`,
 });
+
+/** Horizontal overflow without a visible scrollbar, for a top bar that can extend past its slot. */
+export const hideHorizontalScrollbar = {
+  scrollbarWidth: "none",
+  msOverflowStyle: "none",
+  "&::-webkit-scrollbar": { display: "none" },
+} as const;
+
+const INLINE = 14;
+
+/** The same edge fade as `fadeOverlay`, along the inline axis of a horizontal scroller. */
+export const fadeOverlayInline = (
+  edge: "left" | "right",
+  width: number,
+  color = "var(--chakra-colors-bg)",
+) => ({
+  position: "absolute" as const,
+  top: 0,
+  bottom: 0,
+  [edge]: 0,
+  width: `${width}px`,
+  pointerEvents: "none" as const,
+  zIndex: 1,
+  backgroundImage: `linear-gradient(to ${edge === "left" ? "right" : "left"}, ${color}, transparent)`,
+});
+
+export const FADE_INLINE = INLINE;
+
 export const FADE_TOP = TOP;
 export const FADE_BOTTOM = BOTTOM;
 
@@ -73,4 +105,35 @@ export function useScrollEdgeFade() {
       ? scrollFadeBottom
       : undefined;
   return { containerRef, onScroll: measure, fade, hiddenAbove, hiddenBelow };
+}
+
+/** Scroll-driven fades on the inline axis, for a strip that scrolls sideways. */
+export function useScrollInlineFade() {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [hiddenStart, setHiddenStart] = useState(false);
+  const [hiddenEnd, setHiddenEnd] = useState(false);
+  const measure = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    setHiddenStart(container.scrollLeft > 2);
+    setHiddenEnd(container.scrollWidth - (container.scrollLeft + container.clientWidth) > 8);
+  }, []);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let scheduled = 0;
+    const settle = () => {
+      window.cancelAnimationFrame(scheduled);
+      scheduled = window.requestAnimationFrame(measure);
+    };
+    settle();
+    const observer = new ResizeObserver(settle);
+    observer.observe(container);
+    for (const child of Array.from(container.children)) observer.observe(child);
+    return () => {
+      window.cancelAnimationFrame(scheduled);
+      observer.disconnect();
+    };
+  }, [measure]);
+  return { containerRef, onScroll: measure, hiddenStart, hiddenEnd };
 }

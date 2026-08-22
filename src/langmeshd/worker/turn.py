@@ -14,38 +14,52 @@ from typing import TYPE_CHECKING, Any, Optional, cast
 from a2a.server.agent_execution import RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import DataPart, Message, Part, Task, TaskState
+from a2a.types import Message, Part, Task, TaskState
 from a2a.utils import new_task
 from langchain_core.messages import messages_to_dict
 
 from langmeshd.worker import features_access as _features
+from langmesh.base.content.attachments import (
+    attachment_records,
+    attachments_payload,
+    compose_attachment_content,
+)
 from langmesh.base.primitives import telemetry as _telemetry
-from langmesh.base.configuration import PromptLoader
-from langmesh.base.primitives.serialization import compact, conversation_snapshot_id
+from langmesh.base.content.prompts import PackagePromptLoader
+from langmesh.base.contracts.catalogue import packaged_prompts_directory
+from langmesh.base.primitives.serialization import conversation_snapshot_id
 from langmesh.protocol.errors import _safe_turn_error
 from langmesh.protocol.events import ErrorEvent, InboundMessageEvent, RetryEvent, StatusEvent
 from langmesh.protocol.metadata import (
     METADATA_KEY,
     Metadata,
-    PART_KIND,
-    error_message_metadata,
     turn_metadata,
 )
 from langmesh.protocol.parts import (
-    _all_attachments,
     _attachment_warning_event,
     _event_part,
-    _ingest_incoming_file_parts,
     _input_response_payload,
     _structured_data_payloads,
-    compose_turn_input,
     _text_part,
 )
+from langmeshd.daemon.attachments import ingest_incoming_file_parts
 from langmesh.protocol.turn_record import TurnKind, TurnRecord
 from langmesh.runtime.plugins.goal_review.goal import GoalReviewPhase
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.turn_events import CompactionDone, SuspensionGate, TurnEventUnion
 from langmeshd.worker.sink import _TurnEventSink
+
+
+def _attachment_content(record: dict[str, Any]) -> bytes | None:
+    """Read attachment bytes at the daemon boundary that owns local paths."""
+    path = str(record.get("path") or "")
+    if not path:
+        return None
+    try:
+        return Path(path).read_bytes()
+    except OSError:
+        return None
+
 
 if TYPE_CHECKING:
     # For the annotation only: `session` imports this module, so a real import would close the cycle.
@@ -54,7 +68,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Harness-authored, model-facing notes live as markdown in prompts/, not as string literals.
-_PROMPTS = PromptLoader(Path(__file__).resolve().parent.parent / "runtime" / "prompts")
+_PROMPTS = PackagePromptLoader(packaged_prompts_directory())
 
 
 @dataclass(frozen=True)
@@ -63,13 +77,18 @@ class _ContinuationPlan:
 
     goal: bool = False
     tasks: bool = False
+    review: bool = False
 
     def merged(self, other: "_ContinuationPlan") -> "_ContinuationPlan":
-        return _ContinuationPlan(goal=self.goal or other.goal, tasks=self.tasks or other.tasks)
+        return _ContinuationPlan(
+            goal=self.goal or other.goal,
+            tasks=self.tasks or other.tasks,
+            review=self.review or other.review,
+        )
 
     @property
     def any(self) -> bool:
-        return self.goal or self.tasks
+        return self.goal or self.tasks or self.review
 
 
 @dataclass
@@ -181,6 +200,7 @@ class _TurnMode(StrEnum):
     RETRY = "retry"
     REPORT_REMINDER = "report_reminder"
     GOAL_CONTINUATION = "goal_continuation"
+    GOAL_REMINDER = "goal_reminder"
     TASK_CONTINUATION = "task_continuation"
 
 
@@ -193,12 +213,15 @@ def _turn_mode(metadata: dict) -> _TurnMode:
         (_TurnMode.RETRY, Metadata.RETRY_TURN),
         (_TurnMode.REPORT_REMINDER, Metadata.REPORT_REMINDER),
         (_TurnMode.GOAL_CONTINUATION, Metadata.GOAL_CONTINUATION),
+        (_TurnMode.GOAL_REMINDER, Metadata.GOAL_REMINDER),
         (_TurnMode.TASK_CONTINUATION, Metadata.TASK_CONTINUATION),
     ]
     selected = [mode for mode, key in candidates if metadata.get(key)]
-    # A goal-review instruction may carry the independent task reminder in the same serialized turn.
+    # A goal-review instruction or hidden reminder may carry the independent task reminder in the same serialized turn.
     if set(selected) == {_TurnMode.GOAL_CONTINUATION, _TurnMode.TASK_CONTINUATION}:
         return _TurnMode.GOAL_CONTINUATION
+    if set(selected) == {_TurnMode.GOAL_REMINDER, _TurnMode.TASK_CONTINUATION}:
+        return _TurnMode.GOAL_REMINDER
     if len(selected) > 1:
         raise ValueError("A turn cannot request multiple execution modes.")
     return selected[0] if selected else _TurnMode.STANDARD
@@ -227,13 +250,19 @@ class _Prepared:
 
 @dataclass(frozen=True)
 class _ComposedTurn:
-    """The model-facing input for this segment, produced by ``_compose_turn_input``."""
+    """The model-facing input for this segment, produced by ``_compose_turn_input``.
+
+    ``turn_messages`` is the continuation path: each pending obligation contributes its own
+    separate staged message, in order, rather than pieces merged into one text.
+    """
 
     prepared: _Prepared
     turn_input: Any
     as_system_note: bool
     # Whether the note begins a unit of work the record is written for, which a bare wake does not.
     opens_exchange: bool
+    # Separate messages, staged one by one; empty for every ordinary single-input turn.
+    turn_messages: tuple[str, ...] = ()
 
 
 class _TurnRunner:
@@ -256,6 +285,8 @@ class _TurnRunner:
         self._track_context_activity = False
         self._track_steerable_turn = False
         self._turn_has_images = False
+        # Separate staged messages for the continuation modes; empty otherwise.
+        self._turn_messages: tuple[str, ...] = ()
         # Set only when the turn closed as completed: a failed or parked turn never got there.
         self._completed = False
         self._lifecycle = AsyncExitStack()
@@ -278,9 +309,9 @@ class _TurnRunner:
             self._on_turn_state(resolved.task.context_id, True, resolved.task.id)
         try:
             await self._acquire_serialization_lock(resolved)
-            self._executor._begin_live_turn(resolved.task.context_id, resolved.task.id)
             # Runtime setup runs inside the try, so a missing credential is a clean `failed` rather than a torn stream.
-            self._open_turn_span(resolved)
+            await self._open_turn_span(resolved)
+            self._executor._begin_live_turn(resolved.task.context_id, resolved.task.id)
             prepared = await self._prepare_runtime(resolved)
             if prepared is self._DONE:
                 return
@@ -290,7 +321,7 @@ class _TurnRunner:
             if await self._run_maintenance_turn(prepared) is self._DONE:
                 return
             composed = await self._compose_turn_input(prepared)
-            await self._stream_and_finalize(composed)
+            await self._stream_complete(composed)
         except Exception as exception:  # noqa: BLE001 — surface any failure as A2A failed
             await self._fail(exception)
         finally:
@@ -299,8 +330,10 @@ class _TurnRunner:
     # Collaborators shared across the phases below.
 
     async def _emit(self, part: Part, *, publish_stream_event: bool = True) -> None:
-        await self._updater.update_status(
-            TaskState.working, self._updater.new_agent_message([part])
+        await self._executor._turn_store.commit_status(
+            self._updater,
+            TaskState.working,
+            self._updater.new_agent_message([part]),
         )
         if self._executor._on_stream_event is not None and publish_stream_event:
             self._executor._on_stream_event(self._task.context_id, part)
@@ -362,11 +395,9 @@ class _TurnRunner:
         self._user_text = self._request.get_user_input()
         # Structured input arrives as DataParts beside the prose — today, attachments.
         self._structured_payloads = _structured_data_payloads(message)
-        ingested_attachments = await _ingest_incoming_file_parts(message)
+        ingested_attachments = await ingest_incoming_file_parts(message)
         if ingested_attachments:
-            self._structured_payloads.append(
-                {PART_KIND: "attachments", "attachments": ingested_attachments}
-            )
+            self._structured_payloads.append(attachments_payload(ingested_attachments))
         self._metadata = turn_metadata(message)
         # Dated on arrival and written back onto the message, since this is the one door every message comes through.
         if not self._metadata.get(Metadata.RECEIVED_AT):
@@ -399,7 +430,10 @@ class _TurnRunner:
         task = self._request.current_task
         if task is None:
             task = new_task(message)
+            await self._executor._turn_store.save(task)
             await self._event_queue.enqueue_event(task)
+        else:
+            await self._executor._turn_store.save(task)
         self._task = task
         self._updater = TaskUpdater(self._event_queue, task.id, task.context_id)
 
@@ -410,7 +444,9 @@ class _TurnRunner:
         self._resume_answers = {}
         if input_response is not None:
             if TurnRecord.from_metadata(task.metadata).pending is None:
-                await self._updater.complete()
+                await self._executor._turn_store.commit_status(
+                    self._updater, TaskState.completed, final=True
+                )
                 return self._DONE
             ready = self._executor._record_pending_answer(task, input_response)
             await self._executor._turn_store.save(task)
@@ -418,7 +454,8 @@ class _TurnRunner:
                 # Still awaiting while gates remain; cleared once this answer resumes.
                 self._executor._on_permission_state(task.context_id, ready is None)
             if ready is None:
-                await self._updater.update_status(
+                await self._executor._turn_store.commit_status(
+                    self._updater,
                     TaskState.input_required,
                     self._updater.new_agent_message(
                         [_event_part(StatusEvent(code="input_required"))]
@@ -449,17 +486,22 @@ class _TurnRunner:
         # Serialize the session's turns, so a message and a background wake never drive the runtime at once.
         await self._lifecycle.enter_async_context(self._context_state.lock)
 
-    def _open_turn_span(self, resolved: _Resolved) -> None:
+    async def _open_turn_span(self, resolved: _Resolved) -> None:
         # One trace per turn, grouped by session, nesting under the peer that sent it when there is one.
         task, ingested = resolved.task, resolved.ingested
         self._turn_kind = (
             # A goal turn carries prose somebody has to be able to read, so it is not compacted in with the wakes.
             TurnKind.GOAL
             if ingested.mode is _TurnMode.GOAL_CONTINUATION
-            # The reminder is harness-initiated like a wake, and differs only in having nothing to deliver.
+            # Hidden reminders are harness-initiated like wakes, and differ only in having nothing to deliver.
             else TurnKind.AUTONOMOUS
             if ingested.mode
-            in {_TurnMode.AUTONOMOUS, _TurnMode.REPORT_REMINDER, _TurnMode.TASK_CONTINUATION}
+            in {
+                _TurnMode.AUTONOMOUS,
+                _TurnMode.REPORT_REMINDER,
+                _TurnMode.GOAL_REMINDER,
+                _TurnMode.TASK_CONTINUATION,
+            }
             else TurnKind.COMPACTION
             if ingested.mode
             in {
@@ -480,6 +522,7 @@ class _TurnRunner:
         stamped.peer_sender = ingested.peer_sender
         stamped.goal_review_id = ingested.goal_review_id
         task.metadata = stamped.apply_to(task.metadata)
+        await self._executor._turn_store.save(task)
         parent_context = _telemetry.context_from_traceparent(
             (ingested.message.metadata or {}).get("traceparent", "")
         )
@@ -505,13 +548,16 @@ class _TurnRunner:
             existing_state = self._executor._contexts.get(task.context_id)
             existing_runtime = existing_state.runtime if existing_state is not None else None
             has_live_result = (
-                existing_runtime is not None and _features.has_completed_undelivered_jobs(existing_runtime)
+                existing_runtime is not None
+                and _features.has_completed_undelivered_jobs(existing_runtime)
             )
             has_stored_result = self._executor._job_store.has_undelivered_jobs(
                 task.context_id, self._executor._agent_name
             )
             if not has_live_result and not has_stored_result:
-                await self._updater.complete()
+                await self._executor._turn_store.commit_status(
+                    self._updater, TaskState.completed, final=True
+                )
                 return self._DONE
 
         self._track_steerable_turn = (
@@ -529,8 +575,6 @@ class _TurnRunner:
             self._executor._context(task.context_id).aborted = False
         if self._track_steerable_turn:
             self._executor._context(task.context_id).running = True
-
-        await self._updater.start_work()
 
         workspace = self._executor._workspace(self._requested_working_directory)
 
@@ -553,10 +597,16 @@ class _TurnRunner:
             save_conversation=self._save_runtime_conversation,
             suspend=self._suspend_turn,
             telemetry_span=self._turn_span,
-            model_identifier=lambda: self._runtime.model_identifier
-            if self._runtime is not None
-            else "",
+            model_identifier=lambda: (
+                self._runtime.model_identifier if self._runtime is not None else ""
+            ),
         )
+        return _Prepared(resolved=resolved, runtime=runtime, sink=self._sink)
+
+    async def _announce_persisted_work(self, prepared: _Prepared) -> None:
+        """Publish working state only after the accepted runtime state is durable."""
+        resolved = prepared.resolved
+        await self._executor._turn_store.commit_status(self._updater, TaskState.working)
         if resolved.ingested.mode is _TurnMode.RETRY:
             await self._emit(_event_part(RetryEvent(status="started")))
         if (
@@ -574,36 +624,41 @@ class _TurnRunner:
                     )
                 )
             )
-        return _Prepared(resolved=resolved, runtime=runtime, sink=self._sink)
 
     async def _reconcile_goal(self, prepared: _Prepared) -> object | None:
         """Settle the goal against what opened this turn, now the runtime is built and the goal restored."""
         runtime = prepared.runtime
-        if prepared.resolved.ingested.mode is _TurnMode.GOAL_CONTINUATION:
+        if prepared.resolved.ingested.mode in (
+            _TurnMode.GOAL_CONTINUATION,
+            _TurnMode.GOAL_REMINDER,
+        ):
             goal = _features.goal(runtime)
             if goal is None or not goal.is_open:
                 if not prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
-                    await self._updater.complete()
+                    await self._executor._turn_store.commit_status(
+                        self._updater, TaskState.completed, final=True
+                    )
                     return self._DONE
             else:
                 _features.note_goal_continuation(runtime)
         if prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
             if not _features.has_actionable_tasks(runtime):
-                await self._updater.complete()
+                await self._executor._turn_store.commit_status(
+                    self._updater, TaskState.completed, final=True
+                )
                 return self._DONE
-            _features.note_task_continuation(runtime)
         if prepared.resolved.ingested.from_outside:
             _features.restore_goal_allowance(runtime)
-            _features.restore_task_allowance(runtime)
         return None
 
     async def _run_maintenance_turn(self, prepared: _Prepared) -> object | None:
         """A manual maintenance runs no model turn: it folds the older history and emits the maintenance parts."""
         if prepared.resolved.ingested.mode is not _TurnMode.COMPACTION:
             return None
+        await self._executor._turn_store.commit_status(self._updater, TaskState.working)
         try:
-            async for compaction_event in _features.compact(prepared.runtime, 
-                reason=_features.pending_compaction_reason(prepared.runtime)
+            async for compaction_event in _features.compact(
+                prepared.runtime, reason=_features.pending_compaction_reason(prepared.runtime)
             ):
                 await prepared.sink.emit_compaction(compaction_event)
         except asyncio.CancelledError:
@@ -617,7 +672,9 @@ class _TurnRunner:
             )
             raise
         await self._save_runtime_conversation()
-        await self._updater.complete()
+        await self._executor._turn_store.commit_status(
+            self._updater, TaskState.completed, final=True
+        )
         return self._DONE
 
     async def _compose_turn_input(self, prepared: _Prepared) -> _ComposedTurn:
@@ -628,24 +685,34 @@ class _TurnRunner:
             _TurnMode.AUTONOMOUS,
             _TurnMode.REPORT_REMINDER,
             _TurnMode.GOAL_CONTINUATION,
+            _TurnMode.GOAL_REMINDER,
             _TurnMode.TASK_CONTINUATION,
         }
         if mode in {_TurnMode.COMPACTION_RESUME, _TurnMode.COMPACTION_PREPARE, _TurnMode.RETRY}:
             # The accepted user message is already the conversation tail. This turn merely resumes the model call that the failed compaction prevented.
             self._turn_input = ""
         elif mode is _TurnMode.GOAL_CONTINUATION:
-            # Goal review prose stays visible, while an independent task obligation rides inside its reminder.
-            self._turn_input = self._user_text
+            # The goal's own segment stays visible, and every other pending obligation contributes
+            # its own separate staged message — never pieces merged into one text.
+            segments = [self._user_text]
             if prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
-                self._turn_input = _PROMPTS.load(
-                    "goal_and_task_continuation",
-                    {
-                        "goal_review": self._user_text,
-                        "task_continuation": self._task_continuation_note(runtime),
-                    },
-                ).strip()
+                segments.append(_features.task_continuation_message(runtime))
+            self._turn_messages = tuple(_features.continuation_messages(runtime, segments=segments))
+            self._turn_input = self._turn_messages[0] if self._turn_messages else ""
+        elif mode is _TurnMode.GOAL_REMINDER:
+            # Hidden system reminder — never shown as a user message, only as a model-facing note.
+            segments = [_features.goal_continuation_message(runtime)]
+            if prepared.resolved.ingested.metadata.get(Metadata.TASK_CONTINUATION):
+                segments.append(_features.task_continuation_message(runtime))
+            self._turn_messages = tuple(_features.continuation_messages(runtime, segments=segments))
+            self._turn_input = self._turn_messages[0] if self._turn_messages else ""
         elif mode is _TurnMode.TASK_CONTINUATION:
-            self._turn_input = self._task_continuation_note(runtime)
+            self._turn_messages = tuple(
+                _features.continuation_messages(
+                    runtime, segments=[_features.task_continuation_message(runtime)]
+                )
+            )
+            self._turn_input = self._turn_messages[0] if self._turn_messages else ""
         elif mode is _TurnMode.REPORT_REMINDER:
             # A reminder, never user prose: this is the harness speaking, not the person the session works for.
             self._turn_input = _PROMPTS.load(
@@ -660,41 +727,57 @@ class _TurnRunner:
                 runtime.note_attachments(
                     [
                         str(attachment.get("path") or "")
-                        for attachment in _all_attachments(self._structured_payloads)
+                        for attachment in attachment_records(self._structured_payloads)
                     ]
                 )
             # Paths always ride as a text block; images are inlined only where the model advertises vision.
             model_identifier = runtime.model_identifier if runtime is not None else ""
-            self._turn_input, images_not_inlined = compose_turn_input(
+            self._turn_input, omitted_image_count = compose_attachment_content(
                 self._user_text,
                 self._structured_payloads,
                 model_identifier,
                 runtime.inline_image_bytes if runtime is not None else 0,
+                content=_attachment_content,
             )
             self._turn_has_images = isinstance(self._turn_input, list)
-            if images_not_inlined:
+            if omitted_image_count:
                 await self._emit(
-                    _event_part(_attachment_warning_event(images_not_inlined, model_identifier))
+                    _event_part(_attachment_warning_event(omitted_image_count, model_identifier))
                 )
         else:
             self._turn_input = self._user_text
-        # Attachments reach the model through `_structured_payloads`, which is where the image blocks are built.
-        return _ComposedTurn(
+        composed = _ComposedTurn(
             prepared=prepared,
             turn_input=self._turn_input,
             as_system_note=self._as_system_note,
-            # A goal continuation is a real exchange even though its opening note came from review.
             opens_exchange=mode is _TurnMode.GOAL_CONTINUATION,
+            turn_messages=self._turn_messages,
         )
+        if not prepared.resolved.is_resume and mode not in {
+            _TurnMode.COMPACTION_RESUME,
+            _TurnMode.COMPACTION_PREPARE,
+            _TurnMode.RETRY,
+        }:
+            if composed.turn_messages:
+                # Each obligation's own message, staged in order; the exchange-opening mark rides
+                # on the first, which is the prose a reader sees rather than a hidden reminder.
+                for index, segment in enumerate(composed.turn_messages):
+                    runtime.stage_input(
+                        segment,
+                        as_system_note=composed.as_system_note,
+                        opens_exchange=composed.opens_exchange and index == 0,
+                    )
+            else:
+                runtime.stage_input(
+                    composed.turn_input,
+                    as_system_note=composed.as_system_note,
+                    opens_exchange=composed.opens_exchange,
+                )
+            await self._save_runtime_conversation()
+        await self._announce_persisted_work(prepared)
+        return composed
 
-    @staticmethod
-    def _task_continuation_note(runtime: AgentRuntime) -> str:
-        return _PROMPTS.load(
-            "task_continuation_note",
-            {"tasks": compact(_features.unfinished_tasks(runtime, ))},
-        )
-
-    async def _stream_and_finalize(self, composed: _ComposedTurn) -> None:
+    async def _stream_complete(self, composed: _ComposedTurn) -> None:
         """Drive the runtime's stream through the sink, then close the task as completed or canceled."""
         resolved = composed.prepared.resolved
         # The sink was stood up by `_prepare_runtime` before the stream was composed; guarded for the checker.
@@ -711,11 +794,7 @@ class _TurnRunner:
             if resolved.ingested.mode is _TurnMode.COMPACTION_PREPARE
             else composed.prepared.runtime.continue_stream()
             if resolved.ingested.mode is _TurnMode.RETRY
-            else composed.prepared.runtime.stream(
-                composed.turn_input,
-                as_system_note=composed.as_system_note,
-                opens_exchange=composed.opens_exchange,
-            )
+            else composed.prepared.runtime.continue_stream()
         )
         async for event in event_source:
             # Every concrete event the runtime emits is a member of the closed union; the stream annotation is the base class.
@@ -725,19 +804,25 @@ class _TurnRunner:
         await sink.flush()
 
         if sink.final_text.strip():
-            await self._updater.add_artifact(
+            await self._executor._turn_store.commit_artifact(
+                self._updater,
                 [_text_part(sink.final_text, f"artifact-result:{self._task.id}")],
+                artifact_id=f"result:{self._task.id}",
                 name="result",
                 last_chunk=True,
             )
         await self._save_runtime_conversation()
         if sink.stop_reason == "cancelled":
             # Stop ends the task as canceled, so the transcript reads it honestly as a stopped turn.
-            await self._updater.cancel()
+            await self._executor._turn_store.commit_status(
+                self._updater, TaskState.canceled, final=True
+            )
         else:
             if resolved.ingested.mode is _TurnMode.RETRY:
                 await self._emit(_event_part(RetryEvent(status="done", ok=True)))
-            await self._updater.complete()
+            await self._executor._turn_store.commit_status(
+                self._updater, TaskState.completed, final=True
+            )
             if resolved.ingested.mode is _TurnMode.RETRY and self._runtime is not None:
                 self._runtime.mark_turn_succeeded()
             self._completed = True
@@ -746,16 +831,10 @@ class _TurnRunner:
         await self._save_runtime_conversation()
         # Log the real exception, but show the user a safe category rather than raw exception text. The one it was handed, not the one in flight, since this is reached by a call rather than by a raise.
         logger.error("agent turn failed", exc_info=exception)
-        error_part = _event_part(
-            # `_safe_turn_error` returns fields typed object; the pydantic constructor validates them.
-            ErrorEvent.model_validate(
-                _safe_turn_error(exception, had_images=self._turn_has_images)
-            )
+        error_fields = _safe_turn_error(exception, had_images=self._turn_has_images)
+        message = self._updater.new_agent_message(
+            [_event_part(ErrorEvent.model_validate(error_fields))]
         )
-        # The failed turn's terminal message is the chain's identity. A retry continues the chain its
-        # failure opened, so a retried failure carries the root id rather than another per-attempt one:
-        # the client keeps one row per chain, live and replayed alike.
-        message = self._updater.new_agent_message([error_part])
         root = message.message_id or ""
         if self._runtime is not None:
             if self._mode is _TurnMode.RETRY and self._runtime.turn_failure_root:
@@ -763,19 +842,14 @@ class _TurnRunner:
             self._runtime.mark_turn_failed(chain_root=root)
         if self._mode is _TurnMode.RETRY:
             await self._emit(_event_part(RetryEvent(status="done", ok=False)))
-        # The same part becomes the failed turn's terminal message; stamp the chain's id on it so the
-        # live delivery and the durable replay share one identity in the client's transcript.
-        if root:
-            stamped = error_part.root
-            if isinstance(stamped, DataPart):
-                stamped.metadata = {
-                    **(stamped.metadata or {}),
-                    **error_message_metadata(root),
-                }
-        # Publish the error on the live lane as well as persisting it in the failed status. Without the publish, the chat's error panel only appears after a reload re-reads the history, because the turn-end activity alone carries no error part.
+        error_part = _event_part(ErrorEvent.model_validate({**error_fields, "message_id": root}))
+        # Retries keep the first failure's id so live delivery and history replay are one card.
+        message = message.model_copy(update={"parts": [error_part]})
         if self._executor._on_stream_event is not None:
             self._executor._on_stream_event(self._task.context_id, error_part)
-        await self._updater.failed(message)
+        await self._executor._turn_store.commit_status(
+            self._updater, TaskState.failed, message, final=True
+        )
 
     async def _teardown(self) -> None:
         task = self._task
@@ -843,13 +917,13 @@ class _TurnRunner:
         sink = self._sink
         if sink is None:
             return _ContinuationPlan()
-        # A goal-continuation turn that produced neither prose nor tool work answered the review with nothing; immediately re-reviewing would only spin the review loop, so the goal parks instead and waits for a person.
-        if (
-            self._mode is _TurnMode.GOAL_CONTINUATION
-            and not (sink.final_text.strip() or sink.tool_results)
+        # A goal-continuation or hidden reminder that produced neither prose nor tool work answered the review with nothing; immediately re-reviewing would only spin the review loop, so the goal parks instead and waits for a person.
+        if self._mode in (_TurnMode.GOAL_CONTINUATION, _TurnMode.GOAL_REMINDER) and not (
+            sink.final_text.strip() or sink.tool_results
         ):
             return _ContinuationPlan()
         return _ContinuationPlan(
+            review=bool(goal is not None and goal.pending_review),
             goal=bool(
                 goal is not None and goal.is_open and _features.should_continue_goal(runtime)
             ),
@@ -896,4 +970,6 @@ class _TurnRunner:
             return
         if self._executor._nudged_to_report:
             return
-        asyncio.create_task(self._executor.nudge_to_report(self._task.context_id))
+        self._executor._spawn_background(
+            self._executor.nudge_to_report(self._task.context_id), name="report-reminder"
+        )

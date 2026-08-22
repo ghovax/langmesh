@@ -5,6 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Optional
 
+
 class PermissionMode(StrEnum):
     """Who answers when a call asks to reach past its confinement."""
 
@@ -65,8 +66,7 @@ class PermissionMode(StrEnum):
             (
                 cls.resolve(requested)
                 if requested is not None and requested != ""
-                else parent_mode
-                or cls.resolve(fallback)
+                else parent_mode or cls.resolve(fallback)
             ),
             parent_mode,
         )

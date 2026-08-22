@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _expanded_path(value: str) -> Path:
+    return Path(value).expanduser()
+
+
 @router.get("/terminals")
 async def list_terminals(session_id: str = "", working_directory: str = ""):
     terminal_context = await _terminal_context_for_request(session_id, working_directory)
@@ -91,10 +95,10 @@ async def terminal_websocket(
             # The remote base directory is used verbatim in the ssh `cd`, never resolved locally.
             directory = Path(location_base_directory.strip())
         elif location_base_directory.strip():
-            directory = Path(location_base_directory.strip()).expanduser()
+            directory = _expanded_path(location_base_directory.strip())
         else:
             directory = _terminal_directory(session_id, working_directory)
-        session = await state.terminal_manager.get_or_create(
+        session = await state.terminal_manager.open(
             session_id,
             directory,
             rows,

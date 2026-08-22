@@ -9,15 +9,22 @@ the caller's concern — not the core's and not this seam's.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, AsyncIterator, Sequence
+from typing import Any, AsyncIterator, Sequence, TypeVar, cast
 
-from langmesh.base.configuration import PromptLoader
-from langmesh.runtime import plugins as _plugins_package
+from langmesh.base.content.prompts import PackagePromptLoader, PromptTemplates
 from langmesh.runtime.features.context import PluginContext
 from langmesh.runtime.features.host import PluginHost
-from langmesh.runtime.turn_events import TurnEvent
+from langmesh.runtime.session_control import FeatureState
+from langmesh.runtime.turn_events import TurnEventUnion
 
-plugins_package_root = Path(_plugins_package.__file__).resolve().parent
+_Capability = TypeVar("_Capability")
+
+plugins_package_root = Path(__file__).resolve().parents[1] / "plugins"
+
+
+async def _empty_events() -> AsyncIterator[TurnEventUnion]:
+    for event in ():
+        yield event
 
 
 class Feature:
@@ -33,6 +40,13 @@ class Feature:
     hooks and the context.
     """
 
+    __slots__ = ("_langmesh_session_id",)
+
+    @property
+    def state_name(self) -> str:
+        """The stable namespace used for this plugin's durable state."""
+        return f"{type(self).__module__}.{type(self).__qualname__}"
+
     def attach(self, context: PluginContext, host: "PluginHost | None" = None) -> None:
         """Installed by the runtime; library features keep the internal view here."""
 
@@ -43,6 +57,14 @@ class Feature:
         """The tools this feature provides to the session's roster, empty when it provides none."""
         return []
 
+    def contribute_tool_handlers(self) -> dict[str, Any]:
+        """Event-rich handlers for contributed tools that cannot use the generic invocation path."""
+        return {}
+
+    def required_capabilities(self) -> tuple[type, ...]:
+        """Structural capabilities that must be installed beside this feature."""
+        return ()
+
     def contribute_schema_fields(self, tool_name: str) -> dict:
         """Extra argument fields to add to a tool's schema, by tool name.
 
@@ -52,25 +74,20 @@ class Feature:
         """
         return {}
 
-    def invoke(self, name: str, *args, **kwargs):
-        """Answer a named capability the core asks for by string, or ``None`` to pass.
-
-        The core never names a plugin or a port: it asks for a capability by name and the
-        first installed feature that answers it does. This is how a plugin exposes its
-        services without the core knowing which plugin owns them.
-        """
-        return None
-
     def compose_prompt(self, variables: dict[str, str]) -> None:
         """Contribute named prompt sections, merging into ``variables`` in place."""
+
+    def prompt_revision(self) -> str:
+        """Identify the prompt templates this feature owns, or its stable absence of them."""
+        revision = getattr(getattr(self, "_prompts", None), "revision", None)
+        return str(revision()) if callable(revision) else ""
 
     async def assign_title(self, first_message: str) -> str | None:
         """A suggested title from this feature's own naming call, or ``None`` to leave it unnamed."""
         return None
 
-    def prepare_request(self, messages: list) -> list:
-        """Adjust the exact request about to leave; return the list to send."""
-        return messages
+    def prepare_request(self) -> None:
+        """Append any request-boundary state through the feature's conversation capability."""
 
     def should_maintain(self, request_tokens: int) -> bool:
         """Whether the loop should hold for this feature before admitting new input."""
@@ -83,15 +100,13 @@ class Feature:
     def begin_maintenance(self, *, reason: str, resume_after: bool) -> None:
         """Start holding the loop, preparing the durable handoff the fold needs."""
 
-    async def advance_maintenance(self) -> AsyncIterator[TurnEvent]:
+    def advance_maintenance(self) -> AsyncIterator[TurnEventUnion]:
         """Advance the hold one step (record a handoff, announce a phase), yielding its events."""
-        if False:
-            yield None
+        return _empty_events()
 
-    async def run_maintenance(self, *, reason: str) -> AsyncIterator[TurnEvent]:
+    def run_maintenance(self, *, reason: str) -> AsyncIterator[TurnEventUnion]:
         """Complete the hold and reclaim context, yielding the fold's events."""
-        if False:
-            yield None
+        return _empty_events()
 
     def valid_during_maintenance(self, call: dict) -> bool:
         """Whether a tool call may run while this feature holds the loop."""
@@ -113,10 +128,9 @@ class Feature:
         """The refusal a model is given for calling outside the held loop's protocol."""
         return ""
 
-    async def fail_maintenance(self, message: str) -> AsyncIterator[TurnEvent]:
+    def fail_maintenance(self, message: str) -> AsyncIterator[TurnEventUnion]:
         """The hold could not complete; fail it as a durable blocker, yielding its events."""
-        if False:
-            yield None
+        return _empty_events()
 
     def record_maintenance_handoff(self) -> None:
         """The model declined to act during the hold; the feature records its handoff."""
@@ -141,7 +155,7 @@ class Feature:
         """The verdict a feature that gates decides for one automatic gate, or ``None`` to pass."""
         return None
 
-    def drain(self) -> list[TurnEvent]:
+    def drain(self) -> list[TurnEventUnion]:
         """The events this feature has finished producing since the last drain."""
         return []
 
@@ -149,12 +163,24 @@ class Feature:
         """Why new input must be refused (a failed fold, an unrepaired registry), or ``None``."""
         return None
 
-    def snapshot(self) -> dict | None:
+    def snapshot(self) -> object | None:
         """This feature's durable state to persist beside the checkpoint, or ``None``."""
         return None
 
-    def restore(self, snapshot: dict) -> None:
-        """Rehydrate from the durable checkpoint, reading the keys this feature wrote."""
+    def restore(self, state: object) -> None:
+        """Rehydrate the durable value previously returned by :meth:`snapshot`."""
+
+    def acknowledge_checkpoint(self) -> None:
+        """Acknowledge side records only after their matching conversation snapshot commits."""
+
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Tear down live work this feature owns for ``tool_call_id``.
+
+        Every installed feature is asked, not first-wins, so each plugin can close its own
+        side effects (a process group, a screen-control child, a background search). Return
+        ``True`` when this feature handled that live call.
+        """
+        return False
 
 
 class Features:
@@ -165,10 +191,11 @@ class Features:
     """
 
     def __init__(self, instances: Sequence[Feature] = ()) -> None:
-        self._instances = list(instances)
+        self._instances = tuple(instances)
 
     @property
-    def instances(self) -> list[Feature]:
+    def instances(self) -> tuple[Feature, ...]:
+        """The fixed feature roster in installation order."""
         return self._instances
 
     def by_type(self, feature_type: type) -> Feature | None:
@@ -177,17 +204,23 @@ class Features:
             (feature for feature in self._instances if isinstance(feature, feature_type)), None
         )
 
-    def invoke(self, name: str, *args, **kwargs):
-        """The first installed feature that answers a named capability, in composer order.
+    def capability(self, contract: type[_Capability]) -> _Capability | None:
+        """Return the first installed feature that structurally implements ``contract``."""
+        return next(
+            (
+                cast(_Capability, feature)
+                for feature in self._instances
+                if isinstance(feature, contract)
+            ),
+            None,
+        )
 
-        The core asks for capabilities by string name; the plugin that answers owns the
-        capability. Nothing answers (``None``) when no installed feature handles it.
-        """
-        for feature in self._instances:
-            result = feature.invoke(name, *args, **kwargs)
-            if result is not None:
-                return result
-        return None
+    def require(self, contract: type[_Capability]) -> _Capability:
+        """Return an installed capability or fail at the boundary that requires it."""
+        capability = self.capability(contract)
+        if capability is None:
+            raise RuntimeError(f"The {contract.__name__} feature capability is not installed.")
+        return capability
 
     # The context and the request.
 
@@ -202,6 +235,13 @@ class Features:
             tools.extend(feature.contribute_tools())
         return tools
 
+    def contributed_tool_handlers(self) -> dict[str, Any]:
+        """Merge event-rich contributed handlers in feature order, with later features replacing earlier ones."""
+        handlers: dict[str, Any] = {}
+        for feature in self._instances:
+            handlers.update(feature.contribute_tool_handlers())
+        return handlers
+
     def contributed_schema_fields(self, tool_name: str) -> dict:
         """Every extra argument field the installed features add to one tool, merged in feature order."""
         fields: dict = {}
@@ -213,10 +253,20 @@ class Features:
         for feature in self._instances:
             feature.compose_prompt(variables)
 
-    def prepare_request(self, messages: list) -> list:
+    def prompt_revision(self) -> list[dict[str, str]]:
+        """Return the ordered identities of installed features and their prompt material."""
+        return [
+            {"feature": feature.state_name, "prompts": feature.prompt_revision()}
+            for feature in self._instances
+        ]
+
+    def prepare_request(self) -> None:
         for feature in self._instances:
-            messages = feature.prepare_request(messages)
-        return messages
+            feature.prepare_request()
+
+    def acknowledge_checkpoint(self) -> None:
+        for feature in self._instances:
+            feature.acknowledge_checkpoint()
 
     async def assign_title(self, first_message: str) -> str | None:
         """The first feature that names the session, or ``None`` when none does."""
@@ -319,17 +369,19 @@ class Features:
             events.extend(feature.drain())
         return events
 
-    def snapshot(self) -> dict:
-        merged: dict[str, Any] = {}
+    def snapshot(self) -> tuple[FeatureState, ...]:
+        states: list[FeatureState] = []
         for feature in self._instances:
             own = feature.snapshot()
-            if own:
-                merged.update(own)
-        return merged
+            if own is not None:
+                states.append(FeatureState(feature.state_name, own))
+        return tuple(states)
 
-    def restore(self, snapshot: dict) -> None:
+    def restore(self, states: Sequence[FeatureState]) -> None:
+        by_name = {state.name: state.value for state in states}
         for feature in self._instances:
-            feature.restore(snapshot)
+            if feature.state_name in by_name:
+                feature.restore(by_name[feature.state_name])
 
     def blocked_reason(self) -> str | None:
         """Why new input must be refused, per the first feature that blocks it."""
@@ -339,13 +391,21 @@ class Features:
                 return reason
         return None
 
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Ask every feature to tear down live work for this call. Every plugin is notified."""
+        handled = False
+        for feature in self._instances:
+            if feature.terminate_tool_call(tool_call_id):
+                handled = True
+        return handled
 
-def feature_prompts(name: str, catalogue: Any) -> PromptLoader:
+
+def feature_prompts(name: str, catalogue: Any) -> PromptTemplates:
     """A plugin's own templates, behind the catalogue's overrides and in front of the shared set."""
     # Anchored on the plugins package itself, so a plugin's templates follow the plugin, not this module.
     directory = Path(plugins_package_root) / name / "prompts"
     overrides = getattr(catalogue, "prompt_override", None)
-    return PromptLoader(
+    return PackagePromptLoader(
         directory,
         overrides=overrides if overrides is not None else None,
         fallback=_CataloguePromptLoader(catalogue),
@@ -361,6 +421,9 @@ class _CataloguePromptLoader:
     def load(self, template_name: str, variables: dict) -> str:
         return self._catalogue.prompt(template_name, dict(variables))
 
+    def revision(self) -> str:
+        return self._catalogue.prompt_revision()
+
 
 def build_features(
     instances: Sequence[Feature] | None,
@@ -373,10 +436,23 @@ def build_features(
     classes; installing only hands each its context and, for library features, the internal
     host. Nothing here names a feature or inspects how it was built.
     """
-    installed = list(instances or ())
+    installed = tuple(instances or ())
+    features = Features(installed)
+    for feature in installed:
+        for contract in feature.required_capabilities():
+            if features.capability(contract) is None:
+                raise ValueError(
+                    f"{type(feature).__name__} requires the {contract.__name__} capability."
+                )
+        owner = getattr(feature, "_langmesh_session_id", None)
+        if owner is not None and owner != context.session_id:
+            raise ValueError(
+                f"{type(feature).__name__} is already attached to session {owner!r}; feature instances cannot be shared between sessions."
+            )
     for feature in installed:
         feature.attach(context, host)
-    return Features(installed)
+        feature._langmesh_session_id = context.session_id
+    return features
 
 
 __all__ = [

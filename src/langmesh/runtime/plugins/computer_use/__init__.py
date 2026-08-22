@@ -17,32 +17,72 @@ from typing import Any
 
 from langchain.tools import tool
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.limits import current_limits
 from langmesh.base.primitives.serialization import compact
-from langmesh.computer import control, engine as native_surface, retrieval, surface as surface_module, targets as target_registry, web as web_surface, workflows as workflow_registry
+from langmesh.computer import (
+    control,
+    engine as native_surface,
+    retrieval,
+    surface as surface_module,
+    targets as target_registry,
+    web as web_surface,
+)
 from langmesh.computer.retrieval import retrieval_policy_from, set_retrieval_policy
 from langmesh.computer.surface import message_loader
 from langmesh.runtime.features import Feature
 from langmesh.runtime.plugins.permissions import MUTATING_SCREEN_PRIMITIVES
 from langmesh.runtime.tools import context as tool_context
+from langmesh.runtime.background import current_tool_call_id
 from langmesh.runtime.tools.execution import current_tool_decision, current_tool_services
 
 logger = logging.getLogger(__name__)
 
 #: The tool's model-facing description, read from this plugin's own prompts directory.
-_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
+_DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 
 # The queries this plugin has already asked the screen, so it can tell a rephrasing from a fresh
 # question. The plugin owns its own history; the core never carries a screen-control concept.
 _asked_queries: list[tuple[Any, str]] = []
 
+#: Live control-screen children keyed by tool-call id.
+_live_control: dict[str, Any] = {}
+
+
+def terminate_control_call(tool_call_id: str) -> bool:
+    """Kill the screen-control child still running for this call."""
+    process = _live_control.get(tool_call_id)
+    if process is None or process.returncode is not None:
+        return False
+    try:
+        process.kill()
+    except ProcessLookupError:
+        return False
+    except Exception:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            return False
+    return True
+
 # What an element id looks like on both surfaces, so one can be told from a description of an element.
 _ELEMENT_ID = re.compile(r"(?:f\d+)?e\d+|req\d+|ws\d+|\d+(?:\.\d+)+")
+
+
+def _workflow_catalogue(services: Any) -> Any:
+    bundle = services.plugin_services
+    return bundle.get("workflows") if isinstance(bundle, dict) else None
+
+
+def _plugin_service(services: Any, name: str) -> Any:
+    bundle = services.plugin_services
+    return bundle.get(name) if isinstance(bundle, dict) else None
+
 
 def _surface_for(surface_name: str):
     """The live surface a screen tool names: the native macOS tree, or the user's Chrome."""
     return native_surface.SURFACE if surface_name == "computer" else web_surface.SURFACE
+
 
 @tool
 async def control_screen(
@@ -57,17 +97,21 @@ async def control_screen(
         return compact({"ok": False, "error": "control_screen needs a script to run."})
     target_id = str(target or "").strip()
     if not target_id:
-        return compact({
-            "ok": False,
-            "error": "control_screen needs a target — the window or tab to act in.",
-            "targets": {"current": target_registry.describe_all()},
-        })
+        return compact(
+            {
+                "ok": False,
+                "error": "control_screen needs a target — the window or tab to act in.",
+                "targets": {"current": target_registry.describe_all()},
+            }
+        )
     target_obj = target_registry.find_target(target_id)
     if target_obj is None:
         listing = target_registry.list_targets()
         same_app = [place for place in listing if place.app.lower() == target_id.strip().lower()]
         if same_app:
-            described = target_registry.describe_all(sorted(same_app, key=target_registry._worth_naming))
+            described = target_registry.describe_all(
+                sorted(same_app, key=target_registry._worth_naming)
+            )
             error = f"{target_id!r} is an application, not a window — an application has no single place to act in. Its windows are listed under 'candidates', likeliest first."
             payload = {"ok": False, "error": error, "targets": {"candidates": described}}
         else:
@@ -75,10 +119,12 @@ async def control_screen(
             payload = {
                 "ok": False,
                 "error": error,
-                "targets": {"missing": [target_id], "current": target_registry.describe_all(listing)},
+                "targets": {
+                    "missing": [target_id],
+                    "current": target_registry.describe_all(listing),
+                },
             }
         return compact(payload)
-        return
     surface_name = target_obj.surface
     surface = _surface_for(surface_name)
     gate = surface.preflight("documents")
@@ -147,7 +193,9 @@ async def control_screen(
         asked.append((vector, top))
         del asked[:-12]
 
-    def _rank(query: str, limit: int, floor: float = 0.0, facets: dict | None = None, near: str = "") -> list:
+    def _rank(
+        query: str, limit: int, floor: float = 0.0, facets: dict | None = None, near: str = ""
+    ) -> list:
         raw = surface.documents(target_id)
         if not raw.get("ok"):
             read_failures.append({key: value for key, value in raw.items() if key != "ok"})
@@ -155,7 +203,9 @@ async def control_screen(
         documents = raw.get("documents", [])
         candidates = _matching(documents, facets or {})
         if not candidates and documents:
-            logger.info("screen find: facets %r admitted nothing; ranking the whole surface", facets)
+            logger.info(
+                "screen find: facets %r admitted nothing; ranking the whole surface", facets
+            )
             candidates = documents
         index = retrieval.Index(candidates)
         if near:
@@ -257,7 +307,11 @@ async def control_screen(
         for record in records:
             _register(record)
         ran.append(
-            {"find_many": str(query), "matched": len(records), "ids": [record["id"] for record in records]}
+            {
+                "find_many": str(query),
+                "matched": len(records),
+                "ids": [record["id"] for record in records],
+            }
         )
         return records
 
@@ -272,12 +326,16 @@ async def control_screen(
         top, top_score = scored[0]
         shortlist = current_limits().find_candidates
         competitive = [
-            record for record, score in scored[:shortlist] if top_score <= 0 or score >= 0.9 * top_score
+            record
+            for record, score in scored[:shortlist]
+            if top_score <= 0 or score >= 0.9 * top_score
         ]
         twins = [record for record in competitive[1:] if _identity(record) == _identity(top)]
         if twins:
             raise RuntimeError(
-                control_message("ambiguous_match", query=str(query), candidates=_candidates([top, *twins]))
+                control_message(
+                    "ambiguous_match", query=str(query), candidates=_candidates([top, *twins])
+                )
             )
         runner_up = scored[1][1] if len(scored) > 1 else 0.0
         spread = statistics.pstdev([score for _record, score in scored]) if len(scored) > 1 else 0.0
@@ -346,7 +404,9 @@ async def control_screen(
             args = await asyncio.to_thread(_resolve_target, name, list(args))
         watched = name in watched_verbs
         before = (
-            await asyncio.to_thread(surface.glance, target_id) if watched else surface_module.Glance()
+            await asyncio.to_thread(surface.glance, target_id)
+            if watched
+            else surface_module.Glance()
         )
         outcome = await asyncio.to_thread(surface.perform, target_id, name, list(args), keywords)
         if isinstance(outcome, dict):
@@ -368,22 +428,42 @@ async def control_screen(
         return outcome
 
     active = tool_context.current()
+    workflows = _workflow_catalogue(services)
+    scratch_spaces = _plugin_service(services, "scratch_spaces")
+    scratch = await scratch_spaces.create("screen") if scratch_spaces is not None else ""
+    project_directory = services.project_directory or active.workspace or ""
     targets_before = target_registry.list_targets()
-    result = await control.run_control_script(
-        script,
-        dispatch,
-        profile=active.sandbox,
-        workspace=active.workspace,
-        primitives=tuple(sorted(permitted_primitives)),
-        target=target_id,
-        import_roots=workflow_registry.import_roots(services.project_directory or active.workspace or ""),
-        dependency_roots=workflow_registry.dependency_roots(
-            services.project_directory or active.workspace or ""
-        ),
-        library_roots=workflow_registry.library_roots(
-            services.project_directory or active.workspace or ""
-        ),
-    )
+    call_id = current_tool_call_id()
+
+    def on_started(process: Any) -> None:
+        if call_id:
+            _live_control[call_id] = process
+
+    try:
+        result = await control.run_control_script(
+            script,
+            dispatch,
+            profile=active.sandbox,
+            workspace=active.workspace,
+            primitives=tuple(sorted(permitted_primitives)),
+            target=target_id,
+            import_roots=(
+                workflows.import_roots(project_directory) if workflows is not None else None
+            ),
+            dependency_roots=(
+                workflows.dependency_roots(project_directory) if workflows is not None else None
+            ),
+            library_roots=(
+                workflows.library_roots(project_directory) if workflows is not None else None
+            ),
+            scratch=scratch,
+            on_started=on_started,
+        )
+    finally:
+        if call_id:
+            _live_control.pop(call_id, None)
+        if scratch_spaces is not None and scratch:
+            await scratch_spaces.release(scratch)
     if isinstance(result, dict):
         moved = target_registry.difference(targets_before, target_registry.list_targets())
         if moved:
@@ -399,12 +479,20 @@ async def control_screen(
         result.setdefault("note", rephrased[0])
     return compact(result)
 
+
 class ComputerUse(Feature):
     """Drives the screen: contributes the control_screen tool and the screen context."""
 
     def attach(self, context, host) -> None:
         self._context = context
         self._host = host
+        bundle = getattr(host, "services", None) or {}
+        self._workflows = bundle.get("workflows") if isinstance(bundle, dict) else None
+        if isinstance(bundle, dict):
+            web_surface.SURFACE.configure(
+                endpoint_resolver=bundle.get("browser_endpoint"),
+                download_handler=bundle.get("browser_download"),
+            )
         self._prompts = context.prompts("computer_use")
         # Bind which models rank a screen, from the loaded configuration.
         screen = getattr(context.global_configuration, "computer_control", None)
@@ -424,14 +512,13 @@ class ComputerUse(Feature):
     def contribute_tools(self) -> list:
         return [control_screen] if self._enabled else []
 
-    def prepare_request(self, messages: list) -> list:
-        """The screen-driving guidance rides as its own note when the feature is enabled."""
+    def compose_prompt(self, variables: dict[str, str]) -> None:
+        """Place stable screen guidance in the session prompt once when computer use is enabled."""
         if not self._enabled:
-            return messages
+            return
         guidance = self._prompts.load("computer_control_guidance", {}).strip()
-        if not guidance:
-            return messages
-        return [*messages, self._host.turn.reminder_message(guidance)] if self._host is not None else messages
+        if guidance:
+            variables["computer_control_guidance"] = guidance
 
     def compose_context(self, context: dict) -> None:
         """The screen targets and primitives, when the feature is enabled."""
@@ -442,12 +529,20 @@ class ComputerUse(Feature):
                 context["screen"] = {"reading": message_loader("computer")("screen_warming")}
                 return
             block = target_registry.context_block()
-            saved = workflow_registry.available(self._context.working_directory or "")
+            saved = (
+                self._workflows.available(self._context.working_directory or "")
+                if self._workflows is not None
+                else []
+            )
             if saved:
                 block["workflows"] = saved
             context["screen"] = block
         except Exception:
             context["screen"] = {}
+
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Kill the control-screen child still running for this call."""
+        return terminate_control_call(tool_call_id)
 
 
 # The tool's model-facing description is this plugin's own file, applied once at import.

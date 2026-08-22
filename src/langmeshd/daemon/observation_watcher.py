@@ -7,10 +7,11 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from langmesh.base.persistence.observation_store import (
+from langmeshd.daemon.persistence.observation_registry import (
     SQLiteObservationStore,
     NativeFileSubscription,
 )
+from langmeshd.commons.configuration_locations import observation_database
 
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,6 @@ class ObservationRegistryWatcher:
         self._registry = registry
         self._host = host
         self._broadcaster = broadcaster
-        self._configuration = configuration
         self._tasks: dict[Path, asyncio.Task] = {}
         self._subscriptions: dict[Path, NativeFileSubscription] = {}
         self._snapshots: dict[Path, dict[str, Any]] = {}
@@ -52,7 +52,7 @@ class ObservationRegistryWatcher:
             return snapshot
 
     def _path_for(self, working_directory: str) -> Path:
-        return self._configuration.observation_database_for(working_directory).resolve(strict=False)
+        return observation_database(working_directory).resolve(strict=False)
 
     async def _read(self, path: Path) -> dict[str, Any]:
         """Read once after the native watcher reports a settled event."""
@@ -62,19 +62,37 @@ class ObservationRegistryWatcher:
         except Exception as error:  # noqa: BLE001 — reported as registry feedback below
             message = str(error) or type(error).__name__
         else:
-            return {**snapshot, "metadata": metadata, "error": ""}
+            return {
+                "entries": {
+                    "observations": [
+                        entry.model_dump(mode="json") for entry in snapshot.observations
+                    ],
+                    "directives": [entry.model_dump(mode="json") for entry in snapshot.directives],
+                },
+                "revision": snapshot.revision,
+                "metadata": metadata.model_dump(mode="json"),
+                "error": "",
+            }
+        # A registry that refused to validate is itself reported: describe() never raises and carries `status: broken|missing` plus the problem.
+        try:
+            metadata = (await store.describe()).model_dump(mode="json")
+        except Exception:  # noqa: BLE001 — a descriptor is best-effort around a broken file
+            metadata = {}
+        exists = await asyncio.to_thread(path.exists)
         previous = self._snapshots.get(path) or {
             "revision": 0,
             "entries": {"observations": [], "directives": []},
             "metadata": {
                 "path": str(path),
-                "exists": path.exists(),
+                "exists": exists,
                 "revision": 0,
                 "counts": {"observations": 0, "directives": 0},
                 "updated_at": {"earliest": None, "latest": None},
+                "status": "broken",
+                "problem": message,
             },
         }
-        return {**previous, "error": message}
+        return {**previous, "metadata": metadata, "error": message}
 
     async def _watch(self, path: Path, subscription: NativeFileSubscription) -> None:
         try:

@@ -736,9 +736,14 @@ class AppendOnlyTaskStore(TaskStore):
             raise ValueError(
                 f"non-terminal save for already-terminal task {task.id}: a terminal save must be the last save for a task"
             )
+        committed_count = 0
         async with self._engine.begin() as connection:
             # The in-memory terminal guard does not survive a restart, so the durable head is consulted when the task is new to this process: a non-terminal save of a task whose head is already terminal must still be refused.
-            if not terminal and task.id not in self._terminal_turns and self._persisted_counts.get(task.id) is None:
+            if (
+                not terminal
+                and task.id not in self._terminal_turns
+                and self._persisted_counts.get(task.id) is None
+            ):
                 stored_status = (
                     await connection.execute(
                         select(self._head.c.status).where(self._head.c.id == task.id)
@@ -786,7 +791,7 @@ class AppendOnlyTaskStore(TaskStore):
                     self._history.insert(),
                     [{"turn_id": task.id, "message": _dump(message)} for message in new_messages],
                 )
-                self._persisted_counts[task.id] = persisted + len(new_messages)
+            committed_count = persisted + len(new_messages)
 
             if terminal:
                 # The terminal history is the canonical compacted form. Rewriting the rows wholesale keeps a repeated terminal save idempotent even after a restart, when the in-memory terminal guard and persisted-count cache are cold: a fresh store would otherwise re-insert the messages the merge folded away.
@@ -799,10 +804,12 @@ class AppendOnlyTaskStore(TaskStore):
                     await connection.execute(
                         self._history.insert(),
                         # The compacted items are already serialized dicts.
-                        [{"turn_id": task.id, "message": json.dumps(message)} for message in compacted],
+                        [
+                            {"turn_id": task.id, "message": json.dumps(message)}
+                            for message in compacted
+                        ],
                     )
-                self._persisted_counts[task.id] = len(compacted)
-                self._terminal_turns.add(task.id)
+                committed_count = len(compacted)
 
             # Artifacts: upsert each by id (replace-in-place is safe and bounded).
             for artifact in artifacts:
@@ -821,6 +828,9 @@ class AppendOnlyTaskStore(TaskStore):
                         set_={"artifact": artifact_json},
                     )
                 )
+        self._persisted_counts[task.id] = committed_count
+        if terminal:
+            self._terminal_turns.add(task.id)
 
     async def get(self, turn_id: str, context: ServerCallContext | None = None) -> Optional[Task]:
         await self._ensure_initialized()
@@ -941,15 +951,12 @@ class AppendOnlyTaskStore(TaskStore):
         await self._ensure_initialized()
         async with self._engine.connect() as connection:
             rows = (
-                (
-                    await connection.execute(
-                        select(self._head.c.id, self._head.c.turn_metadata)
-                        .where(self._head.c.session_id == session_id)
-                        .order_by(self._head.c.id.desc())
-                    )
+                await connection.execute(
+                    select(self._head.c.id, self._head.c.turn_metadata)
+                    .where(self._head.c.session_id == session_id)
+                    .order_by(self._head.c.id.desc())
                 )
-                .all()
-            )
+            ).all()
         return [
             (
                 str(turn_id),
@@ -1065,9 +1072,7 @@ class AppendOnlyTaskStore(TaskStore):
                     "context_id": row["session_id"],
                     "kind": row["kind"] or "task",
                     "status": json.loads(row["status"]),
-                    "metadata": json.loads(row["turn_metadata"])
-                    if row["turn_metadata"]
-                    else None,
+                    "metadata": json.loads(row["turn_metadata"]) if row["turn_metadata"] else None,
                     "history": [],
                     "artifacts": None,
                 }

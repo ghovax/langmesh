@@ -7,21 +7,17 @@ import base64
 import hashlib
 import html
 import json
-import os
 import secrets
 import time
 import urllib.parse
-from dataclasses import asdict, dataclass
-from functools import lru_cache
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
-import contextvars
-from typing import Any, Optional
+from typing import Optional
 
 import httpx
 
-from langmesh.base.confinement.paths import oauth_token_path
-
+from langmesh.base.contracts.ports import CredentialStore
+from langmesh.base.identity.credential_store import credential_store
 from langmesh.base.primitives.limits import current_limits
 
 
@@ -54,71 +50,24 @@ class ChatGPTTokens:
     email: str
     expires_at: float
 
-    def is_expired(
-        self, leeway_seconds: float | None = None
-    ) -> bool:
+    def is_expired(self, leeway_seconds: float | None = None) -> bool:
         if leeway_seconds is None:
             leeway_seconds = current_limits().credential_refresh_leeway
         return time.time() >= (self.expires_at - leeway_seconds)
 
 
-def auth_file_path() -> Path:
-    return oauth_token_path(PROVIDER)
+def load_tokens(store: CredentialStore | None = None) -> Optional[ChatGPTTokens]:
+    """Load tokens from the caller-owned store, or return ``None`` when signed out."""
+    tokens = (store or credential_store()).load(PROVIDER)
+    return tokens if isinstance(tokens, ChatGPTTokens) else None
 
 
-class FileCredentials:
-    """Tokens in a 0600 file under the user's data directory, which is the default store."""
-
-    def load(self) -> Optional[ChatGPTTokens]:
-        path = auth_file_path()
-        if not path.exists():
-            return None
-        try:
-            return ChatGPTTokens(**json.loads(path.read_text()))
-        except (OSError, ValueError, TypeError):
-            return None
-
-    def save(self, tokens: ChatGPTTokens) -> None:
-        path = auth_file_path()
-        path.write_text(json.dumps(asdict(tokens), separators=(",", ":")))
-        os.chmod(path, 0o600)
-
-    def clear(self) -> None:
-        auth_file_path().unlink(missing_ok=True)
+def save_tokens(tokens: ChatGPTTokens, store: CredentialStore | None = None) -> None:
+    (store or credential_store()).save(PROVIDER, tokens)
 
 
-# Which store the process uses, as a context variable so two sessions may hold different credentials.
-_store: contextvars.ContextVar[Any] = contextvars.ContextVar("langmesh_credentials", default=None)
-
-
-def set_credentials(store: Any) -> contextvars.Token:
-    """Make `store` the credential store for this task. Pair with :func:`reset_credentials`."""
-    return _store.set(store)
-
-
-def reset_credentials(token: contextvars.Token) -> None:
-    _store.reset(token)
-
-
-def credentials() -> Any:
-    """The bound credential store, or the file-backed default."""
-    return _store.get() or _DEFAULT_STORE
-
-
-_DEFAULT_STORE = FileCredentials()
-
-
-def load_tokens() -> Optional[ChatGPTTokens]:
-    """Load the stored tokens, or `None` when signed out; synchronous file IO."""
-    return credentials().load()
-
-
-def save_tokens(tokens: ChatGPTTokens) -> None:
-    credentials().save(tokens)
-
-
-def clear_tokens() -> None:
-    credentials().clear()
+def clear_tokens(store: CredentialStore | None = None) -> None:
+    (store or credential_store()).clear(PROVIDER)
 
 
 def is_signed_in() -> bool:
@@ -233,24 +182,19 @@ class ChatGPTAuthError(RuntimeError):
     """Raised when a ChatGPT-subscription call cannot be authenticated."""
 
 
-# The page shown in the browser after the redirect, kept as a sibling asset rather than inline.
-_CALLBACK_PAGE_PATH = Path(__file__).resolve().parent / "assets" / "chatgpt_callback.html"
-
-
-@lru_cache(maxsize=1)
-def _callback_template() -> str:
-    return _CALLBACK_PAGE_PATH.read_text()
+_CALLBACK_TEMPLATE = """<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LangMesh sign-in</title><body><main><h1>{{message}}</h1></main></body></html>"""
 
 
 def _callback_page(message: str) -> str:
     """The little HTML page shown in the browser tab after the OAuth redirect."""
-    return _callback_template().replace("{{message}}", html.escape(message))
+    return _CALLBACK_TEMPLATE.replace("{{message}}", html.escape(message))
 
 
 class ChatGPTLoginFlow:
     """One browser sign-in, whose redirect lands on a loopback server this flow owns for its lifetime."""
 
-    def __init__(self) -> None:
+    def __init__(self, store: CredentialStore | None = None) -> None:
+        self._store = store or credential_store()
         self._code_verifier = _generate_code_verifier()
         self._state = secrets.token_urlsafe(24)
         self._server: Optional[HTTPServer] = None
@@ -287,7 +231,7 @@ class ChatGPTLoginFlow:
         try:
             code = await asyncio.to_thread(self._serve_until_callback, timeout)
             tokens = await _exchange_code(code, self._code_verifier)
-            await asyncio.to_thread(save_tokens, tokens)
+            await asyncio.to_thread(save_tokens, tokens, self._store)
             return tokens
         finally:
             await self.close()

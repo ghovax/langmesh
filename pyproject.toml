@@ -13,6 +13,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "httpx>=0.28.0",
+    "charset-normalizer>=3.4",
     "tenacity>=9.0.0",
     "sse-starlette>=2.0.0",
     "exa-py>=2.14.0",
@@ -23,9 +24,6 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.27.0",
     "aiosqlite>=0.22.1",
     "greenlet>=3.5.2",
-    # The public workspace-resource boundary. Its protocol implementations cover local, memory,
-    # object-store, archive, HTTP, SSH and third-party filesystems without LangMesh inventing one.
-    "fsspec>=2026.6.0,<2027",
     # Public, event-driven observer API for subscriptions that must be installed before a read.
     "watchdog>=6.0,<7",
     # Existing broad directory streams use watchfiles' async iterator API.
@@ -64,9 +62,8 @@ dependencies = [
     "playwright>=1.61.0",
     "model2vec>=0.8.2",
     "croniter>=6.2.4",
-    # `langmesh reach pair` prints its pairing link as a QR code, because the alternative is asking
-    # somebody to type a 43-character token into a phone. Pure Python and dependency-free, which
-    # matters for something the frozen build has to carry.
+    # Segno renders pairing links as terminal QR codes without image dependencies.
+    "segno>=1.6,<2",
 ]
 
 [project.scripts]
@@ -76,13 +73,28 @@ langmesh = "langmeshd.__main__:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build]
+skip-excluded-dirs = true
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "src",
+    ".agents/agents/reviewer/AGENT.md",
+    ".agents/skills/context7-mcp/SKILL.md",
+    ".agents/skills/observational-memory/SKILL.md",
+    ".agents/skills/observational-memory/agents/openai.yaml",
+    ".agents/mcp.json",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/langmesh", "src/langmeshd"]
 
 [tool.hatch.build.targets.wheel.force-include]
-".agents/agents" = "langmesh/_bundled/.agents/agents"
-".agents/skills" = "langmesh/_bundled/.agents/skills"
-".agents/mcp.json" = "langmesh/_bundled/.agents/mcp.json"
+".agents/agents/reviewer/AGENT.md" = "langmeshd/_bundled/.agents/agents/reviewer/AGENT.md"
+".agents/skills/context7-mcp/SKILL.md" = "langmeshd/_bundled/.agents/skills/context7-mcp/SKILL.md"
+".agents/skills/observational-memory/SKILL.md" = "langmeshd/_bundled/.agents/skills/observational-memory/SKILL.md"
+".agents/skills/observational-memory/agents/openai.yaml" = "langmeshd/_bundled/.agents/skills/observational-memory/agents/openai.yaml"
+".agents/mcp.json" = "langmeshd/_bundled/.agents/mcp.json"
 
 [tool.uv]
 package = true
@@ -136,14 +148,10 @@ quote-style = "double"
 docstring-code-format = true
 
 [tool.ruff.lint]
-# The set the tree is actually written against and passes clean: pycodestyle errors, pyflakes.
-# Stated explicitly because Ruff's implicit default has grown over releases, and a linter whose
-# meaning depends on which version happens to be installed cannot gate anything.
-#
-# Widening this is worth doing and is deliberately not done here: the wider default reports
-# several hundred findings, and compactioning those into an unrelated change is how a diff stops
-# being reviewable. It is its own piece of work.
-select = ["E4", "E7", "E9", "F"]
+# The explicit gate covers syntax, undefined names, imports, and bug-prone constructs without inheriting changing defaults.
+select = ["E4", "E7", "E9", "F", "B", "ASYNC", "RUF006", "RUF012", "RUF018", "RUF019"]
+# Public timeout parameters are intentional API, while the remaining async rules guard blocking and task ownership.
+ignore = ["ASYNC109"]
 
 
 [tool.basedpyright]
@@ -156,4 +164,3 @@ include = ["src"]
 # undefined attributes (reportAttributeAccessIssue) without demanding full type coverage.
 typeCheckingMode = "basic"
 pythonVersion = "3.13"
-

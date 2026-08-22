@@ -9,13 +9,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
-from langmesh.base.configuration import PromptLoader
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.runtime.plugins.goal_review.goal import NonBlankText
 
 #: The goal-review plugin's schema descriptions, configurable beside this plugin.
-_DESCRIPTIONS = PromptLoader(Path(__file__).parent / "prompts")
+_DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 
 #: Where a goal stands after one reading of the work, which is not the same as what the session says about it.
 GOAL_STANDING = Literal["unmet", "satisfied", "blocked"]
@@ -53,25 +53,31 @@ class GoalReview(BaseModel):
     )
     _review_id: str = PrivateAttr("")
 
+    @field_validator("evidence", "blocker", "message", mode="before")
+    @classmethod
+    def _blank_optional_is_omitted(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @model_validator(mode="after")
     def _carry_what_the_verdict_rests_on(self):
-        """A verdict without what establishes it is not a verdict, so the pass is retried rather than believed."""
+        """A verdict without what establishes it is not a verdict, so the pass is retried rather than believed.
+
+        The standing code decides which fields apply. Values on the others are dropped, not judged as prose.
+        """
         if self.standing == "satisfied":
-            if self.unmet:
-                raise ValueError("A satisfied goal has nothing unmet.")
+            self.unmet = []
+            self.blocker = None
+            self.message = None
             if self.goal_contract != "complete":
                 raise ValueError("A satisfied goal needs a complete contract.")
-            if self.blocker is not None:
-                raise ValueError("A satisfied goal has no blocker.")
-            if self.message is not None:
-                raise ValueError("A satisfied goal opens no continuation message.")
             if self.evidence is None:
                 raise ValueError(
                     "A satisfied goal needs the evidence that proves each requirement."
                 )
             return self
-        if self.evidence is not None:
-            raise ValueError("Only a satisfied goal carries completion evidence.")
+        self.evidence = None
         if not self.unmet and self.goal_contract == "complete":
             raise ValueError(
                 "A goal that is not satisfied has an unmet requirement or needs a stronger contract."
@@ -79,13 +85,11 @@ class GoalReview(BaseModel):
         if self.goal_contract == "needs_revision" and self.standing != "unmet":
             raise ValueError("A goal the session can revise is unmet, not satisfied or blocked.")
         if self.standing == "blocked":
+            self.message = None
             if self.blocker is None:
                 raise ValueError("A blocked goal needs what is in the way and what would clear it.")
-            if self.message is not None:
-                raise ValueError("A blocked goal opens no continuation message.")
             return self
-        if self.blocker is not None:
-            raise ValueError("Only a blocked goal carries a blocker.")
+        self.blocker = None
         if self.message is None:
             raise ValueError("An unmet goal needs the message that opens its next turn.")
         return self

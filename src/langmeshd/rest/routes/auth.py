@@ -26,6 +26,7 @@ from langmesh.base.identity.subscription import (
 from langmeshd.commons import state
 from langmeshd.commons.services.broadcast import _publish_broadcast
 from langmeshd.commons.services.workspaces import _reset_all_runtimes
+from langmeshd.daemon.persistence.credentials import file_credential_store
 
 router = APIRouter()
 
@@ -34,31 +35,48 @@ router = APIRouter()
 class _ProviderAuth:
     """One subscription provider's sign-in: its flow, credential store, and state slot."""
 
-    flow_kind: type
-    load: Callable[[], Any]
-    clear: Callable[[], None]
+    flow_kind: Callable[[Any], Any]
+    load: Callable[[Any], Any]
+    clear: Callable[[Any], None]
     in_flight: str
     clear_caches: Callable[[], None]
     account: Callable[[Any], str] = staticmethod(lambda _tokens: "")
-    clear_resumptions: Callable[[], None] = staticmethod(lambda: None)
+
+    @property
+    def store(self):
+        return file_credential_store()
 
     async def status(self) -> dict:
-        tokens = await asyncio.to_thread(self.load)
+        tokens = await asyncio.to_thread(self.load, self.store)
+        account = ""
+        if tokens is not None:
+            if self.flow_kind is CursorLoginFlow:
+                account = await cursor_subscription.display_account(tokens)
+            else:
+                account = self.account(tokens)
         return {
             "signed_in": tokens is not None,
-            "account": self.account(tokens) if tokens is not None else "",
-            "usage": get_usage_snapshot() if tokens is not None and self.flow_kind is ChatGPTLoginFlow else None,
+            "account": account,
+            "usage": get_usage_snapshot()
+            if tokens is not None and self.flow_kind is ChatGPTLoginFlow
+            else None,
         }
 
     async def start(self) -> dict:
         pending = getattr(state, self.in_flight, None)
         if pending is not None:
             await pending.close()
-        flow = self.flow_kind()
+        flow = self.flow_kind(self.store)
         try:
             await flow.start()
         except OSError as error:
-            raise HTTPException(status_code=409, detail=f"Could not start sign-in ({error}).") from error
+            raise HTTPException(
+                status_code=409, detail=f"Could not start sign-in ({error})."
+            ) from error
+        except Exception as error:  # noqa: BLE001 — the client needs a body, not a dropped CORS 500
+            raise HTTPException(
+                status_code=500, detail=f"Could not start sign-in ({error})."
+            ) from error
         setattr(state, self.in_flight, flow)
 
         async def _await_completion() -> None:
@@ -73,7 +91,9 @@ class _ProviderAuth:
                 if getattr(state, self.in_flight, None) is flow:
                     setattr(state, self.in_flight, None)
 
-        asyncio.create_task(_await_completion())
+        task = asyncio.create_task(_await_completion(), name=f"langmesh:auth:{self.in_flight}")
+        state._auth_tasks.add(task)
+        task.add_done_callback(state._auth_tasks.discard)
         return {"authorize_url": flow.authorize_url}
 
     async def signout(self) -> dict:
@@ -81,9 +101,8 @@ class _ProviderAuth:
         if pending is not None:
             await pending.close()
             setattr(state, self.in_flight, None)
-        await asyncio.to_thread(self.clear)
+        await asyncio.to_thread(self.clear, self.store)
         self.clear_caches()
-        self.clear_resumptions()
         await _reset_all_runtimes()
         _publish_broadcast({"type": "settings_changed"})
         return {"ok": True}
@@ -96,12 +115,6 @@ def _chatgpt_account(tokens: Any) -> str:
 def _chatgpt_caches() -> None:
     clear_subscription_models_cache()
     clear_usage_snapshot()
-
-
-def _cursor_resumptions() -> None:
-    from langmesh.runtime.models.cursor import clear_resumptions
-
-    clear_resumptions()
 
 
 _PROVIDERS = {
@@ -120,7 +133,6 @@ _PROVIDERS = {
         in_flight="cursor_login_flow",
         clear_caches=cursor_subscription.clear_subscription_models_cache,
         account=lambda tokens: tokens.account or "",
-        clear_resumptions=_cursor_resumptions,
     ),
 }
 

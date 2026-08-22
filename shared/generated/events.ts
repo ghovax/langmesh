@@ -22,7 +22,7 @@ export type WireEvent =
   | ThinkingDoneEvent
   | ToolCallEvent
   | ToolResultEvent
-  | McpEvent
+  | MCPEvent
   | StatusEvent
   | DoneEvent
   | CompactionEvent
@@ -68,11 +68,12 @@ export interface CompactionEvent {
  */
 export interface CumulativeUsage {
   cache_read_tokens?: number;
+  cache_write_tokens?: number;
   input_tokens?: number;
   model_calls?: number;
   output_tokens?: number;
-  reachable_tokens?: number;
   reasoning_tokens?: number;
+  reusable_prefix_tokens?: number;
   total_tokens?: number;
 }
 /**
@@ -100,8 +101,11 @@ export interface ErrorEvent {
     | "server_error"
     | "turn_failed"
     | "turn_interrupted"
-    | "tool_error";
+    | "tool_error"
+    | "tool_failed"
+    | "tool_interrupted";
   kind: "error";
+  message_id?: string;
   parameters?: Record<string, unknown>;
   status?: number | null;
   timestamp?: string;
@@ -122,9 +126,9 @@ export interface InboundMessageEvent {
 }
 /**
  * This interface was referenced by `LangMeshEvents`'s JSON-Schema
- * via the `definition` "McpEvent".
+ * via the `definition` "MCPEvent".
  */
-export interface McpEvent {
+export interface MCPEvent {
   event?: Record<string, unknown>;
   kind: "mcp_event";
   server?: string;
@@ -260,7 +264,9 @@ export interface ThinkingEvent {
  * via the `definition` "TokenUsageEvent".
  */
 export interface TokenUsageEvent {
+  cache_prefix_reusable?: boolean | null;
   cache_read_tokens?: number;
+  cache_write_tokens?: number;
   context_window?: number;
   context_window_estimated?: boolean;
   cumulative?: CumulativeUsage;
@@ -268,9 +274,8 @@ export interface TokenUsageEvent {
   input_tokens?: number;
   kind: "token_usage";
   output_tokens?: number;
-  prefix_intact?: boolean;
-  reachable_tokens?: number;
   reasoning_tokens?: number;
+  reusable_prefix_tokens?: number;
   segments?: number;
   shared_segments?: number;
   timestamp?: string;
@@ -316,20 +321,19 @@ export interface ToolResultEvent {
   tool_name: string;
 }
 /**
- * Session context captured in the cache-stable system prompt.
+ * Session context appended as immutable conversation state.
+ *
+ * Only the core's own fields are declared here. The plugins contribute their own
+ * context through ``compose_context``, which merges it into the context dict; the
+ * core never names a plugin's context.
  *
  * This interface was referenced by `LangMeshEvents`'s JSON-Schema
  * via the `definition` "TurnContext".
  */
 export interface TurnContext {
-  background?: Record<string, unknown>;
   confinement?: Record<string, unknown>;
-  goal?: Record<string, unknown>;
   locations?: Record<string, unknown>[];
-  now?: string;
   pwd?: string;
-  screen?: Record<string, unknown>;
-  tasks?: Record<string, unknown>[];
 }
 /**
  * This interface was referenced by `LangMeshEvents`'s JSON-Schema

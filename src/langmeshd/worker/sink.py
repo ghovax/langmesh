@@ -11,7 +11,7 @@ from langmesh.protocol.events import (
     CompactionEvent,
     CumulativeUsage,
     ErrorEvent,
-    McpEvent as McpWireEvent,
+    MCPEvent as MCPWireEvent,
     PermissionRequestEvent,
     PrefixDivergence,
     QuestionEvent,
@@ -21,6 +21,7 @@ from langmesh.protocol.events import (
     ThinkingEvent,
     TokenUsageEvent,
     ToolCallEvent,
+    TurnErrorCode,
 )
 from langmesh.protocol.parts import _event_part, _text_part, _tool_result_part
 from langmesh.runtime.turn_events import (
@@ -33,7 +34,7 @@ from langmesh.runtime.turn_events import (
     GoalReviewFinished,
     GoalReviewProgress,
     GoalReviewStarted,
-    Mcp,
+    MCPEvent,
     Status,
     Steering,
     Suspended,
@@ -208,17 +209,18 @@ class _TurnEventSink:
             case ToolResult():
                 self.tool_results += 1
                 await self.flush()
+                await self._save_conversation()
                 await self._emit(
                     _tool_result_part(event.name, event.id, event.result, event.status)
                 )
             case Checkpoint():
                 # A durable-safe point: snapshot the conversation so a crash leaves completed tools' results in the record.
                 await self._save_conversation()
-            case Mcp():
+            case MCPEvent():
                 await self.flush()
                 await self._emit(
                     _event_part(
-                        McpWireEvent(
+                        MCPWireEvent(
                             server=event.server,
                             tool=event.tool,
                             event=event.event if event.event is not None else {},
@@ -249,9 +251,10 @@ class _TurnEventSink:
                             context_window=event.context_window,
                             context_window_estimated=event.context_window_estimated,
                             cache_read_tokens=event.cache_read_tokens,
+                            cache_write_tokens=event.cache_write_tokens,
                             reasoning_tokens=event.reasoning_tokens,
-                            prefix_intact=event.prefix_intact,
-                            reachable_tokens=event.reachable_tokens,
+                            cache_prefix_reusable=event.cache_prefix_reusable,
+                            reusable_prefix_tokens=event.reusable_prefix_tokens,
                             segments=event.segments,
                             shared_segments=event.shared_segments,
                             divergence=PrefixDivergence.model_validate(event.divergence)
@@ -262,7 +265,8 @@ class _TurnEventSink:
                                 output_tokens=cumulative.get("output_tokens", 0),
                                 total_tokens=cumulative.get("total_tokens", 0),
                                 cache_read_tokens=cumulative.get("cache_read_tokens", 0),
-                                reachable_tokens=cumulative.get("reachable_tokens", 0),
+                                cache_write_tokens=cumulative.get("cache_write_tokens", 0),
+                                reusable_prefix_tokens=cumulative.get("reusable_prefix_tokens", 0),
                                 reasoning_tokens=cumulative.get("reasoning_tokens", 0),
                                 model_calls=cumulative.get("model_calls", 0),
                             ),
@@ -318,12 +322,18 @@ class _TurnEventSink:
                     )
             case Error():
                 await self.flush()
+                await self._save_conversation()
+                code: TurnErrorCode = (
+                    cast(TurnErrorCode, event.code)
+                    if event.code in {"tool_failed", "tool_interrupted"}
+                    else "tool_error"
+                )
                 await self._emit(
                     _event_part(
                         ErrorEvent(
                             tool_call_id=event.id,
                             tool_name=event.tool,
-                            code="tool_error",
+                            code=code,
                         )
                     )
                 )

@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from itertools import accumulate, takewhile
-from tempfile import TemporaryDirectory
 from typing import Any, AsyncIterator, Literal, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -37,29 +37,28 @@ from langmesh.runtime.plugins.compaction.ports import (
 )
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.internals import (
+    await_interruptible,
     conversation_tokens,
     message_tokens,
-    race_interrupt,
 )
 from langmesh.runtime.turn_events import (
     CompactionDone,
     CompactionStarted,
-    Done,
     TurnEvent,
     Usage,
 )
-from langmesh.runtime.cache_trace import cache_lane
+from langmesh.runtime.cache_trace import cache_lane, cache_prefix_label
 
 logger = logging.getLogger(__name__)
 
-class CompactionSummaryExhausted(RuntimeError):
-    """The summarizer never submitted within its configured attempts; the fold cannot proceed without it."""
 
 @dataclass
 class CompactionControl:
     """The compaction handshake as one state value, so invalid flag combinations cannot accumulate."""
 
-    phase: Literal["none", "waiting", "recorded", "preparation_failed", "compaction_failed"] = "none"
+    phase: Literal["none", "waiting", "recorded", "preparation_failed", "compaction_failed"] = (
+        "none"
+    )
     reason: Literal["auto", "manual", "overflow"] = "manual"
     resume_after: bool = False
     preparation_token: Any = None
@@ -124,19 +123,10 @@ class CompactionControl:
         self.failure = None
         self.started = False
 
-    def snapshot(self) -> dict:
-        return {
-            "phase": self.phase,
-            "reason": self.reason,
-            "resume_after": self.resume_after,
-            "preparation_token": self.preparation_token,
-            "failure": self.failure,
-            "started": self.started,
-        }
-
     @classmethod
-    def restore(cls, value: object) -> "CompactionControl":
-        if not isinstance(value, dict):
+    def from_data(cls, value: object) -> "CompactionControl":
+        """Decode this state from a storage adapter's plain representation."""
+        if not isinstance(value, Mapping):
             return cls()
         phase = value.get("phase")
         reason = value.get("reason")
@@ -151,12 +141,14 @@ class CompactionControl:
             started=bool(value.get("started", False)),
         )
 
+
 def _without_provider_reasoning(messages: list) -> list:
     """The same messages with the provider-native reasoning cut out, since the turns it explained are gone."""
     # A sweep for its effect, not a transformation: `forget_carried_reasoning` edits each message in place.
     for message in messages:
         forget_carried_reasoning(message)
     return messages
+
 
 class Compaction(Feature):
     """Keep a conversation inside its window after the agent checkpoints workspace knowledge."""
@@ -174,7 +166,9 @@ class Compaction(Feature):
     ) -> None:
         # The caller's strategy and handoff replace only their own step; the fold stays this plugin's.
         self._strategy = strategy
-        self._preparation = preparation if preparation is not None else DirectCompactionPreparation()
+        self._preparation = (
+            preparation if preparation is not None else DirectCompactionPreparation()
+        )
         self._summarizer = summarizer
         self._control = CompactionControl()
         self._submitted_summary: Any = None
@@ -184,12 +178,29 @@ class Compaction(Feature):
         self._host = host
         self._prompts = context.prompts("compaction")
 
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Stop a tool still running inside the live summarizer session, if any."""
+        live = getattr(self, "_live_summarizer_runtime", None)
+        if live is None:
+            return False
+        return bool(live.abort_tool(tool_call_id))
+
     @property
     def control(self) -> CompactionControl:
         return self._control
 
+    def snapshot(self) -> CompactionControl:
+        return replace(self._control)
+
+    def restore(self, state: object) -> None:
+        self._control = (
+            replace(state)
+            if isinstance(state, CompactionControl)
+            else CompactionControl.from_data(state)
+        )
+
     def restore_control(self, value: object) -> None:
-        self._control = CompactionControl.restore(value)
+        self.restore(value)
 
     def fail_compaction(self, message: str) -> None:
         """Make a failed fold durable and visible, and release the senders it held outside the conversation."""
@@ -209,16 +220,6 @@ class Compaction(Feature):
         """The summarizer's verdict tool lands here, read once the summary turn ends."""
         self._submitted_summary = summary
 
-    def invoke(self, name: str, *args, **kwargs):
-        """Answer the compaction capabilities the core and tools ask for by name."""
-        if name == "submit_compaction_summary":
-            (summary,) = args
-            self.submit_summary(summary)
-            return True
-        if name == "compaction_failure":
-            return self.failure
-        return None
-
     @property
     def submitted_summary(self) -> Any:
         return self._submitted_summary
@@ -229,7 +230,9 @@ class Compaction(Feature):
         if window <= 0:
             return 0
         return max(
-            0, window - int(window * self._context.global_configuration.compaction.output_reserve_fraction)
+            0,
+            window
+            - int(window * self._context.global_configuration.compaction.output_reserve_fraction),
         )
 
     def _recent_working_set(self, reason: str = "automatic", recent: list | None = None) -> int:
@@ -240,7 +243,8 @@ class Compaction(Feature):
             return budget
         # Manual and overflow compaction must remain effective even if a provider failed to report its window. The current conversation is still an honest upper bound.
         measured = int(
-            conversation_tokens(self._host.conversation.messages if recent is None else recent) * fraction
+            conversation_tokens(self._host.conversation.messages if recent is None else recent)
+            * fraction
         )
         return min(budget, measured) if budget > 0 else measured
 
@@ -270,7 +274,9 @@ class Compaction(Feature):
             messages=self.without_preparation(self._host.conversation.messages),
             context_window=self._host.window.context_window,
             context_tokens=(
-                self._host.window.latest_context_tokens if context_tokens is None else context_tokens
+                self._host.window.latest_context_tokens
+                if context_tokens is None
+                else context_tokens
             ),
             reason=reason,
         )
@@ -293,14 +299,14 @@ class Compaction(Feature):
         """The automatic trigger, measured against the usable window, unless a strategy answers it instead."""
         if self._strategy is not None:
             return bool(
-                self._strategy.should_compact(
-                    self._compaction_state(context_tokens=request_tokens)
-                )
+                self._strategy.should_compact(self._compaction_state(context_tokens=request_tokens))
             )
         compaction = self._context.global_configuration.compaction
         if not compaction.automatic or not self._at_compacting_threshold(request_tokens):
             return False
-        return len(self.bounded_tail(self._host.conversation.messages)) < len(self._host.conversation.messages)
+        return len(self.bounded_tail(self._host.conversation.messages)) < len(
+            self._host.conversation.messages
+        )
 
     def maintenance_active(self) -> bool:
         """Whether this plugin is currently holding the loop to reclaim context."""
@@ -367,9 +373,7 @@ class Compaction(Feature):
             try:
                 metadata = await self._preparation.describe()
             except Exception as error:  # noqa: BLE001 — the fold's verification below remains authoritative
-                self._context.bus.emit(
-                    MemoryHandoffFailed(str(error) or type(error).__name__)
-                )
+                self._context.bus.emit(MemoryHandoffFailed(str(error) or type(error).__name__))
             else:
                 self._context.bus.emit(MemoryHandoffVerified(metadata))
         async for event in self.compact(reason):
@@ -378,9 +382,7 @@ class Compaction(Feature):
     def begin_preparation(self, *, reason: str, resume_after: bool) -> None:
         """Begin the configured durable handoff before compacting."""
         self._control.begin(reason=reason, resume_after=resume_after)
-        instruction = self._preparation.instruction(
-            self._prompts.load("prepare_compaction", {})
-        )
+        instruction = self._preparation.instruction(self._prompts.load("prepare_compaction", {}))
         if instruction is None:
             self._control.record()
         else:
@@ -405,7 +407,9 @@ class Compaction(Feature):
         if self._control.phase != "preparation_failed":
             return None
         # A retry gets one unambiguous preparation notice. Retain any accepted user message that followed the failed private segment while removing that segment's discarded work.
-        self._host.conversation.messages[:] = self.without_preparation(self._host.conversation.messages)
+        self._host.conversation.messages[:] = self.without_preparation(
+            self._host.conversation.messages
+        )
         self.begin_preparation(
             reason=self._control.reason,
             resume_after=self._control.resume_after,
@@ -433,7 +437,9 @@ class Compaction(Feature):
             # A failure that never reached the model call still gets a running start, so the interface never jumps straight from nothing to a failure without a visible phase.
             self._control.started = True
             events.append(
-                CompactionStarted(reason="preparation", messages_before=messages, tokens_before=tokens)
+                CompactionStarted(
+                    reason="preparation", messages_before=messages, tokens_before=tokens
+                )
             )
         events.append(
             CompactionDone(
@@ -576,23 +582,7 @@ class Compaction(Feature):
             )
             return
         older = compactable[: len(compactable) - len(kept)]
-        try:
-            summary = await self._summarize_compacted(older, compactable) if older else None
-        except CompactionSummaryExhausted as error:
-            # The summary is the durable memory the tail resumes from: without it the fold must not proceed, and the session stays blocked until the user retries the compaction.
-            self._host.conversation.messages[:] = original
-            self._host.window.set_latest_context_tokens(tokens_before)
-            self.fail_compaction(str(error))
-            yield CompactionDone(
-                reason=reason,
-                ok=False,
-                messages_before=messages_before,
-                messages_after=len(self._host.conversation.messages),
-                tokens_before=tokens_before,
-                tokens_after=self._host.window.latest_context_tokens,
-                error_code="compaction_summary_failed",
-            )
-            return
+        summary = await self._summarize_compacted(older, compactable) if older else None
         if self._host.turn.abort_event.is_set():
             # The person stopped the fold mid-summary; report a terminal, non-blocking cancellation.
             yield CompactionDone(
@@ -605,9 +595,7 @@ class Compaction(Feature):
                 error_code="compaction_cancelled",
             )
             return
-        retained = (
-            [self._summary_message(summary), *kept] if summary else list(kept)
-        )
+        retained = [self._summary_message(summary), *kept] if summary else list(kept)
         try:
             self._host.conversation.messages[:] = _without_provider_reasoning(retained)
             self._host.window.set_latest_context_tokens(
@@ -662,94 +650,68 @@ class Compaction(Feature):
                 return None
             return str(summary or "").strip() or None
         instruction = self._prompts.load("compaction_summary", {})
-        with TemporaryDirectory(prefix="langmesh-compaction-summary-") as scratch_directory:
-            summarizer = self._compaction_summarizer_runtime(scratch_directory)
-            try:
-                from langmesh.runtime.verdict import drive_verdict_session
+        summarizer = self._compaction_summarizer_runtime()
+        try:
+            from langmesh.runtime.verdict import drive_verdict_session
 
-                summary_attempts = (
-                    self._context.global_configuration.compaction.summary_attempts
+            async def _run_turn(current_instruction: str) -> bool:
+                streamed: dict[str, Any] = {"last_usage": None}
+
+                async def _consume() -> None:
+                    with cache_lane("compaction-summary"):
+                        async for _event in summarizer.stream(
+                            current_instruction, as_system_note=False, opens_exchange=True
+                        ):
+                            if isinstance(_event, Usage):
+                                streamed["last_usage"] = _event
+
+                stream_task = asyncio.create_task(_consume())
+                await await_interruptible(
+                    stream_task, self._host.turn.abort_event, summarizer.abort
                 )
-                last_text = ""
-
-                async def _run_turn(current_instruction: str) -> bool:
-                    nonlocal last_text
-                    streamed: dict[str, Any] = {"last_text": "", "last_usage": None}
-
-                    async def _consume() -> None:
-                        with cache_lane("compaction-summary"):
-                            async for _event in summarizer.stream(
-                                current_instruction, as_system_note=False, opens_exchange=True
-                            ):
-                                # The hidden session is private: nothing here is published.
-                                if isinstance(_event, Done):
-                                    streamed["last_text"] = _event.text
-                                if isinstance(_event, Usage):
-                                    streamed["last_usage"] = _event
-
-                    stream_task = asyncio.create_task(_consume())
-                    if await race_interrupt(stream_task, self._host.turn.abort_event):
-                        summarizer.abort()
-                    await stream_task
-                    last_text = streamed["last_text"] or last_text
-                    last_usage = streamed["last_usage"]
-                    if last_usage is not None:
-                        logger.info(
-                            "compaction summary cache lane=compaction-summary prefix_intact=%s cache_read_tokens=%d reachable_tokens=%d shared_segments=%d segments=%d input_tokens=%d output_tokens=%d",
-                            last_usage.prefix_intact,
-                            last_usage.cache_read_tokens,
-                            last_usage.reachable_tokens,
-                            last_usage.shared_segments,
-                            last_usage.segments,
-                            last_usage.input_tokens,
-                            last_usage.output_tokens,
-                        )
-                    return not self._host.turn.abort_event.is_set()
-
-                def _submitted():
-                    feature = summarizer._features.by_type(Compaction)
-                    return feature.submitted_summary if feature is not None else None
-
-                def _on_empty(attempt: int, maximum: int) -> None:
-                    logger.warning(
-                        "the compaction summarizer stopped without submitting its summary (attempt %d/%d); continuing it",
-                        attempt,
-                        maximum,
+                last_usage = streamed["last_usage"]
+                if last_usage is not None:
+                    logger.info(
+                        "compaction summary cache lane=compaction-summary cache_prefix_reusable=%s cache_read_tokens=%d cache_write_tokens=%d reusable_prefix_tokens=%d shared_segments=%d segments=%d input_tokens=%d output_tokens=%d",
+                        cache_prefix_label(last_usage.cache_prefix_reusable),
+                        last_usage.cache_read_tokens,
+                        last_usage.cache_write_tokens,
+                        last_usage.reusable_prefix_tokens,
+                        last_usage.shared_segments,
+                        last_usage.segments,
+                        last_usage.input_tokens,
+                        last_usage.output_tokens,
                     )
+                return not self._host.turn.abort_event.is_set()
 
-                def _on_exhausted():
-                    logger.error(
-                        "compaction summarizer did not submit after %d attempts; last text: %r",
-                        summary_attempts,
-                        last_text,
-                    )
-                    raise CompactionSummaryExhausted(
-                        f"The compaction summarizer did not submit a summary after {summary_attempts} attempts, so the conversation was not compacted."
-                    )
+            def _submitted():
+                feature = summarizer._features.by_type(Compaction)
+                return feature.submitted_summary if feature is not None else None
 
-                submitted = await drive_verdict_session(
-                    attempts=summary_attempts,
-                    reason="compaction summary",
-                    run_turn=_run_turn,
-                    submitted=_submitted,
-                    require_submission=lambda: self._require_summary_submission(summarizer),
-                    missing_instruction=lambda: self._prompts.load(
-                        "compaction_summary_missing", {}
-                    ),
-                    aborted=lambda: self._host.turn.abort_event.is_set(),
-                    initial_instruction=instruction,
-                    on_empty=_on_empty,
-                    on_exhausted=_on_exhausted,
+            def _on_empty(attempt: int) -> None:
+                logger.warning(
+                    "the compaction summarizer stopped without submitting its summary (attempt %d); continuing it",
+                    attempt,
                 )
-                if submitted is not None:
-                    return str(submitted.summary or "").strip() or None
-            except CompactionSummaryExhausted:
-                raise
-            except Exception as error:  # noqa: BLE001 — a failed summary never blocks the compaction
-                logger.exception("compaction summary failed; compacting without one: %s", error)
-                return None
-            finally:
-                summarizer.abort()
+
+            # No cap: the summarizer is reminded until it submits, and emitting the tool call
+            # correctly is the model's own job. Only a person's stop ends the wait.
+            submitted = await drive_verdict_session(
+                run_turn=_run_turn,
+                submitted=_submitted,
+                require_submission=lambda: self._require_summary_submission(summarizer),
+                missing_instruction=lambda: self._prompts.load("compaction_summary_missing", {}),
+                aborted=lambda: self._host.turn.abort_event.is_set(),
+                initial_instruction=instruction,
+                on_empty=_on_empty,
+            )
+            if submitted is not None:
+                return str(submitted.summary or "").strip() or None
+        except Exception as error:  # noqa: BLE001 — a failed summary never blocks the compaction
+            logger.exception("compaction summary failed; compacting without one: %s", error)
+            return None
+        finally:
+            summarizer.abort()
         return None
 
     @staticmethod
@@ -758,16 +720,18 @@ class Compaction(Feature):
         summary_tool = next(
             tool for tool in summarizer.constrained_tool_named("submit_compaction_summary")
         )
-        summarizer.constrain_toolset([summary_tool])
+        summarizer.retain_tools([summary_tool])
 
-    def _compaction_summarizer_runtime(self, scratch_directory: str):
+    def _compaction_summarizer_runtime(self):
         """The hidden session that produces the compaction summary, mirroring the goal reviewer."""
         summarizer_configuration = self._context.agent_configuration.model_copy(
             update={"permission_mode": "automatic"}
         )
         summarizer_global_configuration = self._context.global_configuration.model_copy(
             update={
-                "toolbox": self._context.global_configuration.toolbox.model_copy(update={"enabled": False}),
+                "toolbox": self._context.global_configuration.toolbox.model_copy(
+                    update={"enabled": False}
+                ),
                 # The hidden session inherits the full conversation, so it must never compact itself.
                 "compaction": self._context.global_configuration.compaction.model_copy(
                     update={"automatic": False}
@@ -789,17 +753,9 @@ class Compaction(Feature):
         )
         granted_sandbox = self._host.boundary.granted_profile()
         summarizer_sandbox = granted_sandbox.narrowed(
-            writable=(scratch_directory,),
+            writable=(),
             network=granted_sandbox.network,
             workspace=self._context.working_directory,
-        )
-        summarizer_sandbox = replace(
-            summarizer_sandbox,
-            environment={
-                **summarizer_sandbox.environment,
-                "TMPDIR": scratch_directory,
-                "XDG_CACHE_HOME": scratch_directory,
-            },
         )
         summarizer = AgentRuntime(
             RuntimeProfile(
@@ -818,7 +774,7 @@ class Compaction(Feature):
                 sessions=None,
                 mcp_servers=self._host.tools.tool_context.mcp_server_manager,
                 # The hidden summarizer is one summary call: only its verdict tool is bound.
-                toolset=(submit_compaction_summary_tool,),
+                available_tools=(submit_compaction_summary_tool,),
                 tool_gate=self._host.tools.tool_gate,
                 permissions=summarizer_permissions,
                 features=[
@@ -844,10 +800,10 @@ class Compaction(Feature):
         """The refusal the model is given for calling outside the private handshake."""
         return self._prompts.load("compaction_preparation_violation", {})
 
+
 __all__ = [
     "Compaction",
     "CompactionControl",
-    "CompactionSummaryExhausted",
     "CompactionSummary",
     "DirectCompactionPreparation",
     "KeepRecentTurns",

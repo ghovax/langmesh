@@ -241,7 +241,11 @@ class TerminalSession:
         environment = _login_base_environment()
         if self.remote_host_alias:
             # A remote terminal: ssh to the host and start a login shell in the location's base directory.
-            command = SshExecutor(self.remote_host_alias).terminal_argv(str(self.directory))
+            from langmeshd.commons.paths import ssh_control_directory
+
+            command = SshExecutor(self.remote_host_alias, ssh_control_directory()).terminal_argv(
+                str(self.directory)
+            )
         else:
             command = _shell_command()
         pid, master_fd = pty.fork()
@@ -387,7 +391,7 @@ class TerminalSessionManager:
         self._sessions: dict[tuple[str, str], TerminalSession] = {}
         self._lock = asyncio.Lock()
 
-    async def get_or_create(
+    async def open(
         self,
         session_id: str,
         directory: Path,
@@ -443,8 +447,8 @@ async def _terminal_context_for_request(session_id: str, working_directory: str)
     """Resolve the identifier a context's terminals are stored under."""
     try:
         directory = await asyncio.to_thread(_terminal_directory, session_id, working_directory)
-    except ValueError:
+    except ValueError as error:
         if session_id:
             return session_id
-        raise HTTPException(status_code=400, detail="Terminal directory does not exist.")
+        raise HTTPException(status_code=400, detail="Terminal directory does not exist.") from error
     return _terminal_context_identifier(session_id, directory)

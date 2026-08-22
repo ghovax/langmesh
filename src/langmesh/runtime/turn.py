@@ -2,29 +2,31 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import platform
+import time
+import uuid
+from abc import ABC, abstractmethod
 from contextlib import ExitStack, suppress
 from datetime import datetime, timezone
-from langmesh.base.primitives import telemetry as _telemetry
-from langmesh.base.primitives.identifiers import new_id
-from langmesh.runtime.internals import (
-    _CONTINUE,
-    _detect_workspace,
-    _ModelCallOutcome,
-    _StepOutcome,
-    _PreflightGate,
-    _STOP,
-    _STREAM_EXHAUSTED,
-    _stream_next,
-    _ToolPlan,
-    _maybe_json,
-    conversation_tokens,
-    settled_arguments,
+from typing import Any, AsyncIterator, Callable, Optional, cast
+
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+    message_to_dict,
+    messages_from_dict,
 )
-from langmesh.runtime.cache_trace import cache_lane
-from langmesh.runtime.tools.dispatch import _DispatchesTools
-from langmesh.runtime.values import PermissionAnswer, TurnContext
+from langchain_core.messages.ai import add_ai_message_chunks
+from langchain_core.utils.json import parse_partial_json
+from litellm.exceptions import ContextWindowExceededError as ProviderContextWindowExceeded
+
+from langmesh.base.confinement import Denial, child_environment
 from langmesh.base.content.instructions import instructions_payload
 from langmesh.base.content.memories import memories_payload
 from langmesh.base.content.message_content import (
@@ -33,48 +35,48 @@ from langmesh.base.content.message_content import (
     message_text,
 )
 from langmesh.base.content.model_errors import ContextWindowExceeded, over_context_window
-from langmesh.base.contracts.ports import PromptLayer, TurnSummary
-from langmesh.base.primitives.errors import MaintenanceBlockedError
-from litellm.exceptions import ContextWindowExceededError as ProviderContextWindowExceeded
-from langchain_core.utils.json import parse_partial_json
 from langmesh.base.content.skills import enabled_skills, skills_for_agent, skills_payload
-from langmesh.base.confinement import Denial, child_environment
+from langmesh.base.contracts.ports import PromptLayer, TurnSummary
+from langmesh.base.primitives import telemetry as _telemetry
+from langmesh.base.primitives.errors import MaintenanceBlockedError
+from langmesh.base.primitives.identifiers import new_id
+from langmesh.base.primitives.limits import current_limits
+from langmesh.base.primitives.serialization import compact, content_address, lines
+from langmesh.runtime.cache_trace import cache_lane
+from langmesh.runtime.environment import RuntimeEnvironment
+from langmesh.runtime.session_control import PendingInput, RenderedPrompt
+from langmesh.runtime.internals import (
+    _CONTINUE,
+    _STOP,
+    _STREAM_EXHAUSTED,
+    _maybe_json,
+    _ModelCallOutcome,
+    _PreflightGate,
+    _StepOutcome,
+    _stream_next,
+    _ToolPlan,
+    conversation_tokens,
+    settled_arguments,
+)
+from langmesh.runtime.tools.dispatch import _DispatchesTools
 from langmesh.runtime.turn_events import (
     Checkpoint,
     Done,
     Error,
+    PermissionReviewing,
     RetryRequested,
+    Status,
     Steering,
     Suspended,
-    PermissionReviewing,
     SuspensionGate,
-    Status,
     TextChunk,
     Thinking,
     ThinkingDone,
     ToolCall,
-    TurnEvent,
+    TurnEventUnion,
+    Usage,
 )
-from langchain_core.messages import (
-    AIMessage,
-    AIMessageChunk,
-    HumanMessage,
-    SystemMessage,
-    ToolMessage,
-)
-from langchain_core.messages.ai import add_ai_message_chunks
-from pathlib import Path
-from typing import Any, AsyncIterator, Callable, cast, Optional
-import asyncio
-from abc import ABC, abstractmethod
-import platform
-import time
-import uuid
-from langmesh.base.primitives.serialization import compact, lines
-
-from langmesh.base.primitives.limits import current_limits
-
-
+from langmesh.runtime.values import PermissionAnswer, TurnContext
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +105,8 @@ def _chunk_advances_model_response(chunk: Any) -> bool:
 class _RunsTurns(_DispatchesTools, ABC):
     """The turn itself: what the model is told, what comes back, and when it is over."""
 
+    _environment: RuntimeEnvironment
+
     # The session state this mixin reads. Attributes the dispatch mixin already declares
     # (`_features`, `_conversation`, `_prompt_loader`, `_tool_context`, `_access_grants`,
     # `_abort_event`, `_stop_requested`, `_working_directory`) resolve through it.
@@ -116,13 +120,13 @@ class _RunsTurns(_DispatchesTools, ABC):
     _session_id: str
     _parent_session: str
     _system_prompt: str
+    _rendered_prompt: Any
     _execution_history: list[dict]
     _token_usage: dict[str, int]
     _approvals: Any
     _transcript: Any
     _bound_model: Any
     _context_window_estimated: bool
-    _resource_sync: Any
     _tools: list[Any]
     model_identifier: str
     # The concrete runtime exposes the permission feature's gate factory under this name.
@@ -144,7 +148,7 @@ class _RunsTurns(_DispatchesTools, ABC):
         ...
 
     @abstractmethod
-    def _accumulate_usage(self, response: AIMessage) -> TurnEvent | None:
+    def _accumulate_usage(self, response: AIMessage) -> Usage | None:
         """Tally one call's usage into the turn's running total; the concrete runtime implements it."""
         ...
 
@@ -179,46 +183,8 @@ class _RunsTurns(_DispatchesTools, ABC):
             all_skills = enabled_skills(list(self._catalogue.skills()))
             agent_skills = skills_for_agent(all_skills, self._agent_configuration.skills)
             memories = list(self._catalogue.memories())
-            worktree_root, is_git_repo = _detect_workspace(self._working_directory)
-            context = TurnContext(
-                now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-                pwd=self._working_directory or str(Path.cwd()),
-                locations=self._locations_summary(),
-                confinement=self._confinement_summary(),
-            ).model_dump(exclude_defaults=True)
-            # The features contribute what only they know — their context, the running jobs.
-            self._features.compose_context(context)
-            context["background"] = {
-                "recent_events": self._execution_history[-20:],
-                **dict(context.get("background") or {}),
-            }
-            context.update(
-                {
-                    "session": self._session_id,
-                    **({"parent_session": self._parent_session} if self._parent_session else {}),
-                    "working_directory": self._working_directory,
-                    "project_directory": self._project_directory,
-                    "worktree_root": worktree_root,
-                    "is_git_repo": is_git_repo,
-                    "session_worktree_strategy": self._global_configuration.workspace.strategy,
-                    "platform": platform.system(),
-                    "today_date": datetime.now().strftime("%Y-%m-%d"),
-                    "machine": _maybe_json(cast(Any, self._machine_snapshot())),
-                }
-            )
-            if self._user_context_enabled():
-                user_context = _maybe_json(cast(Any, self._user_context_snapshot()))
-                if isinstance(user_context, dict) and user_context:
-                    context["user_context"] = user_context
-            context_json = compact(context)
-            # Conditional, since it asserts "you are running as a session", which a library runtime is not.
-            parent_report = (
-                self._prompt_loader.load("parent_report", {"parent": self._parent_session})
-                if self._parent_session
-                else ""
-            )
             agent_context = (
-                self._prompt_loader.load("agent_context", {"parent_report": parent_report})
+                self._prompt_loader.load("agent_context", {"parent_report": ""})
                 if "message_session" in {tool.name for tool in self._tools}
                 else ""
             )
@@ -264,7 +230,6 @@ class _RunsTurns(_DispatchesTools, ABC):
             )
             variables = {
                 "agent_prompt": self._system_prompt,
-                "context": context_json,
                 "user_environment": user_environment,
                 "instructions": instructions,
                 "skills": lines(skills_payload(agent_skills)),
@@ -273,7 +238,11 @@ class _RunsTurns(_DispatchesTools, ABC):
                 "toolbox": toolbox,
                 "peer_sessions": peer_sessions,
                 "mcp_servers": mcp_servers,
+                "observational_memory": "",
+                "computer_control_guidance": "",
+                "task_guidance": "",
             }
+            self._features.compose_prompt(variables)
             if self._prompt_composer is None:
                 prompt = self._prompt_loader.load("system_prompt", variables)
             else:
@@ -283,7 +252,69 @@ class _RunsTurns(_DispatchesTools, ABC):
                 if not isinstance(prompt, str):
                     raise TypeError("prompt_composer.compose() must return a string")
             self._cached_system_prompt = prompt.strip()
+            self._rendered_prompt = RenderedPrompt(
+                instructions=self._cached_system_prompt,
+                revision=self._system_prompt_revision(),
+            )
+            self._note_session_changed()
         return self._cached_system_prompt
+
+    def _session_context_content(self) -> str:
+        context = TurnContext(
+            pwd=self._working_directory,
+            locations=self._locations_summary(),
+            confinement=self._confinement_summary(),
+        ).model_dump(exclude_defaults=True)
+        self._features.compose_context(context)
+        context["background"] = {
+            "recent_events": self._execution_history[-20:],
+            **dict(context.get("background") or {}),
+        }
+        context.update(
+            {
+                "session": self._session_id,
+                **({"parent_session": self._parent_session} if self._parent_session else {}),
+                "working_directory": self._working_directory,
+                "project_directory": self._project_directory,
+                "session_worktree_strategy": self._global_configuration.workspace.strategy,
+                "platform": platform.system(),
+                "machine": _maybe_json(cast(Any, self._machine_snapshot())),
+            }
+        )
+        if self._user_context_enabled():
+            user_context = _maybe_json(cast(Any, self._user_context_snapshot()))
+            if isinstance(user_context, dict) and user_context:
+                context["user_context"] = user_context
+        parent_report = (
+            self._prompt_loader.load("parent_report", {"parent": self._parent_session}).strip()
+            if self._parent_session
+            else ""
+        )
+        rendered = f"## Session context\n\n```json\n{compact(context)}\n```"
+        return f"{rendered}\n\n{parent_report}" if parent_report else rendered
+
+    def _refresh_session_context(self) -> None:
+        content = self._session_context_content()
+        digest = content_address(content)
+        previous = next(
+            (
+                message.additional_kwargs.get("langmesh_context")
+                for message in reversed(self._conversation)
+                if message.additional_kwargs.get("langmesh_context")
+            ),
+            None,
+        )
+        if previous == digest:
+            return
+        self._conversation.append(
+            SystemMessage(content=content, additional_kwargs={"langmesh_context": digest})
+        )
+        self._note_session_changed()
+
+    @abstractmethod
+    def _system_prompt_revision(self) -> str:
+        """Identify stable prompt construction inputs without mutable session state."""
+        ...
 
     def _user_context_enabled(self) -> bool:
         user_context = getattr(self._global_configuration, "user_context", None)
@@ -359,8 +390,8 @@ class _RunsTurns(_DispatchesTools, ABC):
             logger.warning("the transcript raised while recording a turn", exc_info=True)
         await self._hooks.after_turn(summary)
 
-    async def _drain_steering_messages(self) -> list[TurnEvent]:
-        events: list[TurnEvent] = []
+    async def _drain_steering_messages(self) -> list[Steering]:
+        events: list[Steering] = []
         pending = self._pending_steering
         if not pending:
             return events
@@ -454,17 +485,42 @@ class _RunsTurns(_DispatchesTools, ABC):
 
     async def resume_stream(
         self, plans: dict[str, dict], answers: dict[str, Any]
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[TurnEventUnion]:
         """Resume a suspended turn: run its pending batch with the recorded answers, then continue normally."""
         async for event in self.stream("", resume_plans=plans, resume_answers=answers):
             yield event
 
-    async def continue_stream(self) -> AsyncIterator[TurnEvent]:
-        """Continue an already-recorded user turn after a failed maintenance was retried successfully."""
+    def stage_input(
+        self,
+        user_message: str | list,
+        *,
+        as_system_note: bool = False,
+        opens_exchange: bool = False,
+    ) -> None:
+        """Stage accepted input in durable session state before any work begins."""
+        if self._pending_input is not None:
+            previous = messages_from_dict([dict(self._pending_input.message)])[0]
+            self._conversation.append(previous)
+        self._refresh_session_context()
+        message = (
+            self._reminder_message(
+                user_message, marks={"opens_exchange": True} if opens_exchange else None
+            )
+            if as_system_note and isinstance(user_message, str)
+            else HumanMessage(content=user_message)
+        )
+        self._pending_input = PendingInput(
+            message=message_to_dict(message),
+            recorded_text=message_text(message),
+        )
+        self._note_session_changed()
+
+    async def continue_stream(self) -> AsyncIterator[TurnEventUnion]:
+        """Continue the accepted input or durable conversation tail without adding another message."""
         async for event in self.stream("", continue_existing=True):
             yield event
 
-    async def prepare_maintenance_stream(self) -> AsyncIterator[TurnEvent]:
+    async def prepare_maintenance_stream(self) -> AsyncIterator[TurnEventUnion]:
         """Run the private recording segment and maintenance, without inventing a user turn afterward."""
         async for event in self.stream("", continue_existing=True, stop_after_maintenance=True):
             yield event
@@ -479,7 +535,30 @@ class _RunsTurns(_DispatchesTools, ABC):
         resume_answers: Optional[dict[str, Any]] = None,
         continue_existing: bool = False,
         stop_after_maintenance: bool = False,
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[TurnEventUnion]:
+        with self._environment.bind():
+            async for event in self._stream(
+                user_message,
+                as_system_note=as_system_note,
+                opens_exchange=opens_exchange,
+                resume_plans=resume_plans,
+                resume_answers=resume_answers,
+                continue_existing=continue_existing,
+                stop_after_maintenance=stop_after_maintenance,
+            ):
+                yield event
+
+    async def _stream(
+        self,
+        user_message: str | list,
+        *,
+        as_system_note: bool,
+        opens_exchange: bool,
+        resume_plans: Optional[dict[str, dict]],
+        resume_answers: Optional[dict[str, Any]],
+        continue_existing: bool,
+        stop_after_maintenance: bool,
+    ) -> AsyncIterator[TurnEventUnion]:
         if self._features.blocked_reason() and not continue_existing:
             raise MaintenanceBlockedError(
                 f"Context maintenance failed: {self._features.blocked_reason()} Retry maintenance before sending more work."
@@ -496,7 +575,10 @@ class _RunsTurns(_DispatchesTools, ABC):
         # Every request leaves from valid history: a resume protects its pending batch, every other path closes unanswered tool calls.
         self._repair_dangling_tool_calls(protect_tail_batch=resume_plans is not None)
 
-        if continue_existing:
+        if continue_existing and self._pending_input is not None:
+            pending_user_message = messages_from_dict([dict(self._pending_input.message)])[0]
+            recorded_user_message = self._pending_input.recorded_text
+        elif continue_existing:
             recorded_user_message = ""
         elif resume_plans is not None:
             # Resume: the checkpoint is already at the tail, so run its batch and fall into the loop.
@@ -520,30 +602,42 @@ class _RunsTurns(_DispatchesTools, ABC):
                 resume_outcomes,
                 resolved,
             ):
+                if isinstance(event, RetryRequested):
+                    raise AssertionError("a resolved suspension cannot request another retry")
                 yield event
             self._append_tool_results(response, resume_outcomes)
-            if self._resource_sync is not None:
-                await self._resource_sync()
             yield Checkpoint()
+            self._features.acknowledge_checkpoint()
         else:
-            # Usually prose, but an attachment turn carries a content list so a vision model sees the pixels.
-            turn_message = (
-                self._reminder_message(
-                    user_message, marks={"opens_exchange": True} if opens_exchange else None
-                )
-                if as_system_note and isinstance(user_message, str)
-                else HumanMessage(content=user_message)
+            self.stage_input(
+                user_message,
+                as_system_note=as_system_note,
+                opens_exchange=opens_exchange,
             )
-            # The event-log recorder only wants prose from LangChain's standard blocks.
-            recorded_user_message = message_text(turn_message)
-            # Held until maintenance has had a chance to reclaim the existing conversation.
-            pending_user_message = turn_message
+            staged_input = self._pending_input
+            if staged_input is None:
+                raise AssertionError("staging input must create a pending value")
+            pending_user_message = messages_from_dict([dict(staged_input.message)])[0]
+            recorded_user_message = staged_input.recorded_text
         turn_started_at = datetime.now(timezone.utc)
+
+        if pending_user_message is not None:
+            yield Checkpoint()
+            self._features.acknowledge_checkpoint()
 
         while True:
             if self._abort_event.is_set() or self._stop_requested:
-                # A stop supersedes steering: drop it and tell its sender no.
                 self.discard_pending_steering()
+                if pending_user_message is not None:
+                    self._conversation.append(pending_user_message)
+                    pending_user_message = None
+                    self._pending_input = None
+                    self._conversation.append(
+                        AIMessage(content="", additional_kwargs={"langmesh_cancelled": True})
+                    )
+                    self._note_session_changed()
+                    yield Checkpoint()
+                    self._features.acknowledge_checkpoint()
                 yield Done(text="", stop_reason="cancelled")
                 return
 
@@ -551,6 +645,8 @@ class _RunsTurns(_DispatchesTools, ABC):
             if background_events:
                 for background_event in background_events:
                     yield background_event
+                yield Checkpoint()
+                self._features.acknowledge_checkpoint()
                 continue
 
             # The loop may hold while a feature reclaims context. The threshold is a preparation boundary, not a hard cut: the reserved window gives the agent room for one private recording batch before the fold happens.
@@ -579,6 +675,8 @@ class _RunsTurns(_DispatchesTools, ABC):
                     if pending_user_message is not None:
                         self._conversation.append(pending_user_message)
                         pending_user_message = None
+                        self._pending_input = None
+                        self._note_session_changed()
                     return
                 if stop_after_maintenance:
                     return
@@ -588,13 +686,19 @@ class _RunsTurns(_DispatchesTools, ABC):
             if pending_user_message is not None and not self._features.active_maintenance():
                 self._conversation.append(pending_user_message)
                 pending_user_message = None
+                self._pending_input = None
+                self._note_session_changed()
 
             # Steering accepted while a new message was waiting belongs after that message. During the hold it remains queued until the private segment has compacted away.
             if not self._features.active_maintenance():
                 for steering_event in await self._drain_steering_messages():
                     yield steering_event
 
-            messages = self._features.prepare_request(self._build_turn_messages())
+            self._features.prepare_request()
+            self._refresh_session_context()
+            messages = self._build_turn_messages()
+            yield Checkpoint()
+            self._features.acknowledge_checkpoint()
 
             # The model call: yields the stream and hands back the assembled response, or a terminal condition.
             call = _ModelCallOutcome()
@@ -670,7 +774,7 @@ class _RunsTurns(_DispatchesTools, ABC):
             # Nothing to call: retry a malformed batch, answer agents, or finish the turn.
             if not response.tool_calls:
                 step = _StepOutcome()
-                async for event in self._finalize_no_tool_calls(
+                async for event in self._complete_no_tool_calls(
                     response,
                     recorded_user_message,
                     turn_tool_calls_log,
@@ -684,6 +788,8 @@ class _RunsTurns(_DispatchesTools, ABC):
                     if pending_user_message is not None:
                         self._conversation.append(pending_user_message)
                         pending_user_message = None
+                        self._pending_input = None
+                        self._note_session_changed()
                     return
                 if step.directive == _STOP:
                     return
@@ -710,6 +816,8 @@ class _RunsTurns(_DispatchesTools, ABC):
                     yield event
                 if pending_user_message is not None:
                     self._conversation.append(pending_user_message)
+                    self._pending_input = None
+                    self._note_session_changed()
                 return
             step = _StepOutcome()
             async for event in self._run_tool_batch(
@@ -724,6 +832,8 @@ class _RunsTurns(_DispatchesTools, ABC):
                 if pending_user_message is not None:
                     self._conversation.append(pending_user_message)
                     pending_user_message = None
+                    self._pending_input = None
+                    self._note_session_changed()
                 return
             if self._features.maintenance_ready():
                 # The successful recording call is the terminal action of this model segment. The next loop iteration folds and resumes the already-accepted work.
@@ -764,7 +874,7 @@ class _RunsTurns(_DispatchesTools, ABC):
 
     async def _stream_model_call(
         self, messages: list, outcome: _ModelCallOutcome
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[TurnEventUnion]:
         """One streamed model call, writing the assembled response or a terminal condition into ``outcome``."""
         response_chunks: list[AIMessageChunk] = []
         # Calls already announced from the stream, so the completed message does not announce them twice.
@@ -780,9 +890,6 @@ class _RunsTurns(_DispatchesTools, ABC):
         generation_span = _telemetry.start_span(
             "gen_ai.generation", {"gen_ai.request.model": self.model_identifier}
         )
-        # A hook may read the conversation about to leave the process, and may change it.
-        if not self._hooks.empty:
-            messages = await self._hooks.before_model(messages)
         self._refuse_if_over_window(messages)
         # This is the truthful phase boundary: hooks and local validation have completed, and the next awaited operation starts the provider stream. The client opens its Thinking row from this status, so no optimistic or timer-driven model activity is fabricated.
         thinking_started_at = time.monotonic()
@@ -797,6 +904,7 @@ class _RunsTurns(_DispatchesTools, ABC):
             if self._features.active_maintenance():
                 cache_scope.enter_context(cache_lane("maintenance"))
             model_stream = bound_model.astream(messages)
+            self._note_session_changed()
             abort_waiter = asyncio.ensure_future(self._abort_event.wait())
             silence_limit = current_limits().model_silence_give_up
             progress_deadline = asyncio.get_running_loop().time() + silence_limit
@@ -938,7 +1046,7 @@ class _RunsTurns(_DispatchesTools, ABC):
             else AIMessageChunk(content="")
         )
 
-    async def _finalize_no_tool_calls(
+    async def _complete_no_tool_calls(
         self,
         response: AIMessageChunk,
         recorded_user_message: str,
@@ -947,7 +1055,7 @@ class _RunsTurns(_DispatchesTools, ABC):
         step: _StepOutcome,
         started_at: datetime,
         nudged: list[bool],
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[TurnEventUnion]:
         """Handle a response with no tool calls: retry a malformed batch, deliver agent messages, or finish."""
         if response.invalid_tool_calls:
             # Only malformed calls: a ToolMessage would be orphaned, so they are corrected by a reminder.
@@ -1010,7 +1118,7 @@ class _RunsTurns(_DispatchesTools, ABC):
         turn_tool_results_log,
         outcomes,
         decisions,
-    ):
+    ) -> AsyncIterator[TurnEventUnion]:
         """Run the calls a retry answer settled, once the rest of the batch has finished."""
         pending = [
             call
@@ -1026,6 +1134,8 @@ class _RunsTurns(_DispatchesTools, ABC):
             outcomes,
             decisions,
         ):
+            if isinstance(event, RetryRequested):
+                raise AssertionError("an approved retry cannot request another retry")
             yield event
 
     async def _run_tool_batch(
@@ -1035,9 +1145,11 @@ class _RunsTurns(_DispatchesTools, ABC):
         turn_tool_calls_log: list[dict],
         turn_tool_results_log: list[dict],
         step: _StepOutcome,
-    ) -> AsyncIterator[TurnEvent]:
+    ) -> AsyncIterator[TurnEventUnion]:
         """Run the tool batch behind a durable checkpoint, with every permission resolved before any tool runs."""
         self._conversation.append(response)
+        yield Checkpoint()
+        self._features.acknowledge_checkpoint()
         tool_calls = cast(list[dict], response.tool_calls)
         outcomes: dict[str, dict] = {}
         if not self._abort_event.is_set() and not self._stop_requested:
@@ -1128,9 +1240,8 @@ class _RunsTurns(_DispatchesTools, ABC):
                 ):
                     yield event
         self._append_tool_results(response, outcomes)
-        if self._resource_sync is not None:
-            await self._resource_sync()
         yield Checkpoint()
+        self._features.acknowledge_checkpoint()
 
         if self._abort_event.is_set() or self._stop_requested:
             self._record_turn(recorded_user_message, turn_tool_calls_log, turn_tool_results_log, "")

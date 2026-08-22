@@ -99,7 +99,7 @@ async def _cancel(session, params: dict) -> dict:
     if tool_call_id:
         # The facade method rather than the context-keyed one, since a worker is one session and its id is implicit.
         return {"cancelled": session.abort_tool_call(tool_call_id)}
-    return {"cancelled": session.abort()}
+    return {"cancelled": await session.abort()}
 
 
 async def _status(session, _params: dict) -> dict:
@@ -113,6 +113,11 @@ async def _abort_input(session, _params: dict) -> dict:
 async def _clear_goal(session, _params: dict) -> dict:
     """The person called the goal off, which is what stops the session opening further turns for itself."""
     return {"cleared": await session.clear_goal(session.session_id)}
+
+
+async def _resume_goal(session, _params: dict) -> dict:
+    """The person restarted a parked goal, so the session opens turns for it again."""
+    return {"resumed": await session.resume_goal(session.session_id)}
 
 
 async def _compact(session, _params: dict) -> dict:
@@ -170,6 +175,7 @@ METHODS: dict[str, Callable[[Any, dict], Awaitable[dict]]] = {
     "tasks/cancel": _cancel,
     "session/status": _status,
     "session/goal-clear": _clear_goal,
+    "session/goal-resume": _resume_goal,
     "session/compact": _compact,
     "session/retry": _retry,
     "session/locations": _set_locations,

@@ -8,11 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from langmeshd.commons import state
 from langmeshd.commons.services.broadcast import _publish_broadcast
 from langmeshd.commons.brokers.remote_agents import _reload_remote_agents
+from langmeshd.commons.configuration_locations import home_agents_root
+from langmeshd.commons.atomic_file import write_text
 
 router = APIRouter()
 
@@ -25,23 +27,23 @@ class RemoteAgentAuthInput(BaseModel):
     tokenUrl: str = ""
     clientId: str = ""
     clientSecret: str = ""
-    scopes: list[str] = []
+    scopes: list[str] = Field(default_factory=list)
 
 
 class RemoteAgentInput(BaseModel):
     name: str
     cardUrl: str
     enabled: bool = True
-    auth: RemoteAgentAuthInput = RemoteAgentAuthInput()
+    auth: RemoteAgentAuthInput = Field(default_factory=RemoteAgentAuthInput)
     cardTtlSeconds: int = 3600
-    allowedHosts: list[str] = []
+    allowedHosts: list[str] = Field(default_factory=list)
     allowPrivate: bool = False
-    allowedProfiles: list[str] = []
+    allowedProfiles: list[str] = Field(default_factory=list)
 
 
 def _home_remote_agents_path() -> Path:
     assert state.global_configuration is not None
-    root = state.global_configuration.home_agents_root()
+    root = home_agents_root()
     root.mkdir(parents=True, exist_ok=True)
     return root / "remote-agents.json"
 
@@ -60,7 +62,7 @@ def _read_file() -> dict:
 
 
 def _write_file(data: dict) -> None:
-    _home_remote_agents_path().write_text(json.dumps(data, indent=2))
+    write_text(_home_remote_agents_path(), json.dumps(data, indent=2))
 
 
 def _entry_from_input(payload: RemoteAgentInput) -> dict:
