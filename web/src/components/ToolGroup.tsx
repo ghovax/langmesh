@@ -10,7 +10,7 @@ import { STATUS_ICON, STATUS_PALETTE, type StatusKind } from "@/lib/status";
 import { RollingNumber } from "./RollingNumber";
 import { ToolCallLabel } from "./ToolLabel";
 import { Pill } from "./ui/Pill";
-import { DisclosureRow } from "./ui/DisclosureRow";
+import { DisclosureLabel, DisclosureRow } from "./ui/DisclosureRow";
 import { ActivitySpinner } from "./ui/ActivityIcon";
 import type { ToolEvent } from "@/lib/tool-event";
 import { hasBackgroundJobId, toolStatus } from "@/lib/tool-event";
@@ -71,25 +71,19 @@ function paletteFromIconColor(iconColor: string): string {
 
 interface ToolGroupProps {
   tools: ToolEvent[];
-  // Keeps the group expanded after its calls complete, so the latest one stays open until the answer arrives.
-  keepOpen?: boolean;
-  pendingLabel?: string;
 }
 
-export const ToolGroup = memo(function ToolGroup({
-  tools,
-  keepOpen = false,
-  pendingLabel,
-}: ToolGroupProps) {
+export const ToolGroup = memo(function ToolGroup({ tools }: ToolGroupProps) {
   const translation = useTranslations("ToolGroup");
+  if (tools.length === 0) return null;
   const backgroundCount = tools.filter(
     (tool) => toolStatus(tool.status) === "running" && hasBackgroundJobId(tool.result),
   ).length;
   const runningCount =
     tools.filter((tool) => toolStatus(tool.status) === "running").length - backgroundCount;
   const inputRequired = tools.some((tool) => toolStatus(tool.status) === "input_required");
-  const active = runningCount > 0 || backgroundCount > 0 || inputRequired || keepOpen;
-  const showActivitySpinner = runningCount > 0 || (keepOpen && !inputRequired);
+  const active = runningCount > 0 || backgroundCount > 0 || inputRequired;
+  const showActivitySpinner = runningCount > 0;
   // Tri-state, so the group can be toggled either way from its default: null follows the default.
   const [manualOverride, setManualOverride] = useState<boolean | null>(null);
   const bodyOpen = manualOverride ?? false;
@@ -136,9 +130,7 @@ export const ToolGroup = memo(function ToolGroup({
       >
         {latestTool ? (
           <ToolCallLabel name={latestTool.name} args={latestTool.arguments} ready />
-        ) : (
-          (pendingLabel ?? translation("thinking"))
-        )}
+        ) : null}
       </Text>
     </Box>
   );
@@ -313,3 +305,20 @@ export const ToolGroup = memo(function ToolGroup({
     </Box>
   );
 });
+
+/** The one transcript row for "the request is with the provider": not a tool group, not thinking. */
+export function TranscriptWaitRow({ label }: { label: string }) {
+  return (
+    <Box alignSelf="flex-start" w="100%" minW={0}>
+      <DisclosureRow
+        tone="active"
+        icon={
+          <Box color="purple.fg" display="flex" alignItems="center">
+            <ActivitySpinner />
+          </Box>
+        }
+        title={<DisclosureLabel shimmer>{label}</DisclosureLabel>}
+      />
+    </Box>
+  );
+}

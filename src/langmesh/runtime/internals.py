@@ -18,7 +18,7 @@ from langmesh.base.content.models import find_model
 from langmesh.runtime.boundary import Escape
 from langmesh.base.primitives.limits import current_limits, clip_to_tokens, count_tokens
 from langchain_core.messages import AIMessageChunk
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Callable, Optional
 from langmesh.base.primitives.serialization import compact
 
 
@@ -43,7 +43,7 @@ async def _stream_next(iterator: AsyncIterator) -> Any:
         return _STREAM_EXHAUSTED
 
 
-async def race_interrupt(task: Any, interrupt_event: Any) -> bool:
+async def _race_interrupt(task: Any, interrupt_event: Any) -> bool:
     """Await `task` raced against an interrupt event; True when the interrupt fired first."""
     waiter = asyncio.ensure_future(interrupt_event.wait())
     try:
@@ -54,6 +54,27 @@ async def race_interrupt(task: Any, interrupt_event: Any) -> bool:
         if not waiter.done():
             with suppress(asyncio.CancelledError):
                 await waiter
+
+
+async def await_interruptible(
+    task: Any,
+    interrupt_event: Any,
+    abort: Callable[[], None] | None = None,
+) -> bool:
+    """Run `task` until it finishes or `interrupt_event` fires.
+
+    True when the interrupt won. The task is always retrieved, so a failure cannot look
+    like a clean empty finish. `abort` runs only when the interrupt won, before that retrieve.
+    """
+    interrupted = await _race_interrupt(task, interrupt_event)
+    if interrupted:
+        if abort is not None:
+            abort()
+        with suppress(asyncio.CancelledError):
+            await task
+        return True
+    await task
+    return False
 
 
 def model_is_authorized(

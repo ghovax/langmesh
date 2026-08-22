@@ -14,7 +14,6 @@ import {
   sessionCreate,
   sessionSend,
   CONTENT_BLOCK_METADATA_KEY,
-  ERROR_MESSAGE_KEY,
   METADATA_KEY,
   partPayload,
   turnState,
@@ -97,7 +96,6 @@ export interface MessageMeta {
     | "compaction_strategy_failed"
     | "compaction_summary_failed";
   retrying?: boolean;
-  retryFailed?: boolean;
   durationMs?: number;
   attachments?: MessageAttachment[];
   // On a peer message: which session sent it, since a report comes from somewhere with an id.
@@ -237,15 +235,6 @@ function structuredErrorFromData(data: Record<string, unknown>): FriendlyError {
   };
 }
 
-// A turn-level failure worth a toast. A tool-scoped error renders on its own card instead.
-function structuredErrorFromPart(part: A2APart | undefined): FriendlyError | null {
-  if (!part || part.kind !== "data") return null;
-  const payload = partPayload(part.data);
-  // A `tool_call_id` marks a failure belonging to one card, which renders in place.
-  if (payload.kind !== "error" || payload.tool_call_id) return null;
-  return structuredErrorFromData(payload);
-}
-
 /** Take a row back out of the transcript, for a message that turned out never to have been delivered. */
 function dropMessage(state: ReduceState, id: string): void {
   state.messages = state.messages.filter((message) => message.id !== id);
@@ -295,9 +284,10 @@ function dropCompactionMarker(state: ReduceState, fallbackId: string): void {
 }
 
 function pushErrorMessage(state: ReduceState, error: FriendlyError, sourceId?: string): void {
-  // An id-carrying error is the failed turn's terminal message: a reconnect replays the same part,
-  // so upsert converges the copies into one card rather than stacking a duplicate.
-  upsertMessage(state, {
+  // One retryable turn failure, after the work that failed. History must not leave a second copy
+  // at the start of the transcript; a retry reuses this row.
+  state.messages = state.messages.filter((message) => message.role !== "error");
+  state.appendMessage({
     id: stableMessageId(state, "error", sourceId),
     role: "error",
     content: "",
@@ -489,6 +479,19 @@ function stableMessageId(state: ReduceState, prefix: string, sourceId: string | 
   return `${prefix}-${sourceId}`;
 }
 
+function settleTurnErrors(messages: ChatMessage[]): ChatMessage[] {
+  // Newest-to-oldest history prepends unmatched rows as if they were older. A turn failure that
+  // the live lane already drew then appears above the user message. There is only ever one
+  // retryable failure card, and it belongs after the work that failed.
+  const lastError = messages.findLast((message) => message.role === "error");
+  if (!lastError) return messages;
+  const without = messages.filter((message) => message.role !== "error");
+  if (without.length === messages.length - 1 && messages[messages.length - 1] === lastError) {
+    return messages;
+  }
+  return [...without, lastError];
+}
+
 function upsertMessage(state: ReduceState, message: ChatMessage): void {
   // Replace in place when the row exists, append when it does not, so a message arriving twice converges.
   const index = state.messages.findIndex((existing) => existing.id === message.id);
@@ -544,7 +547,8 @@ function finishRunningThinking(state: ReduceState): void {
   state.index.finishThinking();
 }
 
-// Close the in-flight thinking row with its measured duration, so it reads "Thought for Ns".
+// Close the in-flight thinking block with its measured duration. Reasoning is not a transcript row;
+// it does not clear the provider wait — visible prose or a ready tool call does.
 function finishRunningThinkingWithDuration(state: ReduceState, durationMs: number): void {
   const index = state.index.thinking();
   if (index < 0) return;
@@ -568,8 +572,6 @@ function finishActiveTools(state: ReduceState): void {
 
 // The one path for the thinking signal: ensure a running row exists, then append the reasoning.
 function applyThinking(state: ReduceState, text: string): void {
-  // Real reasoning arrived, so the provider wait is over in favour of what it returned.
-  state.awaitingModel = false;
   let index = state.index.thinking();
   if (index === -1) {
     // Counted in its own right, not by the array's length nor by the shared anonymous counter: both advance
@@ -754,11 +756,7 @@ function reduceAgentPart(state: ReduceState, part: A2APart, sourceId?: string): 
     return;
   }
   if (part.kind !== "data" || !part.data) return;
-  // A live error is also the failed turn's terminal message, whose id the daemon stamps on the part;
-  // adopt it so the later history replay collapses onto the same row instead of drawing a second card.
-  const extension = sourceId ? undefined : asRecord(part.metadata?.[ERROR_MESSAGE_KEY]);
-  const messageId = String(extension?.messageId ?? "");
-  reduceDataPart(state, partPayload(part.data), sourceId || messageId || undefined);
+  reduceDataPart(state, partPayload(part.data), sourceId);
 }
 
 function reduceLiveDelta(
@@ -923,7 +921,7 @@ function reduceDataPart(
       } else {
         state.messages = state.messages.map((message, index) =>
           index === errorIndex
-            ? { ...message, meta: { ...message.meta, retrying: false, retryFailed: true } }
+            ? { ...message, meta: { ...message.meta, retrying: false } }
             : message,
         );
       }
@@ -958,10 +956,6 @@ function reduceDataPart(
       break;
     }
     case "status": {
-      // Paused on tool execution: tools surface their own status, so the await is over.
-      if (event.code === "waiting_for_tools") finishRunningThinking(state);
-      // The request is with the provider: say the wait out loud instead of looking idle. No row is
-      // fabricated; the placeholder is drawn from this flag and the first real output clears it.
       if (event.code === "awaiting_model") state.awaitingModel = true;
       break;
     }
@@ -1155,24 +1149,8 @@ function reduceDataPart(
         // A tool-scoped error with no card is still model-facing, so swallow it rather than raise a toast.
         break;
       }
-      const retryIndex = state.messages.findLastIndex(
-        (message) => message.role === "error" && message.meta?.retryFailed === true,
-      );
-      if (retryIndex >= 0) {
-        // The retried failure is a new turn with a new message id; rekey the row so its replay
-        // deduplicates against this live delivery rather than drawing a second card.
-        state.messages = state.messages.map((message, index) =>
-          index === retryIndex
-            ? {
-                ...message,
-                ...(sourceId ? { id: stableMessageId(state, "error", sourceId) } : {}),
-                meta: { ...message.meta, error: structuredErrorFromData(data), retryFailed: false },
-              }
-            : message,
-        );
-      } else {
-        pushErrorMessage(state, structuredErrorFromData(data), sourceId);
-      }
+      const identity = (event.message_id ?? "").trim() || sourceId;
+      pushErrorMessage(state, structuredErrorFromData(data), identity);
       break;
     }
     case "warning": {
@@ -1276,7 +1254,7 @@ export class TranscriptHistoryBuffer {
     }
     const olderMessages = acceptedNewestFirst.reverse().flat();
     const transcriptWasEmpty = state.messages.length === 0;
-    state.messages = [...olderMessages, ...state.messages];
+    state.messages = settleTurnErrors([...olderMessages, ...state.messages]);
     const mergedTasks = new Map(this.tasks);
     state.tasks.forEach((task) => mergedTasks.set(task.identifier, task));
     state.tasks = [...mergedTasks.values()];
@@ -1338,13 +1316,13 @@ export function useChat(
   const viewerAttachRef = useRef<{ abort: () => void; ready: Promise<boolean> } | null>(null);
   const viewerContextRef = useRef<string | null>(null);
   const historyReloadAppliedRef = useRef(0);
+  const historyLoadedRef = useRef(false);
   const stateRef = useRef<ReduceState>(newReduceState());
   const sessionIdRef = useRef<string | null>(initialSessionId);
   const isStreamingRef = useRef(false);
   // Set by a Stop so the stream close does not drain the queue into a fresh turn. One-shot.
   const abortedByUserRef = useRef(false);
-  const errorToastKeysRef = useRef<Set<string>>(new Set());
-  // True once we have driven a turn: the live stream is then authoritative, so never subscribe as well.
+  // True while this hook is driving a turn, so the durable viewer does not also reduce those frames.
   const streamedLocallyRef = useRef(false);
   const startTurnRef = useRef<(message: OutboxMessage) => Promise<Delivery>>(async () => "failed");
   const flushScheduledRef = useRef(false);
@@ -1425,24 +1403,6 @@ export function useChat(
     });
   }, [flushNow]);
 
-  const messageTranslation = useTranslations("ChatMessage");
-  const notifyTurnError = useCallback(
-    (part: A2APart | undefined) => {
-      const error = structuredErrorFromPart(part);
-      if (!error) return;
-      const key = `${sessionIdRef.current || "turn"}:${error.code}:${error.status ?? ""}`;
-      if (errorToastKeysRef.current.has(key)) return;
-      errorToastKeysRef.current.add(key);
-      toaster.create({
-        type: "error",
-        title: messageTranslation(`errors.${error.code}.title`),
-        description: messageTranslation(`errors.${error.code}.body`, error.parameters),
-        closable: true,
-      });
-    },
-    [messageTranslation],
-  );
-
   // Close this hook's stream on unmount, or orphaned streams exhaust the browser's connection pool.
   useEffect(() => {
     return () => {
@@ -1474,13 +1434,14 @@ export function useChat(
     if (resetTranscript) {
       stateRef.current = newReduceState();
       historyBufferRef.current.reset();
+      historyLoadedRef.current = false;
     }
     sessionIdRef.current = initialSessionId;
     setSessionId(initialSessionId);
     if (resetTranscript) flushNow();
     setHistoryError(false);
     if (resetTranscript) setIsHistoryLoading(true);
-    setIsHistoryStreaming(true);
+    if (!historyLoadedRef.current) setIsHistoryStreaming(true);
     const subscription = attachSession(
       initialSessionId,
       (frame) => {
@@ -1488,11 +1449,15 @@ export function useChat(
         if (frame.kind === "snapshot") {
           attached = true;
           setHistoryError(false);
-          if (frame.reconnected) setIsHistoryStreaming(true);
+          if (frame.reconnected && !historyLoadedRef.current) setIsHistoryStreaming(true);
         } else if (frame.kind === "history") {
+          // A remount after a locally streamed turn must not prepend durable history: that lane
+          // yields the just-finished turn newest-first, which parks a second error above the user.
+          if (historyLoadedRef.current) return;
           prependHistoryTurn(frame.turn);
           setIsHistoryLoading(false);
         } else if (frame.kind === "history_done") {
+          historyLoadedRef.current = true;
           flushNow();
           setIsHistoryLoading(false);
           setIsHistoryStreaming(false);
@@ -1565,10 +1530,8 @@ export function useChat(
           isStreamingRef.current = false;
           streamedLocallyRef.current = false;
           setIsStreaming(false);
-          // Stay authoritative until the backend confirms the turn settled. Dropping into viewer
-          // mode here re-attaches and replays a snapshot that can race the final durable writes,
-          // briefly replacing the finished transcript with a shorter one. The idle transition
-          // below is the safe moment to return to viewer mode.
+          // Stay on this attachment until the turn settles. Re-entering viewer mode at this
+          // instant can race the last durable writes.
         };
 
         let sendAccepted = false;
@@ -1594,7 +1557,6 @@ export function useChat(
                 return;
               }
               if (frame.kind !== "live") return;
-              notifyTurnError(frame.part);
               reduceAgentPart(stateRef.current, frame.part);
               flush();
             },
@@ -1670,7 +1632,6 @@ export function useChat(
       workspaceId,
       flush,
       flushNow,
-      notifyTurnError,
       notifyHeldForDecision,
     ],
   );
@@ -2071,7 +2032,7 @@ export function useChat(
     if (errorIndex < 0) return false;
     stateRef.current.messages = stateRef.current.messages.map((message, index) =>
       index === errorIndex
-        ? { ...message, meta: { ...message.meta, retrying: true, retryFailed: false } }
+        ? { ...message, meta: { ...message.meta, retrying: true } }
         : message,
     );
     flushNow();
@@ -2135,7 +2096,7 @@ export function useChat(
       setIsStreaming(false);
       stateRef.current.messages = stateRef.current.messages.map((message, index) =>
         index === errorIndex
-          ? { ...message, meta: { ...message.meta, retrying: false, retryFailed: true } }
+          ? { ...message, meta: { ...message.meta, retrying: false } }
           : message,
       );
       flushNow();

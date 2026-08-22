@@ -1,4 +1,4 @@
-What proves the goal, requirement by requirement. Required when the standing is `satisfied`, and `null` otherwise.
+What proves the goal, requirement by requirement. Required when the standing is `satisfied`. When standing is not `satisfied`, omit this field (`null`); the standing code is what says it does not apply.
 
 For each requirement, name what was looked at and what it showed. This is what the person reads to decide whether to trust that the goal was reached, so it has to survive being checked: a command and its output, a path and what it contains, a behaviour and how it was reproduced. Quote the output rather than characterising it — "printed `14 passed`" is evidence, "the tests were fine" is not.
 

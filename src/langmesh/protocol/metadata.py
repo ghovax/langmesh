@@ -7,10 +7,6 @@ from a2a.types import DataPart, Part
 # The URI-namespaced convention the extension specification asks an extension to place its attributes under.
 METADATA_KEY = "urn:langmesh:ext:turn:v1"
 
-# A DataPart that is also the failed turn's terminal message carries that message id here, so a live
-# delivery and the later durable replay are one row in the client's transcript.
-ERROR_MESSAGE_KEY = "urn:langmesh:ext:error-message:v1"
-
 # DataPart discriminator: every structured part declares its kind in `data.kind`.
 PART_KIND = "kind"
 
@@ -74,11 +70,6 @@ def turn_metadata(message) -> dict:
 def turn_metadata_envelope(fields: dict) -> dict:
     """Wrap turn fields under the namespaced key, dropping unset ones so the object carries only what was given."""
     return {METADATA_KEY: {key: value for key, value in fields.items() if value is not None}}
-
-
-def error_message_metadata(message_id: str) -> dict:
-    """The part-level extension tying an error part to the terminal message it is persisted in."""
-    return {ERROR_MESSAGE_KEY: {"messageId": message_id}}
 
 
 def part_payload(data: dict | None) -> dict:

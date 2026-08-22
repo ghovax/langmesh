@@ -237,6 +237,9 @@ class ErrorEvent(_EventBase):
     # Values interpolated by the client's locale catalogue. Provider text never crosses this boundary.
     parameters: dict[str, Any] = Field(default_factory=dict)
     status: int | None = None
+    # The transcript identity of a turn-level failure. Live delivery and durable replay both reduce this
+    # field, so the card is one row rather than an A2A envelope id that differs across lanes.
+    message_id: str = ""
 
 
 # The discriminated union of everything that can appear on the wire.

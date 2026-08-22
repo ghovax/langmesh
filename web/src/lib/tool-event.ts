@@ -54,15 +54,16 @@ export interface ToolEvent {
   question?: ToolQuestion;
 }
 
-/** Whether a call has a complete explanation and may enter the transcript. */
+/** Whether a call is whole enough to occupy a transcript row. */
 export function toolCallReady(event: ToolEvent): boolean {
-  // The reviewer's verdict is the one call with no model-supplied explanation: it is complete the
-  // moment it is called, and its own line names it (ToolCallLabel falls back for it).
-  if (event.name === "submit_goal_review") return true;
+  const complete = event.argumentsComplete !== false;
+  // Verdict tools have no model-supplied explanation; they still wait until the call is whole.
+  if (event.name === "submit_goal_review" || event.name === "submit_compaction_summary") {
+    return complete;
+  }
   const explanation = event.arguments?.explanation;
-  // The explanation is what the row is made of; the arguments may still be streaming, so the
-  // line appears the moment the model finishes writing its intent rather than when the call is whole.
-  return typeof explanation === "string" && explanation.trim().length > 0;
+  if (typeof explanation !== "string" || !explanation.trim()) return false;
+  return complete;
 }
 
 export function isSameToolEvent(event: ToolEvent, _name: string, toolCallId: string): boolean {

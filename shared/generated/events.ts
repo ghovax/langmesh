@@ -105,6 +105,7 @@ export interface ErrorEvent {
     | "tool_failed"
     | "tool_interrupted";
   kind: "error";
+  message_id?: string;
   parameters?: Record<string, unknown>;
   status?: number | null;
   timestamp?: string;

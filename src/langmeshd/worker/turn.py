@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Optional, cast
 from a2a.server.agent_execution import RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import DataPart, Message, Part, Task, TaskState
+from a2a.types import Message, Part, Task, TaskState
 from a2a.utils import new_task
 from langchain_core.messages import messages_to_dict
 
@@ -33,7 +33,6 @@ from langmesh.protocol.events import ErrorEvent, InboundMessageEvent, RetryEvent
 from langmesh.protocol.metadata import (
     METADATA_KEY,
     Metadata,
-    error_message_metadata,
     turn_metadata,
 )
 from langmesh.protocol.parts import (
@@ -832,14 +831,10 @@ class _TurnRunner:
         await self._save_runtime_conversation()
         # Log the real exception, but show the user a safe category rather than raw exception text. The one it was handed, not the one in flight, since this is reached by a call rather than by a raise.
         logger.error("agent turn failed", exc_info=exception)
-        error_part = _event_part(
-            # `_safe_turn_error` returns fields typed object; the pydantic constructor validates them.
-            ErrorEvent.model_validate(_safe_turn_error(exception, had_images=self._turn_has_images))
+        error_fields = _safe_turn_error(exception, had_images=self._turn_has_images)
+        message = self._updater.new_agent_message(
+            [_event_part(ErrorEvent.model_validate(error_fields))]
         )
-        # The failed turn's terminal message is the chain's identity. A retry continues the chain its
-        # failure opened, so a retried failure carries the root id rather than another per-attempt one:
-        # the client keeps one row per chain, live and replayed alike.
-        message = self._updater.new_agent_message([error_part])
         root = message.message_id or ""
         if self._runtime is not None:
             if self._mode is _TurnMode.RETRY and self._runtime.turn_failure_root:
@@ -847,16 +842,9 @@ class _TurnRunner:
             self._runtime.mark_turn_failed(chain_root=root)
         if self._mode is _TurnMode.RETRY:
             await self._emit(_event_part(RetryEvent(status="done", ok=False)))
-        # The same part becomes the failed turn's terminal message; stamp the chain's id on it so the
-        # live delivery and the durable replay share one identity in the client's transcript.
-        if root:
-            stamped = error_part.root
-            if isinstance(stamped, DataPart):
-                stamped.metadata = {
-                    **(stamped.metadata or {}),
-                    **error_message_metadata(root),
-                }
-        # Publish the error on the live lane as well as persisting it in the failed status. Without the publish, the chat's error panel only appears after a reload re-reads the history, because the turn-end activity alone carries no error part.
+        error_part = _event_part(ErrorEvent.model_validate({**error_fields, "message_id": root}))
+        # Retries keep the first failure's id so live delivery and history replay are one card.
+        message = message.model_copy(update={"parts": [error_part]})
         if self._executor._on_stream_event is not None:
             self._executor._on_stream_event(self._task.context_id, error_part)
         await self._executor._turn_store.commit_status(
