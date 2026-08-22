@@ -48,9 +48,15 @@ class _ProviderAuth:
 
     async def status(self) -> dict:
         tokens = await asyncio.to_thread(self.load, self.store)
+        account = ""
+        if tokens is not None:
+            if self.flow_kind is CursorLoginFlow:
+                account = await cursor_subscription.display_account(tokens)
+            else:
+                account = self.account(tokens)
         return {
             "signed_in": tokens is not None,
-            "account": self.account(tokens) if tokens is not None else "",
+            "account": account,
             "usage": get_usage_snapshot()
             if tokens is not None and self.flow_kind is ChatGPTLoginFlow
             else None,
@@ -66,6 +72,10 @@ class _ProviderAuth:
         except OSError as error:
             raise HTTPException(
                 status_code=409, detail=f"Could not start sign-in ({error})."
+            ) from error
+        except Exception as error:  # noqa: BLE001 — the client needs a body, not a dropped CORS 500
+            raise HTTPException(
+                status_code=500, detail=f"Could not start sign-in ({error})."
             ) from error
         setattr(state, self.in_flight, flow)
 
