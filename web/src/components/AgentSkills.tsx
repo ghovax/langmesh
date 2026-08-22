@@ -2,7 +2,7 @@
 
 import { Box, Flex, Span, Text } from "@chakra-ui/react";
 import { reportError } from "@/lib/faults";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 // The same glyphs the transcript uses for these things.
 import { CONCEPT_ICONS } from "@/lib/glyphs";
@@ -50,37 +50,47 @@ function disabledLast(first: { enabled?: boolean }, second: { enabled?: boolean 
 export function AgentSkills({
   card,
   workingDirectory,
+  onReady,
 }: {
   card: AgentCard | null;
   workingDirectory?: string;
+  // Fires once the first skills and MCP lists have settled, so a blank conversation can appear as one piece.
+  onReady?: () => void;
 }) {
   const translation = useTranslations("AgentSkills");
   const [mcpServers, setMcpServers] = useState<McpServerTools[]>([]);
   const [folderSkills, setFolderSkills] = useState<AgentSkill[]>([]);
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
 
   useEffect(() => {
     let cancelled = false;
+    let announced = false;
     // Skills and servers are scoped to the selected folder, so both refetch whenever it changes.
-    const loadCapabilities = () => {
-      fetchSkills(workingDirectory)
-        .then((skills) => {
-          if (!cancelled) setFolderSkills(skills);
-        })
-        .catch((caught) =>
-          reportError({ component: "agent-skills", operation: "list the skills" }, caught),
-        );
-      fetchMcpTools(workingDirectory)
-        .then((servers) => {
-          if (!cancelled) setMcpServers(servers);
-        })
-        .catch((caught) =>
-          reportError({ component: "agent-skills", operation: "list MCP server tools" }, caught),
-        );
+    const loadCapabilities = (announce: boolean) => {
+      Promise.all([
+        fetchSkills(workingDirectory).catch((caught: unknown) => {
+          reportError({ component: "agent-skills", operation: "list the skills" }, caught);
+          return [] as AgentSkill[];
+        }),
+        fetchMcpTools(workingDirectory).catch((caught: unknown) => {
+          reportError({ component: "agent-skills", operation: "list MCP server tools" }, caught);
+          return [] as McpServerTools[];
+        }),
+      ]).then(([skills, servers]) => {
+        if (cancelled) return;
+        setFolderSkills(skills);
+        setMcpServers(servers);
+        if (announce && !announced) {
+          announced = true;
+          onReadyRef.current?.();
+        }
+      });
     };
-    loadCapabilities();
+    loadCapabilities(true);
     // Both reload live, since their files are watched, so refetch when the server signals a change.
     const unsubscribe = subscribeEvents((event) => {
-      if (event.type === "agents_changed") loadCapabilities();
+      if (event.type === "agents_changed") loadCapabilities(false);
     });
     return () => {
       cancelled = true;

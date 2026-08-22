@@ -349,9 +349,16 @@ export function ModelSelect({
     <>
       <Button
         variant="outline"
+        position="relative"
         px={2}
+        // Trailing inset after the caret, plus the same gap the icon keeps before the name.
+        pe="calc(var(--fit-arrow-column) + var(--chakra-spacing-2) + 0.375rem)"
         // The icon-to-label gap is stated rather than inherited, so this matches the chips beside it.
         gap={1.5}
+        alignItems="center"
+        // The Select chips beside this one keep the glyph at the start of the compact box;
+        // centering it here closed the gap to the caret.
+        justifyContent="flex-start"
         bg="bg"
         borderColor="border"
         // With every word gone this is an icon and an arrow, sized to match the pickers beside it.
@@ -365,9 +372,26 @@ export function ModelSelect({
         minW={compact ? "max-content" : undefined}
         maxW={fitted ? "none" : compact ? "220px" : "100%"}
         flexShrink={0}
+        css={
+          labelHidden
+            ? {
+                justifyContent: "flex-start !important",
+                paddingInlineStart: "var(--chakra-spacing-2) !important",
+              }
+            : undefined
+        }
         onClick={openDialog}
       >
-        <LuBot size={14} />
+        <Box
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+          boxSize="3.5"
+          color="fg.muted"
+          flexShrink={0}
+        >
+          <LuBot size={14} />
+        </Box>
         {chipProviderLabel ? (
           <Span
             data-fit-label={fitted ? "model" : undefined}
@@ -425,7 +449,21 @@ export function ModelSelect({
         >
           <ModelCapabilityBadges model={chipModel} size={compact ? 11 : 14} />
         </Box>
-        <LuChevronDown size={compact ? 13 : 15} />
+        <Box
+          position="absolute"
+          insetEnd="0"
+          top="0"
+          bottom="0"
+          w="calc(var(--fit-arrow-column) + var(--chakra-spacing-2))"
+          pe={2}
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+          pointerEvents="none"
+          color="fg.muted"
+        >
+          <LuChevronDown size={14} />
+        </Box>
       </Button>
 
       {/* An empty catalog means the load failed or nothing was served; the retry sits with the picker it serves. */}

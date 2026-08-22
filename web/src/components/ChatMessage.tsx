@@ -5,12 +5,13 @@ import { useTranslations } from "next-intl";
 import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   LuCheck,
+  LuClipboardCheck,
   LuClock,
   LuCopy,
+  LuFlag,
   LuFoldVertical,
   LuMessagesSquare,
   LuRotateCw,
-  LuTarget,
   LuTrash2,
   LuTriangleAlert,
 } from "react-icons/lu";
@@ -285,7 +286,7 @@ function MessageFooter({
       )}
       {reviewId && onOpenReview && (
         <Button size="2xs" variant="ghost" color="fg.subtle" onClick={() => onOpenReview(reviewId)}>
-          <LuTarget size={11} />
+          <LuClipboardCheck size={11} />
           {translation("openReview")}
         </Button>
       )}
@@ -424,7 +425,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
         <UserMessageCard
           message={message}
           banner={translation("relayedFromGoalReviewAgent")}
-          bannerIcon={<LuTarget />}
+          bannerIcon={<LuFlag />}
           onOpenReview={onOpenReview}
         />
       );

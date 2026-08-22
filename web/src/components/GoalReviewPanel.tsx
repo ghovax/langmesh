@@ -7,6 +7,7 @@ import { useTranslations } from "next-intl";
 import { ChatMessageItem, ChatToolGroup } from "@/components/ChatMessage";
 import { TranscriptWaitRow } from "@/components/ToolGroup";
 import { PanelBody, PanelCard, PanelEmptyState, PanelHeader } from "@/components/ui/Panel";
+import { FadeSwitch } from "@/components/ui/FadeIn";
 import { timelineItems, turnHasVisibleOutput } from "@/lib/chat-timeline";
 import {
   appendTranscriptPart,
@@ -150,15 +151,18 @@ export function GoalReviewPanel({
 }) {
   const translation = useTranslations("GoalReviewPanel");
   const [reviews, setReviews] = useState<GoalReviewSession[]>([]);
+  const [reviewsReady, setReviewsReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
+    const load = async (announce: boolean) => {
       if (!sessionId) {
         setReviews([]);
+        setReviewsReady(true);
         onSelectedReviewChange(null);
         return;
       }
+      if (announce) setReviewsReady(false);
       try {
         const found = await fetchGoalReviews(sessionId);
         if (cancelled) return;
@@ -169,12 +173,14 @@ export function GoalReviewPanel({
         if (requested !== selectedReviewId) onSelectedReviewChange(requested);
       } catch (caught) {
         reportError({ component: "goal-review-panel", operation: "read goal reviews" }, caught);
+      } finally {
+        if (!cancelled) setReviewsReady(true);
       }
     };
-    void load();
+    void load(true);
     const unsubscribe = subscribeEvents((event) => {
       const changed = event as { type: string; session?: string };
-      if (changed.type === "goal_reviews_changed" && changed.session === sessionId) void load();
+      if (changed.type === "goal_reviews_changed" && changed.session === sessionId) void load(false);
     });
     return () => {
       cancelled = true;
@@ -193,7 +199,8 @@ export function GoalReviewPanel({
         onClose={onClose}
       />
       <PanelBody px={0}>
-        {reviews.length === 0 ? (
+        <FadeSwitch childKey={!reviewsReady ? "pending" : reviews.length === 0 ? "empty" : (selectedReviewId ?? "list")}>
+        {!reviewsReady ? null : reviews.length === 0 ? (
           <PanelEmptyState
             icon={<LuClipboardCheck />}
             title={translation("emptyTitle")}
@@ -206,6 +213,7 @@ export function GoalReviewPanel({
             ) : null}
           </Flex>
         )}
+        </FadeSwitch>
       </PanelBody>
     </PanelCard>
   );

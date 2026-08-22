@@ -17,7 +17,7 @@ import {
 import { reportError } from "@/lib/faults";
 import { useTranslations } from "next-intl";
 import { useLocale } from "@/lib/i18n/locale-provider";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import {
   LuArrowDownUp,
   LuChevronDown,
@@ -34,6 +34,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { LangMeshMark } from "@/components/ui/LangmeshMark";
 import { DropdownMenu, MenuOption } from "@/components/ui/Menu";
 import { PanelBody, PanelCard } from "@/components/ui/Panel";
+import { FadeSwitch } from "@/components/ui/FadeIn";
 import { Tooltip } from "@/components/ui/Tooltip";
 import {
   deleteWorkspace,
@@ -105,6 +106,218 @@ const ROW_MINIMUM_H = "30px";
 // Just wide enough to hold the row glyph centred, so titles hug the pill's left edge.
 const LEADING_SLOT = "14px";
 
+function workspaceTitle(
+  workspace: Workspace,
+  locale: string,
+  untitled: string,
+): string {
+  return workspaceLabel(workspace.locations, locale, untitled);
+}
+
+// Isolated from the search field so a keystroke does not rescan titles or reconcile the tree on the urgent path.
+const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
+  search,
+  sessions,
+  sessionsLoaded,
+  workspaces,
+  activeSessionId,
+  unseenCompletions,
+  currentWorkspaceId,
+  agents,
+  workspaceOpenOverrides,
+  onWorkspaceOpenOverridesChange,
+  onSwitchWorkspace,
+  onOpenWorkspaceSettings,
+  onResume,
+  onRequestDelete,
+  onRequestWorkspaceDelete,
+}: {
+  search: string;
+  sessions: SessionEntry[];
+  sessionsLoaded: boolean;
+  workspaces: Workspace[];
+  activeSessionId: string | null;
+  unseenCompletions: Set<string>;
+  currentWorkspaceId: string;
+  agents: AgentSummary[];
+  workspaceOpenOverrides: Record<string, boolean>;
+  onWorkspaceOpenOverridesChange: (
+    update: (current: Record<string, boolean>) => Record<string, boolean>,
+  ) => void;
+  onSwitchWorkspace: (workspaceId: string) => void;
+  onOpenWorkspaceSettings: (workspaceId: string) => void;
+  onResume: (entry: SessionEntry) => void;
+  onRequestDelete: (entry: SessionEntry) => void;
+  onRequestWorkspaceDelete: (workspace: Workspace) => void;
+}) {
+  const translation = useTranslations("SessionsSidebar");
+  const { locale } = useLocale();
+  const searchQuery = search.trim().toLowerCase();
+  const shownSessions = useMemo(
+    () =>
+      searchQuery
+        ? sessions.filter((entry) => (entry.title || "").toLowerCase().includes(searchQuery))
+        : sessions,
+    [sessions, searchQuery],
+  );
+
+  // Grouped once per change rather than per render, since a scan per workspace is what every keystroke and
+  // every folder toggle would otherwise pay for.
+  const visibleWorkspaces = useMemo(() => {
+    const byWorkspace = new Map<string, SessionEntry[]>();
+    for (const session of shownSessions) {
+      // Only the conversations you started; a session a session created is listed in the delegated panel.
+      if (session.parentSessionId) continue;
+      const held = byWorkspace.get(session.workspaceId ?? "");
+      if (held) held.push(session);
+      else byWorkspace.set(session.workspaceId ?? "", [session]);
+    }
+    return workspaces
+      .map((workspace) => ({ workspace, sessions: byWorkspace.get(workspace.id) ?? [] }))
+      .filter(({ sessions: workspaceSessions }) => !searchQuery || workspaceSessions.length > 0);
+  }, [workspaces, shownSessions, searchQuery]);
+
+  if (!sessionsLoaded || workspaces.length === 0) return null;
+  if (visibleWorkspaces.length === 0) {
+    // The same alert the settings panel uses, since a search that found nothing is a state rather than a caption.
+    return (
+      <Alert.Root status="info" size="sm" borderRadius="md" my={2} alignItems="center">
+        <Alert.Indicator />
+        <Alert.Content minW={0}>
+          <Alert.Description fontSize="xs">
+            {translation("noMatches", { query: search })}
+          </Alert.Description>
+        </Alert.Content>
+      </Alert.Root>
+    );
+  }
+
+  return (
+    <VStack gap={1} align="stretch">
+      {visibleWorkspaces.map(({ workspace, sessions: workspaceSessions }) => {
+        const label = workspaceTitle(workspace, locale, translation("untitledWorkspace"));
+        // Keyed by the workspace alone: including the search text made every keystroke discard the choice.
+        const workspaceOpen =
+          workspaceOpenOverrides[workspace.id] ??
+          (searchQuery ? workspaceSessions.length > 0 : workspace.id === currentWorkspaceId);
+        const tooltipContent = (
+          <WorkspaceHoverCard
+            label={label}
+            workspace={workspace}
+            sessionCount={workspaceSessions.length}
+          />
+        );
+        const workspaceActions = (
+          <Box>
+            <DropdownMenu
+              trigger={
+                <IconButton
+                  aria-label={translation("workspaceOptions")}
+                  variant="plain"
+                  boxSize={5}
+                  color="fg.subtle"
+                  _hover={{ bg: "transparent", color: "fg" }}
+                  _active={{ bg: "transparent" }}
+                  _focusVisible={{ outline: "none", boxShadow: "none", color: "fg" }}
+                  css={{
+                    "&[data-state=open]": {
+                      background: "transparent",
+                      color: "var(--chakra-colors-fg)",
+                    },
+                  }}
+                >
+                  <LuEllipsis size={13} />
+                </IconButton>
+              }
+              minW="180px"
+              positioning={{ placement: "bottom-end" }}
+            >
+              <MenuOption
+                value="settings"
+                icon={<LuSettings size={14} />}
+                onClick={() => onOpenWorkspaceSettings(workspace.id)}
+              >
+                {translation("workspaceSettings")}
+              </MenuOption>
+              <Menu.Item
+                value="delete-workspace"
+                color="red.fg"
+                disabled={workspaces.length <= 1}
+                onClick={() => onRequestWorkspaceDelete(workspace)}
+              >
+                <LuTrash2 size={14} />
+                <Box flex={1}>{translation("deleteWorkspace")}</Box>
+              </Menu.Item>
+            </DropdownMenu>
+          </Box>
+        );
+
+        return (
+          <TreeRow
+            key={workspace.id}
+            disclosure={workspaceOpen ? "open" : "closed"}
+            disclosureLabel={
+              workspaceOpen ? translation("hideWorkspace") : translation("showWorkspace")
+            }
+            // Disclosure only shows what is inside; the name is what chooses the workspace, and choosing
+            // one navigates the page and rebuilds the conversation, which is no price for a chevron.
+            onDisclosureChange={(nextOpen) => {
+              onWorkspaceOpenOverridesChange((current) => ({
+                ...current,
+                [workspace.id]: nextOpen,
+              }));
+            }}
+            onActivate={() => {
+              // Switching must not collapse the workspace that was open: keep it unless the person closed it by hand.
+              if (workspace.id !== currentWorkspaceId && currentWorkspaceId) {
+                onWorkspaceOpenOverridesChange((current) =>
+                  current[currentWorkspaceId] === false
+                    ? current
+                    : { ...current, [currentWorkspaceId]: true },
+                );
+              }
+              onSwitchWorkspace(workspace.id);
+            }}
+            glyph={<LuFolderOpen size={13} />}
+            label={
+              <Tooltip
+                content={tooltipContent}
+                rich
+                openDelay={350}
+                positioning={{ placement: "right" }}
+              >
+                <Box minW={0} w="full">
+                  <Text textStyle="xs" truncate>
+                    {label}
+                  </Text>
+                </Box>
+              </Tooltip>
+            }
+            actions={workspaceActions}
+          >
+            {/* Nothing at all for a workspace with no conversations, so the chevron goes with the absent children. */}
+            {workspaceSessions.length > 0 ? (
+              <VStack gap={1} align="stretch">
+                {workspaceSessions.map((entry) => (
+                  <SessionRow
+                    key={entry.sessionId}
+                    entry={entry}
+                    agents={agents}
+                    isActive={entry.sessionId === activeSessionId}
+                    unseenCompletions={unseenCompletions}
+                    onResume={onResume}
+                    onRequestDelete={onRequestDelete}
+                  />
+                ))}
+              </VStack>
+            ) : null}
+          </TreeRow>
+        );
+      })}
+    </VStack>
+  );
+});
+
 export function SessionsSidebar({
   sessions,
   sessionsLoaded,
@@ -146,14 +359,8 @@ export function SessionsSidebar({
   const [newScheduleOpen, setNewScheduleOpen] = useState(false);
   const [workspaceOpenOverrides, setWorkspaceOpenOverrides] = useState<Record<string, boolean>>({});
   const [search, setSearch] = useState("");
-  const searchQuery = search.trim().toLowerCase();
-  const shownSessions = useMemo(
-    () =>
-      searchQuery
-        ? sessions.filter((entry) => (entry.title || "").toLowerCase().includes(searchQuery))
-        : sessions,
-    [sessions, searchQuery],
-  );
+  // The field stays on the urgent path; title matching and the tree reconcile as a deferred update.
+  const deferredSearch = useDeferredValue(search);
 
   const refreshWorkspaces = useCallback(() => {
     listWorkspaces()
@@ -211,24 +418,8 @@ export function SessionsSidebar({
   }
 
   function workspaceName(workspace: Workspace): string {
-    return workspaceLabel(workspace.locations, locale, translation("untitledWorkspace"));
+    return workspaceTitle(workspace, locale, translation("untitledWorkspace"));
   }
-
-  // Grouped once per change rather than per render, since a scan per workspace is what every keystroke and
-  // every folder toggle would otherwise pay for.
-  const visibleWorkspaces = useMemo(() => {
-    const byWorkspace = new Map<string, SessionEntry[]>();
-    for (const session of shownSessions) {
-      // Only the conversations you started; a session a session created is listed in the delegated panel.
-      if (session.parentSessionId) continue;
-      const held = byWorkspace.get(session.workspaceId ?? "");
-      if (held) held.push(session);
-      else byWorkspace.set(session.workspaceId ?? "", [session]);
-    }
-    return workspaces
-      .map((workspace) => ({ workspace, sessions: byWorkspace.get(workspace.id) ?? [] }))
-      .filter(({ sessions: workspaceSessions }) => !searchQuery || workspaceSessions.length > 0);
-  }, [workspaces, shownSessions, searchQuery]);
 
   return (
     <PanelCard flex={1}>
@@ -403,140 +594,27 @@ export function SessionsSidebar({
             </DropdownMenu>
           </Box>
         </Flex>
-        {!sessionsLoaded || workspaces.length === 0 ? null : visibleWorkspaces.length === 0 ? (
-          // The same alert the settings panel uses, since a search that found nothing is a state rather than a caption.
-          <Alert.Root status="info" size="sm" borderRadius="md" my={2} alignItems="center">
-            <Alert.Indicator />
-            <Alert.Content minW={0}>
-              <Alert.Description fontSize="xs">
-                {translation("noMatches", { query: search })}
-              </Alert.Description>
-            </Alert.Content>
-          </Alert.Root>
-        ) : (
-          <VStack gap={1} align="stretch">
-            {visibleWorkspaces.map(({ workspace, sessions: workspaceSessions }) => {
-              const label = workspaceName(workspace);
-              // Keyed by the workspace alone: including the search text made every keystroke discard the choice.
-              const workspaceOpen =
-                workspaceOpenOverrides[workspace.id] ??
-                (searchQuery ? workspaceSessions.length > 0 : workspace.id === currentWorkspaceId);
-              const tooltipContent = (
-                <WorkspaceHoverCard
-                  label={label}
-                  workspace={workspace}
-                  sessionCount={workspaceSessions.length}
-                />
-              );
-              const workspaceActions = (
-                <Box>
-                  <DropdownMenu
-                    trigger={
-                      <IconButton
-                        aria-label={translation("workspaceOptions")}
-                        variant="plain"
-                        boxSize={5}
-                        color="fg.subtle"
-                        _hover={{ bg: "transparent", color: "fg" }}
-                        _active={{ bg: "transparent" }}
-                        _focusVisible={{ outline: "none", boxShadow: "none", color: "fg" }}
-                        css={{
-                          "&[data-state=open]": {
-                            background: "transparent",
-                            color: "var(--chakra-colors-fg)",
-                          },
-                        }}
-                      >
-                        <LuEllipsis size={13} />
-                      </IconButton>
-                    }
-                    minW="180px"
-                    positioning={{ placement: "bottom-end" }}
-                  >
-                    <MenuOption
-                      value="settings"
-                      icon={<LuSettings size={14} />}
-                      onClick={() => onOpenWorkspaceSettings(workspace.id)}
-                    >
-                      {translation("workspaceSettings")}
-                    </MenuOption>
-                    <Menu.Item
-                      value="delete-workspace"
-                      color="red.fg"
-                      disabled={workspaces.length <= 1}
-                      onClick={() => setPendingWorkspaceDelete(workspace)}
-                    >
-                      <LuTrash2 size={14} />
-                      <Box flex={1}>{translation("deleteWorkspace")}</Box>
-                    </Menu.Item>
-                  </DropdownMenu>
-                </Box>
-              );
-
-              return (
-                <TreeRow
-                  key={workspace.id}
-                  disclosure={workspaceOpen ? "open" : "closed"}
-                  disclosureLabel={
-                    workspaceOpen ? translation("hideWorkspace") : translation("showWorkspace")
-                  }
-                  // Disclosure only shows what is inside; the name is what chooses the workspace, and choosing
-                  // one navigates the page and rebuilds the conversation, which is no price for a chevron.
-                  onDisclosureChange={(nextOpen) => {
-                    setWorkspaceOpenOverrides((current) => ({
-                      ...current,
-                      [workspace.id]: nextOpen,
-                    }));
-                  }}
-                  onActivate={() => {
-                    // Switching must not collapse the workspace that was open: keep it unless the person closed it by hand.
-                    if (workspace.id !== currentWorkspaceId && currentWorkspaceId) {
-                      setWorkspaceOpenOverrides((current) =>
-                        current[currentWorkspaceId] === false
-                          ? current
-                          : { ...current, [currentWorkspaceId]: true },
-                      );
-                    }
-                    onSwitchWorkspace(workspace.id);
-                  }}
-                  glyph={<LuFolderOpen size={13} />}
-                  label={
-                    <Tooltip
-                      content={tooltipContent}
-                      rich
-                      openDelay={350}
-                      positioning={{ placement: "right" }}
-                    >
-                      <Box minW={0} w="full">
-                        <Text textStyle="xs" truncate>
-                          {label}
-                        </Text>
-                      </Box>
-                    </Tooltip>
-                  }
-                  actions={workspaceActions}
-                >
-                  {/* Nothing at all for a workspace with no conversations, so the chevron goes with the absent children. */}
-                  {workspaceSessions.length > 0 ? (
-                    <VStack gap={1} align="stretch">
-                      {workspaceSessions.map((entry) => (
-                        <SessionRow
-                          key={entry.sessionId}
-                          entry={entry}
-                          agents={agents}
-                          isActive={entry.sessionId === activeSessionId}
-                          unseenCompletions={unseenCompletions}
-                          onResume={onResume}
-                          onRequestDelete={setPendingDelete}
-                        />
-                      ))}
-                    </VStack>
-                  ) : null}
-                </TreeRow>
-              );
-            })}
-          </VStack>
-        )}
+        <FadeSwitch
+          childKey={sessionsLoaded && workspaces.length > 0 ? "tree" : "pending"}
+        >
+        <WorkspaceSessionTree
+          search={deferredSearch}
+          sessions={sessions}
+          sessionsLoaded={sessionsLoaded}
+          workspaces={workspaces}
+          activeSessionId={activeSessionId}
+          unseenCompletions={unseenCompletions}
+          currentWorkspaceId={currentWorkspaceId}
+          agents={agents}
+          workspaceOpenOverrides={workspaceOpenOverrides}
+          onWorkspaceOpenOverridesChange={setWorkspaceOpenOverrides}
+          onSwitchWorkspace={onSwitchWorkspace}
+          onOpenWorkspaceSettings={onOpenWorkspaceSettings}
+          onResume={onResume}
+          onRequestDelete={setPendingDelete}
+          onRequestWorkspaceDelete={setPendingWorkspaceDelete}
+        />
+        </FadeSwitch>
       </PanelBody>
 
       <ConfirmDialog
