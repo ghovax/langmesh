@@ -2,7 +2,10 @@
 
 The Action posts the acknowledgement before the venv exists. A comment starts a turn
 when it addresses the bot, or when it is a reply to one of the bot's comments — a
-quote-reply, a review reply, or the comment immediately after the bot.
+review reply (`in_reply_to_id`) or the comment immediately after the bot.
+
+Reply detection follows those pointers only: one parent comment, or the two most
+recent comments on the same collection. It does not load the thread into memory.
 """
 
 from __future__ import annotations
@@ -74,21 +77,37 @@ def _get(url: str, token: str) -> Any:
     return json.loads(body) if body else {}
 
 
-def _quoted_lines(body: str) -> list[str]:
-    return [line[1:].strip() for line in body.splitlines() if line.startswith(">")]
+def _review_comment(comment: Mapping[str, Any]) -> bool:
+    return comment.get("pull_request_review_id") is not None or comment.get("diff_hunk") is not None
 
 
-def _thread_comments(
-    repository: str, number: int, token: str, api: str
-) -> list[dict[str, Any]]:
+def _previous_comment(
+    event: Mapping[str, Any],
+    *,
+    repository: str,
+    token: str,
+    api: str,
+) -> dict[str, Any] | None:
+    """The comment immediately before this one on the same collection, or ``None``."""
+    comment = event.get("comment") or {}
+    this_id = comment.get("id")
+    number = (event.get("issue") or {}).get("number") or (
+        event.get("pull_request") or {}
+    ).get("number")
+    if not number or not this_id:
+        return None
+    collection = "pulls" if _review_comment(comment) else "issues"
     raw = _get(
-        f"{api}/repos/{repository}/issues/{number}/comments?per_page=100"
-        "&sort=created&direction=desc",
+        f"{api}/repos/{repository}/{collection}/{int(number)}/comments"
+        "?per_page=2&sort=created&direction=desc",
         token,
     )
     rows = [row for row in raw if isinstance(row, dict)] if isinstance(raw, list) else []
-    rows.reverse()
-    return rows
+    if not rows:
+        return None
+    if int(rows[0].get("id") or 0) == int(this_id):
+        return rows[1] if len(rows) > 1 else None
+    return rows[0]
 
 
 def reply_to_mention_bot(
@@ -98,11 +117,10 @@ def reply_to_mention_bot(
     token: str,
     api: str,
 ) -> bool:
-    """A quote-reply, review reply, or the comment immediately after the mention bot."""
+    """A review reply or the comment immediately after the mention bot."""
     if not token:
         return False
     comment = event.get("comment") or {}
-    body = str(comment.get("body") or "")
     parent_id = comment.get("in_reply_to_id")
     if parent_id:
         for path in (
@@ -116,26 +134,10 @@ def reply_to_mention_bot(
             login = str((record.get("user") or {}).get("login") or "")
             if mention_bot_login(login):
                 return True
-    number = (event.get("issue") or {}).get("number") or (
-        event.get("pull_request") or {}
-    ).get("number")
-    this_id = comment.get("id")
-    if not number or not this_id:
-        return False
     try:
-        rows = _thread_comments(repository, int(number), token, api)
+        previous = _previous_comment(event, repository=repository, token=token, api=api)
     except (RuntimeError, TypeError, ValueError):
         return False
-    quotes = [line for line in _quoted_lines(body) if len(line) >= 8]
-    previous = None
-    for row in rows:
-        if int(row.get("id") or 0) == int(this_id):
-            break
-        previous = row
-        if quotes and mention_bot_login(str((row.get("user") or {}).get("login") or "")):
-            text = str(row.get("body") or "")
-            if any(line in text for line in quotes):
-                return True
     if previous is None:
         return False
     return mention_bot_login(str((previous.get("user") or {}).get("login") or ""))
