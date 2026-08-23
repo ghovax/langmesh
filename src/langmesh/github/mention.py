@@ -186,38 +186,31 @@ def api_key_for(provider: str, environ: Mapping[str, str] | None = None) -> str:
     return (definition.anonymous_api_key if definition is not None else "").strip()
 
 
-def prompt_for(mention: Mention) -> str:
-    """The turn's user message: the thread, then the comment."""
+def prompt_for(mention: Mention, *, checkout: Checkout | None = None) -> str:
+    """The turn's user message: the thread, the comment, then this mention's situation."""
+    branch = checkout.branch if checkout is not None else ""
+    resumed = checkout.resumed if checkout is not None else False
     return render(
         "turn",
-        {"title": mention.title, "html_url": mention.html_url, "body": mention.body},
+        {
+            "title": mention.title,
+            "html_url": mention.html_url,
+            "body": mention.body,
+            "publication": publication_note(mention, branch=branch, resumed=resumed),
+        },
     )
 
 
 def publication_note(mention: Mention, *, branch: str = "", resumed: bool = False) -> str:
-    """What the wrapper will do with file edits, for the system prompt."""
+    """This mention's situation, appended on the turn so the system prompt stays cache-stable."""
     if mention.kind != "issue":
-        return (
-            "If you leave file changes, a wrapper commits them on this pull request's branch. "
-            "It does not open another pull request and does not change whether this one is a draft."
-        )
+        where = f" Stay on `{branch}`." if branch else ""
+        return f"This mention is on a pull request.{where}"
     if resumed and branch:
-        return (
-            f"You are already on `{branch}`. Keep working here; do not create another branch. "
-            "If you leave file changes, a wrapper commits them and updates the draft pull request. "
-            "It stays a draft until a person marks it ready."
-        )
-    return (
-        "If you will edit files, inspect existing branches in this checkout first "
-        "(`git branch -a`) and reuse one that already is this issue's work — including a "
-        "remote-tracking branch, even when its name does not follow the rule below. Create a "
-        "branch only when nothing existing fits. When you do create one, name it "
-        "`langmesh/<descriptive-name>-<four-hex-digits>`: the `langmesh/` prefix; a name that "
-        "states the work in full (lowercase, hyphen-separated words, as many as that takes); "
-        "a hyphen; four hexadecimal digits. Do not stay on the default branch. A wrapper then "
-        "commits, pushes, and opens a draft pull request. It stays a draft until a person "
-        "marks it ready."
-    )
+        return f"This mention is on an issue. You are already on `{branch}`; keep working there."
+    if branch:
+        return f"This mention is on an issue. HEAD is `{branch}`."
+    return "This mention is on an issue."
 
 
 def draft_pull_arguments(mention: Mention, branch: str) -> list[str]:
@@ -501,7 +494,7 @@ def mention_features(reply: GitHubReply) -> list[Feature]:
     ]
 
 
-def _session(mention: Mention, workspace: Path, reply: GitHubReply, *, checkout: Checkout) -> Session:
+def _session(mention: Mention, workspace: Path, reply: GitHubReply) -> Session:
     state_path(workspace).parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(
         state_path(workspace), isolation_level=None, check_same_thread=False
@@ -511,16 +504,7 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply, *, checkout:
     agent = AgentConfiguration(
         name="langmesh",
         description="Does the work asked in a GitHub mention.",
-        system_prompt=render(
-            "system",
-            {
-                "publication": publication_note(
-                    mention,
-                    branch=checkout.branch,
-                    resumed=checkout.resumed,
-                )
-            },
-        ),
+        system_prompt=render("system"),
         provider=provider,
         model=model,
         permission_mode="automatic",
@@ -551,8 +535,8 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply, *, checkout:
 
 async def run_turn(mention: Mention, workspace: Path, *, checkout: Checkout) -> str:
     reply = GitHubReply()
-    async with _session(mention, workspace, reply, checkout=checkout) as session:
-        await session.ask(prompt_for(mention))
+    async with _session(mention, workspace, reply) as session:
+        await session.ask(prompt_for(mention, checkout=checkout))
         return (reply.comment or "").strip()
 
 
