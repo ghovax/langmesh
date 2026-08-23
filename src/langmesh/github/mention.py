@@ -850,7 +850,11 @@ def main() -> None:
     try:
         checkout = prepare_tree(mention, workspace, token=token)
         thread_followup = thread_has_prior_bot_comment(
-            event, repository=repository, token=token, api=api
+            event,
+            repository=repository,
+            token=token,
+            api=api,
+            ignore_ids=(comment_id,) if comment_id else (),
         )
 
         def publish_comment(text: str) -> None:
