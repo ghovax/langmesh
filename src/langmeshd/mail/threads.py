@@ -143,6 +143,10 @@ class ThreadStore:
                 ON items(message_id) WHERE message_id != '';
             CREATE UNIQUE INDEX IF NOT EXISTS idx_items_uid_unique
                 ON items(mailbox, uidvalidity, uid);
+            CREATE INDEX IF NOT EXISTS idx_threads_session ON threads(session_id);
+            CREATE INDEX IF NOT EXISTS idx_items_session ON items(session_id);
+            CREATE INDEX IF NOT EXISTS idx_items_outbound
+                ON items(outbound_message_id) WHERE outbound_message_id != '';
             """
         )
 
@@ -164,6 +168,124 @@ class ThreadStore:
             "SELECT session_id FROM threads WHERE thread_key = ?", (thread_key,)
         ).fetchone()
         return str(row["session_id"]) if row is not None else ""
+
+    def thread_key_for_session(self, session_id: str) -> str:
+        if not session_id:
+            return ""
+        row = self._connection.execute(
+            "SELECT thread_key FROM threads WHERE session_id = ? LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        return str(row["thread_key"]) if row is not None else ""
+
+    def binding_for_session(self, session_id: str) -> dict[str, str] | None:
+        if not session_id:
+            return None
+        row = self._connection.execute(
+            """
+            SELECT thread_key, last_message_id, last_references, reply_address, subject
+            FROM threads WHERE session_id = ? LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "thread_key": str(row["thread_key"] or ""),
+            "last_message_id": str(row["last_message_id"] or ""),
+            "last_references": str(row["last_references"] or ""),
+            "reply_address": str(row["reply_address"] or ""),
+            "subject": str(row["subject"] or ""),
+        }
+
+    def get(self, item_id: str) -> MailItem | None:
+        row = self._connection.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+        return _row(row) if row is not None else None
+
+    def item_by_outbound_message_id(self, message_id: str) -> MailItem | None:
+        if not message_id:
+            return None
+        row = self._connection.execute(
+            """
+            SELECT * FROM items WHERE outbound_message_id = ?
+            ORDER BY updated_at DESC LIMIT 1
+            """,
+            (message_id,),
+        ).fetchone()
+        return _row(row) if row is not None else None
+
+    def resolve_thread_key(self, identifiers: list[str], fallback: str) -> str:
+        """The thread an In-Reply-To or References id already belongs to, else `fallback`."""
+        for identifier in identifiers:
+            if not identifier:
+                continue
+            item = self.item_by_message_id(identifier) or self.item_by_outbound_message_id(
+                identifier
+            )
+            if item is not None and item.thread_key:
+                return item.thread_key
+            row = self._connection.execute(
+                "SELECT thread_key FROM threads WHERE last_message_id = ? LIMIT 1",
+                (identifier,),
+            ).fetchone()
+            if row is not None:
+                return str(row["thread_key"])
+        return fallback
+
+    def items_for_session(self, session_id: str) -> list[MailItem]:
+        if not session_id:
+            return []
+        rows = self._connection.execute(
+            "SELECT * FROM items WHERE session_id = ? ORDER BY uid ASC, id ASC",
+            (session_id,),
+        ).fetchall()
+        return [_row(row) for row in rows]
+
+    def latest_item_for_session(self, session_id: str) -> MailItem | None:
+        if not session_id:
+            return None
+        row = self._connection.execute(
+            """
+            SELECT * FROM items
+            WHERE session_id = ? AND state != ?
+            ORDER BY uid DESC, updated_at DESC LIMIT 1
+            """,
+            (session_id, SKIPPED),
+        ).fetchone()
+        return _row(row) if row is not None else None
+
+    def note_outbound(self, session_id: str, *, message_id: str, references: str) -> None:
+        key = self.thread_key_for_session(session_id)
+        if not key:
+            return
+        with self._txn() as connection:
+            connection.execute(
+                """
+                UPDATE threads SET last_message_id = ?, last_references = ?, updated_at = ?
+                WHERE thread_key = ?
+                """,
+                (message_id, references, _now(), key),
+            )
+
+    def mark_replied(
+        self,
+        session_id: str,
+        *,
+        reply_text: str,
+        outbound_message_id: str,
+        expected: tuple[str, ...] = (SUBMITTED, DISCOVERED),
+    ) -> None:
+        """One SMTP reply covers every inbound still waiting on this session."""
+        now = _now()
+        with self._txn() as connection:
+            connection.execute(
+                f"""
+                UPDATE items SET
+                    state = ?, reply_text = ?, outbound_message_id = ?, updated_at = ?
+                WHERE session_id = ? AND state IN ({",".join("?" * len(expected))})
+                """,
+                (POSTED, reply_text, outbound_message_id, now, session_id, *expected),
+            )
 
     def bind(
         self,
@@ -240,15 +362,15 @@ class ThreadStore:
         text_to_send: str,
         first: bool,
     ) -> MailItem:
-        existing = self.item_by_message_id(message_id) if message_id else self.item_by_uid(
-            mailbox, uidvalidity, uid
+        existing = (
+            self.item_by_message_id(message_id)
+            if message_id
+            else self.item_by_uid(mailbox, uidvalidity, uid)
         )
         if existing is not None:
             if existing.state in {SUBMITTED, COMPLETED, POSTED, SEEN, SKIPPED}:
                 if existing.uid != uid or existing.uidvalidity != uidvalidity:
-                    return self.update(
-                        existing.id, uid=uid, uidvalidity=uidvalidity
-                    )
+                    return self.update(existing.id, uid=uid, uidvalidity=uidvalidity)
                 return existing
             with self._txn() as connection:
                 connection.execute(
@@ -314,8 +436,10 @@ class ThreadStore:
                     ),
                 )
         except sqlite3.IntegrityError:
-            raced = self.item_by_message_id(message_id) if message_id else self.item_by_uid(
-                mailbox, uidvalidity, uid
+            raced = (
+                self.item_by_message_id(message_id)
+                if message_id
+                else self.item_by_uid(mailbox, uidvalidity, uid)
             )
             if raced is not None:
                 return raced
@@ -329,8 +453,10 @@ class ThreadStore:
     def mark_skipped(
         self, *, mailbox: str, uidvalidity: int, uid: int, message_id: str, reason: str
     ) -> None:
-        existing = self.item_by_message_id(message_id) if message_id else self.item_by_uid(
-            mailbox, uidvalidity, uid
+        existing = (
+            self.item_by_message_id(message_id)
+            if message_id
+            else self.item_by_uid(mailbox, uidvalidity, uid)
         )
         if existing is not None:
             self.update(existing.id, state=SKIPPED, skip_reason=reason)
@@ -350,8 +476,10 @@ class ThreadStore:
                     (item_id, mailbox, uidvalidity, uid, message_id, SKIPPED, reason, _now()),
                 )
         except sqlite3.IntegrityError:
-            raced = self.item_by_message_id(message_id) if message_id else self.item_by_uid(
-                mailbox, uidvalidity, uid
+            raced = (
+                self.item_by_message_id(message_id)
+                if message_id
+                else self.item_by_uid(mailbox, uidvalidity, uid)
             )
             if raced is not None:
                 self.update(raced.id, state=SKIPPED, skip_reason=reason)
@@ -384,9 +512,7 @@ class ThreadStore:
             values.append(value)
         values.append(item_id)
         with self._txn() as connection:
-            connection.execute(
-                f"UPDATE items SET {', '.join(assignments)} WHERE id = ?", values
-            )
+            connection.execute(f"UPDATE items SET {', '.join(assignments)} WHERE id = ?", values)
         row = self._connection.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         assert row is not None
         return _row(row)

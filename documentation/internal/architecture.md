@@ -72,7 +72,7 @@ The two answers are one fact read in two directions. What the kernel calls a ses
 
 ## The CLI
 
-`langmesh` adds nothing the control plane does not have. `serve` makes the interface available over HTTP with the daemon behind it. `mail` IDLEs a mailbox and drives the same control plane as a client; see [Email](../user/email.md). `serve` is a reverse proxy in front of the daemon plus a static interface server: the browser page never sees the daemon's capability token. `serve` starts the daemon if it is not running and stops a daemon it started, leaving a pre-existing daemon alone. With `--reach` it adds a token-gated pairing door for your own devices. The [CLI guide](../user/installation.md) is the reference.
+`langmesh` adds nothing the control plane does not have. `serve` makes the interface available over HTTP with the daemon behind it. `mail` IDLEs a mailbox and drives the same control plane as a client; mail sessions speak through `submit_email`. See [Email](../user/email.md). `serve` is a reverse proxy in front of the daemon plus a static interface server: the browser page never sees the daemon's capability token. `serve` starts the daemon if it is not running and stops a daemon it started, leaving a pre-existing daemon alone. With `--reach` it adds a token-gated pairing door for your own devices. The [CLI guide](../user/installation.md) is the reference.
 
 Creating and messaging sessions, answering permission requests, schedules, configuration, and sign-in otherwise happen in the interface or over the daemon's API, never through extra CLI verbs.
 

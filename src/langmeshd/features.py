@@ -31,6 +31,7 @@ from langmeshd.daemon.workflow_catalogue import FilesystemWorkflowCatalogue
 from langmeshd.daemon.browser import browser_endpoint, save_browser_download
 from langmeshd.daemon.scratch import FilesystemScratchSpaces
 from langmeshd.commons.paths import runtime_directory
+from langmeshd.mail.plugin import EmailReply
 
 
 _WORKFLOWS = FilesystemWorkflowCatalogue()
@@ -101,6 +102,7 @@ def compose_plugins(
         Web(),
         Interaction(),
         ComputerUse(),
+        EmailReply(),
     ]
     # The goal plugin hears every goal change through the host's listener: that is how the
     # interface learns of one. The plugin owns the goal; the host owns the listener.
@@ -138,6 +140,7 @@ def contributed_tools() -> dict[str, Any]:
         Web(),
         Interaction(),
         ComputerUse(),
+        EmailReply(),
     ]
     tools: dict[str, Any] = {}
     for feature in features:

@@ -9,6 +9,7 @@ import aiosmtplib
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from langmeshd.commons.configuration import EmailConfiguration
+from langmeshd.mail.html import html_from_markdown
 
 
 def reply_message(
@@ -29,7 +30,13 @@ def reply_message(
     message["To"] = to_address
     message["Date"] = formatdate(localtime=True)
     message["Message-ID"] = message_id or make_msgid(domain=domain)
-    reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}" if subject else "Re: LangMesh"
+    reply_subject = (
+        subject
+        if subject.lower().startswith("re:")
+        else f"Re: {subject}"
+        if subject
+        else "Re: LangMesh"
+    )
     message["Subject"] = reply_subject
     if in_reply_to:
         message["In-Reply-To"] = in_reply_to
@@ -37,6 +44,7 @@ def reply_message(
     if chain:
         message["References"] = chain
     message.set_content(body)
+    message.add_alternative(html_from_markdown(body), subtype="html")
     return message
 
 

@@ -1,6 +1,6 @@
 # Email
 
-A message to a configured mailbox starts a daemon session. A reply in that thread continues it. The mail process is a **client** of `langmeshd`, the same way the desktop app is: it talks over the daemon's unix socket with the capability token, and it never embeds a library `Session`. Quoted reply history is stripped before the turn, so each inbound message is that email's own content.
+You write to the agent's mailbox with a subject and a body. It replies in that thread and can mail you progress while it works. The mail process is a **client** of `langmeshd`, the same way the desktop app is: it talks over the daemon's unix socket with the capability token, and it never embeds a library `Session`. Quoted reply history is stripped, so each inbound message is that email's own content.
 
 This is not XMPP and not the GitHub mention Action. GitHub mentions run the library in a short-lived job. Mail sits in front of a long-running daemon on a machine that stays up — typically a small Linux VPS.
 
@@ -9,9 +9,9 @@ This is not XMPP and not the GitHub mention Action. GitHub mentions run the libr
 1. `langmesh mail` starts the daemon if it is not up, then IDLEs the mailbox (`aioimaplib`, RFC 2177). It does not poll from inside a running turn.
 2. A new UNSEEN message from an allowlisted sender is fetched. Automatic replies, bounces, and mail from the mailbox itself are ignored.
 3. `email-reply-parser` keeps this message's body and drops the quoted thread. HTML-only mail is reduced with `markdownify` first.
-4. The thread is keyed as `email:{mailbox}:{root-message-id}` from `References` / `In-Reply-To` / `Message-ID`. That key maps to one daemon session, stored under `$XDG_DATA_HOME/langmesh/mail-threads.sqlite`.
-5. `session.create` mints the session on the first mail in a thread (`permission_mode: automatic` by default). Later mail on the same thread reuses it. IDLE keeps running while a turn is in flight: a follow-up on a live session is steered into that turn; a mail that arrives when the session is idle starts a new turn.
-6. When the turn ends, `aiosmtplib` sends the assistant's visible text as an in-thread SMTP reply (`In-Reply-To` and `References` set).
+4. The thread is keyed as `email:{mailbox}:{root-message-id}` from `References` / `In-Reply-To` / `Message-ID`. An In-Reply-To of a prior outbound also continues the same session. That key maps to one daemon session, stored under `$XDG_DATA_HOME/langmesh/mail.sqlite`.
+5. The opening turn is one JSON object with `subject` and `message`. Later mail on the same thread is only `message`. `session.create` mints the session on the first mail (`permission_mode: automatic` by default). IDLE keeps running while a turn is in flight: a follow-up on a live session is steered into that turn; a mail that arrives when the session is idle starts a new turn.
+6. The session speaks through `submit_email`, the same idea as `submit_github_comment` on GitHub. `kind` `progress` mails a short status and keeps working. `kind` `reply` mails the answer and ends the turn. Markdown is sent as `text/plain` plus an HTML alternative (`markdown`). Assistant prose in the transcript is not mailed.
 
 Later mail is discovered by IDLE, not by polling from inside a turn. A different thread can run at the same time; one IMAP connection fetches only between IDLEs.
 
@@ -19,14 +19,14 @@ Later mail is discovered by IDLE, not by polling from inside a turn. A different
 
 Cheap VPS hosts suspend. Containers get paused or replaced. The mail client is written for that:
 
-- Every inbound message is a sqlite job under `$XDG_DATA_HOME/langmesh/mail-threads.sqlite` **before** IMAP `\Seen` is set. UNSEEN is only how new mail is found. The file uses DELETE journaling so a volume snapshot of that path is the whole job queue (no `-wal` sidecar).
-- Jobs move `discovered → submitted → completed → posted → seen`. A crash or freeze leaves the job on disk; the next start continues from that step, including **before** IMAP is up. SMTP reuses the same `Message-ID` so a retried send is the same mail.
-- `session.send` carries a stable client `messageId`. If the session is already working, the mail is steered into that turn; otherwise it starts a new one. A crash cannot duplicate a message the daemon already accepted. Reply text is harvested only from the turn that took that mail.
+- Every inbound message is a sqlite job under `$XDG_DATA_HOME/langmesh/mail.sqlite` **before** IMAP `\Seen` is set. UNSEEN is only how new mail is found. The file uses DELETE journaling so a volume snapshot of that path is the whole job queue (no `-wal` sidecar).
+- Jobs move `discovered → submitted → posted → seen`. A crash or freeze leaves the job on disk; the next start continues from that step, including **before** IMAP is up. `submit_email` with `kind` `reply` is what posts; IMAP `\Seen` is last.
+- `session.send` carries a stable client `messageId`. If the session is already working, the mail is steered into that turn; otherwise it starts a new one. A crash cannot duplicate a message the daemon already accepted.
 - A mapped thread is never replaced just because the daemon was restarting or the unix socket was stale. Only `session.get` saying the session ended (or does not exist) mints a new one.
-- If the daemon itself died mid-turn, the turn is interrupted and marked retryable. Mail calls `session.retry` rather than pasting the user text again. Reply text is taken only from that mail's turn, never from a neighbour.
+- If the daemon itself died mid-turn, the turn is interrupted and marked retryable. Mail calls `session.retry` rather than pasting the user text again.
 - IMAP, SMTP, and daemon sockets are not trusted across a suspend: TCP keepalive, a boot-time/monotonic clock check every two seconds, and a NOOP after every IDLE. `clock.note()` is only used after a **new** connect, so a freeze during IDLE cannot be swallowed. systemd units use `Restart=always` and `TimeoutStopSec=60`. A container must mount `/srv/langmesh/xdg` as a volume so the job file and the daemon history survive. The entrypoint unlinks a stale daemon socket left on that volume.
 
-A fake "Done." is never mailed because a wait timed out. The wait re-attaches and reads durable history; only that text is posted.
+A fake "Done." is never mailed because a wait timed out. Nothing is mailed until `submit_email` itself lands.
 
 ## Turn it on
 
@@ -57,7 +57,7 @@ email:
     password: ""
 ```
 
-Gmail needs an [app password](https://support.google.com/accounts/answer/185833) and IMAP enabled. The client fills `imap.gmail.com` / `smtp.gmail.com` from a `gmail.com` address. Fastmail, Outlook, and Yahoo are the same. Do not commit the password; `LANGMESH_MAIL_IMAP_PASSWORD` and `LANGMESH_MAIL_SMTP_PASSWORD` (or `LANGMESH_MAIL_PASSWORD` for both) override the file.
+Gmail needs an [app password](https://support.google.com/accounts/answer/185833) and IMAP enabled. The client fills `imap.gmail.com` / `smtp.gmail.com` from a `gmail.com` address. Fastmail, Outlook, and Yahoo are the same. Do not commit the password.
 
 ```sh
 uv run langmesh mail
@@ -65,17 +65,16 @@ uv run langmesh mail
 
 `mail` starts `langmeshd` when it is not listening, then IDLEs. If the mailbox is not configured yet, it waits and re-reads the file instead of exiting. Logs go to stderr and `$XDG_STATE_HOME/langmesh/langmesh-mail.log`.
 
-On a VPS, install both systemd units from `packaging/mail/` so the daemon and the mail client restart on boot. `packaging/mail/install.sh` does that: it installs Python 3.13 and uv if needed, syncs this checkout, writes the units, and enables them. It reads mailbox and provider credentials from `LANGMESH_MAIL_*` and `LANGMESH_*_API_KEY` in the environment.
+On a VPS, copy `packaging/mail/mail.env.example` to `mail.env`, fill it, and load it with `xargs` so `install.sh` sees the same variables systemd will:
 
 ```sh
-sudo LANGMESH_MAIL_ADDRESS=agent@gmail.com \
-     LANGMESH_MAIL_ALLOW_FROM=you@gmail.com \
-     LANGMESH_MAIL_PASSWORD=... \
-     OPENROUTER_API_KEY=... \
-     packaging/mail/install.sh
+cp packaging/mail/mail.env.example mail.env
+chmod 600 mail.env
+# edit mail.env
+sudo env $(grep -vE '^(#|$)' mail.env | xargs -d '\n') packaging/mail/install.sh
 ```
 
-Then send mail to `email.address` from an allowlisted From. The first reply is the agent's turn; a further reply in that thread continues the same session with only the new body.
+`install.sh` writes `/srv/langmesh/mail.env` as the systemd `EnvironmentFile` and enables `langmeshd` and `langmesh-mail`. GNU `xargs -d '\n'` keeps values that contain spaces. Then send mail to `email.address` from an allowlisted From. Progress and the reply arrive in that thread; a further reply continues the same session with only the new body.
 
 ## What you still have to supply
 
@@ -84,7 +83,7 @@ The mail client cannot create a mailbox or a cloud VM by itself. You need:
 - IMAP and SMTP reachability for `email.address` (an app password, not your ordinary login, on Gmail).
 - At least one allowlisted From (`LANGMESH_MAIL_ALLOW_FROM`).
 - A provider key the agent profile can use.
-- A host that stays up. `packaging/mail/provision.sh` will try Fly.io (with a persistent `langmesh_xdg` volume), Hetzner, or DigitalOcean when those tokens are already in the environment; otherwise you bring a VPS and run `install.sh` on it.
+- A host that stays up. `packaging/mail/provision.sh` will try Fly.io (with a persistent `langmesh_xdg` volume), Hetzner, or DigitalOcean when those tokens are already in the environment; pass `LANGMESH_MAIL_ENV=mail.env` so the host is installed from that file. Otherwise you bring a VPS and run `install.sh` on it as above.
 
 The daemon still binds loopback. Mail never exposes the capability token. Do not publish `langmeshd`'s port on the public internet; SSH or Tailscale if you also want the app. Persist `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) across VM and container replacement, or in-flight mail cannot resume.
 

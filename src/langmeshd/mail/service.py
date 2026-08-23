@@ -1,9 +1,10 @@
 """The mail client loop: durable jobs, IDLE for discovery, resume after pause, reboot, or a killed process.
 
 IMAP UNSEEN finds new mail. SQLite is what must finish. IDLE keeps running while a turn is
-in flight, so a follow-up can be steered; FETCH never runs from inside IDLE. Quoted history
-is stripped before the turn. Sockets that survived a suspend or a container pause are dropped
-and rebuilt.
+in flight, so a follow-up can be steered; FETCH never runs from inside IDLE. Each turn is
+JSON with subject and message; quoted history is stripped. The session mails progress and
+the reply through `submit_email`. Sockets that survived a suspend or a container pause are
+dropped and rebuilt.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from langmesh.base.primitives.errors import log_fields
 from langmeshd.commons.configuration import EmailConfiguration
 from langmeshd.mail import body
 from langmeshd.mail import client as daemon_client
+from langmeshd.mail import payload
 from langmeshd.mail.clock import ResumeClock, StaleConnection
 from langmeshd.mail.imap import Inbox
 from langmeshd.mail.smtp import reply_message, send_reply
@@ -33,8 +35,6 @@ from langmeshd.mail.threads import (
     ThreadStore,
 )
 from langmeshd.mail.transcript import (
-    assistant_text,
-    turn_complete,
     turn_failed,
     turn_for_client_message,
 )
@@ -46,21 +46,6 @@ def _thread_key(mailbox: str, message: Message) -> str:
     root = body.thread_root_id(message)
     identity = root or body.durable_identity(message)
     return f"email:{mailbox}:{identity}"
-
-
-def _opening_text(message: Message, prose: str, *, first: bool) -> str:
-    if not first:
-        return prose
-    header = []
-    sender = body.display_from(message)
-    subject = body.subject_of(message)
-    if sender:
-        header.append(f"From: {sender}")
-    if subject:
-        header.append(f"Subject: {subject}")
-    if not header:
-        return prose
-    return "\n".join(header) + "\n\n" + prose
 
 
 def _reply_subject(item: MailItem) -> str:
@@ -164,9 +149,7 @@ class MailService:
             if status == "live":
                 return mapped, False
             if status not in {"missing", "ended"}:
-                raise daemon_client.MailDaemonError(
-                    f"session {mapped} is not usable ({status})."
-                )
+                raise daemon_client.MailDaemonError(f"session {mapped} is not usable ({status}).")
         created = await self._rpc(
             http,
             "session.create",
@@ -187,25 +170,11 @@ class MailService:
         turns = result.get("turns")
         return [turn for turn in turns if isinstance(turn, dict)] if isinstance(turns, list) else []
 
-    async def _harvest(self, http, item: MailItem) -> str:
-        if not item.session_id:
-            return ""
-        turns = await self._history(http, item.session_id)
-        if item.turn_id:
-            for turn in turns:
-                if str(turn.get("id") or "") == item.turn_id:
-                    return assistant_text(turn)
-        matched = turn_for_client_message(turns, item.client_message_id)
-        if matched is not None:
-            return assistant_text(matched)
-        return ""
-
-    async def _wait_for_turn(self, http, item: MailItem) -> str:
-        """Attach until the session is idle, then read durable history. Re-attach if the stream dies."""
+    async def _wait_until_idle(self, http, item: MailItem) -> None:
+        """Attach until the session is idle. Re-attach if the stream dies. Does not harvest prose."""
         deadline = asyncio.get_running_loop().time() + self.configuration.turn_timeout_seconds
         while asyncio.get_running_loop().time() < deadline:
             self._guard()
-            harvested = await self._harvest(http, item)
             working = await self._session_working(http, item.session_id)
             turns = await self._history(http, item.session_id)
             matched = turn_for_client_message(turns, item.client_message_id)
@@ -218,10 +187,8 @@ class MailService:
                     )
                     await asyncio.sleep(1)
                 continue
-            if matched is not None and turn_complete(matched) and not working:
-                return assistant_text(matched) or harvested
-            if harvested and not working:
-                return harvested
+            if not working:
+                return
             remaining = min(30.0, deadline - asyncio.get_running_loop().time())
             if remaining <= 0:
                 break
@@ -236,10 +203,9 @@ class MailService:
                     exc_info=True,
                 )
                 await asyncio.sleep(1)
-        harvested = await self._harvest(http, item)
-        if harvested:
-            return harvested
-        raise daemon_client.MailDaemonError("The session did not finish before the mail wait elapsed.")
+        raise daemon_client.MailDaemonError(
+            "The session did not finish before the mail wait elapsed."
+        )
 
     async def _attach_until_idle(self, http, session_id: str, timeout: float) -> None:
         response = await self.clock.await_fresh(daemon_client.attach(http, session_id))
@@ -282,9 +248,7 @@ class MailService:
                 await pump_task
 
     async def _submit(self, http, item: MailItem) -> MailItem:
-        session_id, first = await self._ensure_session(
-            http, item.thread_key, _reply_subject(item)
-        )
+        session_id, first = await self._ensure_session(http, item.thread_key, _reply_subject(item))
         self.store.bind(
             item.thread_key,
             session_id,
@@ -294,7 +258,7 @@ class MailService:
             subject=item.subject,
         )
         if first and not item.first:
-            text = _opening_text_from_item(item, first=True)
+            text = payload.turn_text(subject=item.subject, message=item.body, first=True)
             item = self.store.update(item.id, first=True, text_to_send=text, session_id=session_id)
         else:
             item = self.store.update(item.id, session_id=session_id)
@@ -311,7 +275,9 @@ class MailService:
             if outcome.get("compaction_required"):
                 notice = "The session cannot take mail until its last compaction is retried from the app."
             elif outcome.get("awaiting_input"):
-                notice = "The session is waiting on a decision in the app, so this mail was not taken."
+                notice = (
+                    "The session is waiting on a decision in the app, so this mail was not taken."
+                )
             else:
                 notice = "The session did not accept this mail."
             # Stay discovered: a refusal is not a finished job, and must not set \Seen.
@@ -324,12 +290,6 @@ class MailService:
             turn_id=turn_id,
             injected=bool(outcome.get("injected")),
         )
-
-    async def _complete(self, http, item: MailItem) -> MailItem:
-        reply = await self._wait_for_turn(http, item)
-        if not reply:
-            reply = "The session finished this turn without visible text."
-        return self.store.update(item.id, state=COMPLETED, reply_text=reply)
 
     async def _post(self, item: MailItem) -> MailItem:
         mailbox = self.configuration.effective_address
@@ -362,35 +322,46 @@ class MailService:
         return self.store.update(item.id, state=SEEN)
 
     async def finish(self, http, item: MailItem, inbox: Inbox | None) -> None:
-        current = item
+        current = self.store.get(item.id) or item
+        if current.state in {SEEN, SKIPPED}:
+            return
         async with self._lock_for(item.thread_key or item.id):
+            current = self.store.get(current.id) or current
             if current.state == DISCOVERED:
                 current = await self._submit(http, current)
         # Released so a later mail on this thread can steer a live turn.
         if current.state == SUBMITTED:
-            current = await self._complete(http, current)
+            await self._wait_until_idle(http, current)
+            current = self.store.get(current.id) or current
         if current.state == COMPLETED:
             current = await self._post(current)
         if current.state == POSTED:
             current = await self._mark_seen(inbox, current)
         logger.info(
             "mail item advanced",
-            extra=log_fields(
-                item=current.id, state=current.state, session=current.session_id
-            ),
+            extra=log_fields(item=current.id, state=current.state, session=current.session_id),
         )
 
     async def ingest(self, uidvalidity: int, uid: int, message: Message) -> MailItem | None:
         mailbox = self.configuration.imap.mailbox
         message_id = body.durable_identity(message)
         if self.store.already_finished(mailbox, uidvalidity, uid, message_id):
-            return self.store.item_by_message_id(message_id) or self.store.item_by_uid(
+            existing = self.store.item_by_message_id(message_id) or self.store.item_by_uid(
                 mailbox, uidvalidity, uid
             )
+            if existing is not None and (
+                existing.uid != uid or existing.uidvalidity != uidvalidity
+            ):
+                return self.store.update(existing.id, uid=uid, uidvalidity=uidvalidity)
+            return existing
         sender = body.sender_address(message)
         if sender == self.configuration.effective_address.lower():
             self.store.mark_skipped(
-                mailbox=mailbox, uidvalidity=uidvalidity, uid=uid, message_id=message_id, reason="own"
+                mailbox=mailbox,
+                uidvalidity=uidvalidity,
+                uid=uid,
+                message_id=message_id,
+                reason="own",
             )
             return None
         if body.is_automatic(message):
@@ -414,11 +385,22 @@ class MailService:
         prose = body.turn_body(message)
         if not prose:
             self.store.mark_skipped(
-                mailbox=mailbox, uidvalidity=uidvalidity, uid=uid, message_id=message_id, reason="empty"
+                mailbox=mailbox,
+                uidvalidity=uidvalidity,
+                uid=uid,
+                message_id=message_id,
+                reason="empty",
             )
             return None
-        thread_key = _thread_key(mailbox, message)
+        computed = _thread_key(mailbox, message)
+        in_reply = body.in_reply_to_ids(message)
+        known = set(in_reply)
+        identifiers = in_reply + [
+            identifier for identifier in body.referenced_ids(message) if identifier not in known
+        ]
+        thread_key = self.store.resolve_thread_key(identifiers, computed)
         first = not bool(self.store.session_id(thread_key))
+        subject = body.subject_of(message) or "LangMesh"
         return self.store.put_discovered(
             mailbox=mailbox,
             uidvalidity=uidvalidity,
@@ -426,11 +408,11 @@ class MailService:
             message_id=message_id,
             thread_key=thread_key,
             sender=sender,
-            subject=body.subject_of(message) or "LangMesh",
+            subject=subject,
             references=_references(message),
             in_reply_to=body.message_id_of(message) or message_id,
             body=prose,
-            text_to_send=_opening_text(message, prose, first=first),
+            text_to_send=payload.turn_text(subject=subject, message=prose, first=first),
             first=first,
         )
 
@@ -439,9 +421,11 @@ class MailService:
         await self.resume(http, inbox)
         for uid in await self._imap(inbox, inbox.unseen()):
             self._guard()
-            existing = self.store.item_by_uid(inbox.configuration.imap.mailbox, inbox.uidvalidity, uid)
+            existing = self.store.item_by_uid(
+                inbox.configuration.imap.mailbox, inbox.uidvalidity, uid
+            )
             if existing is not None and existing.state in {POSTED, SEEN, SKIPPED}:
-                if existing.state != SEEN:
+                if existing.state == POSTED:
                     self._spawn_item(http, existing, inbox)
                 elif existing.state == SKIPPED:
                     with contextlib.suppress(Exception):
@@ -485,19 +469,6 @@ class MailService:
         for item in self.store.incomplete():
             self._guard()
             self._spawn_item(http, item, inbox)
-
-
-def _opening_text_from_item(item: MailItem, *, first: bool) -> str:
-    if not first:
-        return item.body
-    header = []
-    if item.sender:
-        header.append(f"From: {item.sender}")
-    if item.subject:
-        header.append(f"Subject: {item.subject}")
-    if not header:
-        return item.body
-    return "\n".join(header) + "\n\n" + item.body
 
 
 def load_email_configuration() -> EmailConfiguration:
