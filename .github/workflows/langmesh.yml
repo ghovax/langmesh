@@ -54,9 +54,6 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 src/langmesh/github/session_store.py restore
       - id: ack
         env:
           GH_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
@@ -76,6 +73,10 @@ jobs:
           key: langmesh-venv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
           restore-keys: |
             langmesh-venv-${{ runner.os }}-
+      - if: steps.ack.outputs.start == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 src/langmesh/github/session_store.py restore
       - if: steps.ack.outputs.start == 'true'
         run: uv sync --no-dev --frozen
       - if: steps.ack.outputs.start == 'true'
