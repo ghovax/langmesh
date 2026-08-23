@@ -2,3 +2,5 @@
 {{ html_url }}
 
 {{ body }}
+
+{{ publication }}
