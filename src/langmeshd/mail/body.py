@@ -157,7 +157,8 @@ def _drop_quoted_html(html: str) -> str:
             sibling.extract()
         node.decompose()
     for node in soup.select(
-        ".gmail_quote, .gmail_extra, blockquote[type=cite], .yahoo_quoted, .protonmail_quote"
+        ".gmail_quote, .gmail_quote_container, .gmail_extra, "
+        "blockquote[type=cite], .yahoo_quoted, .protonmail_quote, .moz-cite-prefix"
     ):
         node.decompose()
     root = soup.body if soup.body is not None else soup
@@ -185,10 +186,16 @@ def _unquoted_plain(text: str) -> str:
 
 
 def turn_body(message: Message) -> str:
-    """This email's body as markdown: HTML when present, otherwise unquoted text/plain."""
+    """This email's body as markdown: HTML when present, otherwise unquoted text/plain.
+
+    HTML is the body even when a plaintext part exists. If that HTML is only the quoted
+    thread, the unquoted plaintext part is used so the new message is not dropped.
+    """
     html = _part_of(message, "html")
     if html:
-        return _markdown_from_html(_drop_quoted_html(html))
+        prose = _markdown_from_html(_drop_quoted_html(html))
+        if prose:
+            return prose
     plain = _part_of(message, "plain")
     if plain:
         return _unquoted_plain(plain)

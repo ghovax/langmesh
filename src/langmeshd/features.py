@@ -14,7 +14,6 @@ from langmesh.runtime.plugins.compaction import ObservationCompactionPreparation
 from langmesh.runtime.plugins.background import BackgroundJobsFeature
 from langmesh.runtime.plugins.bash import Bash
 from langmesh.runtime.plugins.compaction import Compaction
-from langmesh.runtime.plugins.computer_use import ComputerUse
 from langmesh.runtime.plugins.continuation import Continuation
 from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 from langmesh.runtime.plugins.interaction import Interaction
@@ -31,11 +30,20 @@ from langmeshd.daemon.workflow_catalogue import FilesystemWorkflowCatalogue
 from langmeshd.daemon.browser import browser_endpoint, save_browser_download
 from langmeshd.daemon.scratch import FilesystemScratchSpaces
 from langmeshd.commons.paths import runtime_directory
-from langmeshd.mail.plugin import EmailReply
+from langmeshd.mail.plugin import EmailReply, submit_email
 
 
 _WORKFLOWS = FilesystemWorkflowCatalogue()
 _SCRATCH_SPACES = FilesystemScratchSpaces(runtime_directory() / "scratch")
+
+
+def _computer_use() -> list:
+    """Screen control when the native surface is importable. A Linux VPS has no AppKit."""
+    try:
+        from langmesh.runtime.plugins.computer_use import ComputerUse
+    except ImportError:
+        return []
+    return [ComputerUse()]
 
 
 def _compaction_preparation(global_configuration: Any, runtime_directory: str) -> Any:
@@ -101,7 +109,7 @@ def compose_plugins(
         Bash(),
         Web(),
         Interaction(),
-        ComputerUse(),
+        *_computer_use(),
         EmailReply(),
     ]
     # The goal plugin hears every goal change through the host's listener: that is how the
@@ -139,7 +147,7 @@ def contributed_tools() -> dict[str, Any]:
         Bash(),
         Web(),
         Interaction(),
-        ComputerUse(),
+        *_computer_use(),
         EmailReply(),
     ]
     tools: dict[str, Any] = {}
@@ -149,3 +157,10 @@ def contributed_tools() -> dict[str, Any]:
             if name:
                 tools[name] = with_shared_fields(tool)
     return tools
+
+
+def mailbox_tools(session_id: str) -> list:
+    """`submit_email`, only when this hosted session is a mailbox thread."""
+    from langmeshd.mail.threads import session_is_mailbox
+
+    return [submit_email] if session_is_mailbox(session_id) else []

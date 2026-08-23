@@ -8,7 +8,7 @@ This is not XMPP and not the GitHub mention Action. GitHub mentions run the libr
 
 1. `langmesh mail` starts the daemon if it is not up, then IDLEs the mailbox (`aioimaplib`, RFC 2177). It does not poll from inside a running turn.
 2. A new UNSEEN message from an allowlisted sender is fetched. Automatic replies, bounces, and mail from the mailbox itself are ignored.
-3. The HTML part is the body. Quoted replies are the containers the mail client wrapped around the previous message; those nodes are removed and the rest is converted with `markdownify` so the agent sees markdown. `text/plain` is used only when there is no HTML.
+3. The HTML part is the body. Quoted replies are the containers the mail client wrapped around the previous message; those nodes are removed and the rest is converted with `markdownify` so the agent sees markdown. `text/plain` is used only when there is no HTML, or when the HTML is only the quoted thread.
 4. The thread is keyed as `email:{mailbox}:{root-message-id}` from `References` / `In-Reply-To` / `Message-ID`. An In-Reply-To of a prior outbound also continues the same session. That key maps to one daemon session, stored under `$XDG_DATA_HOME/langmesh/mail.sqlite`.
 5. The opening turn is one JSON object with `subject` and `message`. Later mail on the same thread is only `message`. `session.create` mints the session on the first mail (`permission_mode: automatic` by default). IDLE keeps running while a turn is in flight: a follow-up on a live session is steered into that turn; a mail that arrives when the session is idle starts a new turn.
 6. The session speaks through `submit_email`, the same idea as `submit_github_comment` on GitHub. `kind` `progress` mails a short status and keeps working. `kind` `reply` mails the answer and ends the turn. The agent writes markdown; it is rendered as HTML and sent as `multipart/alternative` with that HTML as the preferred part. Assistant prose in the transcript is not mailed.
@@ -33,7 +33,7 @@ A fake "Done." is never mailed because a wait timed out. Nothing is mailed until
 On the machine that runs `langmeshd`:
 
 1. The bundled `reviewer` profile is the default (`~/.agents/agents/reviewer/AGENT.md` on a laptop, or `.agents/agents/reviewer` in this checkout on a VPS). Set `email.agent` only if you want a different one.
-2. Give the daemon a provider key, in `~/.config/langmesh/configuration.yaml` or that provider's environment variable.
+2. Give the daemon a provider key, in `~/.config/langmesh/configuration.yaml` or that provider's environment variable. `LANGMESH_MAIL_ADDRESS` in the environment is enough to enable the client without setting `email.enabled` in the file.
 3. On a headless Linux host, set `sandbox.enforce` to `preferred` (or `off`) so sessions can start without a confinement backend. Set `sandbox.network: true` if the agent should reach the network. `install.sh` already does this.
 4. Put the mailbox in the same file, or in the environment. Environment variables win over the file. Gmail, Fastmail, Outlook, and Yahoo fill IMAP/SMTP hosts from the address; you still need an app password.
 
@@ -74,7 +74,7 @@ chmod 600 mail.env
 sudo env $(grep -vE '^(#|$)' mail.env | xargs -d '\n') packaging/mail/install.sh
 ```
 
-`install.sh` writes `/srv/langmesh/mail.env` as the systemd `EnvironmentFile` and enables `langmeshd` and `langmesh-mail`. GNU `xargs -d '\n'` keeps values that contain spaces. Then send mail to `email.address` from an allowlisted From. Progress and the reply arrive in that thread; a further reply continues the same session with only the new body.
+`install.sh` writes `/srv/langmesh/mail.env` as the systemd `EnvironmentFile` and enables `langmeshd` and `langmesh-mail`. GNU `xargs -d '\n'` keeps values that contain spaces. Filling `mail.env` and re-running that command refreshes `/srv/langmesh/mail.env`; it does not keep a previous empty file. Then send mail to `email.address` from an allowlisted From. Progress and the reply arrive in that thread; a further reply continues the same session with only the new body.
 
 ## What you still have to supply
 
