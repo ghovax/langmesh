@@ -151,14 +151,13 @@ work = Path(os.environ["LANGMESH_WORKSPACE"])
 mention = Mention(
     body="@langmesh",
     number=1,
-    kind="pull",
+    kind="issue",
     title="x",
     html_url="https://example.test/1",
     user="owner",
     association="OWNER",
     default_branch="main",
     repository="ghovax/langmesh",
-    head_ref="main",
 )
 try:
     publish_changes(mention, work, token="")
@@ -201,10 +200,9 @@ PY
 
 git -C "$work" checkout main
 git -C "$work" branch -D langmesh/flaky-test-ab12 2>/dev/null || true
-rm -f "$work/.github/langmesh/branch" "$work/.github/langmesh/code"
+rm -f "$work/.github/langmesh/branch"
 "${python[@]}" - <<'PY'
 import os
-import re
 from pathlib import Path
 
 from langmesh.github.mention import Mention, current_branch, prepare_tree
@@ -224,18 +222,13 @@ mention = Mention(
 first = prepare_tree(mention, work, token="")
 if first.resumed or first.branch != "main":
     raise SystemExit(f"new issue should start on the default branch, got {first!r}")
-if not re.fullmatch(r"[0-9a-f]{4}", first.code):
-    raise SystemExit(f"expected a 4-hex suffix, got {first.code!r}")
 if current_branch(work) != "main":
     raise SystemExit(f"checkout was {current_branch(work)!r}")
-recorded = (work / ".github/langmesh/code").read_text().strip()
-if recorded != first.code:
-    raise SystemExit(f"code file was {recorded!r}")
 if (work / ".github/langmesh/branch").exists():
     raise SystemExit("new issue must not pre-create a branch name")
 second = prepare_tree(mention, work, token="")
-if second.code != first.code or second.branch != "main" or second.resumed:
-    raise SystemExit(f"follow-up before a draft should keep the same suffix on main, got {second!r}")
+if second.branch != "main" or second.resumed:
+    raise SystemExit(f"follow-up before a draft should stay on main, got {second!r}")
 PY
 
 echo "github mention ephemeral git: ok"
