@@ -30,10 +30,12 @@ sync_checkout() {
   mkdir -p "${prefix}"
   if [[ "${root}" != "${prefix}" ]]; then
     log "syncing checkout into ${prefix}"
+    # Never replace xdg or mail.env: those are the job queue, history, and secrets.
+    local exclude=(--exclude '.venv' --exclude '.git' --exclude 'xdg' --exclude 'mail.env' --exclude 'web/node_modules' --exclude 'web/.next')
     if command -v rsync >/dev/null 2>&1; then
-      rsync -a --delete --exclude '.venv' --exclude '.git' "${root}/" "${prefix}/"
+      rsync -a --delete "${exclude[@]}" "${root}/" "${prefix}/"
     else
-      tar -C "${root}" --exclude '.venv' --exclude '.git' -cf - . | tar -C "${prefix}" -xf -
+      tar -C "${root}" "${exclude[@]}" -cf - . | tar -C "${prefix}" -xf -
     fi
   fi
   mkdir -p \

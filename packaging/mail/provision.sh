@@ -37,7 +37,8 @@ remote_install() {
   done
   log "installing LangMesh mail on ${host}"
   ssh -o StrictHostKeyChecking=accept-new "${host}" "sudo mkdir -p /srv/langmesh"
-  tar -C "${root}" --exclude '.venv' --exclude '.git' --exclude 'web/node_modules' --exclude 'web/.next' -cf - . \
+  tar -C "${root}" --exclude '.venv' --exclude '.git' --exclude 'xdg' --exclude 'mail.env' \
+    --exclude 'web/node_modules' --exclude 'web/.next' -cf - . \
     | ssh "${host}" "sudo tar -C /srv/langmesh -xf -"
   if file="$(env_file)"; then
     scp -o StrictHostKeyChecking=accept-new "${file}" "${host}:/tmp/langmesh-mail.env"
