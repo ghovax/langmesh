@@ -744,10 +744,7 @@ async def run_turn(
             return
         publish(working_comment(text))
 
-    reply = GitHubReply(
-        publish=publish_working if publish is not None else None,
-        followup=thread_followup,
-    )
+    reply = GitHubReply(publish=publish_working if publish is not None else None)
     async with _session(mention, workspace, reply, token) as session:
         restored = await session.restore()
         followup = restored or thread_followup
