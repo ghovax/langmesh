@@ -58,7 +58,6 @@ class GitHubReply(Feature):
 
     def __init__(self) -> None:
         self._comment: str | None = None
-        self._reminders = 0
 
     def attach(self, context: PluginContext, host=None) -> None:
         self._context = context
@@ -82,9 +81,8 @@ class GitHubReply(Feature):
         return self._comment is not None
 
     def incomplete_reminder(self) -> str | None:
-        if self._comment is not None or self._reminders >= 3:
+        if self._comment is not None:
             return None
-        self._reminders += 1
         return _PROMPTS.load("github_comment_missing", {}).strip()
 
 
