@@ -30,7 +30,7 @@ from langmesh import (
 )
 from langmesh.base.content.models import split_model_identifier
 from langmesh.base.content.prompts import PackagePromptLoader
-from langmesh.github.reply import TOOL_NAME, GitHubReply
+from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features import Feature
 from langmesh.runtime.plugins.background import BackgroundJobsFeature
 from langmesh.runtime.plugins.bash import Bash
@@ -48,18 +48,6 @@ MENTION = "@langmesh"
 ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 STATE_DIRECTORY = ".langmesh-github"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
-COMMENT_LIMIT = 65536
-DEFAULT_MODEL_IDENTIFIER = "anthropic/claude-sonnet-4-5"
-KEEP_RECENT_TURNS = 24
-MENTION_TOOLS = [
-    "bash",
-    "search_web",
-    "fetch_url",
-    "download",
-    "set_tasks",
-    "update_tasks",
-    TOOL_NAME,
-]
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 
 _BASH_DENY = {
@@ -165,14 +153,16 @@ def render(name: str, variables: Mapping[str, object] | None = None) -> str:
 def posted_reply(answer: str, pull_url: str = "") -> str:
     """The issue comment: the submitted reply, or ``Done.``, plus a pull-request URL when there is one."""
     note = answer.strip() or "Done."
-    if pull_url:
-        return f"{note}\n\n{pull_url}"
-    return note
+    if not pull_url:
+        return note
+    return f"""{note}
+
+{pull_url}"""
 
 
 def model_identifier_from_env(environ: Mapping[str, str] | None = None) -> tuple[str, str]:
     """``LANGMESH_MODEL`` as ``(provider, model)``, split on the first slash."""
-    raw = ((environ or os.environ).get("LANGMESH_MODEL") or DEFAULT_MODEL_IDENTIFIER).strip()
+    raw = ((environ or os.environ).get("LANGMESH_MODEL") or "anthropic/claude-sonnet-4-5").strip()
     split = split_model_identifier(raw)
     if split is None or not split[0].strip() or not split[1].strip():
         raise ValueError(raw)
@@ -360,7 +350,7 @@ def post_comment(repository: str, number: int, text: str, token: str, api: str) 
     _api_request(
         f"{api}/repos/{repository}/issues/{number}/comments",
         token,
-        data=json.dumps({"body": text[:COMMENT_LIMIT]}).encode(),
+        data=json.dumps({"body": text[:65536]}).encode(),
     )
 
 
@@ -369,7 +359,7 @@ def mention_features(reply: GitHubReply) -> list[Feature]:
     reviewer = PermissionReviewer()
     return [
         Compaction(
-            strategy=KeepRecentTurns(KEEP_RECENT_TURNS),
+            strategy=KeepRecentTurns(24),
             preparation=DirectCompactionPreparation(),
             summarizer=None,
         ),
@@ -397,7 +387,15 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply) -> Session:
         provider=provider,
         model=model,
         permission_mode="automatic",
-        tools_enabled=list(MENTION_TOOLS),
+        tools_enabled=[
+            "bash",
+            "search_web",
+            "fetch_url",
+            "download",
+            "set_tasks",
+            "update_tasks",
+            "submit_github_comment",
+        ],
         tools=ToolsConfiguration(bash=BashToolConfiguration(permissions=dict(_BASH_DENY))),
     )
     return Session(
