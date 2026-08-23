@@ -139,8 +139,10 @@ def test_prompt_includes_the_thread_and_the_comment() -> None:
 
 
 def test_system_prompt_comes_from_markdown() -> None:
-    assert "Do not git push" in render("system")
-    assert "submit_github_comment" in render("system")
+    prompt = render("system")
+    assert "Do not git push" in prompt
+    assert "submit_github_comment" in prompt
+    assert "assistant prose" in prompt
     assert "provider/model" in render("invalid_model", {"value": "gpt-4"})
 
 
@@ -328,12 +330,11 @@ def test_github_reply_reminds_until_the_comment_is_submitted() -> None:
     first = reply.incomplete_reminder()
     assert first is not None
     assert "submit_github_comment" in first
-    for _ in range(2):
-        assert reply.incomplete_reminder()
+    assert "until you make it" in first
+    assert reply.incomplete_reminder() == first
+    reply.submit("Posted.")
     assert reply.incomplete_reminder() is None
-    features = Features([reply])
-    assert features.incomplete_reminder() is None
-    assert not features.should_complete_turn()
+    assert GitHubReply().incomplete_reminder()
 
 
 def test_features_dispatch_incomplete_reminder_first_wins() -> None:
