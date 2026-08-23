@@ -1,10 +1,9 @@
-"""The automatic permission reviewer: the model-based evaluator that decides automatic gates.
+"""The automatic permission reviewer: the model call ``PermissionReview`` uses for a verdict.
 
 Whether a call runs, is asked about, or is refused is the permissions plugin's concern. This
-plugin is the one piece that calls a model for a verdict: given a gate the boundary did not
-settle by rule, it asks the session's own model to allow or deny, and returns the typed
-decision. The permissions plugin holds the boundary and calls this reviewer through a port;
-the runtime can also reach it directly through the seam's ``review_automatic_gate``.
+module is the one piece that calls a model: given a gate the boundary did not settle by rule,
+it asks the session's own model to allow or deny, and returns the typed decision. Composers
+list ``PermissionReview()``; they do not list this class.
 """
 
 from __future__ import annotations

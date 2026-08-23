@@ -47,7 +47,6 @@ from langmesh.runtime.plugins.compaction import (
     KeepRecentTurns,
 )
 from langmesh.runtime.plugins.continuation import Continuation
-from langmesh.runtime.plugins.permission_reviewer import PermissionReviewer
 from langmesh.runtime.plugins.permissions import PermissionReview
 from langmesh.runtime.plugins.web import Web
 
@@ -725,15 +724,13 @@ def mention_features(reply: GitHubReply, workspace: Path) -> list[Feature]:
     Ordinary ``git`` and ``gh`` on the topic branch do not raise a gate — network and
     the job token are already in the box.
     """
-    reviewer = PermissionReviewer()
     return [
         Compaction(
             strategy=KeepRecentTurns(24),
             preparation=DirectCompactionPreparation(),
             summarizer=None,
         ),
-        PermissionReview(reviewer=reviewer),
-        reviewer,
+        PermissionReview(),
         Continuation(),
         BackgroundJobsFeature(),
         Bash(),
