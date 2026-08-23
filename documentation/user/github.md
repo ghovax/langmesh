@@ -2,7 +2,7 @@
 
 A comment that contains `@langmesh[bot]` on an issue or pull request starts a library session in a GitHub Action. `@langmesh` still works so existing comments keep firing. The user account [`@langmesh`](https://github.com/langmesh) already exists, so GitHub will not let you register an App named `LangMesh` and there is no `langmesh[bot]` to install. Type `@langmesh[bot]` anyway to start a turn; after you install your own App, type that App's `@slug[bot]` instead. A later mention on the same thread continues that session. The agent answers both: an issue with file edits opens a draft pull request; a pull-request mention updates that PR.
 
-This is the library in a short-lived job, not the daemon. The workflow lives at `.github/workflows/langmesh.yml`; the session is composed in `langmesh.github.mention`. The job posts an acknowledgement as soon as it has a GitHub token — before checkout and Python — then updates that same comment when the work is done. The text that replaces the acknowledgement is collected by the `GitHubReply` plugin through `submit_github_comment` — model prose is not posted. Failures are written to the Action log with the same logger the daemon uses; the thread only gets a short, user-facing note and a link to that log. Real prompts (the system prompt, the turn, the tool description, the missing-call reminder, the invalid-model note) are markdown templates under `src/langmesh/github/prompts/`. Short strings the Action itself writes (the acknowledgement, a commit message, a pull-request title, `Done.`) stay in code.
+This is the library in a short-lived job, not the daemon. The workflow lives at `.github/workflows/langmesh.yml`; the session is composed in `langmesh.github.mention`. The job posts an acknowledgement as soon as it has a GitHub token — before checkout and Python. The agent writes that same comment through `submit_github_comment`: a short progress note when the direction changes (`kind` `progress`), then the reply (`kind` `reply`). Model prose is not posted. Failures are written to the Action log with the same logger the daemon uses; the thread only gets a short, user-facing note and a link to that log. Real prompts (the system prompt, the turn, the tool description, the missing-call reminder, the invalid-model note) are markdown templates under `src/langmesh/github/prompts/`. Short strings the Action itself writes (the acknowledgement, a commit message, a pull-request title, `Done.`) stay in code.
 
 ## How to cite the agent
 
@@ -13,7 +13,7 @@ GitHub's `@` box only suggests **users**, **teams**, and **installed GitHub Apps
 | `@langmesh[bot]` | Looks for a bot login that cannot be registered: GitHub reserved `LangMesh` for [`@langmesh`](https://github.com/langmesh). This spelling does **not** notify that user. GitHub will not suggest it. | Starts (or continues) the session. Use this until you have your own App. |
 | `@your-slug[bot]` | Mentions the App you installed (for example `@langmesh-agent[bot]`). After that bot has commented, GitHub recommends this handle. | Starts the session for `@langmesh-…[bot]`, or when `LANGMESH_MENTION` is this handle. Use this once the App is installed. |
 | `@langmesh` | Mentions the [`@langmesh`](https://github.com/langmesh) user. They get a notification. | Still starts the session, so old comments keep working. Do not use this. |
-| Quote reply on a bot comment | Inserts a blockquote. It does **not** address the bot and does **not** start a turn. | Nothing, unless the new comment also contains a handle above. |
+| Quote reply on a bot comment | Inserts a blockquote of the previous comment. | Starts a turn when that quote is a reply to the bot, even without a handle. |
 | A handle inside backticks or a fenced code block | Rendered as code, not a mention. | Ignored. |
 
 Write the handle in the comment body the same way you would address a teammate. A follow-up on the same issue or pull request is another comment that cites that handle again. You do not need to quote the previous reply.
@@ -50,6 +50,7 @@ Fill it in as follows:
   - **Contents:** Read and write (push the topic branch)
   - **Issues:** Read and write (acknowledgement and reply)
   - **Pull requests:** Read and write (draft PRs and PR comments)
+  - **Workflows:** Read and write (push changes under `.github/workflows/`)
   - **Metadata:** Read-only (GitHub adds this)
 - **Account permissions:** none.
 - **Where can this GitHub App be installed?** Only on this account.
@@ -86,19 +87,20 @@ The next mention job mints an installation token from those secrets, then posts 
 
 ### 5. Check that citing works
 
-On an issue or a same-repo pull request, comment `@<slug>[bot]` (or `@langmesh[bot]`) as an owner, member, or collaborator. You should see the acknowledgement appear as your bot, then that comment update when the turn finishes. On the next comment, type `@` — GitHub should offer that bot.
+On an issue or a same-repo pull request, comment `@<slug>[bot]` (or `@langmesh[bot]`) as an owner, member, or collaborator. You should see the acknowledgement appear as your bot. On a longer turn the agent may replace that text with a short status, then with the final reply. On the next comment, type `@` — GitHub should offer that bot.
 
 ## What it will and will not do
 
 - Only **owners**, **members**, and **collaborators** are answered. Other comments are ignored.
 - Pull requests from forks are ignored.
 - Two mentions on the same thread wait their turn rather than overlapping.
-- The job posts an acknowledgement as soon as it has a token — before installing Python — and **edits that comment** with the reply or with a short failure note. It does not add a second comment for the result.
-- `@langmesh[bot]` on an **issue** does the work. If files will change, the agent looks at existing branches and open pull requests first and reuses one that already is this issue's work. Only when nothing fits does it create `langmesh/<descriptive-name>-<four-hex-digits>` itself. The Action then commits, pushes, and opens a **draft** pull request. A later mention on that issue continues that draft. The Action never marks it ready — a person does that.
+- The job posts an acknowledgement as soon as it has a token — before installing Python. The agent **edits that comment** through `submit_github_comment` when the direction of the work changes, then overwrites it with the finished reply or a short failure note. It does not add a second comment for the result.
+- `@langmesh[bot]` on an **issue** does the work. If files will change, the agent looks at existing branches and open pull requests first and reuses one that already is this issue's work. Only when nothing fits does it create `langmesh/<slug>-<four-hex-digits>` itself: at most three content words, then four hexadecimal digits. The agent commits; the Action pushes and opens a **draft** pull request. A later mention on that issue continues that draft. The Action never marks it ready — a person does that.
 - `@langmesh[bot]` on a **pull request** does the work on that PR's own branch and pushes commits. It does not open a second PR and does not change whether the PR is a draft.
 - It never pushes `main` or `master`. Tool children cannot `git push`; the job is the only publisher.
-- Tool calls run unattended (`automatic`). Network is off for shell children; the GitHub token is never written into the checkout.
-- The GitHub comment must be submitted with `submit_github_comment`. If the turn ends without that call, the session reminds the model until it submits. An empty submitted comment is posted as `Done.`
+- Tool calls run unattended (`automatic`). Shell children start offline; a command that needs the network asks for it on that call. The GitHub token is never written into the checkout.
+- The GitHub comment is `submit_github_comment`. A `progress` note keeps the turn open. A `reply` is the answer and ends the turn. If the turn ends without that reply, the session reminds the model until it submits. An empty reply is posted as `Done.`
+- The agent writes the commit subject from the request, in the style of this repository. The job does not invent one.
 - Long threads keep the last 24 turns and drop the rest, with no summarizer call.
 
-A follow-up `@langmesh[bot]` on the same issue or pull request continues the same library session. The id is stable per thread (`github:{repository}:{issue|pull}:{number}`). After a turn, the conversation and the provider cache state are written to `.github/langmesh/session.sqlite`. That directory is gitignored and is what the workflow caches — it is not committed; the Action also unstages it before pushing file edits, so a workflow change under `.github/workflows/` can still land. The cache key is the repository plus the thread number, and `restore-keys` lets the next job load the previous run's sqlite. The job saves that cache even when the turn fails, so a later mention still restores the prefix. `session.ask` restores that checkpoint before the new mention. The mention system prompt is the same on every job so the instructions and tool schema stay a reusable provider-cache prefix; which issue or pull request this is, and which branch HEAD is on, are appended on the turn. GitHub can evict a cache; a miss starts a fresh conversation.
+A follow-up `@langmesh[bot]` on the same issue or pull request continues the same library session. The id is stable per thread (`github:{repository}:{issue|pull}:{number}`). After a turn, the conversation and the provider cache state are written to `.github/langmesh/session.sqlite`. That directory is gitignored and is what the workflow caches — it is not committed; the Action also unstages it before pushing file edits, so a workflow change under `.github/workflows/` can still land. The cache key is the repository plus the thread number, and `restore-keys` lets the next job load the previous run's sqlite. The job saves that cache even when the turn fails, so a later mention still restores the prefix. `session.ask` restores that checkpoint before the new mention. The mention system prompt is the same on every job so the instructions and tool schema stay a reusable provider-cache prefix; it does not assume a particular host repository. Which issue or pull request this is, and which branch HEAD is on, are appended on the turn. GitHub can evict a cache; a miss starts a fresh conversation.
