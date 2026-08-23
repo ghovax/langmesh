@@ -4,9 +4,10 @@ The daemon is not involved. Follow-up mentions on the same issue or pull request
 the saved session. The process may use GitHub's token; tool children cannot, because
 confinement strips it from their environment and credentials are never written into the
 checkout. On an issue the agent reuses a branch that already is this work when one exists,
-otherwise creates ``langmesh/<name>-<code>`` itself; the wrapper
-commits, pushes, and opens a draft. On a pull request, file edits are pushed to that
-branch. Never to main. Thread replies stay user-facing; failures go to the logger.
+otherwise creates ``langmesh/<slug>-<code>`` itself; the agent
+commits, and the wrapper pushes and opens a draft. On a pull request, file edits are
+pushed to that branch. Never to main. Thread replies stay user-facing; failures go to
+the logger.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from langmesh import (
     AgentConfiguration,
@@ -176,16 +177,84 @@ def user_failure(message: str) -> str:
     return message
 
 
+def mention_bot_login(login: str) -> bool:
+    """Whether this login is the mention job's bot, not some other App."""
+    name = (login or "").strip()
+    if not name.endswith("[bot]"):
+        return False
+    handle = f"@{name}"
+    if any(handle.lower() == item.lower() for item in mention_handles()):
+        return True
+    if name.lower() == "github-actions[bot]":
+        return True
+    return bool(re.fullmatch(r"langmesh(?:-[\w-]+)?\[bot\]", name, flags=re.IGNORECASE))
+
+
+def reply_to_mention_bot(
+    event: Mapping[str, Any],
+    *,
+    repository: str,
+    token: str,
+    api: str,
+) -> bool:
+    """A quote-reply, review reply, or the comment immediately after the mention bot."""
+    if not token:
+        return False
+    comment = event.get("comment") or {}
+    parent_id = comment.get("in_reply_to_id")
+    if parent_id:
+        for path in (
+            f"issues/comments/{int(parent_id)}",
+            f"pulls/comments/{int(parent_id)}",
+        ):
+            try:
+                record = _api_request(f"{api}/repos/{repository}/{path}", token)
+            except (RuntimeError, TypeError, ValueError):
+                continue
+            login = str((record.get("user") or {}).get("login") or "")
+            if mention_bot_login(login):
+                return True
+    number = (event.get("issue") or {}).get("number") or (
+        event.get("pull_request") or {}
+    ).get("number")
+    this_id = comment.get("id")
+    if not number or not this_id:
+        return False
+    try:
+        rows = _api_request(
+            f"{api}/repos/{repository}/issues/{int(number)}/comments?per_page=100",
+            token,
+        )
+    except (RuntimeError, TypeError, ValueError):
+        return False
+    if not isinstance(rows, list):
+        return False
+    previous = None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if int(row.get("id") or 0) == int(this_id):
+            break
+        previous = row
+    if previous is None:
+        return False
+    return mention_bot_login(str((previous.get("user") or {}).get("login") or ""))
+
+
 def mention_from_event(
     event: Mapping[str, Any],
     *,
     repository: str,
     pull: Mapping[str, Any] | None = None,
+    token: str = "",
+    api: str = "",
 ) -> Mention | None:
-    """The mention this payload is, or ``None`` when it is not one we answer."""
+    """The mention this payload is, or ``None`` when it is not a mention to answer."""
     comment = event.get("comment") or {}
     body = str(comment.get("body") or "")
-    if not mentioned(body):
+    if not mentioned(body) and not reply_to_mention_bot(
+        event, repository=repository, token=token, api=api
+    ):
         return None
     user = str((comment.get("user") or {}).get("login") or "")
     if user.endswith("[bot]"):
@@ -423,6 +492,7 @@ def prepare_tree(mention: Mention, workspace: Path, *, token: str, run: Run = _r
     cwd = str(workspace)
     # Checkout writes safe.directory under a temporary HOME; later git uses the runner's HOME.
     run(["git", "config", "--global", "--add", "safe.directory", cwd], cwd=cwd)
+    configure_git_author(workspace, run=run)
     header = _git_header(token)
     run(["git", "fetch", "origin", "--prune"], cwd=cwd, extraheader=header)
     if mention.kind == "pull" and mention.head_ref and not mention.is_fork:
@@ -471,8 +541,39 @@ def tree_is_dirty(workspace: Path, *, run: Run = _run) -> bool:
     return bool(staged)
 
 
-def publish_changes(mention: Mention, workspace: Path, *, token: str, run: Run = _run) -> str:
-    """Commit file edits and push. On an issue, open or reuse a draft PR. On a pull request, only push."""
+def commits_to_push(workspace: Path, *, run: Run = _run) -> bool:
+    """Whether HEAD has commits that are not on ``origin`` for this branch."""
+    cwd = str(workspace)
+    branch = current_branch(workspace, run=run)
+    try:
+        count = run(
+            ["git", "rev-list", "--count", f"origin/{branch}..HEAD"],
+            cwd=cwd,
+        ).strip()
+    except (OSError, RuntimeError, subprocess.CalledProcessError):
+        return True
+    return int(count or 0) > 0
+
+
+def configure_git_author(workspace: Path, *, run: Run = _run) -> None:
+    """So commits the agent makes are authored as the job's bot."""
+    cwd = str(workspace)
+    actor = (os.environ.get("LANGMESH_GIT_NAME") or "github-actions[bot]").strip()
+    email = (
+        os.environ.get("LANGMESH_GIT_EMAIL") or "41898282+github-actions[bot]@users.noreply.github.com"
+    ).strip()
+    run(["git", "config", "user.name", actor], cwd=cwd)
+    run(["git", "config", "user.email", email], cwd=cwd)
+
+
+def publish_changes(
+    mention: Mention,
+    workspace: Path,
+    *,
+    token: str,
+    run: Run = _run,
+) -> str:
+    """Push the agent's commits. On an issue, open or reuse a draft PR. On a pull request, only push."""
     cwd = str(workspace)
     branch = current_branch(workspace, run=run)
     protected = PROTECTED_BRANCHES | {mention.default_branch}
@@ -482,21 +583,8 @@ def publish_changes(mention: Mention, workspace: Path, *, token: str, run: Run =
         remember_branch(workspace, branch)
     run(["git", "add", "-A"], cwd=cwd)
     run(["git", "reset", "-q", "--", STATE_DIRECTORY], cwd=cwd)
-    actor = (os.environ.get("LANGMESH_GIT_NAME") or "github-actions[bot]").strip()
-    email = (
-        os.environ.get("LANGMESH_GIT_EMAIL") or "41898282+github-actions[bot]@users.noreply.github.com"
-    ).strip()
-    run(["git", "config", "user.name", actor], cwd=cwd)
-    run(["git", "config", "user.email", email], cwd=cwd)
-    run(
-        [
-            "git",
-            "commit",
-            "-m",
-            f"langmesh: {mention.title or mention.session_id}",
-        ],
-        cwd=cwd,
-    )
+    if tree_is_dirty(workspace, run=run):
+        raise RuntimeError("uncommitted file changes remain; the agent must commit before finishing")
     header = _git_header(token)
     run(["git", "push", "-u", "origin", f"HEAD:{branch}"], cwd=cwd, extraheader=header)
     if mention.kind != "issue":
@@ -628,7 +716,7 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply) -> Session:
     key = api_key_for(provider)
     agent = AgentConfiguration(
         name="langmesh",
-        description="Does the work asked in a GitHub mention.",
+        description="Does the work asked in a GitHub mention, in the repository that comment is on.",
         system_prompt=render("system"),
         provider=provider,
         model=model,
@@ -658,8 +746,14 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply) -> Session:
     )
 
 
-async def run_turn(mention: Mention, workspace: Path, *, checkout: Checkout) -> str:
-    reply = GitHubReply()
+async def run_turn(
+    mention: Mention,
+    workspace: Path,
+    *,
+    checkout: Checkout,
+    publish: Callable[[str], None] | None = None,
+) -> str:
+    reply = GitHubReply(publish=publish)
     async with _session(mention, workspace, reply) as session:
         await session.ask(prompt_for(mention, checkout=checkout))
         return (reply.comment or "").strip()
@@ -686,7 +780,9 @@ def main() -> None:
     api = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
     event = json.loads(Path(event_path).read_text())
     comment_id = acknowledgement_id()
-    mention = mention_from_event(event, repository=repository)
+    mention = mention_from_event(
+        event, repository=repository, token=token, api=api
+    )
     if mention is None:
         drop_acknowledgement(repository, comment_id, token, api)
         return
@@ -695,6 +791,8 @@ def main() -> None:
             event,
             repository=repository,
             pull=fetch_pull(repository, mention.number, token, api),
+            token=token,
+            api=api,
         )
         if mention is None:
             drop_acknowledgement(repository, comment_id, token, api)
@@ -730,9 +828,21 @@ def main() -> None:
         return
     try:
         checkout = prepare_tree(mention, workspace, token=token)
-        answer = asyncio.run(run_turn(mention, workspace, checkout=checkout))
+
+        def publish_comment(text: str) -> None:
+            if comment_id:
+                update_comment(repository, comment_id, text[:65536], token, api)
+
+        answer = asyncio.run(
+            run_turn(
+                mention,
+                workspace,
+                checkout=checkout,
+                publish=publish_comment if comment_id else None,
+            )
+        )
         pull_url = ""
-        if tree_is_dirty(workspace):
+        if tree_is_dirty(workspace) or commits_to_push(workspace):
             pull_url = publish_changes(mention, workspace, token=token)
         publish_thread_comment(
             repository,

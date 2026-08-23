@@ -2,14 +2,15 @@
 
 The Action posts whatever this feature collected, not the model's prose. The working session
 sees `submit_github_comment` because the embedder both composed this feature and named the
-tool in `tools_enabled`. The submitted comment is not checkpointed: a later mention must
-submit its own reply.
+tool in `tools_enabled`. Each call writes the acknowledgement in place. A later mention must
+submit its own reply; earlier submissions are not the next turn's comment.
 """
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Literal, Protocol, runtime_checkable
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -21,13 +22,20 @@ from langmesh.runtime.tools.execution import current_tool_services
 from langmesh.runtime.values import ToolStatus
 
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
+logger = logging.getLogger("langmesh.github")
+
+CommentKind = Literal["progress", "reply"]
 
 
 class GitHubComment(BaseModel):
-    """The comment `submit_github_comment` posts on the issue or pull request."""
+    """The comment `submit_github_comment` writes onto the acknowledgement."""
 
     comment: str = Field(
-        description="The entire GitHub comment to post on this issue or pull request."
+        description="The entire GitHub comment to write onto this issue or pull request."
+    )
+    kind: CommentKind = Field(
+        default="progress",
+        description=_PROMPTS.load("github_comment_kind", {}).strip(),
     )
 
 
@@ -36,13 +44,21 @@ class GitHubReplyCapability(Protocol):
     @property
     def comment(self) -> str | None: ...
 
-    def submit(self, comment: str) -> None: ...
+    def submit(self, comment: str, *, kind: CommentKind = "progress") -> None: ...
 
 
 async def _submit_github_comment(**arguments: Any) -> str:
     payload = GitHubComment.model_validate(arguments)
-    current_tool_services().features.require(GitHubReplyCapability).submit(payload.comment)
-    return compact({"code": "github_comment_submitted", "status": ToolStatus.OK.value})
+    current_tool_services().features.require(GitHubReplyCapability).submit(
+        payload.comment, kind=payload.kind
+    )
+    return compact(
+        {
+            "code": "github_comment_submitted",
+            "status": ToolStatus.OK.value,
+            "kind": payload.kind,
+        }
+    )
 
 
 submit_github_comment = StructuredTool.from_function(
@@ -54,10 +70,12 @@ submit_github_comment = StructuredTool.from_function(
 
 
 class GitHubReply(Feature):
-    """Collect the GitHub comment through `submit_github_comment` and remind until it lands."""
+    """Write `submit_github_comment` in place and remind until a call is a reply."""
 
-    def __init__(self) -> None:
+    def __init__(self, publish: Callable[[str], None] | None = None) -> None:
         self._comment: str | None = None
+        self._replied = False
+        self._publish = publish
 
     def attach(self, context: PluginContext, host=None) -> None:
         self._context = context
@@ -66,8 +84,16 @@ class GitHubReply(Feature):
     def comment(self) -> str | None:
         return self._comment
 
-    def submit(self, comment: str) -> None:
+    def submit(self, comment: str, *, kind: CommentKind = "progress") -> None:
         self._comment = comment
+        if kind == "reply":
+            self._replied = True
+        if self._publish is None:
+            return
+        try:
+            self._publish(comment)
+        except Exception:
+            logger.exception("could not write submit_github_comment onto the thread")
 
     def contribute_tools(self) -> list:
         """The comment tool, for a profile that declared it, or before attachment for discovery."""
@@ -78,15 +104,16 @@ class GitHubReply(Feature):
         return [submit_github_comment] if "submit_github_comment" in declared else []
 
     def should_complete_turn(self) -> bool:
-        return self._comment is not None
+        return self._replied
 
     def incomplete_reminder(self) -> str | None:
-        if self._comment is not None:
+        if self._replied:
             return None
         return _PROMPTS.load("github_comment_missing", {}).strip()
 
 
 __all__ = [
+    "CommentKind",
     "GitHubComment",
     "GitHubReply",
     "GitHubReplyCapability",
