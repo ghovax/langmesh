@@ -141,7 +141,7 @@ The repository ships **no unit-test suite**. It ships two guards and one verific
 | `shared/` | The renderer-free catalogue both clients read: messages, labels, the generated wire event union |
 | `web/` | The desktop app: Next.js UI, and the Tauri shell in `src-tauri/` |
 | `mobile/` | The phone client: an Expo WebView onto the same interface |
-| `.github/` | The `@langmesh` mention Action; `GitHubReply` and real prompts live under `src/langmesh/github/` |
+| `.github/` | The `@langmesh[bot]` mention Action; `GitHubReply` and real prompts live under `src/langmesh/github/` |
 | `packaging/` | PyInstaller spec and signing, plus `entry.py` for the frozen build |
 | `scripts/` | Event-schema generation and the web dev script |
 | `examples/` | Example MCP servers |
