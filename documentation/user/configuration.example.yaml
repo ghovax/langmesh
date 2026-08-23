@@ -196,6 +196,34 @@ daemon:
   session_idle_sleep_seconds: 18000.0
 
 
+# IMAP IDLE plus SMTP in front of the daemon. Off until you enable it.
+# Secrets also resolve from LANGMESH_MAIL_* environment variables, which win.
+# See documentation/user/email.md.
+email:
+  enabled: false
+  address: ""
+  allow_from: []
+  agent: ""
+  working_directory: ""
+  permission_mode: "automatic"
+  idle_timeout_seconds: 60.0
+  turn_timeout_seconds: 1800.0
+  imap:
+    host: ""
+    port: 993
+    username: ""
+    password: ""
+    mailbox: "INBOX"
+    ssl: true
+  smtp:
+    host: ""
+    port: 587
+    username: ""
+    password: ""
+    start_tls: true
+    use_tls: false
+
+
 # Other tools, other machines
 
 # Composio's hosted MCP gateway, as one server.

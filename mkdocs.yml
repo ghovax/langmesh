@@ -38,6 +38,7 @@ nav:
   - User guide:
       - Installation: user/installation.md
       - GitHub mentions: user/github.md
+      - Email: user/email.md
       - Desktop app: user/app.md
       - Configuration: user/configuration.md
       - Agent system: user/agent-system.md

@@ -77,3 +77,100 @@ class ComposioConfiguration(AppConfigurationSection):
     @property
     def effective_api_key(self) -> str:
         return os.environ.get(environment_variables.COMPOSIO_API_KEY) or self.api_key
+
+
+class EmailImapConfiguration(AppConfigurationSection):
+    """The mailbox the mail client IDLEs on. Passwords also resolve from LANGMESH_MAIL_IMAP_PASSWORD."""
+
+    host: str = Field(default="")
+    port: int = Field(default=993, ge=1, le=65535)
+    username: str = Field(default="")
+    password: str = Field(default="", json_schema_extra={"secret": True})
+    mailbox: str = Field(default="INBOX")
+    ssl: bool = Field(default=True)
+
+
+class EmailSmtpConfiguration(AppConfigurationSection):
+    """Where replies are sent. Passwords also resolve from LANGMESH_MAIL_SMTP_PASSWORD."""
+
+    host: str = Field(default="")
+    port: int = Field(default=587, ge=1, le=65535)
+    username: str = Field(default="")
+    password: str = Field(default="", json_schema_extra={"secret": True})
+    start_tls: bool = Field(default=True)
+    use_tls: bool = Field(default=False)
+
+
+class EmailConfiguration(AppConfigurationSection):
+    """IMAP IDLE plus SMTP in front of the daemon: a client, not a second session embedder.
+
+    Off by default. Environment variables win over file secrets. The mail process reads this
+    section; the library never does.
+    """
+
+    enabled: bool = Field(default=False)
+    address: str = Field(default="")
+    allow_from: list[str] = Field(default_factory=list)
+    agent: str = Field(default="")
+    working_directory: str = Field(default="")
+    permission_mode: str = Field(default="automatic")
+    idle_timeout_seconds: float = Field(default=60.0, gt=0)
+    turn_timeout_seconds: float = Field(default=1800.0, gt=0)
+    imap: EmailImapConfiguration = Field(default_factory=EmailImapConfiguration)
+    smtp: EmailSmtpConfiguration = Field(default_factory=EmailSmtpConfiguration)
+
+    @property
+    def effective_address(self) -> str:
+        return os.environ.get("LANGMESH_MAIL_ADDRESS", "").strip() or self.address.strip()
+
+    @property
+    def effective_agent(self) -> str:
+        return os.environ.get("LANGMESH_MAIL_AGENT", "").strip() or self.agent.strip()
+
+    @property
+    def effective_allow_from(self) -> list[str]:
+        raw = os.environ.get("LANGMESH_MAIL_ALLOW_FROM", "").strip()
+        if raw:
+            return [item.strip() for item in raw.split(",") if item.strip()]
+        return [item.strip() for item in self.allow_from if item.strip()]
+
+    @property
+    def effective_imap_host(self) -> str:
+        return os.environ.get("LANGMESH_MAIL_IMAP_HOST", "").strip() or self.imap.host.strip()
+
+    @property
+    def effective_imap_username(self) -> str:
+        return (
+            os.environ.get("LANGMESH_MAIL_IMAP_USER", "").strip()
+            or self.imap.username.strip()
+            or self.effective_address
+        )
+
+    @property
+    def effective_imap_password(self) -> str:
+        return (
+            os.environ.get("LANGMESH_MAIL_IMAP_PASSWORD")
+            or os.environ.get("LANGMESH_MAIL_PASSWORD")
+            or self.imap.password
+        )
+
+    @property
+    def effective_smtp_host(self) -> str:
+        return os.environ.get("LANGMESH_MAIL_SMTP_HOST", "").strip() or self.smtp.host.strip()
+
+    @property
+    def effective_smtp_username(self) -> str:
+        return (
+            os.environ.get("LANGMESH_MAIL_SMTP_USER", "").strip()
+            or self.smtp.username.strip()
+            or self.effective_imap_username
+        )
+
+    @property
+    def effective_smtp_password(self) -> str:
+        return (
+            os.environ.get("LANGMESH_MAIL_SMTP_PASSWORD")
+            or os.environ.get("LANGMESH_MAIL_PASSWORD")
+            or self.smtp.password
+            or self.effective_imap_password
+        )
