@@ -79,6 +79,17 @@ def turn_for_client_message(turns: list[dict[str, Any]], client_message_id: str)
                 continue
             if _role(message) == "user" and _message_id(message) == client_message_id:
                 return turn
+            for part in message.get("parts") or []:
+                if not isinstance(part, dict):
+                    continue
+                data = part.get("data") if part.get("kind") == "data" else part
+                if not isinstance(data, dict):
+                    continue
+                kind = str(data.get("kind") or data.get("type") or "")
+                if kind in {"inbound_message", "InboundMessageEvent"} and str(
+                    data.get("message_id") or data.get("messageId") or ""
+                ) == client_message_id:
+                    return turn
     return None
 
 

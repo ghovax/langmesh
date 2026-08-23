@@ -1241,6 +1241,10 @@ class SessionExecutor(AgentExecutor):
         state = self._contexts.get(self._session_id)
         return bool(state is not None and state.running)
 
+    def live_turn_id(self) -> str:
+        """The in-flight A2A task, empty when the session is idle."""
+        return next(iter(self._aborts), "")
+
     def serialized_send(self):
         """The session-wide acceptance lock used by every external message send."""
         return self._send_lock
@@ -1292,6 +1296,19 @@ class SessionExecutor(AgentExecutor):
                         getattr(status, "state", "") or ""
                     )
                     return {"turn_id": turn.id, "state": state}
+                for part in getattr(message, "parts", None) or []:
+                    root = getattr(part, "root", part)
+                    data = getattr(root, "data", None)
+                    if not isinstance(data, dict):
+                        continue
+                    kind = str(data.get("kind") or data.get("type") or "")
+                    inbound_id = str(data.get("message_id") or data.get("messageId") or "")
+                    if kind in {"inbound_message", "InboundMessageEvent"} and inbound_id == message_id:
+                        status = getattr(turn, "status", None)
+                        state = getattr(getattr(status, "state", None), "value", None) or str(
+                            getattr(status, "state", "") or ""
+                        )
+                        return {"turn_id": turn.id, "state": state}
         return None
 
     async def start_turn(self, parts: list, metadata: dict) -> str:

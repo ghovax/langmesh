@@ -81,6 +81,7 @@ class Inbox:
         self.clock = clock or ResumeClock()
         self.imap: Optional[IMAP4] = None
         self.uidvalidity = 0
+        self._wake = asyncio.Event()
 
     async def connect(self) -> None:
         self.imap = _client(self.configuration)
@@ -176,19 +177,35 @@ class Inbox:
         assert self.imap is not None
         await self.imap.uid("store", str(uid), "+FLAGS.SILENT", "(\\Seen)")
 
-    async def idle_until_exists(self) -> None:
-        """Block in IDLE until EXISTS or the RFC timeout, then leave IDLE so FETCH can run.
+    def idling(self) -> bool:
+        return bool(self.imap is not None and self.imap.has_pending_idle())
 
-        Every two seconds we check whether the host slept. asyncio's IDLE timeout uses
-        CLOCK_MONOTONIC, which often does not include a container pause.
+    def request_wake(self) -> None:
+        """Leave IDLE so FETCH or STORE can run. Safe if we are not in IDLE."""
+        self._wake.set()
+        if self.imap is not None and self.imap.has_pending_idle():
+            try:
+                self.imap.idle_done()
+            except Exception:  # noqa: BLE001
+                logger.debug("mail idle_done from wake failed", exc_info=True)
+
+    async def idle_until_exists(self) -> None:
+        """Block in IDLE until EXISTS, a command wants the socket, or the RFC timeout.
+
+        FETCH never runs from inside IDLE. Every two seconds we check whether the host slept.
         """
         assert self.imap is not None
+        self._wake.clear()
         idle = await self.imap.idle_start(timeout=int(self.configuration.idle_timeout_seconds))
         try:
             while self.imap.has_pending_idle():
+                if self._wake.is_set():
+                    break
                 try:
                     pushed = await self.imap.wait_server_push(timeout=2.0)
                 except TimeoutError:
+                    if self._wake.is_set():
+                        break
                     if self.clock.jumped():
                         raise StaleConnection("the host slept or the clock jumped") from None
                     continue

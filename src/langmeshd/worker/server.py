@@ -72,7 +72,7 @@ async def _send(session, params: dict) -> dict:
             # Who sent it, carried into the running turn, so a peer's report is not shown as the user's own words.
             peer_sender = str((params.get("metadata") or {}).get(Metadata.PEER_SENDER) or "")
             if await session.inject(text, inject_id, peer_sender):
-                return {"accepted": True, "injected": True, "turn_id": ""}
+                return {"accepted": True, "injected": True, "turn_id": session.live_turn_id()}
             compaction_error = await session.compaction_failure()
             if compaction_error:
                 return {
