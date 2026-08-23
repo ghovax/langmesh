@@ -351,6 +351,8 @@ The hooks are the points in the turn where a feature can act. The full set a `Fe
 | `should_maintain` / `begin_maintenance` / `advance_maintenance` / `run_maintenance` / `maintenance_ready` / `valid_during_maintenance` / `maintenance_tool_schemas` / `maintenance_violation_message` / `fail_maintenance` / `record_maintenance_handoff` / `maintenance_describe` | holding the loop to reclaim context |
 | `plan_tool_calls` / `resolve_gates` / `review_automatic_gate` | gating a batch of tool calls |
 | `drain()` | turn-driven events (e.g. finished background jobs) |
+| `incomplete_reminder()` | a reminder when the model stopped without finishing this feature's work |
+| `should_complete_turn()` | whether this feature considers the turn done without further model output |
 | `blocks_input()` | why new input must be refused (a failed fold, an unrepaired registry) |
 | `snapshot()` / `restore(snapshot)` | durable session state beside the checkpoint |
 
