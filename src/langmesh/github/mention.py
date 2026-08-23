@@ -255,35 +255,47 @@ def api_key_for(provider: str, environ: Mapping[str, str] | None = None) -> str:
     return (definition.anonymous_api_key if definition is not None else "").strip()
 
 
-def prompt_for(mention: Mention, *, checkout: Checkout | None = None) -> str:
-    """The turn's user message: pointers, the comment that started it, then the situation.
+def _labeled(name: str, value: str) -> str:
+    text = (value or "").strip()
+    return f"{name}: {text}" if text else ""
 
-    The thread is not pasted. The agent reads earlier comments through ``gh``.
+
+def prompt_for(
+    mention: Mention,
+    *,
+    checkout: Checkout | None = None,
+    followup: bool = False,
+) -> str:
+    """The turn's user message: labeled metadata on the opening turn, only the new comment later.
+
+    Stable thread fields are not repeated after the session already has them. The thread
+    body is not pasted; the agent reads earlier comments through ``gh``.
     """
+    comment_url = _labeled("Comment URL", mention.comment_url)
+    if followup:
+        return render(
+            "turn",
+            {
+                "title": "",
+                "html_url": "",
+                "kind": "",
+                "comment_url": comment_url,
+                "branch": "",
+                "body": mention.body,
+            },
+        )
     branch = checkout.branch if checkout is not None else ""
-    resumed = checkout.resumed if checkout is not None else False
     return render(
         "turn",
         {
-            "title": mention.title,
-            "html_url": mention.html_url,
-            "comment_url": mention.comment_url,
+            "title": _labeled("Thread", mention.title),
+            "html_url": _labeled("Thread URL", mention.html_url),
+            "kind": _labeled("Kind", mention.kind),
+            "comment_url": comment_url,
+            "branch": _labeled("HEAD", branch),
             "body": mention.body,
-            "publication": publication_note(mention, branch=branch, resumed=resumed),
         },
     )
-
-
-def publication_note(mention: Mention, *, branch: str = "", resumed: bool = False) -> str:
-    """This mention's situation, appended on the turn so the system prompt stays cache-stable."""
-    if mention.kind != "issue":
-        where = f" Stay on `{branch}`." if branch else ""
-        return f"This mention is on a pull request.{where}"
-    if resumed and branch:
-        return f"This mention is on an issue. You are already on `{branch}`; keep working there."
-    if branch:
-        return f"This mention is on an issue. HEAD is `{branch}`."
-    return "This mention is on an issue."
 
 
 def draft_pull_arguments(mention: Mention, branch: str) -> list[str]:
@@ -728,8 +740,11 @@ async def run_turn(
 
     reply = GitHubReply(publish=publish_working if publish is not None else None)
     async with _session(mention, workspace, reply, token) as session:
+        followup = await session.restore()
+        provider, model = model_identifier_from_env()
+        logger.info("mention model %s/%s followup=%s", provider, model, followup)
         await session.set_permission_mode("automatic")
-        await session.ask(prompt_for(mention, checkout=checkout))
+        await session.ask(prompt_for(mention, checkout=checkout, followup=followup))
         return (reply.comment or "").strip()
 
 
