@@ -463,12 +463,19 @@ class ChatLiteLLMModel(BaseChatModel):
 
         The OpenAI Python client adds ``x-stainless-*`` fields. Zen has been
         answering those requests as an empty-model 401 even when ``model`` is set.
+        ``x-opencode-session`` is the conversation's session id so Zen can keep
+        the prompt cache on the same route.
         """
         headers = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
             "User-Agent": "opencode/0.0.0",
         }
+        if self.session_id.strip():
+            headers["x-opencode-session"] = self.session_id.strip()
+        client = self.default_headers.get("x-opencode-client", "").strip()
+        if client:
+            headers["x-opencode-client"] = client
         key = ""
         if self.api_key is not None:
             key = self.api_key.get_secret_value().strip()
