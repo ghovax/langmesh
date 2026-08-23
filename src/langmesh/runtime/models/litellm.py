@@ -662,23 +662,6 @@ class ChatLiteLLMModel(BaseChatModel):
             )
         return self._stable_provider_key
 
-    def _log_opencode_usage(self, usage: Mapping[str, Any] | None) -> None:
-        """Write the provider cache figures Zen actually returned."""
-        if not usage:
-            return
-        prompt = int(usage.get("input_tokens", 0) or 0)
-        cached = int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0)
-        completion = int(usage.get("output_tokens", 0) or 0)
-        hit = (100.0 * cached / prompt) if prompt else 0.0
-        logger.info(
-            "opencode usage model=%s prompt=%d cached=%d hit=%.1f%% completion=%d",
-            self._wire_model(),
-            prompt,
-            cached,
-            hit,
-            completion,
-        )
-
     def _cache_diagnosis(self, current: RequestTrace) -> dict[str, object]:
         """What this request kept from the previous request in its cache lane."""
         lane = active_cache_lane()
@@ -718,7 +701,6 @@ class ChatLiteLLMModel(BaseChatModel):
         reported = False
         if self._opencode_host():
             payload = self._opencode_payload(sent, params, stream=True)
-            logger.info("opencode http model=%s stream=true", payload["model"])
             async for event in self._opencode_stream_events(payload):
                 generation_chunk = self._litellm_chunk_to_generation_chunk(
                     self._namespace(event), block
@@ -728,7 +710,6 @@ class ChatLiteLLMModel(BaseChatModel):
                 usage = getattr(generation_chunk.message, "usage_metadata", None)
                 if usage and not reported:
                     reported = True
-                    self._log_opencode_usage(usage)
                     reconcile(
                         diagnosis,
                         int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0),
@@ -899,7 +880,6 @@ class ChatLiteLLMModel(BaseChatModel):
         diagnosis = self._cache_diagnosis(current_trace)
         if self._opencode_host():
             payload = self._opencode_payload(sent, params, stream=False)
-            logger.info("opencode http model=%s stream=false", payload["model"])
             response = self._namespace(await self._opencode_completion(payload))
         else:
             response = await litellm.acompletion(
@@ -908,8 +888,6 @@ class ChatLiteLLMModel(BaseChatModel):
             )
         # The byte verdict was made before the call; the response's cache figure corrects it.
         reported_usage = self._usage_metadata(getattr(response, "usage", None)) or {}
-        if self._opencode_host():
-            self._log_opencode_usage(reported_usage)
         reconcile(
             diagnosis,
             int((reported_usage.get("input_token_details") or {}).get("cache_read", 0) or 0),
@@ -939,8 +917,6 @@ class ChatLiteLLMModel(BaseChatModel):
         else:
             response = litellm.completion(messages=sent, **params)
         reported_usage = self._usage_metadata(getattr(response, "usage", None)) or {}
-        if self._opencode_host():
-            self._log_opencode_usage(reported_usage)
         reconcile(
             diagnosis,
             int((reported_usage.get("input_token_details") or {}).get("cache_read", 0) or 0),
