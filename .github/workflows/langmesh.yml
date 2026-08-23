@@ -1,6 +1,7 @@
 # @langmesh on an issue or pull request runs the library in this job.
 # A later mention on the same thread continues the saved session.
 # LANGMESH_MODEL is provider/model. LANGMESH_API_KEY is that provider's key.
+# .github/langmesh holds the checkpoint (conversation and provider cache state).
 
 name: langmesh
 
@@ -32,7 +33,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         with:
           path: .github/langmesh
           key: langmesh-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}-${{ github.run_id }}
@@ -44,3 +45,8 @@ jobs:
           LANGMESH_MODEL: ${{ vars.LANGMESH_MODEL }}
           LANGMESH_API_KEY: ${{ secrets.LANGMESH_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/cache/save@v4
+        if: ${{ always() && hashFiles('.github/langmesh/session.sqlite') != '' }}
+        with:
+          path: .github/langmesh
+          key: langmesh-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}-${{ github.run_id }}
