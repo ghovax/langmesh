@@ -100,8 +100,13 @@ fi
 
 if [[ -n "${DIGITALOCEAN_ACCESS_TOKEN:-}" ]] && command -v doctl >/dev/null 2>&1; then
   name="${LANGMESH_VPS_NAME:-langmesh-mail}"
+  ssh_key="${LANGMESH_DO_SSH_KEY:-}"
+  if [[ -z "${ssh_key}" ]]; then
+    log "Set LANGMESH_DO_SSH_KEY to a DigitalOcean SSH key fingerprint or id so the droplet can be installed over SSH."
+    exit 2
+  fi
   doctl compute droplet create "${name}" --size s-1vcpu-1gb --image ubuntu-24-04-x64 \
-    --region "${LANGMESH_DO_REGION:-nyc1}" --wait
+    --region "${LANGMESH_DO_REGION:-nyc1}" --ssh-keys "${ssh_key}" --wait
   ip="$(doctl compute droplet get "${name}" --format PublicIPv4 --no-header)"
   remote_install "root@${ip}"
   exit 0
