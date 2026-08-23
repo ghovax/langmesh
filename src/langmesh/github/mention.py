@@ -20,6 +20,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -40,6 +41,7 @@ from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
 from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features import Feature
+from langmesh.runtime.turn_events import ToolCall
 from langmesh.runtime.plugins.background import BackgroundJobsFeature
 from langmesh.runtime.plugins.bash import Bash
 from langmesh.runtime.plugins.compaction import (
@@ -62,6 +64,9 @@ BRANCH_RECORD = "branch"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 ACKNOWLEDGEMENT = "Got it — I'll update this comment when I'm done."
 ACK_COMMENT_ENV = "LANGMESH_ACK_COMMENT_ID"
+PROGRESS_INTERVAL_SECONDS = 8.0
+PROGRESS_LINE_LIMIT = 8
+PROGRESS_COMMAND_CHARS = 72
 TURN_FAILED = (
     "Something went wrong while I was working on this. "
     "The details are in the Action log."
@@ -174,6 +179,66 @@ def user_failure(message: str) -> str:
     if log:
         return f"{message} See the [Action log]({log})."
     return message
+
+
+def _progress_snippet(text: str) -> str:
+    """One short, mention-safe line for the live acknowledgement."""
+    line = " ".join(text.strip().split())
+    line = re.sub(r"@langmesh(?:-[\w-]+)?(?:\[bot\])?", "", line, flags=re.IGNORECASE)
+    line = " ".join(line.split())
+    if len(line) > PROGRESS_COMMAND_CHARS:
+        line = line[: PROGRESS_COMMAND_CHARS - 1] + "…"
+    return line
+
+
+def progress_line(event: ToolCall) -> str | None:
+    """A user-facing note for one completed tool call, or ``None`` to stay quiet."""
+    if not event.arguments_complete or event.name == "submit_github_comment":
+        return None
+    arguments = event.arguments
+    if event.name == "bash" and isinstance(arguments, Mapping):
+        command = _progress_snippet(str(arguments.get("command") or ""))
+        return f"`{command}`" if command else "Running a command"
+    if event.name == "search_web" and isinstance(arguments, Mapping):
+        query = _progress_snippet(str(arguments.get("query") or arguments.get("q") or ""))
+        return f"Searching for {query}" if query else "Searching the web"
+    if event.name == "fetch_url" and isinstance(arguments, Mapping):
+        url = _progress_snippet(str(arguments.get("url") or ""))
+        return f"Fetching {url}" if url else "Fetching a page"
+    label = event.name.replace("_", " ")
+    return f"Using {label}" if label else None
+
+
+class CommentProgress:
+    """PATCH the acknowledgement as the turn proceeds. Failures here must not stop the job."""
+
+    def __init__(self, repository: str, comment_id: int, token: str, api: str) -> None:
+        self.repository = repository
+        self.comment_id = comment_id
+        self.token = token
+        self.api = api
+        self._notes: list[str] = []
+        self._flushed_at = 0.0
+
+    def note(self, line: str) -> None:
+        text = line.strip()
+        if not text:
+            return
+        self._notes.append(text)
+        now = time.monotonic()
+        if now - self._flushed_at >= PROGRESS_INTERVAL_SECONDS:
+            self.flush()
+
+    def flush(self) -> None:
+        if not self._notes:
+            return
+        recent = self._notes[-PROGRESS_LINE_LIMIT:]
+        body = ACKNOWLEDGEMENT + "\n\n" + "\n".join(f"- {item}" for item in recent)
+        try:
+            update_comment(self.repository, self.comment_id, body, self.token, self.api)
+            self._flushed_at = time.monotonic()
+        except Exception:
+            logger.exception("could not publish progress on comment %s", self.comment_id)
 
 
 def mention_from_event(
@@ -658,10 +723,23 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply) -> Session:
     )
 
 
-async def run_turn(mention: Mention, workspace: Path, *, checkout: Checkout) -> str:
+async def run_turn(
+    mention: Mention,
+    workspace: Path,
+    *,
+    checkout: Checkout,
+    progress: CommentProgress | None = None,
+) -> str:
     reply = GitHubReply()
     async with _session(mention, workspace, reply) as session:
-        await session.ask(prompt_for(mention, checkout=checkout))
+        async for event in session.stream(prompt_for(mention, checkout=checkout)):
+            if progress is None or not isinstance(event, ToolCall):
+                continue
+            line = progress_line(event)
+            if line:
+                progress.note(line)
+        if progress is not None:
+            progress.flush()
         return (reply.comment or "").strip()
 
 
@@ -730,7 +808,12 @@ def main() -> None:
         return
     try:
         checkout = prepare_tree(mention, workspace, token=token)
-        answer = asyncio.run(run_turn(mention, workspace, checkout=checkout))
+        progress = (
+            CommentProgress(repository, comment_id, token, api) if comment_id else None
+        )
+        answer = asyncio.run(
+            run_turn(mention, workspace, checkout=checkout, progress=progress)
+        )
         pull_url = ""
         if tree_is_dirty(workspace):
             pull_url = publish_changes(mention, workspace, token=token)
