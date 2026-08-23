@@ -1,0 +1,24 @@
+# Fly.io: daemon + mail client with a persistent XDG volume.
+# Create the volume once, then deploy:
+#   fly volumes create langmesh_xdg --size 3 --region iad --yes
+#   fly secrets set LANGMESH_MAIL_ADDRESS=... LANGMESH_MAIL_ALLOW_FROM=... \
+#     LANGMESH_MAIL_PASSWORD=... OPENROUTER_API_KEY=...
+#   fly deploy --config packaging/mail/fly.toml --dockerfile packaging/mail/Dockerfile
+
+app = "langmesh-mail"
+primary_region = "iad"
+
+[build]
+  dockerfile = "packaging/mail/Dockerfile"
+
+[mounts]
+  source = "langmesh_xdg"
+  destination = "/srv/langmesh/xdg"
+
+[env]
+  LANGMESH_MAIL_AGENT = "reviewer"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1

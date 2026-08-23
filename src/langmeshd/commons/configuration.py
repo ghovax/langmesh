@@ -16,6 +16,27 @@ from langmesh.protocol.dtos import SettingsUpdateRequest
 from langmeshd.commons import timing
 
 
+# Hosts we can fill in from the mailbox domain so a Gmail/Fastmail/Outlook address
+# only needs a password, not a copy-paste of imap.gmail.com.
+_MAIL_HOSTS: dict[str, tuple[str, str]] = {
+    "gmail.com": ("imap.gmail.com", "smtp.gmail.com"),
+    "googlemail.com": ("imap.gmail.com", "smtp.gmail.com"),
+    "fastmail.com": ("imap.fastmail.com", "smtp.fastmail.com"),
+    "messagingengine.com": ("imap.fastmail.com", "smtp.fastmail.com"),
+    "outlook.com": ("outlook.office365.com", "smtp.office365.com"),
+    "hotmail.com": ("outlook.office365.com", "smtp.office365.com"),
+    "live.com": ("outlook.office365.com", "smtp.office365.com"),
+    "msn.com": ("outlook.office365.com", "smtp.office365.com"),
+    "yahoo.com": ("imap.mail.yahoo.com", "smtp.mail.yahoo.com"),
+}
+
+
+def _hosts_for(address: str) -> tuple[str, str]:
+    if "@" not in address:
+        return "", ""
+    return _MAIL_HOSTS.get(address.rsplit("@", 1)[-1].lower(), ("", ""))
+
+
 class AppConfigurationSection(BaseModel, extra="forbid"):
     """A daemon-owned configuration section that rejects unknown fields."""
 
@@ -111,7 +132,7 @@ class EmailConfiguration(AppConfigurationSection):
     enabled: bool = Field(default=False)
     address: str = Field(default="")
     allow_from: list[str] = Field(default_factory=list)
-    agent: str = Field(default="")
+    agent: str = Field(default="reviewer")
     working_directory: str = Field(default="")
     permission_mode: str = Field(default="automatic")
     idle_timeout_seconds: float = Field(default=60.0, gt=0)
@@ -125,7 +146,11 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_agent(self) -> str:
-        return os.environ.get("LANGMESH_MAIL_AGENT", "").strip() or self.agent.strip()
+        return (
+            os.environ.get("LANGMESH_MAIL_AGENT", "").strip()
+            or self.agent.strip()
+            or "reviewer"
+        )
 
     @property
     def effective_allow_from(self) -> list[str]:
@@ -136,7 +161,11 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_imap_host(self) -> str:
-        return os.environ.get("LANGMESH_MAIL_IMAP_HOST", "").strip() or self.imap.host.strip()
+        return (
+            os.environ.get("LANGMESH_MAIL_IMAP_HOST", "").strip()
+            or self.imap.host.strip()
+            or _hosts_for(self.effective_address)[0]
+        )
 
     @property
     def effective_imap_username(self) -> str:
@@ -156,7 +185,11 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_smtp_host(self) -> str:
-        return os.environ.get("LANGMESH_MAIL_SMTP_HOST", "").strip() or self.smtp.host.strip()
+        return (
+            os.environ.get("LANGMESH_MAIL_SMTP_HOST", "").strip()
+            or self.smtp.host.strip()
+            or _hosts_for(self.effective_address)[1]
+        )
 
     @property
     def effective_smtp_username(self) -> str:

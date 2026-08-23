@@ -276,7 +276,8 @@ class MailService:
                 notice = "The session is waiting on a decision in the app, so this mail was not taken."
             else:
                 notice = "The session did not accept this mail."
-            return self.store.update(item.id, state=COMPLETED, reply_text=notice, session_id=session_id)
+            # Stay discovered: a refusal is not a finished job, and must not set \Seen.
+            raise daemon_client.MailDaemonError(notice)
         turn_id = str(outcome.get("turn_id") or item.turn_id)
         return self.store.update(
             item.id,
@@ -482,25 +483,33 @@ def validate_ready(configuration: EmailConfiguration) -> str:
 
 
 async def run(configuration: Optional[EmailConfiguration] = None) -> int:
-    """Connect to the daemon, resume unfinished mail, then IDLE until cancelled."""
-    configuration = configuration or load_email_configuration()
-    problem = validate_ready(configuration)
-    if problem:
-        logger.error("mail not configured: %s", problem)
-        return 1
+    """Connect to the daemon, resume unfinished mail, then IDLE until cancelled.
+
+    A missing mailbox config is waited out rather than exiting, so a systemd unit
+    that started before mail.env was filled comes up on its own.
+    """
     store = ThreadStore()
     clock = ResumeClock()
-    service = MailService(configuration, store, clock)
     delay = 1.0
+    supplied = configuration
     try:
         while True:
+            current = supplied or load_email_configuration()
+            problem = validate_ready(current)
+            if problem:
+                logger.error("mail not configured: %s; waiting", problem)
+                if supplied is not None:
+                    return 1
+                await asyncio.sleep(5)
+                continue
+            service = MailService(current, store, clock)
             try:
                 clock.note()
                 async with daemon_client.connect() as http:
                     if not await daemon_client.health(http):
                         raise StaleConnection("the daemon is not accepting connections")
                     await service.resume(http, None)
-                    inbox = Inbox(configuration, clock=clock)
+                    inbox = Inbox(current, clock=clock)
                     try:
                         await clock.await_fresh(inbox.connect())
                         await service.drain(http, inbox)
