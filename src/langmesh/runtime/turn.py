@@ -1080,8 +1080,13 @@ class _RunsTurns(_DispatchesTools, ABC):
         # No tool calls, so the turn ends: the resume pump wakes the agent when the next result lands.
         final_text = message_text(response)
         self._conversation.append(response)
-        # A response with no prose (thinking only) is a no-op: prompt the model once to actually answer, so the exchange cannot end silently. A second no-op ends the turn for real.
-        if not final_text and not nudged[0]:
+        reminder = self._features.incomplete_reminder()
+        if reminder:
+            self._conversation.append(self._reminder_message(reminder))
+            step.directive = _CONTINUE
+            return
+        # A response with no prose (thinking only) is a no-op: prompt the model once to actually answer, so the exchange cannot end silently. A second no-op ends the turn for real. A feature that already collected its output does not need that nudge.
+        if not final_text and not nudged[0] and not self._features.should_complete_turn():
             nudged[0] = True
             self._conversation.append(
                 self._reminder_message(self._prompt_loader.load("response_required", {}))

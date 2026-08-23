@@ -47,22 +47,9 @@ providers:
   custom: { api_key: "", base_url: "" }
 ```
 
-Each provider also reads its conventional environment variable, which takes precedence over the file:
+Each non-native provider also reads environment variables when no key is in the file. The names are the catalogue entry's `env_vars`, then `{IDENTIFIER}_API_KEY` with hyphens turned into underscores (`openrouter` → `OPENROUTER_API_KEY`, `meta_llama` → `META_LLAMA_API_KEY`). Catalogue names exist when the provider's usual variable is not that spelling: `alibaba` reads `DASHSCOPE_API_KEY`, `google` reads `GOOGLE_GENERATIVE_AI_API_KEY`, `GEMINI_API_KEY`, and `GOOGLE_API_KEY`. ChatGPT and Cursor subscriptions have no key: they sign in.
 
-| Provider       | Environment variable                                              |
-| -------------- | ----------------------------------------------------------------- |
-| `opencode`     | `OPENCODE_API_KEY`                                                |
-| `commandcode`  | `COMMAND_CODE_API_KEY`                                            |
-| `anthropic`    | `ANTHROPIC_API_KEY`                                               |
-| `openai`       | `OPENAI_API_KEY`                                                  |
-| `google`       | `GOOGLE_GENERATIVE_AI_API_KEY`, or `GEMINI_API_KEY`               |
-| `openrouter`   | `OPENROUTER_API_KEY`                                              |
-| `xai`          | `XAI_API_KEY`                                                     |
-| `deepseek`     | `DEEPSEEK_API_KEY`                                                |
-| `groq`         | `GROQ_API_KEY`                                                    |
-| `mistral`      | `MISTRAL_API_KEY`                                                 |
-
-`custom` takes any OpenAI-compatible endpoint, which is why it needs a `base_url` as well. Around fifty providers are registered (Azura, Alibaba, Vercel, Cerebras, Cohere, DeepInfra, Hyperbolic, Hetzner, and more); the registry in `langmesh.base.identity.providers` is the full list.
+`custom` takes any OpenAI-compatible endpoint, which is why it needs a `base_url` as well; it still reads `CUSTOM_API_KEY`. Around fifty providers are registered (Azure, Alibaba, Vercel, Cerebras, Cohere, DeepInfra, Hyperbolic, Hetzner, and more); the registry in `langmesh.base.identity.providers` is the full list.
 
 You can also **sign in with a ChatGPT or a Cursor subscription** instead of pasting a key, in Settings, under Providers. Neither has a key to store: both live as OAuth tokens in the data directory's `oauths/` folder, one file per provider, written `0600` inside a `0700` directory. They stay out of `configuration.yaml` deliberately, because that file is digest-synced and would thrash on every silent token refresh. Which models each plan serves is discovered live from the account.
 
