@@ -21,7 +21,6 @@ MENTION = "@langmesh[bot]"
 MENTION_ALIASES = (MENTION, "@langmesh")
 # `LangMesh` cannot be a GitHub App (reserved for @langmesh). Accept @langmesh-…[bot].
 _HYPHENATED_BOT = re.compile(r"@langmesh-[\w-]+\[bot\](?![\w-])", re.IGNORECASE)
-ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 
 
 def mention_handles() -> tuple[str, ...]:
@@ -150,11 +149,13 @@ def thread_has_prior_bot_comment(
     repository: str,
     token: str,
     api: str,
+    ignore_ids: tuple[int, ...] = (),
 ) -> bool:
     """Whether the mention bot already wrote on this collection before this comment.
 
     Looks at the ten most recent comments on the same collection (issue comments or
-    review comments). It does not load the thread body.
+    review comments). It does not load the thread body. ``ignore_ids`` skips comments
+    this job just posted, so the acknowledgement is not treated as an earlier turn.
     """
     if not token:
         return False
@@ -165,6 +166,8 @@ def thread_has_prior_bot_comment(
     ).get("number")
     if not number:
         return False
+    ignored = {int(this_id)} if this_id else set()
+    ignored.update(int(item) for item in ignore_ids if item)
     collection = "pulls" if _review_comment(comment) else "issues"
     try:
         raw = _get(
@@ -176,7 +179,7 @@ def thread_has_prior_bot_comment(
         return False
     rows = [row for row in raw if isinstance(row, dict)] if isinstance(raw, list) else []
     for row in rows:
-        if this_id and int(row.get("id") or 0) == int(this_id):
+        if int(row.get("id") or 0) in ignored:
             continue
         login = str((row.get("user") or {}).get("login") or "")
         if mention_bot_login(login):
@@ -198,85 +201,4 @@ def is_mention_turn(
     body = str(comment.get("body") or "")
     return mentioned(body) or reply_to_mention_bot(
         event, repository=repository, token=token, api=api
-    )
-
-
-def comment_key(comment: Mapping[str, Any]) -> str:
-    """A stable id for one GitHub comment across issue and review collections."""
-    comment_id = int(comment.get("id") or 0)
-    collection = "pulls" if _review_comment(comment) else "issues"
-    return f"{collection}:{comment_id}"
-
-
-def tagged_comment_rows(
-    rows: list[Mapping[str, Any]],
-    *,
-    after_created_at: str,
-    ingested: set[str],
-) -> list[dict[str, Any]]:
-    """Newer comments that tag the bot and are allowed to steer a running turn.
-
-    Replies without a handle still start their own job; only an explicit tag is
-    injected as steering. Rows are returned oldest first. Issue comments and
-    review comments use separate id spaces, so recency is ``created_at``.
-    """
-    found: list[dict[str, Any]] = []
-    for row in rows:
-        if not isinstance(row, Mapping):
-            continue
-        created = str(row.get("created_at") or "")
-        if after_created_at and created and created < after_created_at:
-            continue
-        key = comment_key(row)
-        if key.endswith(":0") or key in ingested:
-            continue
-        login = str((row.get("user") or {}).get("login") or "")
-        if login.endswith("[bot]"):
-            continue
-        association = str(row.get("author_association") or "")
-        if association not in ALLOWED_ASSOCIATIONS:
-            continue
-        if not mentioned(str(row.get("body") or "")):
-            continue
-        found.append(dict(row))
-    found.sort(key=lambda row: (str(row.get("created_at") or ""), comment_key(row)))
-    return found
-
-
-def fetch_tagged_comments(
-    *,
-    repository: str,
-    number: int,
-    kind: str,
-    token: str,
-    api: str,
-    after_created_at: str,
-    ingested: set[str],
-) -> list[dict[str, Any]]:
-    """Issue comments, and review comments on a pull request, that tag the bot."""
-    if not token or not number:
-        return []
-    paths = [f"issues/{int(number)}/comments"]
-    if kind == "pull":
-        paths.append(f"pulls/{int(number)}/comments")
-    rows: list[Mapping[str, Any]] = []
-    seen: set[str] = set()
-    for path in paths:
-        try:
-            raw = _get(
-                f"{api}/repos/{repository}/{path}?per_page=100&sort=created&direction=desc",
-                token,
-            )
-        except (RuntimeError, TypeError, ValueError):
-            continue
-        for row in raw if isinstance(raw, list) else []:
-            if not isinstance(row, dict):
-                continue
-            key = comment_key(row)
-            if key.endswith(":0") or key in seen:
-                continue
-            seen.add(key)
-            rows.append(row)
-    return tagged_comment_rows(
-        rows, after_created_at=after_created_at, ingested=ingested
     )
