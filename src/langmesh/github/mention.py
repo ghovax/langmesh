@@ -13,11 +13,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
-import secrets
 import sqlite3
 import subprocess
-import unicodedata
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -54,12 +51,8 @@ MENTION = "@langmesh"
 ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 STATE_DIRECTORY = ".github/langmesh"
 BRANCH_RECORD = "branch"
-CODE_RECORD = "code"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
-_SLUG = re.compile(r"[^a-z0-9]+")
-_TOPIC = re.compile(r"^langmesh/[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-f]{4}$")
-_TOPIC_SUFFIX = re.compile(r"^langmesh/.+-([0-9a-f]{4})$")
 
 # The job is the only publisher. Longest-match would otherwise keep force-push at "ask".
 _BASH_DENY = {
@@ -82,10 +75,9 @@ class Run(Protocol):
 
 @dataclass(frozen=True)
 class Checkout:
-    """Where this mention starts: the branch, the assigned suffix, and whether it already exists."""
+    """Where this mention starts, and whether that branch already exists for the thread."""
 
     branch: str
-    code: str = ""
     resumed: bool = False
 
 
@@ -201,13 +193,7 @@ def prompt_for(mention: Mention) -> str:
     )
 
 
-def publication_note(
-    mention: Mention,
-    *,
-    branch: str = "",
-    code: str = "",
-    resumed: bool = False,
-) -> str:
+def publication_note(mention: Mention, *, branch: str = "", resumed: bool = False) -> str:
     """What the wrapper will do with file edits, for the system prompt."""
     if mention.kind != "issue":
         return (
@@ -220,11 +206,10 @@ def publication_note(
             "If you leave file changes, a wrapper commits them and updates the draft pull request. "
             "It stays a draft until a person marks it ready."
         )
-    suffix = code or "????"
     return (
         "If you will edit files, create the branch yourself first with "
-        f"`git checkout -b langmesh/<short-kebab-name>-{suffix}` — you choose the name, "
-        f"the suffix is `{suffix}`. Do not stay on the default branch. "
+        "`git checkout -b langmesh/<short-kebab-name>-<4hex>` — you choose a clear name and "
+        "four hex digits, for example `langmesh/fix-auth-a3f2`. Do not stay on the default branch. "
         "A wrapper then commits, pushes, and opens a draft pull request. "
         "It stays a draft until a person marks it ready."
     )
@@ -248,53 +233,14 @@ def draft_pull_arguments(mention: Mention, branch: str) -> list[str]:
     ]
 
 
-def branch_slug(name: str, *, limit: int = 48) -> str:
-    """Kebab-case a name the agent chose, so it is a legal git branch segment."""
-    ascii_text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
-    slug = _SLUG.sub("-", ascii_text.lower()).strip("-")
-    if not slug:
-        return "work"
-    if len(slug) <= limit:
-        return slug
-    trimmed = slug[:limit].rstrip("-")
-    if "-" in trimmed:
-        trimmed = trimmed.rsplit("-", 1)[0] or trimmed
-    return trimmed or "work"
-
-
-def looks_like_topic(name: str) -> bool:
-    return bool(_TOPIC.fullmatch(name))
-
-
-def topic_branch_from_agent(current: str, *, code: str) -> str:
-    """``langmesh/<agent-name>-<code>``. Protected branches fall back to ``work``."""
-    if current in PROTECTED_BRANCHES:
-        return f"langmesh/work-{code}"
-    if looks_like_topic(current) and current.endswith(f"-{code}"):
-        return current
-    name = current.removeprefix("langmesh/")
-    name = re.sub(r"-[0-9a-f]{4}$", "", name)
-    return f"langmesh/{branch_slug(name)}-{code}"
-
-
 def branch_record(workspace: Path) -> Path:
     return workspace / STATE_DIRECTORY / BRANCH_RECORD
-
-
-def code_record(workspace: Path) -> Path:
-    return workspace / STATE_DIRECTORY / CODE_RECORD
 
 
 def remember_branch(workspace: Path, name: str) -> None:
     path = branch_record(workspace)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"{name}\n")
-
-
-def remember_code(workspace: Path, code: str) -> None:
-    path = code_record(workspace)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"{code}\n")
 
 
 def recalled_branch(workspace: Path) -> str:
@@ -305,19 +251,6 @@ def recalled_branch(workspace: Path) -> str:
     if not name or name in PROTECTED_BRANCHES:
         return ""
     return name
-
-
-def recalled_code(workspace: Path) -> str:
-    path = code_record(workspace)
-    if not path.is_file():
-        return ""
-    code = path.read_text().strip()
-    return code if re.fullmatch(r"[0-9a-f]{4}", code) else ""
-
-
-def suffix_of(name: str) -> str:
-    match = _TOPIC_SUFFIX.fullmatch(name)
-    return match.group(1) if match else ""
 
 
 def state_path(workspace: Path) -> Path:
@@ -434,12 +367,7 @@ def prepare_tree(mention: Mention, workspace: Path, *, token: str, run: Run = _r
             remote_exists=_remote_has(name, cwd=cwd, header=header, run=run),
         )
         remember_branch(workspace, name)
-        code = recalled_code(workspace) or suffix_of(name)
-        if code:
-            remember_code(workspace, code)
-        return Checkout(branch=name, code=code, resumed=True)
-    code = recalled_code(workspace) or secrets.token_hex(2)
-    remember_code(workspace, code)
+        return Checkout(branch=name, resumed=True)
     run(
         ["git", "fetch", "origin", mention.default_branch],
         cwd=cwd,
@@ -449,7 +377,7 @@ def prepare_tree(mention: Mention, workspace: Path, *, token: str, run: Run = _r
         ["git", "checkout", "-B", mention.default_branch, "FETCH_HEAD"],
         cwd=cwd,
     )
-    return Checkout(branch=mention.default_branch, code=code, resumed=False)
+    return Checkout(branch=mention.default_branch, resumed=False)
 
 
 def current_branch(workspace: Path, *, run: Run = _run) -> str:
@@ -473,19 +401,11 @@ def publish_changes(mention: Mention, workspace: Path, *, token: str, run: Run =
     """Commit file edits and push. On an issue, open or reuse a draft PR. On a pull request, only push."""
     cwd = str(workspace)
     branch = current_branch(workspace, run=run)
-    if mention.kind == "issue":
-        code = recalled_code(workspace) or suffix_of(branch) or secrets.token_hex(2)
-        target = (
-            branch if looks_like_topic(branch) else topic_branch_from_agent(branch, code=code)
-        )
-        if target != branch:
-            run(["git", "checkout", "-B", target], cwd=cwd)
-            branch = target
-        remember_branch(workspace, branch)
-        remember_code(workspace, suffix_of(branch) or code)
     protected = PROTECTED_BRANCHES | {mention.default_branch}
     if branch in protected:
         raise RuntimeError(f"refusing to push protected branch {branch!r}")
+    if mention.kind == "issue":
+        remember_branch(workspace, branch)
     run(["git", "add", "-A"], cwd=cwd)
     run(["git", "reset", "-q", "--", STATE_DIRECTORY], cwd=cwd)
     run(["git", "config", "user.name", "github-actions[bot]"], cwd=cwd)
@@ -592,7 +512,6 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply, *, checkout:
                 "publication": publication_note(
                     mention,
                     branch=checkout.branch,
-                    code=checkout.code,
                     resumed=checkout.resumed,
                 )
             },

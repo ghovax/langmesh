@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -12,7 +11,6 @@ from langmesh.base.identity.providers import PROVIDERS, provider_env_vars, resol
 from langmesh.github.mention import (
     _BASH_DENY,
     api_key_for,
-    branch_slug,
     draft_pull_arguments,
     mention_features,
     mention_from_event,
@@ -22,7 +20,6 @@ from langmesh.github.mention import (
     publication_note,
     publish_changes,
     render,
-    topic_branch_from_agent,
 )
 from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features.seam import Feature, Features
@@ -183,12 +180,12 @@ def run_mention_matrix() -> None:
     check("turn includes url", mention.html_url in text, True)
     check(
         "issue publication asks the agent to branch",
-        "git checkout -b" in publication_note(mention, code="ab12"),
+        "git checkout -b" in publication_note(mention),
         True,
     )
     check(
-        "issue publication gives the suffix",
-        "ab12" in publication_note(mention, code="ab12"),
+        "issue publication names the langmesh pattern",
+        "langmesh/<short-kebab-name>-<4hex>" in publication_note(mention),
         True,
     )
     check(
@@ -209,23 +206,6 @@ def run_mention_matrix() -> None:
     check("create uses the issue branch", "langmesh/flaky-test-ab12" in created, True)
     check("create bases on default branch", "main" in created, True)
     check("create is not marked ready", "ready" not in created, True)
-    check("slug sanitizes an agent name", branch_slug("Fix: API / JSON"), "fix-api-json")
-    check("slug empty name", branch_slug(""), "work")
-    check(
-        "keeps the agent's topic branch",
-        topic_branch_from_agent("langmesh/fix-auth-ab12", code="ab12"),
-        "langmesh/fix-auth-ab12",
-    )
-    check(
-        "prefixes and suffixes the agent's name",
-        topic_branch_from_agent("fix-auth", code="ab12"),
-        "langmesh/fix-auth-ab12",
-    )
-    check(
-        "main falls back to work",
-        topic_branch_from_agent("main", code="ab12"),
-        "langmesh/work-ab12",
-    )
 
 
 def run_model_and_reply_matrix() -> None:
@@ -310,7 +290,7 @@ def run_model_and_reply_matrix() -> None:
     assert issue_mention is not None
     prompt = render(
         "system",
-        {"publication": publication_note(issue_mention, code="ab12")},
+        {"publication": publication_note(issue_mention)},
     )
     check("system names the comment tool", "submit_github_comment" in prompt, True)
     check("system forbids push", "Do not git push" in prompt, True)
@@ -338,6 +318,11 @@ def run_model_and_reply_matrix() -> None:
     check("issue publish returns the draft url", opened, "https://github.com/ghovax/langmesh/pull/99")
     created = next(call for call in recorded if call[:3] == ["gh", "pr", "create"])
     check("issue publish creates a draft", "--draft" in created, True)
+    check(
+        "publish does not rename the branch",
+        all(call[:3] != ["git", "checkout", "-B"] for call in recorded),
+        True,
+    )
     recorded.clear()
 
     def fake_existing(
@@ -362,36 +347,6 @@ def run_model_and_reply_matrix() -> None:
         True,
     )
     check("follow-up does not mark ready", all("ready" not in call for call in recorded), True)
-    recorded.clear()
-
-    def fake_agent_name(
-        arguments: list[str],
-        *,
-        cwd: str,
-        env: Mapping[str, str] | None = None,
-        extraheader: str = "",
-    ) -> str:
-        recorded.append(list(arguments))
-        if arguments[:3] == ["git", "rev-parse", "--abbrev-ref"]:
-            return "fix-auth"
-        if arguments[:3] == ["gh", "pr", "list"]:
-            return ""
-        if arguments[:3] == ["gh", "pr", "create"]:
-            return "https://github.com/ghovax/langmesh/pull/8\n"
-        return ""
-
-    scratch = Path(tempfile.mkdtemp())
-    (scratch / ".github/langmesh").mkdir(parents=True)
-    (scratch / ".github/langmesh/code").write_text("ab12\n")
-    opened = publish_changes(issue_mention, scratch, token="t", run=fake_agent_name)
-    check("agent-named branch opens a draft", opened, "https://github.com/ghovax/langmesh/pull/8")
-    check(
-        "wrapper prefixes the agent's name",
-        ["git", "checkout", "-B", "langmesh/fix-auth-ab12"] in recorded,
-        True,
-    )
-    created = next(call for call in recorded if call[:3] == ["gh", "pr", "create"])
-    check("create uses the agent's slug", "langmesh/fix-auth-ab12" in created, True)
     recorded.clear()
 
     def fake_on_pull(
