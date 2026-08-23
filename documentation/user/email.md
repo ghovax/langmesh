@@ -32,10 +32,10 @@ A fake "Done." is never mailed because a wait timed out. The wait re-attaches an
 
 On the machine that runs `langmeshd`:
 
-1. Pick an agent profile that exists on that machine (`~/.agents/agents/<name>/AGENT.md`). Mail will not guess one.
+1. The bundled `reviewer` profile is the default (`~/.agents/agents/reviewer/AGENT.md` on a laptop, or `.agents/agents/reviewer` in this checkout on a VPS). Set `email.agent` only if you want a different one.
 2. Give the daemon a provider key, in `~/.config/langmesh/configuration.yaml` or that provider's environment variable.
-3. On a headless Linux host, set `sandbox.enforce` to `preferred` (or `off`) so sessions can start without a confinement backend. Set `sandbox.network: true` if the agent should reach the network.
-4. Put the mailbox in the same file, or in the environment. Environment variables win over the file.
+3. On a headless Linux host, set `sandbox.enforce` to `preferred` (or `off`) so sessions can start without a confinement backend. Set `sandbox.network: true` if the agent should reach the network. `install.sh` already does this.
+4. Put the mailbox in the same file, or in the environment. Environment variables win over the file. Gmail, Fastmail, Outlook, and Yahoo fill IMAP/SMTP hosts from the address; you still need an app password.
 
 ```yaml
 email:
@@ -57,23 +57,20 @@ email:
     password: ""
 ```
 
-Gmail needs an [app password](https://support.google.com/accounts/answer/185833), IMAP enabled, `imap.gmail.com:993` and `smtp.gmail.com:587`. Fastmail is `imap.fastmail.com` / `smtp.fastmail.com`. Do not commit the password; `LANGMESH_MAIL_IMAP_PASSWORD` and `LANGMESH_MAIL_SMTP_PASSWORD` (or `LANGMESH_MAIL_PASSWORD` for both) override the file.
+Gmail needs an [app password](https://support.google.com/accounts/answer/185833) and IMAP enabled. The client fills `imap.gmail.com` / `smtp.gmail.com` from a `gmail.com` address. Fastmail, Outlook, and Yahoo are the same. Do not commit the password; `LANGMESH_MAIL_IMAP_PASSWORD` and `LANGMESH_MAIL_SMTP_PASSWORD` (or `LANGMESH_MAIL_PASSWORD` for both) override the file.
 
 ```sh
 uv run langmesh mail
 ```
 
-`mail` starts `langmeshd` when it is not listening, then IDLEs. Logs go to stderr and `$XDG_STATE_HOME/langmesh/langmesh-mail.log`.
+`mail` starts `langmeshd` when it is not listening, then IDLEs. If the mailbox is not configured yet, it waits and re-reads the file instead of exiting. Logs go to stderr and `$XDG_STATE_HOME/langmesh/langmesh-mail.log`.
 
 On a VPS, install both systemd units from `packaging/mail/` so the daemon and the mail client restart on boot. `packaging/mail/install.sh` does that: it installs Python 3.13 and uv if needed, syncs this checkout, writes the units, and enables them. It reads mailbox and provider credentials from `LANGMESH_MAIL_*` and `LANGMESH_*_API_KEY` in the environment.
 
 ```sh
-sudo LANGMESH_MAIL_ADDRESS=agent@example.com \
-     LANGMESH_MAIL_ALLOW_FROM=you@example.com \
-     LANGMESH_MAIL_IMAP_HOST=imap.example.com \
-     LANGMESH_MAIL_IMAP_PASSWORD=... \
-     LANGMESH_MAIL_SMTP_HOST=smtp.example.com \
-     LANGMESH_MAIL_AGENT=reviewer \
+sudo LANGMESH_MAIL_ADDRESS=agent@gmail.com \
+     LANGMESH_MAIL_ALLOW_FROM=you@gmail.com \
+     LANGMESH_MAIL_PASSWORD=... \
      OPENROUTER_API_KEY=... \
      packaging/mail/install.sh
 ```
@@ -85,12 +82,12 @@ Then send mail to `email.address` from an allowlisted From. The first reply is t
 The mail client cannot create a mailbox or a cloud VM by itself. You need:
 
 - IMAP and SMTP reachability for `email.address` (an app password, not your ordinary login, on Gmail).
-- At least one allowlisted From.
+- At least one allowlisted From (`LANGMESH_MAIL_ALLOW_FROM`).
 - A provider key the agent profile can use.
-- A host that stays up. `packaging/mail/provision.sh` will try Fly.io, Hetzner, or DigitalOcean when those tokens are already in the environment; otherwise you bring a VPS and run `install.sh` on it.
+- A host that stays up. `packaging/mail/provision.sh` will try Fly.io (with a persistent `langmesh_xdg` volume), Hetzner, or DigitalOcean when those tokens are already in the environment; otherwise you bring a VPS and run `install.sh` on it.
 
 The daemon still binds loopback. Mail never exposes the capability token. Do not publish `langmeshd`'s port on the public internet; SSH or Tailscale if you also want the app. Persist `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) across VM and container replacement, or in-flight mail cannot resume.
 
 ## Settings
 
-Every field is in the [configuration reference](configuration.md#email). A change to the mail section applies the next time `langmesh mail` starts.
+Every field is in the [configuration reference](configuration.md#email). A change to the mail section is picked up on the next reconnect, or within a few seconds if the client is still waiting for a complete config. Editing `mail.env` still needs `systemctl restart langmesh-mail` because systemd only reads that file at start.

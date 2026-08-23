@@ -203,7 +203,7 @@ email:
   enabled: false
   address: ""
   allow_from: []
-  agent: ""
+  agent: "reviewer"
   working_directory: ""
   permission_mode: "automatic"
   idle_timeout_seconds: 60.0
