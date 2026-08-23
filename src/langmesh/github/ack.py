@@ -11,7 +11,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from detect import is_mention_turn
+from detect import comment_key, is_mention_turn
+from ingest import already_ingested
 from substitute import render_file
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
@@ -77,6 +78,11 @@ def main() -> None:
     repository = os.environ["GITHUB_REPOSITORY"]
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
     api = (os.environ.get("GITHUB_API_URL") or "https://api.github.com").rstrip("/")
+    workspace = Path(os.environ.get("GITHUB_WORKSPACE") or os.getcwd()).resolve()
+    if already_ingested(workspace, comment_key(event.get("comment") or {})):
+        print("comment already steered; skipping", flush=True)
+        _write_output(start=False)
+        return
     if not is_mention_turn(event, repository=repository, token=token, api=api):
         _write_output(start=False)
         return
