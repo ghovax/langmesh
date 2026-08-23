@@ -1,4 +1,4 @@
-"""A GitHub Action embedder: one @langmesh[bot] mention drives one library session.
+"""A GitHub Action embedder: one mention or reply to the bot drives one library session.
 
 The daemon is not involved. Follow-up mentions on the same issue or pull request restore
 the saved session. The agent commits and pushes on topic branches. It is told not to
@@ -16,7 +16,6 @@ import base64
 import json
 import logging
 import os
-import re
 import sqlite3
 import subprocess
 import sys
@@ -37,6 +36,7 @@ from langmesh.base.confinement import Profile
 from langmesh.base.content.models import split_model_identifier
 from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
+from langmesh.github.detect import is_mention_turn
 from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features import Feature
 from langmesh.runtime.plugins.background import BackgroundJobsFeature
@@ -50,10 +50,6 @@ from langmesh.runtime.plugins.continuation import Continuation
 from langmesh.runtime.plugins.permissions import PermissionReview
 from langmesh.runtime.plugins.web import Web
 
-MENTION = "@langmesh[bot]"
-MENTION_ALIASES = (MENTION, "@langmesh")
-# `LangMesh` cannot be a GitHub App (reserved for @langmesh). Accept @langmesh-…[bot].
-_HYPHENATED_BOT = re.compile(r"@langmesh-[\w-]+\[bot\](?![\w-])", re.IGNORECASE)
 ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 STATE_DIRECTORY = ".github/langmesh"
 BRANCH_RECORD = "branch"
@@ -126,28 +122,6 @@ def configure_logging() -> None:
     logging.getLogger("langmesh").setLevel(logging.INFO)
 
 
-def mention_handles() -> tuple[str, ...]:
-    """`@langmesh[bot]` first, then `@langmesh`, then an optional custom handle."""
-    extra = (os.environ.get("LANGMESH_MENTION") or "").strip()
-    handles: list[str] = list(MENTION_ALIASES)
-    if extra and extra.lower() not in {name.lower() for name in handles}:
-        handles.insert(0, extra)
-    return tuple(handles)
-
-
-def mentioned(body: str) -> bool:
-    """Whether the comment addressed the bot, not some longer `@langmesh…` login.
-
-    `@langmesh-agent[bot]` and other `@langmesh-…[bot]` slugs count even when
-    ``LANGMESH_MENTION`` is unset, because ``LangMesh`` itself cannot be an App.
-    """
-    text = body.lower()
-    for handle in mention_handles():
-        if re.search(re.escape(handle.lower()) + r"(?![\w-])", text):
-            return True
-    return _HYPHENATED_BOT.search(text) is not None
-
-
 def run_log_url() -> str:
     server = (os.environ.get("GITHUB_SERVER_URL") or "https://github.com").rstrip("/")
     repository = os.environ.get("GITHUB_REPOSITORY") or ""
@@ -178,70 +152,6 @@ def user_failure(message: str) -> str:
     return message
 
 
-def mention_bot_login(login: str) -> bool:
-    """Whether this login is the mention job's bot, not some other App."""
-    name = (login or "").strip()
-    if not name.endswith("[bot]"):
-        return False
-    handle = f"@{name}"
-    if any(handle.lower() == item.lower() for item in mention_handles()):
-        return True
-    if name.lower() == "github-actions[bot]":
-        return True
-    return bool(re.fullmatch(r"langmesh(?:-[\w-]+)?\[bot\]", name, flags=re.IGNORECASE))
-
-
-def reply_to_mention_bot(
-    event: Mapping[str, Any],
-    *,
-    repository: str,
-    token: str,
-    api: str,
-) -> bool:
-    """A quote-reply, review reply, or the comment immediately after the mention bot."""
-    if not token:
-        return False
-    comment = event.get("comment") or {}
-    parent_id = comment.get("in_reply_to_id")
-    if parent_id:
-        for path in (
-            f"issues/comments/{int(parent_id)}",
-            f"pulls/comments/{int(parent_id)}",
-        ):
-            try:
-                record = _api_request(f"{api}/repos/{repository}/{path}", token)
-            except (RuntimeError, TypeError, ValueError):
-                continue
-            login = str((record.get("user") or {}).get("login") or "")
-            if mention_bot_login(login):
-                return True
-    number = (event.get("issue") or {}).get("number") or (
-        event.get("pull_request") or {}
-    ).get("number")
-    this_id = comment.get("id")
-    if not number or not this_id:
-        return False
-    try:
-        rows = _api_request(
-            f"{api}/repos/{repository}/issues/{int(number)}/comments?per_page=100",
-            token,
-        )
-    except (RuntimeError, TypeError, ValueError):
-        return False
-    if not isinstance(rows, list):
-        return False
-    previous = None
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        if int(row.get("id") or 0) == int(this_id):
-            break
-        previous = row
-    if previous is None:
-        return False
-    return mention_bot_login(str((previous.get("user") or {}).get("login") or ""))
-
-
 def mention_from_event(
     event: Mapping[str, Any],
     *,
@@ -253,9 +163,7 @@ def mention_from_event(
     """The mention this payload is, or ``None`` when it is not a mention to answer."""
     comment = event.get("comment") or {}
     body = str(comment.get("body") or "")
-    if not mentioned(body) and not reply_to_mention_bot(
-        event, repository=repository, token=token, api=api
-    ):
+    if not is_mention_turn(event, repository=repository, token=token, api=api):
         return None
     user = str((comment.get("user") or {}).get("login") or "")
     if user.endswith("[bot]"):
