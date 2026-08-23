@@ -56,12 +56,14 @@ def reply_message(
 )
 async def send_reply(configuration: EmailConfiguration, message: EmailMessage) -> None:
     """Hand the message to aiosmtplib. The same Message-ID is reused on retry so a duplicate is the same mail."""
+    password = configuration.effective_smtp_password or None
+    username = configuration.effective_smtp_username or None if password else None
     await aiosmtplib.send(
         message,
         hostname=configuration.effective_smtp_host,
         port=configuration.effective_smtp_port,
-        username=configuration.effective_smtp_username or None,
-        password=configuration.effective_smtp_password or None,
+        username=username,
+        password=password,
         start_tls=(
             configuration.effective_smtp_start_tls
             if not configuration.effective_smtp_use_tls

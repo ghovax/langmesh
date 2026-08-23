@@ -20,7 +20,9 @@ RUN uv sync --no-dev \
         /srv/langmesh/xdg/cache/langmesh \
         /srv/langmesh/xdg/runtime/langmesh
 
-ENV XDG_CONFIG_HOME=/srv/langmesh/xdg/config \
+ENV PATH="/srv/langmesh/.venv/bin:${PATH}" \
+    VIRTUAL_ENV=/srv/langmesh/.venv \
+    XDG_CONFIG_HOME=/srv/langmesh/xdg/config \
     XDG_DATA_HOME=/srv/langmesh/xdg/data \
     XDG_STATE_HOME=/srv/langmesh/xdg/state \
     XDG_CACHE_HOME=/srv/langmesh/xdg/cache \
