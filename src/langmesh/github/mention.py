@@ -28,13 +28,11 @@ from langmesh import (
     SQLiteCheckpoints,
     ToolsConfiguration,
 )
+from langmesh.base.content.models import split_model_identifier
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.runtime.plugins.background import BackgroundJobsFeature
 from langmesh.runtime.plugins.bash import Bash
-from langmesh.runtime.plugins.compaction import (
-    Compaction,
-    DirectCompactionPreparation,
-    KeepRecentTurns,
-)
+from langmesh.runtime.plugins.compaction import Compaction, DirectCompactionPreparation
 from langmesh.runtime.plugins.continuation import Continuation
 from langmesh.runtime.plugins.permission_reviewer import PermissionReviewer
 from langmesh.runtime.plugins.permissions import PermissionReview
@@ -45,8 +43,8 @@ ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 STATE_DIRECTORY = ".langmesh-github"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 COMMENT_LIMIT = 65536
-DEFAULT_MODEL = "claude-sonnet-4-5"
-DEFAULT_PROVIDER = "anthropic"
+DEFAULT_MODEL_IDENTIFIER = "anthropic/claude-sonnet-4-5"
+_PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 
 _BASH_DENY = {
     "git push --force*": "deny",
@@ -60,14 +58,6 @@ _BASH_DENY = {
     "git push origin HEAD:main*": "deny",
     "git push origin HEAD:master*": "deny",
 }
-
-_SYSTEM_PROMPT = """\
-You were mentioned as @langmesh on GitHub. This checkout is the repository. Do the work by
-editing files here. Do not git push, do not force-push, and do not change the default branch;
-if you leave file changes, a wrapper commits them on a topic branch and opens or updates a
-pull request. A later mention on this same issue or pull request continues this conversation.
-Write the GitHub comment in your reply, and do not mention @langmesh in it.
-"""
 
 
 class Run(Protocol):
@@ -151,10 +141,33 @@ def mention_from_event(
     )
 
 
+def render(name: str, variables: Mapping[str, object] | None = None) -> str:
+    """A GitHub-mention template from ``prompts/*.md``."""
+    return _PROMPTS.load(name, dict(variables or {})).strip()
+
+
+def model_identifier_from_env(environ: Mapping[str, str] | None = None) -> tuple[str, str]:
+    """``LANGMESH_MODEL`` as ``(provider, model)``, split on the first slash."""
+    raw = ((environ or os.environ).get("LANGMESH_MODEL") or DEFAULT_MODEL_IDENTIFIER).strip()
+    split = split_model_identifier(raw)
+    if split is None or not split[0].strip() or not split[1].strip():
+        raise ValueError(raw)
+    return split[0].strip(), split[1].strip()
+
+
+def api_key_for(provider: str, environ: Mapping[str, str] | None = None) -> str:
+    """The key for ``provider``: ``LANGMESH_API_KEY``, else that provider's usual env var."""
+    env = environ or os.environ
+    named = f"{provider.upper().replace('-', '_')}_API_KEY"
+    return (env.get("LANGMESH_API_KEY") or env.get(named) or "").strip()
+
+
 def prompt_for(mention: Mention) -> str:
     """The turn's user message: the thread, then the comment."""
-    header = f"{mention.title}\n{mention.html_url}".strip()
-    return f"{header}\n\n{mention.body}" if header else mention.body
+    return render(
+        "turn",
+        {"title": mention.title, "html_url": mention.html_url, "body": mention.body},
+    )
 
 
 def state_path(workspace: Path) -> Path:
@@ -250,7 +263,15 @@ def publish_changes(mention: Mention, workspace: Path, *, token: str, run: Run =
         ["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"],
         cwd=cwd,
     )
-    run(["git", "commit", "-m", f"langmesh: {mention.title or mention.session_id}"], cwd=cwd)
+    run(
+        [
+            "git",
+            "commit",
+            "-m",
+            render("commit", {"subject": mention.title or mention.session_id}),
+        ],
+        cwd=cwd,
+    )
     header = _git_header(token)
     run(["git", "push", "-u", "origin", f"HEAD:{branch}"], cwd=cwd, extraheader=header)
     if mention.kind == "issue":
@@ -278,9 +299,12 @@ def publish_changes(mention: Mention, workspace: Path, *, token: str, run: Run =
                 "--head",
                 branch,
                 "--title",
-                mention.title or f"langmesh/{mention.number}",
+                render(
+                    "pull_request_title",
+                    {"title": mention.title or f"langmesh/{mention.number}"},
+                ),
                 "--body",
-                f"Opened from {mention.html_url}",
+                render("pull_request", {"html_url": mention.html_url}),
             ],
             cwd=cwd,
         ).strip()
@@ -319,31 +343,20 @@ def post_comment(repository: str, number: int, text: str, token: str, api: str) 
     )
 
 
-def _providers() -> dict[str, str]:
-    providers: dict[str, str] = {}
-    for name, variable in (
-        ("anthropic", "ANTHROPIC_API_KEY"),
-        ("openai", "OPENAI_API_KEY"),
-        ("google", "GOOGLE_API_KEY"),
-    ):
-        secret = os.environ.get(variable, "")
-        if secret:
-            providers[name] = secret
-    return providers
-
-
 def _session(mention: Mention, workspace: Path) -> Session:
     state_path(workspace).parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(
         state_path(workspace), isolation_level=None, check_same_thread=False
     )
     reviewer = PermissionReviewer()
+    provider, model = model_identifier_from_env()
+    key = api_key_for(provider)
     agent = AgentConfiguration(
         name="langmesh",
         description="Does the work asked in a GitHub mention.",
-        system_prompt=_SYSTEM_PROMPT,
-        provider=os.environ.get("LANGMESH_PROVIDER", DEFAULT_PROVIDER),
-        model=os.environ.get("LANGMESH_MODEL", DEFAULT_MODEL),
+        system_prompt=render("system"),
+        provider=provider,
+        model=model,
         permission_mode="automatic",
         tools_enabled=["bash", "search_web", "fetch_url", "download", "set_tasks", "update_tasks"],
         tools=ToolsConfiguration(bash=BashToolConfiguration(permissions=dict(_BASH_DENY))),
@@ -354,15 +367,11 @@ def _session(mention: Mention, workspace: Path) -> Session:
         session_id=mention.session_id,
         permission_mode="automatic",
         sandbox=SandboxConfiguration(enforce="required", network=False),
-        providers=_providers(),
+        providers={provider: key} if key else None,
         components=SessionComponents(
             checkpoints=SQLiteCheckpoints(connection),
             features=[
-                Compaction(
-                    strategy=KeepRecentTurns(24),
-                    preparation=DirectCompactionPreparation(),
-                    summarizer=None,
-                ),
+                Compaction(preparation=DirectCompactionPreparation(), summarizer=None),
                 PermissionReview(reviewer=reviewer),
                 reviewer,
                 Continuation(),
@@ -399,11 +408,13 @@ def main() -> None:
             return
     if not mention.allowed:
         return
-    if not _providers():
+    try:
+        model_identifier_from_env()
+    except ValueError as error:
         post_comment(
             repository,
             mention.number,
-            "No model key is set. Add `ANTHROPIC_API_KEY` (or another provider key) as a repository secret.",
+            render("invalid_model", {"value": str(error)}),
             token,
             api,
         )
@@ -412,13 +423,19 @@ def main() -> None:
     try:
         answer = asyncio.run(run_turn(mention, workspace))
     except Exception as error:
-        post_comment(repository, mention.number, f"The turn failed: {error}", token, api)
+        post_comment(
+            repository,
+            mention.number,
+            render("turn_failed", {"error": error}),
+            token,
+            api,
+        )
         raise
-    note = answer.strip() or "Done."
+    note = answer.strip() or render("empty_reply")
     if tree_is_dirty(workspace):
         url = publish_changes(mention, workspace, token=token)
         if url:
-            note = f"{note}\n\n{url}"
+            note = render("comment_with_pull", {"answer": note, "url": url})
     post_comment(repository, mention.number, note, token, api)
 
 

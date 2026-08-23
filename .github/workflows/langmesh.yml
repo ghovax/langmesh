@@ -1,6 +1,6 @@
 # @langmesh on an issue or pull request runs the library in this job.
 # A later mention on the same thread continues the saved session.
-# Repository secret: ANTHROPIC_API_KEY (or another provider key the session uses).
+# LANGMESH_MODEL is provider/model. LANGMESH_API_KEY is that provider's key.
 
 name: langmesh
 
@@ -41,5 +41,6 @@ jobs:
       - run: uv sync --no-dev
       - run: uv run python -m langmesh.github.mention
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LANGMESH_MODEL: ${{ vars.LANGMESH_MODEL }}
+          LANGMESH_API_KEY: ${{ secrets.LANGMESH_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
