@@ -94,6 +94,7 @@ class Mention:
     kind: str
     title: str
     html_url: str
+    comment_url: str
     user: str
     association: str
     default_branch: str
@@ -152,6 +153,19 @@ def user_failure(message: str) -> str:
     return message
 
 
+def comment_pointer(comment: Mapping[str, Any], thread_url: str) -> str:
+    """The HTML URL of this comment, or a fragment on the thread when the event omitted one."""
+    url = str(comment.get("html_url") or "").strip()
+    if url:
+        return url
+    comment_id = comment.get("id")
+    if not thread_url or not comment_id:
+        return thread_url
+    if comment.get("pull_request_review_id") is not None or comment.get("diff_hunk") is not None:
+        return f"{thread_url}#discussion_r{int(comment_id)}"
+    return f"{thread_url}#issuecomment-{int(comment_id)}"
+
+
 def mention_from_event(
     event: Mapping[str, Any],
     *,
@@ -159,11 +173,18 @@ def mention_from_event(
     pull: Mapping[str, Any] | None = None,
     token: str = "",
     api: str = "",
+    known_turn: bool = False,
 ) -> Mention | None:
-    """The mention this payload is, or ``None`` when it is not a mention to answer."""
+    """The mention this payload is, or ``None`` when it is not a mention to answer.
+
+    ``known_turn`` is set when the ack step already decided this comment starts a
+    turn, so this call does not walk GitHub again.
+    """
     comment = event.get("comment") or {}
     body = str(comment.get("body") or "")
-    if not is_mention_turn(event, repository=repository, token=token, api=api):
+    if not known_turn and not is_mention_turn(
+        event, repository=repository, token=token, api=api
+    ):
         return None
     user = str((comment.get("user") or {}).get("login") or "")
     if user.endswith("[bot]"):
@@ -178,12 +199,14 @@ def mention_from_event(
     head = source.get("head") or {}
     head_repository = str((head.get("repo") or {}).get("full_name") or "")
     default_branch = str((event.get("repository") or {}).get("default_branch") or "main")
+    html_url = str(issue.get("html_url") or pull_event.get("html_url") or "")
     return Mention(
         body=body,
         number=int(number),
         kind=kind,
         title=str(issue.get("title") or pull_event.get("title") or ""),
-        html_url=str(issue.get("html_url") or pull_event.get("html_url") or ""),
+        html_url=html_url,
+        comment_url=comment_pointer(comment, html_url),
         user=user,
         association=str(comment.get("author_association") or ""),
         default_branch=default_branch,
@@ -233,7 +256,10 @@ def api_key_for(provider: str, environ: Mapping[str, str] | None = None) -> str:
 
 
 def prompt_for(mention: Mention, *, checkout: Checkout | None = None) -> str:
-    """The turn's user message: the thread, the comment, then this mention's situation."""
+    """The turn's user message: pointers, the comment that started it, then the situation.
+
+    The thread is not pasted. The agent reads earlier comments through ``gh``.
+    """
     branch = checkout.branch if checkout is not None else ""
     resumed = checkout.resumed if checkout is not None else False
     return render(
@@ -241,6 +267,7 @@ def prompt_for(mention: Mention, *, checkout: Checkout | None = None) -> str:
         {
             "title": mention.title,
             "html_url": mention.html_url,
+            "comment_url": mention.comment_url,
             "body": mention.body,
             "publication": publication_note(mention, branch=branch, resumed=resumed),
         },
@@ -728,7 +755,11 @@ def main() -> None:
     event = json.loads(Path(event_path).read_text())
     comment_id = acknowledgement_id()
     mention = mention_from_event(
-        event, repository=repository, token=token, api=api
+        event,
+        repository=repository,
+        token=token,
+        api=api,
+        known_turn=comment_id is not None,
     )
     if mention is None:
         drop_acknowledgement(repository, comment_id, token, api)
@@ -740,6 +771,7 @@ def main() -> None:
             pull=fetch_pull(repository, mention.number, token, api),
             token=token,
             api=api,
+            known_turn=True,
         )
         if mention is None:
             drop_acknowledgement(repository, comment_id, token, api)
