@@ -169,10 +169,12 @@ else:
 PY
 git -C "$work" checkout -- README
 
-git -C "$work" branch langmesh/issue-12 origin/main
-git -C "$work" push origin langmesh/issue-12
+mkdir -p "$work/.github/langmesh"
+printf 'langmesh/flaky-test-ab12\n' > "$work/.github/langmesh/branch"
+git -C "$work" branch langmesh/flaky-test-ab12 origin/main
+git -C "$work" push origin langmesh/flaky-test-ab12
 git -C "$work" checkout main
-git -C "$work" branch -D langmesh/issue-12
+git -C "$work" branch -D langmesh/flaky-test-ab12
 "${python[@]}" - <<'PY'
 import os
 from pathlib import Path
@@ -192,14 +194,16 @@ mention = Mention(
     repository="ghovax/langmesh",
 )
 prepare_tree(mention, work, token="")
-if current_branch(work) != "langmesh/issue-12":
-    raise SystemExit(f"expected topic branch, got {current_branch(work)!r}")
+if current_branch(work) != "langmesh/flaky-test-ab12":
+    raise SystemExit(f"expected remembered branch, got {current_branch(work)!r}")
 PY
 
 git -C "$work" checkout main
-git -C "$work" branch -D langmesh/issue-99 2>/dev/null || true
+git -C "$work" branch -D langmesh/flaky-test-ab12 2>/dev/null || true
+rm -f "$work/.github/langmesh/branch"
 "${python[@]}" - <<'PY'
 import os
+import re
 from pathlib import Path
 
 from langmesh.github.mention import Mention, current_branch, prepare_tree
@@ -216,9 +220,17 @@ mention = Mention(
     default_branch="main",
     repository="ghovax/langmesh",
 )
-prepare_tree(mention, work, token="")
-if current_branch(work) != "langmesh/issue-99":
-    raise SystemExit(f"expected new topic branch, got {current_branch(work)!r}")
+first = prepare_tree(mention, work, token="")
+if not re.fullmatch(r"langmesh/new-[0-9a-f]{4}", first):
+    raise SystemExit(f"expected langmesh/<name>-<4 hex>, got {first!r}")
+if current_branch(work) != first:
+    raise SystemExit(f"checkout was {current_branch(work)!r}, allocated {first!r}")
+recorded = (work / ".github/langmesh/branch").read_text().strip()
+if recorded != first:
+    raise SystemExit(f"branch file was {recorded!r}")
+second = prepare_tree(mention, work, token="")
+if second != first:
+    raise SystemExit(f"follow-up allocated {second!r}, expected {first!r}")
 PY
 
 echo "github mention ephemeral git: ok"
