@@ -62,12 +62,8 @@ ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 STATE_DIRECTORY = ".github/langmesh"
 BRANCH_RECORD = "branch"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
-ACKNOWLEDGEMENT = "Got it — I'll update this comment when I'm done."
 ACK_COMMENT_ENV = "LANGMESH_ACK_COMMENT_ID"
 HEARTBEAT_SECONDS = 120
-_WATCH_FOOTER = re.compile(
-    r"\n\nWatch this turn in the \[Action log\]\([^)]+\)\.(?: Working for \d+ minutes?\.)?\s*$"
-)
 TURN_FAILED = (
     "Something went wrong while I was working on this. "
     "The details are in the Action log."
@@ -174,18 +170,27 @@ def run_log_url() -> str:
     return ""
 
 
+def acknowledgement() -> str:
+    return render("acknowledgement")
+
+
 def working_comment(text: str, *, started: float) -> str:
     """The acknowledgement or a progress note, plus the live Action log while the turn runs."""
-    body = _WATCH_FOOTER.sub("", (text or ACKNOWLEDGEMENT).rstrip())
+    body = (text or acknowledgement()).strip()
     url = run_log_url()
     if not url:
         return body
-    footer = f"Watch this turn in the [Action log]({url})."
-    elapsed = int((time.monotonic() - started) // 60)
-    if elapsed >= 1:
-        unit = "minute" if elapsed == 1 else "minutes"
-        footer += f" Working for {elapsed} {unit}."
-    return f"{body}\n\n{footer}"
+    minutes = int((time.monotonic() - started) // 60)
+    elapsed = ""
+    if minutes >= 1:
+        elapsed = render(
+            "working_elapsed",
+            {
+                "minutes": str(minutes),
+                "unit": "minute" if minutes == 1 else "minutes",
+            },
+        )
+    return render("working_comment", {"body": body, "url": url, "elapsed": elapsed})
 
 
 def user_failure(message: str) -> str:
@@ -787,7 +792,7 @@ async def run_turn(
             if reply.should_complete_turn():
                 return
             try:
-                publish_working(reply.comment or ACKNOWLEDGEMENT)
+                publish_working(reply.comment or acknowledgement())
             except Exception:
                 logger.exception("could not refresh the working comment")
 
@@ -859,7 +864,7 @@ def main() -> None:
             comment_id = create_comment(
                 repository,
                 mention.number,
-                working_comment(ACKNOWLEDGEMENT, started=time.monotonic()),
+                working_comment(acknowledgement(), started=time.monotonic()),
                 token,
                 api,
             )
