@@ -649,7 +649,7 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply) -> Session:
         directory=str(workspace),
         session_id=mention.session_id,
         permission_mode="automatic",
-        sandbox=SandboxConfiguration(enforce="required", network=False),
+        sandbox=SandboxConfiguration(enforce="required", network=True),
         providers={provider: key} if key else None,
         components=SessionComponents(
             checkpoints=SQLiteCheckpoints(connection),
