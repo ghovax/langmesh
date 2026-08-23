@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Callable, Literal, Protocol, runtime_checkable
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -24,6 +24,8 @@ from langmesh.runtime.values import ToolStatus
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
 
+CommentKind = Literal["progress", "reply"]
+
 
 class GitHubComment(BaseModel):
     """The comment `submit_github_comment` writes onto the acknowledgement."""
@@ -31,11 +33,11 @@ class GitHubComment(BaseModel):
     comment: str = Field(
         description="The entire GitHub comment to write onto this issue or pull request."
     )
-    done: bool = Field(
-        default=False,
+    kind: CommentKind = Field(
+        default="progress",
         description=(
-            "True when this is the finished reply and the turn should end. "
-            "False for a brief progress note; keep working after that call."
+            "progress: a short status of the direction you are taking; keep working. "
+            "reply: the answer to the person who asked; this call ends the turn."
         ),
     )
 
@@ -45,19 +47,19 @@ class GitHubReplyCapability(Protocol):
     @property
     def comment(self) -> str | None: ...
 
-    def submit(self, comment: str, *, done: bool = False) -> None: ...
+    def submit(self, comment: str, *, kind: CommentKind = "progress") -> None: ...
 
 
 async def _submit_github_comment(**arguments: Any) -> str:
     payload = GitHubComment.model_validate(arguments)
     current_tool_services().features.require(GitHubReplyCapability).submit(
-        payload.comment, done=payload.done
+        payload.comment, kind=payload.kind
     )
     return compact(
         {
             "code": "github_comment_submitted",
             "status": ToolStatus.OK.value,
-            "done": payload.done,
+            "kind": payload.kind,
         }
     )
 
@@ -71,11 +73,11 @@ submit_github_comment = StructuredTool.from_function(
 
 
 class GitHubReply(Feature):
-    """Write `submit_github_comment` in place and remind until a call sets done."""
+    """Write `submit_github_comment` in place and remind until a call is a reply."""
 
     def __init__(self, publish: Callable[[str], None] | None = None) -> None:
         self._comment: str | None = None
-        self._done = False
+        self._replied = False
         self._publish = publish
 
     def attach(self, context: PluginContext, host=None) -> None:
@@ -85,10 +87,10 @@ class GitHubReply(Feature):
     def comment(self) -> str | None:
         return self._comment
 
-    def submit(self, comment: str, *, done: bool = False) -> None:
+    def submit(self, comment: str, *, kind: CommentKind = "progress") -> None:
         self._comment = comment
-        if done:
-            self._done = True
+        if kind == "reply":
+            self._replied = True
         if self._publish is None:
             return
         try:
@@ -105,15 +107,16 @@ class GitHubReply(Feature):
         return [submit_github_comment] if "submit_github_comment" in declared else []
 
     def should_complete_turn(self) -> bool:
-        return self._done
+        return self._replied
 
     def incomplete_reminder(self) -> str | None:
-        if self._done:
+        if self._replied:
             return None
         return _PROMPTS.load("github_comment_missing", {}).strip()
 
 
 __all__ = [
+    "CommentKind",
     "GitHubComment",
     "GitHubReply",
     "GitHubReplyCapability",
