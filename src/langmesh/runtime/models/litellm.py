@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, ClassVar, Optional, Sequence, cast
@@ -50,6 +53,7 @@ from langmesh.base.content.message_content import (
 )
 
 litellm.drop_params = True
+logger = logging.getLogger("langmesh.runtime.litellm")
 
 #: The one thing worth asking a Responses request for: the model's own thinking, encrypted, to hand back next call.
 _ENCRYPTED_REASONING = ["reasoning.encrypted_content"]
@@ -119,8 +123,20 @@ class ChatLiteLLMModel(BaseChatModel):
             "reasoning_effort": self.reasoning_effort,
         }
 
+    def _custom_chat_endpoint(self) -> bool:
+        """An openai-prefixed host that is not api.openai.com, so it speaks chat completions."""
+        if self._route() != "openai":
+            return False
+        base = (self.api_base or "").lower()
+        return bool(base) and "api.openai.com" not in base
+
+    def _opencode_host(self) -> bool:
+        return "opencode.ai" in (self.api_base or "").lower()
+
     def _speaks_responses(self) -> bool:
         """Whether this model's reasoning only round-trips over the Responses API, asked of LiteLLM's own model map."""
+        if self._custom_chat_endpoint():
+            return False
         route, _, remainder = self.model.partition("/")
         if remainder.startswith("responses/"):
             return True
@@ -135,6 +151,8 @@ class ChatLiteLLMModel(BaseChatModel):
     def _request_model(self) -> str:
         """The model id to send, which is the Responses one when reasoning depends on it."""
         route, separator, remainder = self.model.partition("/")
+        if separator and not remainder.strip():
+            raise ValueError(f"empty model suffix: {self.model!r}")
         if not self._speaks_responses() or not separator or remainder.startswith("responses/"):
             return self.model
         return f"{route}/responses/{remainder}"
@@ -401,8 +419,14 @@ class ChatLiteLLMModel(BaseChatModel):
             params["max_tokens"] = self.maximum_tokens  # litellm/OpenAI API param name
         if self.timeout is not None:
             params["timeout"] = self.timeout
-        if self.default_headers:
-            params["extra_headers"] = self.default_headers
+        if self.default_headers or self._opencode_host():
+            headers = dict(self.default_headers)
+            if self._opencode_host():
+                headers.setdefault("x-opencode-client", "langmesh")
+                if self.session_id:
+                    headers["x-opencode-session"] = self.session_id
+            if headers:
+                params["extra_headers"] = headers
         if self._route() == self._GATEWAY_ROUTE:
             # A gateway rewrites the request for whichever provider it routes to, so it is the only thing that can place breakpoints.
             params["extra_body"] = {**params.get("extra_body", {}), "gateway": {"caching": "auto"}}
@@ -416,6 +440,20 @@ class ChatLiteLLMModel(BaseChatModel):
         # Caller-supplied arguments override the model defaults, so `bind_tools` bindings reach LiteLLM.
         params.update({key: value for key, value in kwargs.items() if value is not None})
         return params
+
+    def _attach_prompt_cache_key(
+        self, params: dict[str, Any], sent: list[dict[str, Any]]
+    ) -> None:
+        """OpenAI's routing hint. Custom openai-compatible hosts do not take it."""
+        if self._custom_chat_endpoint():
+            return
+        params["prompt_cache_key"] = self._provider_cache_key(params, sent)
+
+    @staticmethod
+    def _empty_model_refusal(error: BaseException) -> bool:
+        """OpenCode has returned `Model  is not supported` with an empty id."""
+        text = str(error)
+        return "Model  is not supported" in text or "Model is not supported" in text
 
     def _trace_request(self, params: dict[str, Any], sent: list[dict[str, Any]]) -> RequestTrace:
         """Cut the outgoing request into the pieces a prompt cache matches on, in wire order."""
@@ -494,13 +532,20 @@ class ChatLiteLLMModel(BaseChatModel):
         translated = self._messages_to_dicts(messages)
         # Taken before cache-control metadata is added, because marker placement is not model-visible prompt content.
         current_trace = self._trace_request(params, translated)
-        params["prompt_cache_key"] = self._provider_cache_key(params, translated)
+        self._attach_prompt_cache_key(params, translated)
         sent, cache_candidate = self._apply_cache_breakpoints(translated)
         self._remember_cache_candidate(cache_candidate)
         # The baseline advances when the request is sent, so a usage-less or interrupted response still leaves the next request a true comparison.
         diagnosis = self._cache_diagnosis(current_trace)
         reported = False
-        stream = cast(AsyncIterator[Any], await litellm.acompletion(messages=sent, **params))
+        try:
+            stream = cast(AsyncIterator[Any], await litellm.acompletion(messages=sent, **params))
+        except Exception as error:
+            if not ChatLiteLLMModel._empty_model_refusal(error):
+                raise
+            logger.warning("provider refused an empty model id; retrying the same completion once")
+            await asyncio.sleep(1.5)
+            stream = cast(AsyncIterator[Any], await litellm.acompletion(messages=sent, **params))
         async for chunk in stream:
             generation_chunk = self._litellm_chunk_to_generation_chunk(chunk, block)
             if generation_chunk is not None:
@@ -656,15 +701,25 @@ class ChatLiteLLMModel(BaseChatModel):
         params = self._completion_kwargs(stop=stop, **kwargs)
         translated = self._messages_to_dicts(messages)
         current_trace = self._trace_request(params, translated)
-        params["prompt_cache_key"] = self._provider_cache_key(params, translated)
+        self._attach_prompt_cache_key(params, translated)
         sent, cache_candidate = self._apply_cache_breakpoints(translated)
         self._remember_cache_candidate(cache_candidate)
         # Same outgoing-boundary advance as the streaming path: the comparison chain moves with the request.
         diagnosis = self._cache_diagnosis(current_trace)
-        response = await litellm.acompletion(
-            messages=sent,
-            **params,
-        )
+        try:
+            response = await litellm.acompletion(
+                messages=sent,
+                **params,
+            )
+        except Exception as error:
+            if not ChatLiteLLMModel._empty_model_refusal(error):
+                raise
+            logger.warning("provider refused an empty model id; retrying the same completion once")
+            await asyncio.sleep(1.5)
+            response = await litellm.acompletion(
+                messages=sent,
+                **params,
+            )
         # The byte verdict was made before the call; the response's cache figure corrects it.
         reported_usage = self._usage_metadata(getattr(response, "usage", None)) or {}
         reconcile(
@@ -686,11 +741,18 @@ class ChatLiteLLMModel(BaseChatModel):
         params = self._completion_kwargs(stop=stop, **kwargs)
         translated = self._messages_to_dicts(messages)
         current_trace = self._trace_request(params, translated)
-        params["prompt_cache_key"] = self._provider_cache_key(params, translated)
+        self._attach_prompt_cache_key(params, translated)
         sent, cache_candidate = self._apply_cache_breakpoints(translated)
         self._remember_cache_candidate(cache_candidate)
         diagnosis = self._cache_diagnosis(current_trace)
-        response = litellm.completion(messages=sent, **params)
+        try:
+            response = litellm.completion(messages=sent, **params)
+        except Exception as error:
+            if not ChatLiteLLMModel._empty_model_refusal(error):
+                raise
+            logger.warning("provider refused an empty model id; retrying the same completion once")
+            time.sleep(1.5)
+            response = litellm.completion(messages=sent, **params)
         reported_usage = self._usage_metadata(getattr(response, "usage", None)) or {}
         reconcile(
             diagnosis,
