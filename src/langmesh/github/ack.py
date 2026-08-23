@@ -11,6 +11,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from detect import is_mention_turn
 from substitute import render_file
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
@@ -57,6 +58,15 @@ def _post(repository: str, number: int, text: str, token: str, api: str) -> int:
     return int(record["id"])
 
 
+def _write_output(*, start: bool, comment_id: int | None = None) -> None:
+    output = os.environ.get("GITHUB_OUTPUT")
+    if not output:
+        return
+    with Path(output).open("a", encoding="utf-8") as handle:
+        print(f"start={'true' if start else 'false'}", file=handle)
+        print(f"comment_id={comment_id or ''}", file=handle)
+
+
 def main() -> None:
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     number = (event.get("issue") or {}).get("number") or (
@@ -67,6 +77,9 @@ def main() -> None:
     repository = os.environ["GITHUB_REPOSITORY"]
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
     api = (os.environ.get("GITHUB_API_URL") or "https://api.github.com").rstrip("/")
+    if not is_mention_turn(event, repository=repository, token=token, api=api):
+        _write_output(start=False)
+        return
     comment_id = _post(
         repository,
         int(number),
@@ -74,10 +87,7 @@ def main() -> None:
         token,
         api,
     )
-    output = os.environ.get("GITHUB_OUTPUT")
-    if output:
-        with Path(output).open("a", encoding="utf-8") as handle:
-            print(f"comment_id={comment_id}", file=handle)
+    _write_output(start=True, comment_id=comment_id)
 
 
 if __name__ == "__main__":
