@@ -9,16 +9,30 @@ from typing import Any
 import pytest
 
 from langmesh.github.mention import (
+    KEEP_RECENT_TURNS,
+    MENTION_TOOLS,
     Mention,
     api_key_for,
     current_branch,
+    mention_features,
     mention_from_event,
     model_identifier_from_env,
+    posted_reply,
     prompt_for,
     publish_changes,
     render,
     tree_is_dirty,
 )
+from langmesh.github.reply import (
+    REMINDER_LIMIT,
+    TOOL_NAME,
+    GitHubReply,
+    GitHubReplyCapability,
+    submit_github_comment,
+)
+from langmesh.runtime.features.seam import Feature, Features
+from langmesh.runtime.plugins.compaction import Compaction, KeepRecentTurns
+from langmesh.runtime.tools.execution import ToolServices, bind_tool_services, unbind_tool_services
 
 
 def _comment_event(
@@ -132,11 +146,18 @@ def test_prompt_includes_the_thread_and_the_comment() -> None:
     assert mention.html_url in text
 
 
-def test_system_prompt_and_replies_come_from_markdown() -> None:
+def test_system_prompt_comes_from_markdown() -> None:
     assert "Do not git push" in render("system")
-    assert render("empty_reply") == "Done."
+    assert "submit_github_comment" in render("system")
     assert "provider/model" in render("invalid_model", {"value": "gpt-4"})
-    assert "boom" in render("turn_failed", {"error": "boom"})
+
+
+def test_posted_reply_uses_short_strings_in_code() -> None:
+    assert posted_reply("") == "Done."
+    assert posted_reply("  All green.  ") == "All green."
+    assert posted_reply("All green.", "https://example.test/pr") == (
+        "All green.\n\nhttps://example.test/pr"
+    )
 
 
 def test_model_identifier_splits_on_the_first_slash() -> None:
@@ -248,3 +269,111 @@ def test_prepare_tree_checks_out_an_existing_topic_branch(tmp_path: Path) -> Non
         for call in calls
         for argument in call
     )
+
+
+def test_publish_commit_message_is_inline() -> None:
+    mention = Mention(
+        body="@langmesh",
+        number=1,
+        kind="issue",
+        title="Flaky test",
+        html_url="https://example.test/1",
+        user="owner",
+        association="OWNER",
+        default_branch="main",
+        repository="ghovax/langmesh",
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(arguments: list[str], **_kwargs: object) -> str:
+        calls.append(arguments)
+        if arguments[:2] == ["git", "rev-parse"]:
+            return "langmesh/issue-1\n"
+        if arguments[:3] == ["gh", "pr", "list"]:
+            return "https://example.test/pr\n"
+        return ""
+
+    assert publish_changes(mention, workspace=Path("/tmp"), token="t", run=fake_run) == (
+        "https://example.test/pr"
+    )
+    commit = next(call for call in calls if call[:2] == ["git", "commit"])
+    assert commit[commit.index("-m") + 1] == "langmesh: Flaky test"
+
+
+def test_mention_keeps_recent_turns_and_the_reply_plugin() -> None:
+    reply = GitHubReply()
+    features = mention_features(reply)
+    compaction = next(feature for feature in features if isinstance(feature, Compaction))
+    strategy = compaction._strategy
+    assert isinstance(strategy, KeepRecentTurns)
+
+    class Window:
+        def __init__(self, count: int) -> None:
+            self.messages = [None] * count
+
+    assert not strategy.should_compact(Window(KEEP_RECENT_TURNS * 2))
+    assert strategy.should_compact(Window(KEEP_RECENT_TURNS * 2 + 1))
+    assert reply in features
+    assert TOOL_NAME in MENTION_TOOLS
+    assert reply.contribute_tools()[0].name == TOOL_NAME
+
+
+def test_github_reply_collects_the_comment_and_does_not_snapshot_it() -> None:
+    reply = GitHubReply()
+    assert reply.comment is None
+    assert not reply.should_complete_turn()
+    reply.submit("Fixed the flake.")
+    assert reply.comment == "Fixed the flake."
+    assert reply.should_complete_turn()
+    assert reply.snapshot() is None
+    assert reply.incomplete_reminder() is None
+
+
+def test_github_reply_reminds_until_the_comment_is_submitted() -> None:
+    reply = GitHubReply()
+    first = reply.incomplete_reminder()
+    assert first is not None
+    assert "submit_github_comment" in first
+    for _ in range(REMINDER_LIMIT - 1):
+        assert reply.incomplete_reminder()
+    assert reply.incomplete_reminder() is None
+    features = Features([reply])
+    assert features.incomplete_reminder() is None
+    assert not features.should_complete_turn()
+
+
+def test_features_dispatch_incomplete_reminder_first_wins() -> None:
+    class First(Feature):
+        def incomplete_reminder(self) -> str | None:
+            return "first"
+
+    class Second(Feature):
+        def incomplete_reminder(self) -> str | None:
+            return "second"
+
+        def should_complete_turn(self) -> bool:
+            return True
+
+    features = Features([First(), Second()])
+    assert features.incomplete_reminder() == "first"
+    assert features.should_complete_turn()
+
+
+async def test_submit_github_comment_stores_the_payload() -> None:
+    reply = GitHubReply()
+    token = bind_tool_services(
+        ToolServices(
+            features=Features([reply]),
+            permissions=None,
+            prompt_loader=None,
+            catalogue=None,
+            tool_context=None,
+        )
+    )
+    try:
+        result = await submit_github_comment.ainvoke({"comment": "Shipped."})
+    finally:
+        unbind_tool_services(token)
+    assert reply.comment == "Shipped."
+    assert "github_comment_submitted" in result
+    assert isinstance(reply, GitHubReplyCapability)
