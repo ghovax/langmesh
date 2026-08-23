@@ -79,7 +79,7 @@ In the repository: **Settings → Secrets and variables → Actions**.
 
 If the App slug is not `langmesh`, also set the repository **variable** `LANGMESH_MENTION` to `@your-slug[bot]`.
 
-The next mention job mints an installation token from those secrets, then posts and pushes as `langmesh[bot]`. Commits use that bot as the author. Without the secrets, the job still runs, but comments come from `github-actions[bot]` and GitHub will not suggest `@langmesh[bot]`.
+The next mention job mints an installation token from those secrets, then posts and pushes as `langmesh[bot]`. Commits use that bot as the author. The App secrets are optional. Without them the job still runs as `github-actions[bot]`, and GitHub will not suggest `@langmesh[bot]`.
 
 ### 5. Check that citing works
 

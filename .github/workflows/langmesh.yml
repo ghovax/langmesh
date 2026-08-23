@@ -26,6 +26,10 @@ jobs:
     if: contains(github.event.comment.body, '@langmesh')
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Step `if:` cannot read `secrets`. Copy presence into env so the App token step is optional.
+    env:
+      HAVE_LANGMESH_APP: ${{ secrets.LANGMESH_APP_ID != '' && secrets.LANGMESH_APP_PRIVATE_KEY != '' }}
+      LANGMESH_APP_ID: ${{ secrets.LANGMESH_APP_ID }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,7 +37,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/create-github-app-token@v2
         id: app
-        if: ${{ secrets.LANGMESH_APP_ID != '' && secrets.LANGMESH_APP_PRIVATE_KEY != '' }}
+        if: env.HAVE_LANGMESH_APP == 'true'
         with:
           app-id: ${{ secrets.LANGMESH_APP_ID }}
           private-key: ${{ secrets.LANGMESH_APP_PRIVATE_KEY }}
@@ -55,7 +59,7 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
           LANGMESH_GIT_NAME: ${{ steps.app.outcome == 'success' && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
-          LANGMESH_GIT_EMAIL: ${{ steps.app.outcome == 'success' && format('{0}+{1}[bot]@users.noreply.github.com', secrets.LANGMESH_APP_ID, steps.app.outputs.app-slug) || '41898282+github-actions[bot]@users.noreply.github.com' }}
+          LANGMESH_GIT_EMAIL: ${{ steps.app.outcome == 'success' && format('{0}+{1}[bot]@users.noreply.github.com', env.LANGMESH_APP_ID, steps.app.outputs.app-slug) || '41898282+github-actions[bot]@users.noreply.github.com' }}
       - uses: actions/cache/save@v4
         if: ${{ always() && hashFiles('.github/langmesh/session.sqlite') != '' }}
         with:
