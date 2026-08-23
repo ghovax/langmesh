@@ -19,7 +19,7 @@ The left-hand side of `LANGMESH_MODEL` is a LangMesh provider name (`anthropic`,
 - Two mentions on the same thread wait their turn rather than overlapping.
 - The agent may edit files. The Action then commits a topic branch (`langmesh/issue-N` or the pull request's own branch) and opens or updates a pull request. It never pushes `main` or `master`.
 - Tool calls run unattended (`automatic`). Force-push and pushes to the default branch are denied. Network is off for shell children; the GitHub token is never written into the checkout.
-- The GitHub comment must be submitted with `submit_github_comment`. If the turn ends without that call, the session reminds the model a few times, then posts `Done.`
+- The GitHub comment must be submitted with `submit_github_comment`. If the turn ends without that call, the session reminds the model until it submits. An empty submitted comment is posted as `Done.`
 - Long threads keep the last 24 turns and drop the rest, with no summarizer call.
 
 A follow-up `@langmesh` on the same issue or pull request continues the same library session. The id is stable per thread (`github:{repository}:{issue|pull}:{number}`). After a turn, the conversation is written to `.langmesh-github/session.sqlite`. That directory is what the workflow caches — it is not committed; the Action unstages it before pushing file edits. The cache key is the repository plus the thread number, and `restore-keys` lets the next job load the previous run's sqlite. `session.ask` restores that checkpoint before the new mention. GitHub can evict a cache; a miss starts a fresh conversation.
