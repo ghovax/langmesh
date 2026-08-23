@@ -37,7 +37,7 @@ sequenceDiagram
 
 ## The feature seam
 
-A session runs a plain model turn by itself. Everything else is a feature: goal review, compaction, permission gating, automatic permission review, autonomous continuation, observational memory, background jobs, work habits, session naming, locations, and every tool from `bash` to `control_screen`. Composition is the caller's choice, never a library default. The daemon builds its bundle explicitly in `langmeshd.features`; an embedder builds its own. See [Composition](../library/composition.md).
+A session runs a plain model turn by itself. Everything else is a feature: goal review, compaction, permission gating, autonomous continuation, observational memory, background jobs, work habits, session naming, locations, and every tool from `bash` to `control_screen`. Composition is the caller's choice, never a library default. The daemon builds its bundle explicitly in `langmeshd.features`; an embedder builds its own. See [Composition](../library/composition.md).
 
 ## Sessions
 

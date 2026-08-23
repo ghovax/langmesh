@@ -124,7 +124,7 @@ Three ways to compose a session's tools:
 
 - **The whole roster.** Pass `SessionComponents(available_tools=[...])` to run exactly those tools, or `available_tools=()` to run with no tools at all.
 - **Supplied tools.** Pass `tools=[...]` before the first call for a stable initial schema, or call `session.grant_tool(...)` later when the session truly gains a new capability. A tool whose name the session already runs replaces its implementation and schema.
-- **Plugin tools.** Compose a feature that contributes tools — `Bash()`, `Web()`, `ComputerUse()`, `Interaction()`, `Continuation()`, `GoalReviewFeature()`, `Compaction()`, `PermissionReviewer()` — each gated by the agent's `tools_enabled`.
+- **Plugin tools.** Compose a feature that contributes tools — `Bash()`, `Web()`, `ComputerUse()`, `Interaction()`, `Continuation()`, `GoalReviewFeature()`, `Compaction()`, `PermissionReview()` — each gated by the agent's `tools_enabled`.
 
 ```python
 from langchain_core.tools import tool
@@ -381,7 +381,7 @@ session = Session(
 
 The shipped classes are ordinary classes: construct them with the ports they declare and hand the instances over. Structural dependencies are validated when the runtime is built, so a `Bash` or `Web` feature without the `BackgroundCapability` it uses fails immediately with a composition error. A plugin contributes a positive tool allowlist through `contribute_tools()` and handlers only for those tools; it never removes names from an unknown global roster. `features=()` runs a plain session with no features at all.
 
-What the product runs for a hosted session is the daemon's business, not the library's. `langmeshd.features.compose_plugins` builds the full set — goal review, compaction, permissions, the automatic reviewer, continuation, observational memory, background jobs, work habits, titling, locations, bash, web, interaction, and computer use — and hands it to each executor.
+What the product runs for a hosted session is the daemon's business, not the library's. `langmeshd.features.compose_plugins` builds the full set — goal review, compaction, permissions, continuation, observational memory, background jobs, work habits, titling, locations, bash, web, interaction, and computer use — and hands it to each executor.
 
 ### Writing a feature
 
