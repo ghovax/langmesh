@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,7 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             identifier="google",
             name="Google Gemini",
             litellm_prefix="gemini",
-            env_vars=("GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY"),
+            env_vars=("GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"),
         ),
         ProviderDefinition(
             identifier="openrouter",
@@ -124,7 +124,7 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             identifier="zai",
             name="Zhipu AI",
             litellm_prefix="zai",
-            env_vars=("ZAI_API_KEY",),
+            env_vars=("ZAI_API_KEY", "ZHIPU_API_KEY"),
         ),
         ProviderDefinition(
             identifier="deepseek",
@@ -148,7 +148,7 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             identifier="meta_llama",
             name="Meta Llama",
             litellm_prefix="meta_llama",
-            env_vars=(),
+            env_vars=("LLAMA_API_KEY", "META_LLAMA_API_KEY"),
         ),
         ProviderDefinition(
             identifier="ai21",
@@ -172,7 +172,7 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             identifier="databricks",
             name="Databricks",
             litellm_prefix="databricks",
-            env_vars=("DATABRICKS_API_KEY",),
+            env_vars=("DATABRICKS_API_KEY", "DATABRICKS_TOKEN"),
         ),
         ProviderDefinition(
             identifier="deepinfra",
@@ -202,13 +202,13 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             identifier="perplexity",
             name="Perplexity AI",
             litellm_prefix="perplexity",
-            env_vars=("PERPLEXITYAI_API_KEY",),
+            env_vars=("PERPLEXITY_API_KEY", "PERPLEXITYAI_API_KEY"),
         ),
         ProviderDefinition(
             identifier="sambanova",
             name="SambaNova",
             litellm_prefix="sambanova",
-            env_vars=("SAMBA_NOVA_API_KEY",),
+            env_vars=("SAMBANOVA_API_KEY", "SAMBA_NOVA_API_KEY"),
         ),
         ProviderDefinition(
             identifier="oci",
@@ -336,18 +336,29 @@ def extend_provider_env_vars(provider_identifier: str, additional: tuple[str, ..
     merged = tuple(dict.fromkeys((*definition.env_vars, *additional)))
     if merged == definition.env_vars:
         return
-    PROVIDERS[provider_identifier] = ProviderDefinition(
-        identifier=definition.identifier,
-        name=definition.name,
-        litellm_prefix=definition.litellm_prefix,
-        env_vars=merged,
-        default_base_url=definition.default_base_url,
-        openai_compatible=definition.openai_compatible,
-        uses_custom_base_url=definition.uses_custom_base_url,
-        credential_identifier=definition.credential_identifier,
-        selectable=definition.selectable,
-        native=definition.native,
-    )
+    PROVIDERS[provider_identifier] = replace(definition, env_vars=merged)
+
+
+def conventional_api_key_env(provider_identifier: str) -> str:
+    """``{IDENTIFIER}_API_KEY`` with hyphens turned into underscores."""
+    return f"{provider_identifier.strip().upper().replace('-', '_')}_API_KEY"
+
+
+def provider_env_vars(provider_identifier: str) -> tuple[str, ...]:
+    """Catalogue key names for this provider, then the conventional ``{IDENTIFIER}_API_KEY``.
+
+    Native providers (ChatGPT, Cursor) have no key: they sign in.
+    """
+    identifier = provider_identifier.strip()
+    definition = PROVIDERS.get(identifier) or PROVIDERS.get(identifier.lower())
+    if definition is not None and definition.native:
+        return ()
+    names = list(definition.env_vars) if definition is not None else []
+    if identifier:
+        conventional = conventional_api_key_env(identifier)
+        if conventional not in names:
+            names.append(conventional)
+    return tuple(names)
 
 
 def resolve_api_key(
@@ -355,18 +366,18 @@ def resolve_api_key(
     configured_keys: dict[str, str],
 ) -> str:
     """Resolve a provider key from its shared credential, then its environment, else the anonymous sentinel."""
-    definition = PROVIDERS.get(provider_identifier)
-    if definition is None:
-        return ""
-    credential_identifier = definition.credential_identifier or provider_identifier
-    configured = configured_keys.get(credential_identifier, "")
-    if configured:
-        return configured
-    for environment_variable in definition.env_vars:
+    identifier = provider_identifier.strip()
+    definition = PROVIDERS.get(identifier) or PROVIDERS.get(identifier.lower())
+    if definition is not None:
+        credential_identifier = definition.credential_identifier or definition.identifier
+        configured = configured_keys.get(credential_identifier, "")
+        if configured:
+            return configured
+    for environment_variable in provider_env_vars(identifier):
         value = os.environ.get(environment_variable, "")
         if value:
             return value
-    return definition.anonymous_api_key
+    return definition.anonymous_api_key if definition is not None else ""
 
 
 def resolve_base_url(

@@ -159,6 +159,14 @@ class Feature:
         """The events this feature has finished producing since the last drain."""
         return []
 
+    def incomplete_reminder(self) -> str | None:
+        """A reminder when the model stopped without finishing this feature's work, or ``None``."""
+        return None
+
+    def should_complete_turn(self) -> bool:
+        """Whether this feature considers the turn done even without further model output."""
+        return False
+
     def blocks_input(self) -> str | None:
         """Why new input must be refused (a failed fold, an unrepaired registry), or ``None``."""
         return None
@@ -368,6 +376,18 @@ class Features:
         for feature in self._instances:
             events.extend(feature.drain())
         return events
+
+    def incomplete_reminder(self) -> str | None:
+        """The first feature that still needs the model to finish, or ``None``."""
+        for feature in self._instances:
+            reminder = feature.incomplete_reminder()
+            if reminder:
+                return reminder
+        return None
+
+    def should_complete_turn(self) -> bool:
+        """Whether any feature considers the turn finished without further model output."""
+        return any(feature.should_complete_turn() for feature in self._instances)
 
     def snapshot(self) -> tuple[FeatureState, ...]:
         states: list[FeatureState] = []

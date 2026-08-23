@@ -37,6 +37,7 @@ nav:
       - API reference: library/api.md
   - User guide:
       - Installation: user/installation.md
+      - GitHub mentions: user/github.md
       - Desktop app: user/app.md
       - Configuration: user/configuration.md
       - Agent system: user/agent-system.md
