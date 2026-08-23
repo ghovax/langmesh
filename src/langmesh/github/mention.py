@@ -177,7 +177,7 @@ def user_failure(message: str) -> str:
     return message
 
 
-def our_bot_login(login: str) -> bool:
+def mention_bot_login(login: str) -> bool:
     """Whether this login is the mention job's bot, not some other App."""
     name = (login or "").strip()
     if not name.endswith("[bot]"):
@@ -190,14 +190,14 @@ def our_bot_login(login: str) -> bool:
     return bool(re.fullmatch(r"langmesh(?:-[\w-]+)?\[bot\]", name, flags=re.IGNORECASE))
 
 
-def reply_to_our_bot(
+def reply_to_mention_bot(
     event: Mapping[str, Any],
     *,
     repository: str,
     token: str,
     api: str,
 ) -> bool:
-    """A quote-reply, review reply, or the comment immediately after ours."""
+    """A quote-reply, review reply, or the comment immediately after the mention bot."""
     if not token:
         return False
     comment = event.get("comment") or {}
@@ -212,7 +212,7 @@ def reply_to_our_bot(
             except (RuntimeError, TypeError, ValueError):
                 continue
             login = str((record.get("user") or {}).get("login") or "")
-            if our_bot_login(login):
+            if mention_bot_login(login):
                 return True
     number = (event.get("issue") or {}).get("number") or (
         event.get("pull_request") or {}
@@ -238,7 +238,7 @@ def reply_to_our_bot(
         previous = row
     if previous is None:
         return False
-    return our_bot_login(str((previous.get("user") or {}).get("login") or ""))
+    return mention_bot_login(str((previous.get("user") or {}).get("login") or ""))
 
 
 def mention_from_event(
@@ -249,10 +249,10 @@ def mention_from_event(
     token: str = "",
     api: str = "",
 ) -> Mention | None:
-    """The mention this payload is, or ``None`` when it is not one we answer."""
+    """The mention this payload is, or ``None`` when it is not a mention to answer."""
     comment = event.get("comment") or {}
     body = str(comment.get("body") or "")
-    if not mentioned(body) and not reply_to_our_bot(
+    if not mentioned(body) and not reply_to_mention_bot(
         event, repository=repository, token=token, api=api
     ):
         return None
