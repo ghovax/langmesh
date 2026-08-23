@@ -35,10 +35,7 @@ class GitHubComment(BaseModel):
     )
     kind: CommentKind = Field(
         default="progress",
-        description=(
-            "progress: a short status of the direction you are taking; keep working. "
-            "reply: the answer to the person who asked; this call ends the turn."
-        ),
+        description=_PROMPTS.load("github_comment_kind", {}).strip(),
     )
 
 
