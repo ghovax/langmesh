@@ -231,12 +231,19 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_smtp_password(self) -> str:
-        return (
+        explicit = (
             os.environ.get("LANGMESH_MAIL_SMTP_PASSWORD")
             or os.environ.get("LANGMESH_MAIL_PASSWORD")
             or self.smtp.password
-            or self.effective_imap_password
         )
+        if explicit:
+            return explicit
+        # Same-provider inferred SMTP shares the IMAP app password. A custom
+        # relay host is not authenticated with that secret.
+        inferred = _hosts_for(self.effective_address)[1]
+        if inferred and self.effective_smtp_host == inferred:
+            return self.effective_imap_password
+        return ""
 
     @property
     def effective_imap_port(self) -> int:
