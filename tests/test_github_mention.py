@@ -10,10 +10,13 @@ import pytest
 
 from langmesh.github.mention import (
     Mention,
+    api_key_for,
     current_branch,
     mention_from_event,
+    model_identifier_from_env,
     prompt_for,
     publish_changes,
+    render,
     tree_is_dirty,
 )
 
@@ -126,6 +129,35 @@ def test_prompt_includes_the_thread_and_the_comment() -> None:
     text = prompt_for(mention)
     assert "Flaky test" in text
     assert "@langmesh" in text
+    assert mention.html_url in text
+
+
+def test_system_prompt_and_replies_come_from_markdown() -> None:
+    assert "Do not git push" in render("system")
+    assert render("empty_reply") == "Done."
+    assert "provider/model" in render("invalid_model", {"value": "gpt-4"})
+    assert "boom" in render("turn_failed", {"error": "boom"})
+
+
+def test_model_identifier_splits_on_the_first_slash() -> None:
+    assert model_identifier_from_env({}) == ("anthropic", "claude-sonnet-4-5")
+    assert model_identifier_from_env(
+        {"LANGMESH_MODEL": "openrouter/anthropic/claude-sonnet-4-5"}
+    ) == (
+        "openrouter",
+        "anthropic/claude-sonnet-4-5",
+    )
+
+
+def test_model_identifier_rejects_a_value_without_a_slash() -> None:
+    with pytest.raises(ValueError, match="gpt-4"):
+        model_identifier_from_env({"LANGMESH_MODEL": "gpt-4"})
+
+
+def test_api_key_is_not_tied_to_a_provider_list() -> None:
+    assert api_key_for("anthropic", {"LANGMESH_API_KEY": "sk-any"}) == "sk-any"
+    assert api_key_for("groq", {"GROQ_API_KEY": "g"}) == "g"
+    assert api_key_for("anthropic", {"OPENAI_API_KEY": "ignored"}) == ""
 
 
 def test_publish_refuses_the_default_branch() -> None:
