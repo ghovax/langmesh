@@ -33,10 +33,10 @@ from langmesh import (
     SQLiteCheckpoints,
 )
 from langmesh.base.confinement import Profile
-from langmesh.base.content.models import split_model_identifier
+from langmesh.base.content.models import resolve_litellm, split_model_identifier
 from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
-from langmesh.github.detect import is_mention_turn
+from langmesh.github.detect import is_mention_turn, thread_has_prior_bot_comment
 from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features import Feature
 from langmesh.runtime.plugins.background import BackgroundJobsFeature
@@ -255,9 +255,27 @@ def api_key_for(provider: str, environ: Mapping[str, str] | None = None) -> str:
     return (definition.anonymous_api_key if definition is not None else "").strip()
 
 
-def _labeled(name: str, value: str) -> str:
-    text = (value or "").strip()
-    return f"{name}: {text}" if text else ""
+def turn_payload(
+    mention: Mention,
+    *,
+    checkout: Checkout | None = None,
+    followup: bool = False,
+) -> dict[str, str]:
+    """The labeled fields one mention turn sends. Follow-ups omit the stable thread keys."""
+    payload: dict[str, str] = {}
+    if not followup:
+        if mention.title.strip():
+            payload["thread"] = mention.title.strip()
+        if mention.html_url.strip():
+            payload["thread_url"] = mention.html_url.strip()
+        payload["kind"] = mention.kind
+        head = checkout.branch if checkout is not None else ""
+        if head.strip():
+            payload["head"] = head.strip()
+    if mention.comment_url.strip():
+        payload["comment_url"] = mention.comment_url.strip()
+    payload["comment"] = mention.body
+    return payload
 
 
 def prompt_for(
@@ -266,34 +284,21 @@ def prompt_for(
     checkout: Checkout | None = None,
     followup: bool = False,
 ) -> str:
-    """The turn's user message: labeled metadata on the opening turn, only the new comment later.
+    """The turn's user message: one JSON object with a key in front of each field.
 
-    Stable thread fields are not repeated after the session already has them. The thread
+    The opening turn names the thread, its URL, the kind, HEAD, the comment URL, and
+    the comment. A later mention on the same thread — restored or not — sends only
+    the new comment and its URL so those stable keys are not repeated. The thread
     body is not pasted; the agent reads earlier comments through ``gh``.
     """
-    comment_url = _labeled("Comment URL", mention.comment_url)
-    if followup:
-        return render(
-            "turn",
-            {
-                "title": "",
-                "html_url": "",
-                "kind": "",
-                "comment_url": comment_url,
-                "branch": "",
-                "body": mention.body,
-            },
-        )
-    branch = checkout.branch if checkout is not None else ""
     return render(
         "turn",
         {
-            "title": _labeled("Thread", mention.title),
-            "html_url": _labeled("Thread URL", mention.html_url),
-            "kind": _labeled("Kind", mention.kind),
-            "comment_url": comment_url,
-            "branch": _labeled("HEAD", branch),
-            "body": mention.body,
+            "payload": json.dumps(
+                turn_payload(mention, checkout=checkout, followup=followup),
+                ensure_ascii=False,
+                indent=2,
+            )
         },
     )
 
@@ -732,6 +737,7 @@ async def run_turn(
     checkout: Checkout,
     publish: Callable[[str], None] | None = None,
     token: str = "",
+    thread_followup: bool = False,
 ) -> str:
     def publish_working(text: str) -> None:
         if publish is None:
@@ -740,9 +746,23 @@ async def run_turn(
 
     reply = GitHubReply(publish=publish_working if publish is not None else None)
     async with _session(mention, workspace, reply, token) as session:
-        followup = await session.restore()
+        restored = await session.restore()
+        followup = restored or thread_followup
         provider, model = model_identifier_from_env()
-        logger.info("mention model %s/%s followup=%s", provider, model, followup)
+        key = api_key_for(provider)
+        resolved = resolve_litellm(
+            f"{provider}/{model}", {provider: key} if key else {}, {}
+        )
+        logger.info(
+            "mention model %s/%s wire=%s base=%s restored=%s thread_followup=%s followup=%s",
+            provider,
+            model,
+            resolved["model"],
+            resolved["api_base"],
+            restored,
+            thread_followup,
+            followup,
+        )
         await session.set_permission_mode("automatic")
         await session.ask(prompt_for(mention, checkout=checkout, followup=followup))
         return (reply.comment or "").strip()
@@ -828,6 +848,9 @@ def main() -> None:
         return
     try:
         checkout = prepare_tree(mention, workspace, token=token)
+        thread_followup = thread_has_prior_bot_comment(
+            event, repository=repository, token=token, api=api
+        )
 
         def publish_comment(text: str) -> None:
             if comment_id:
@@ -840,6 +863,7 @@ def main() -> None:
                 checkout=checkout,
                 publish=publish_comment if comment_id else None,
                 token=token,
+                thread_followup=thread_followup,
             )
         )
         pull_url = ""

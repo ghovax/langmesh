@@ -40,7 +40,10 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             uses_custom_base_url=True,
             # Zen serves its free tier anonymously: the client sends the sentinel `public` key and
             # an opencode User-Agent, and paid calls require a real OPENCODE_API_KEY instead.
-            default_headers={"User-Agent": "opencode/0.0.0"},
+            default_headers={
+                "User-Agent": "opencode/0.0.0",
+                "x-opencode-client": "langmesh",
+            },
             anonymous_api_key="public",
         ),
         ProviderDefinition(
