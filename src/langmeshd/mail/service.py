@@ -1,8 +1,9 @@
 """The mail client loop: durable jobs, IDLE for discovery, resume after pause, reboot, or a killed process.
 
-IMAP UNSEEN finds new mail. SQLite is what must finish. A later message is not polled from
-inside a running turn. Quoted history is stripped before the turn. Sockets that survived a
-suspend or a container pause are dropped and rebuilt.
+IMAP UNSEEN finds new mail. SQLite is what must finish. IDLE keeps running while a turn is
+in flight, so a follow-up can be steered; FETCH never runs from inside IDLE. Quoted history
+is stripped before the turn. Sockets that survived a suspend or a container pause are dropped
+and rebuilt.
 """
 
 from __future__ import annotations
@@ -82,6 +83,44 @@ class MailService:
         self.store = store
         self.clock = clock
         self._session_locks: dict[str, asyncio.Lock] = {}
+        self._imap_commands = asyncio.Lock()
+        self._work: set[asyncio.Task[None]] = set()
+        self._stale = asyncio.Event()
+        self._inflight: set[str] = set()
+
+    def _spawn_item(self, http, item: MailItem, inbox: Inbox | None) -> None:
+        if item.id in self._inflight:
+            return
+        self._inflight.add(item.id)
+
+        async def run() -> None:
+            try:
+                await self._finish_one(http, item, inbox)
+            finally:
+                self._inflight.discard(item.id)
+
+        self._spawn(run())
+
+    def _spawn(self, coroutine: Any) -> None:
+        task = asyncio.create_task(coroutine)
+        self._work.add(task)
+        task.add_done_callback(self._work.discard)
+
+    async def cancel_work(self) -> None:
+        for task in list(self._work):
+            task.cancel()
+        if self._work:
+            await asyncio.gather(*self._work, return_exceptions=True)
+        self._inflight.clear()
+
+    async def _imap(self, inbox: Inbox, awaitable: Any) -> Any:
+        """Run an IMAP command only while we are not in IDLE."""
+        inbox.request_wake()
+        async with self._imap_commands:
+            while inbox.idling():
+                self._guard()
+                await asyncio.sleep(0.05)
+            return await self.clock.await_fresh(awaitable)
 
     def _lock_for(self, thread_key: str) -> asyncio.Lock:
         lock = self._session_locks.get(thread_key)
@@ -266,7 +305,6 @@ class MailService:
                 "id": session_id,
                 "parts": [{"kind": "text", "text": item.text_to_send}],
                 "metadata": {"messageId": item.client_message_id},
-                "serialize": True,
             },
         )
         if outcome.get("accepted") is False:
@@ -315,7 +353,7 @@ class MailService:
         if inbox is None or not item.uid or item.uidvalidity != inbox.uidvalidity:
             return item
         try:
-            await self.clock.await_fresh(inbox.mark_seen(item.uid))
+            await self._imap(inbox, inbox.mark_seen(item.uid))
         except StaleConnection:
             raise
         except Exception:  # noqa: BLE001 — Seen is a flag; the job is already posted
@@ -324,22 +362,23 @@ class MailService:
         return self.store.update(item.id, state=SEEN)
 
     async def finish(self, http, item: MailItem, inbox: Inbox | None) -> None:
+        current = item
         async with self._lock_for(item.thread_key or item.id):
-            current = item
             if current.state == DISCOVERED:
                 current = await self._submit(http, current)
-            if current.state == SUBMITTED:
-                current = await self._complete(http, current)
-            if current.state == COMPLETED:
-                current = await self._post(current)
-            if current.state == POSTED:
-                current = await self._mark_seen(inbox, current)
-            logger.info(
-                "mail item advanced",
-                extra=log_fields(
-                    item=current.id, state=current.state, session=current.session_id
-                ),
-            )
+        # Released so a later mail on this thread can steer a live turn.
+        if current.state == SUBMITTED:
+            current = await self._complete(http, current)
+        if current.state == COMPLETED:
+            current = await self._post(current)
+        if current.state == POSTED:
+            current = await self._mark_seen(inbox, current)
+        logger.info(
+            "mail item advanced",
+            extra=log_fields(
+                item=current.id, state=current.state, session=current.session_id
+            ),
+        )
 
     async def ingest(self, uidvalidity: int, uid: int, message: Message) -> MailItem | None:
         mailbox = self.configuration.imap.mailbox
@@ -396,27 +435,29 @@ class MailService:
         )
 
     async def drain(self, http, inbox: Inbox) -> None:
+        """Discover UNSEEN mail and start jobs. Does not wait for turns, so IDLE can keep running."""
         await self.resume(http, inbox)
-        for uid in await self.clock.await_fresh(inbox.unseen()):
+        for uid in await self._imap(inbox, inbox.unseen()):
             self._guard()
             existing = self.store.item_by_uid(inbox.configuration.imap.mailbox, inbox.uidvalidity, uid)
             if existing is not None and existing.state in {POSTED, SEEN, SKIPPED}:
                 if existing.state != SEEN:
-                    await self._mark_seen(inbox, existing)
+                    self._spawn_item(http, existing, inbox)
                 elif existing.state == SKIPPED:
                     with contextlib.suppress(Exception):
-                        await self.clock.await_fresh(inbox.mark_seen(uid))
+                        await self._imap(inbox, inbox.mark_seen(uid))
                 continue
-            message = await self.clock.await_fresh(inbox.fetch(uid))
+            message = await self._imap(inbox, inbox.fetch(uid))
             if message is None:
                 continue
             try:
                 item = await self.ingest(inbox.uidvalidity, uid, message)
                 if item is None or item.state == SKIPPED:
                     with contextlib.suppress(Exception):
-                        await self.clock.await_fresh(inbox.mark_seen(uid))
+                        await self._imap(inbox, inbox.mark_seen(uid))
                     continue
-                await self.finish(http, item, inbox)
+                if item.state in {DISCOVERED, SUBMITTED, COMPLETED, POSTED}:
+                    self._spawn_item(http, item, inbox)
             except StaleConnection:
                 raise
             except Exception as error:  # noqa: BLE001 — one bad mail must not stop IDLE
@@ -426,19 +467,24 @@ class MailService:
                     exc_info=True,
                 )
 
+    async def _finish_one(self, http, item: MailItem, inbox: Inbox | None) -> None:
+        try:
+            await self.finish(http, item, inbox)
+        except StaleConnection:
+            self._stale.set()
+            if inbox is not None:
+                inbox.request_wake()
+        except Exception as error:  # noqa: BLE001
+            logger.warning(
+                "mail job failed",
+                extra=log_fields(error, item=item.id, state=item.state),
+                exc_info=True,
+            )
+
     async def resume(self, http, inbox: Inbox | None) -> None:
         for item in self.store.incomplete():
             self._guard()
-            try:
-                await self.finish(http, item, inbox)
-            except StaleConnection:
-                raise
-            except Exception as error:  # noqa: BLE001
-                logger.warning(
-                    "mail resume failed",
-                    extra=log_fields(error, item=item.id, state=item.state),
-                    exc_info=True,
-                )
+            self._spawn_item(http, item, inbox)
 
 
 def _opening_text_from_item(item: MailItem, *, first: bool) -> str:
@@ -514,12 +560,15 @@ async def run(configuration: Optional[EmailConfiguration] = None) -> int:
                         await clock.await_fresh(inbox.connect())
                         await service.drain(http, inbox)
                         while True:
-                            await inbox.idle_until_exists()
-                            if clock.jumped():
+                            if service._stale.is_set():
                                 raise StaleConnection("the host slept or the clock jumped")
-                            await clock.await_fresh(inbox.noop())
+                            await inbox.idle_until_exists()
+                            if service._stale.is_set() or clock.jumped():
+                                raise StaleConnection("the host slept or the clock jumped")
+                            await service._imap(inbox, inbox.noop())
                             await service.drain(http, inbox)
                     finally:
+                        await service.cancel_work()
                         await inbox.close()
                 delay = 1.0
             except asyncio.CancelledError:

@@ -10,10 +10,10 @@ This is not XMPP and not the GitHub mention Action. GitHub mentions run the libr
 2. A new UNSEEN message from an allowlisted sender is fetched. Automatic replies, bounces, and mail from the mailbox itself are ignored.
 3. `email-reply-parser` keeps this message's body and drops the quoted thread. HTML-only mail is reduced with `markdownify` first.
 4. The thread is keyed as `email:{mailbox}:{root-message-id}` from `References` / `In-Reply-To` / `Message-ID`. That key maps to one daemon session, stored under `$XDG_DATA_HOME/langmesh/mail-threads.sqlite`.
-5. `session.create` mints the session on the first mail in a thread (`permission_mode: automatic` by default). Later mail on the same thread reuses it. `session.send` with `serialize: true` waits for any in-flight turn, then starts this email as its own turn.
+5. `session.create` mints the session on the first mail in a thread (`permission_mode: automatic` by default). Later mail on the same thread reuses it. IDLE keeps running while a turn is in flight: a follow-up on a live session is steered into that turn; a mail that arrives when the session is idle starts a new turn.
 6. When the turn ends, `aiosmtplib` sends the assistant's visible text as an in-thread SMTP reply (`In-Reply-To` and `References` set).
 
-Later mail waits in the inbox until the current message for that thread is finished. A different thread can be next in the drain; one IMAP session fetches serially so FETCH never races IDLE.
+Later mail is discovered by IDLE, not by polling from inside a turn. A different thread can run at the same time; one IMAP connection fetches only between IDLEs.
 
 ## Pause, idle, reboot
 
@@ -21,7 +21,7 @@ Cheap VPS hosts suspend. Containers get paused or replaced. The mail client is w
 
 - Every inbound message is a sqlite job under `$XDG_DATA_HOME/langmesh/mail-threads.sqlite` **before** IMAP `\Seen` is set. UNSEEN is only how new mail is found. The file uses DELETE journaling so a volume snapshot of that path is the whole job queue (no `-wal` sidecar).
 - Jobs move `discovered → submitted → completed → posted → seen`. A crash or freeze leaves the job on disk; the next start continues from that step, including **before** IMAP is up. SMTP reuses the same `Message-ID` so a retried send is the same mail.
-- `session.send` carries a stable client `messageId` and `serialize: true`. The daemon will not start a second copy of a message it already accepted, and it will not steer this mail into some other turn. Each email is its own turn, taken when the session is free.
+- `session.send` carries a stable client `messageId`. If the session is already working, the mail is steered into that turn; otherwise it starts a new one. A crash cannot duplicate a message the daemon already accepted. Reply text is harvested only from the turn that took that mail.
 - A mapped thread is never replaced just because the daemon was restarting or the unix socket was stale. Only `session.get` saying the session ended (or does not exist) mints a new one.
 - If the daemon itself died mid-turn, the turn is interrupted and marked retryable. Mail calls `session.retry` rather than pasting the user text again. Reply text is taken only from that mail's turn, never from a neighbour.
 - IMAP, SMTP, and daemon sockets are not trusted across a suspend: TCP keepalive, a boot-time/monotonic clock check every two seconds, and a NOOP after every IDLE. `clock.note()` is only used after a **new** connect, so a freeze during IDLE cannot be swallowed. systemd units use `Restart=always` and `TimeoutStopSec=60`. A container must mount `/srv/langmesh/xdg` as a volume so the job file and the daemon history survive. The entrypoint unlinks a stale daemon socket left on that volume.
