@@ -1,1 +1,1 @@
-Got it — I'll update this comment when I'm done.
+Got it — I'll update this comment as I make progress.
