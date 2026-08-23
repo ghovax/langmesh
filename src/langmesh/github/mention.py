@@ -61,6 +61,7 @@ STATE_DIRECTORY = ".github/langmesh"
 BRANCH_RECORD = "branch"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 ACKNOWLEDGEMENT = "Got it — I'll update this comment when I'm done."
+ACK_COMMENT_ENV = "LANGMESH_ACK_COMMENT_ID"
 TURN_FAILED = (
     "Something went wrong while I was working on this. "
     "The details are in the Action log."
@@ -544,6 +545,20 @@ def fetch_pull(repository: str, number: int, token: str, api: str) -> dict[str, 
     return _api_request(f"{api}/repos/{repository}/pulls/{number}", token)
 
 
+def acknowledgement_id(environ: Mapping[str, str] | None = None) -> int | None:
+    """Comment id posted by the workflow before this process started, if any."""
+    raw = ((environ or os.environ).get(ACK_COMMENT_ENV) or "").strip()
+    return int(raw) if raw.isdigit() else None
+
+
+def delete_comment(repository: str, comment_id: int, token: str, api: str) -> None:
+    _api_request(
+        f"{api}/repos/{repository}/issues/comments/{comment_id}",
+        token,
+        method="DELETE",
+    )
+
+
 def create_comment(repository: str, number: int, text: str, token: str, api: str) -> int:
     record = _api_request(
         f"{api}/repos/{repository}/issues/{number}/comments",
@@ -650,6 +665,18 @@ async def run_turn(mention: Mention, workspace: Path, *, checkout: Checkout) -> 
         return (reply.comment or "").strip()
 
 
+def drop_acknowledgement(
+    repository: str, comment_id: int | None, token: str, api: str
+) -> None:
+    """Remove a workflow-posted ack when this process will not answer the mention."""
+    if not comment_id:
+        return
+    try:
+        delete_comment(repository, comment_id, token, api)
+    except Exception:
+        logger.exception("could not delete acknowledgement comment %s", comment_id)
+
+
 def main() -> None:
     configure_logging()
     event_path = os.environ["GITHUB_EVENT_PATH"]
@@ -658,8 +685,10 @@ def main() -> None:
     token = os.environ.get("GITHUB_TOKEN", "")
     api = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
     event = json.loads(Path(event_path).read_text())
+    comment_id = acknowledgement_id()
     mention = mention_from_event(event, repository=repository)
     if mention is None:
+        drop_acknowledgement(repository, comment_id, token, api)
         return
     if mention.kind == "pull" and not mention.head_ref:
         mention = mention_from_event(
@@ -668,9 +697,11 @@ def main() -> None:
             pull=fetch_pull(repository, mention.number, token, api),
         )
         if mention is None:
+            drop_acknowledgement(repository, comment_id, token, api)
             return
     if not mention.allowed:
         logger.info("ignoring mention from %s (%s)", mention.user, mention.association)
+        drop_acknowledgement(repository, comment_id, token, api)
         return
     logger.info(
         "mention %s %s#%s by %s",
@@ -679,11 +710,11 @@ def main() -> None:
         mention.number,
         mention.user,
     )
-    comment_id: int | None = None
-    try:
-        comment_id = create_comment(repository, mention.number, ACKNOWLEDGEMENT, token, api)
-    except Exception:
-        logger.exception("could not post acknowledgement")
+    if comment_id is None:
+        try:
+            comment_id = create_comment(repository, mention.number, ACKNOWLEDGEMENT, token, api)
+        except Exception:
+            logger.exception("could not post acknowledgement")
     try:
         model_identifier_from_env()
     except ValueError as error:
