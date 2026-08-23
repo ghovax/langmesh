@@ -35,8 +35,9 @@ def artifact_name(event: dict) -> str:
 def _gh(*arguments: str, output: Path | None = None) -> str:
     command = ["gh", "api", "-H", "Accept: application/vnd.github+json", *arguments]
     if output is not None:
-        command.extend(["--output", str(output)])
-        subprocess.check_call(command)
+        # Runner ``gh`` has no ``--output``; write the body (the zip) to stdout.
+        with output.open("wb") as handle:
+            subprocess.check_call(command, stdout=handle)
         return ""
     return subprocess.check_output(command, text=True)
 
