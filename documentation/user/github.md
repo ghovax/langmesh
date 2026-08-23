@@ -17,7 +17,7 @@ The left-hand side of `LANGMESH_MODEL` is a LangMesh provider name (`anthropic`,
 - Only **owners**, **members**, and **collaborators** are answered. Other comments are ignored.
 - Pull requests from forks are ignored.
 - Two mentions on the same thread wait their turn rather than overlapping.
-- `@langmesh` on an **issue** does the work. If files will change, the agent creates `langmesh/<name>-<4hex>` itself (`git checkout -b`). The Action then commits, pushes, and opens a **draft** pull request. A later mention on that issue continues that draft. The Action never marks it ready — a person does that.
+- `@langmesh` on an **issue** does the work. If files will change, the agent looks at existing branches and open pull requests first and reuses one that already is this issue's work. Only when nothing fits does it create `langmesh/<descriptive-name>-<four-hex-digits>` itself. The Action then commits, pushes, and opens a **draft** pull request. A later mention on that issue continues that draft. The Action never marks it ready — a person does that.
 - `@langmesh` on a **pull request** does the work on that PR's own branch and pushes commits. It does not open a second PR and does not change whether the PR is a draft.
 - It never pushes `main` or `master`. Tool children cannot `git push`; the job is the only publisher.
 - Tool calls run unattended (`automatic`). Network is off for shell children; the GitHub token is never written into the checkout.

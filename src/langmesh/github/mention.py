@@ -3,7 +3,8 @@
 The daemon is not involved. Follow-up mentions on the same issue or pull request restore
 the saved session. The process may use GitHub's token; tool children cannot, because
 confinement strips it from their environment and credentials are never written into the
-checkout. On a new issue the agent creates ``langmesh/<name>-<code>`` itself; the wrapper
+checkout. On an issue the agent reuses a branch that already is this work when one exists,
+otherwise creates ``langmesh/<name>-<code>`` itself; the wrapper
 commits, pushes, and opens a draft. On a pull request, file edits are pushed to that
 branch. Never to main.
 """
@@ -207,11 +208,15 @@ def publication_note(mention: Mention, *, branch: str = "", resumed: bool = Fals
             "It stays a draft until a person marks it ready."
         )
     return (
-        "If you will edit files, create the branch yourself first with "
-        "`git checkout -b langmesh/<short-kebab-name>-<4hex>` — you choose a clear name and "
-        "four hex digits, for example `langmesh/fix-auth-a3f2`. Do not stay on the default branch. "
-        "A wrapper then commits, pushes, and opens a draft pull request. "
-        "It stays a draft until a person marks it ready."
+        "If you will edit files, inspect existing branches in this checkout first "
+        "(`git branch -a`) and reuse one that already is this issue's work — including a "
+        "remote-tracking branch, even when its name does not follow the rule below. Create a "
+        "branch only when nothing existing fits. When you do create one, name it "
+        "`langmesh/<descriptive-name>-<four-hex-digits>`: the `langmesh/` prefix; a name that "
+        "states the work in full (lowercase, hyphen-separated words, as many as that takes); "
+        "a hyphen; four hexadecimal digits. Do not stay on the default branch. A wrapper then "
+        "commits, pushes, and opens a draft pull request. It stays a draft until a person "
+        "marks it ready."
     )
 
 
@@ -344,7 +349,7 @@ def open_issue_head(mention: Mention, *, run: Run, cwd: str) -> str:
 
 
 def prepare_tree(mention: Mention, workspace: Path, *, token: str, run: Run = _run) -> Checkout:
-    """Check out an existing thread branch, or the default branch so the agent can create one."""
+    """Check out an existing thread branch, or the default branch so the agent can choose."""
     cwd = str(workspace)
     header = _git_header(token)
     run(["git", "fetch", "origin", "--prune"], cwd=cwd, extraheader=header)
