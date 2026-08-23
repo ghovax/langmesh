@@ -32,5 +32,8 @@ wheels/
 # the runtime .langmesh/configuration.yaml holds real credentials, so it is ignored.
 /.langmesh/
 
+# Session checkpoints for the GitHub mention Action, restored by the workflow cache.
+/.langmesh-github/
+
 # Command Code's per-workspace agent settings (permissions, taste) — personal tooling state.
 /.commandcode/
