@@ -54,6 +54,8 @@ from langmesh.runtime.plugins.web import Web
 
 MENTION = "@langmesh[bot]"
 MENTION_ALIASES = (MENTION, "@langmesh")
+# `LangMesh` cannot be a GitHub App (reserved for @langmesh). Accept @langmesh-…[bot].
+_HYPHENATED_BOT = re.compile(r"@langmesh-[\w-]+\[bot\](?![\w-])", re.IGNORECASE)
 ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 STATE_DIRECTORY = ".github/langmesh"
 BRANCH_RECORD = "branch"
@@ -144,12 +146,16 @@ def mention_handles() -> tuple[str, ...]:
 
 
 def mentioned(body: str) -> bool:
-    """Whether the comment addressed the bot, not some longer `@langmesh…` login."""
+    """Whether the comment addressed the bot, not some longer `@langmesh…` login.
+
+    `@langmesh-agent[bot]` and other `@langmesh-…[bot]` slugs count even when
+    ``LANGMESH_MENTION`` is unset, because ``LangMesh`` itself cannot be an App.
+    """
     text = body.lower()
     for handle in mention_handles():
         if re.search(re.escape(handle.lower()) + r"(?![\w-])", text):
             return True
-    return False
+    return _HYPHENATED_BOT.search(text) is not None
 
 
 def run_log_url() -> str:
