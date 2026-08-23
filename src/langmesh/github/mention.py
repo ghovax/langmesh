@@ -765,6 +765,18 @@ async def run_turn(
         )
         await session.set_permission_mode("automatic")
         await session.ask(prompt_for(mention, checkout=checkout, followup=followup))
+        usage = session.runtime.token_usage
+        prompt = int(usage.get("input_tokens", 0) or 0)
+        cached = int(usage.get("cache_read_tokens", 0) or 0)
+        hit = (100.0 * cached / prompt) if prompt else 0.0
+        logger.info(
+            "mention usage calls=%d input=%d cached=%d hit=%.1f%% output=%d",
+            int(usage.get("model_calls", 0) or 0),
+            prompt,
+            cached,
+            hit,
+            int(usage.get("output_tokens", 0) or 0),
+        )
         return (reply.comment or "").strip()
 
 
