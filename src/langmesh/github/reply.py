@@ -20,8 +20,6 @@ from langmesh.runtime.features import Feature, PluginContext
 from langmesh.runtime.tools.execution import current_tool_services
 from langmesh.runtime.values import ToolStatus
 
-TOOL_NAME = "submit_github_comment"
-REMINDER_LIMIT = 3
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 
 
@@ -49,8 +47,8 @@ async def _submit_github_comment(**arguments: Any) -> str:
 
 submit_github_comment = StructuredTool.from_function(
     coroutine=_submit_github_comment,
-    name=TOOL_NAME,
-    description=_PROMPTS.load(TOOL_NAME, {}).strip(),
+    name="submit_github_comment",
+    description=_PROMPTS.load("submit_github_comment", {}).strip(),
     args_schema=GitHubComment,
 )
 
@@ -78,13 +76,13 @@ class GitHubReply(Feature):
         if context is None:
             return [submit_github_comment]
         declared = getattr(context.agent_configuration, "tools_enabled", None) or []
-        return [submit_github_comment] if TOOL_NAME in declared else []
+        return [submit_github_comment] if "submit_github_comment" in declared else []
 
     def should_complete_turn(self) -> bool:
         return self._comment is not None
 
     def incomplete_reminder(self) -> str | None:
-        if self._comment is not None or self._reminders >= REMINDER_LIMIT:
+        if self._comment is not None or self._reminders >= 3:
             return None
         self._reminders += 1
         return _PROMPTS.load("github_comment_missing", {}).strip()
@@ -94,7 +92,5 @@ __all__ = [
     "GitHubComment",
     "GitHubReply",
     "GitHubReplyCapability",
-    "REMINDER_LIMIT",
-    "TOOL_NAME",
     "submit_github_comment",
 ]

@@ -9,8 +9,6 @@ from typing import Any
 import pytest
 
 from langmesh.github.mention import (
-    KEEP_RECENT_TURNS,
-    MENTION_TOOLS,
     Mention,
     api_key_for,
     current_branch,
@@ -23,13 +21,7 @@ from langmesh.github.mention import (
     render,
     tree_is_dirty,
 )
-from langmesh.github.reply import (
-    REMINDER_LIMIT,
-    TOOL_NAME,
-    GitHubReply,
-    GitHubReplyCapability,
-    submit_github_comment,
-)
+from langmesh.github.reply import GitHubReply, GitHubReplyCapability, submit_github_comment
 from langmesh.runtime.features.seam import Feature, Features
 from langmesh.runtime.plugins.compaction import Compaction, KeepRecentTurns
 from langmesh.runtime.tools.execution import ToolServices, bind_tool_services, unbind_tool_services
@@ -155,8 +147,11 @@ def test_system_prompt_comes_from_markdown() -> None:
 def test_posted_reply_uses_short_strings_in_code() -> None:
     assert posted_reply("") == "Done."
     assert posted_reply("  All green.  ") == "All green."
-    assert posted_reply("All green.", "https://example.test/pr") == (
-        "All green.\n\nhttps://example.test/pr"
+    assert (
+        posted_reply("All green.", "https://example.test/pr")
+        == """All green.
+
+https://example.test/pr"""
     )
 
 
@@ -311,11 +306,10 @@ def test_mention_keeps_recent_turns_and_the_reply_plugin() -> None:
         def __init__(self, count: int) -> None:
             self.messages = [None] * count
 
-    assert not strategy.should_compact(Window(KEEP_RECENT_TURNS * 2))
-    assert strategy.should_compact(Window(KEEP_RECENT_TURNS * 2 + 1))
+    assert not strategy.should_compact(Window(48))
+    assert strategy.should_compact(Window(49))
     assert reply in features
-    assert TOOL_NAME in MENTION_TOOLS
-    assert reply.contribute_tools()[0].name == TOOL_NAME
+    assert reply.contribute_tools()[0].name == "submit_github_comment"
 
 
 def test_github_reply_collects_the_comment_and_does_not_snapshot_it() -> None:
@@ -334,7 +328,7 @@ def test_github_reply_reminds_until_the_comment_is_submitted() -> None:
     first = reply.incomplete_reminder()
     assert first is not None
     assert "submit_github_comment" in first
-    for _ in range(REMINDER_LIMIT - 1):
+    for _ in range(2):
         assert reply.incomplete_reminder()
     assert reply.incomplete_reminder() is None
     features = Features([reply])
