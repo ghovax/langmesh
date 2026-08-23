@@ -60,8 +60,6 @@ jobs:
           enable-cache: true
       - uses: actions/cache/restore@v4
         if: steps.ack.outputs.start == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path: .venv
           key: langmesh-venv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
@@ -69,8 +67,6 @@ jobs:
             langmesh-venv-${{ runner.os }}-
       - uses: actions/cache/restore@v4
         if: steps.ack.outputs.start == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path: .github/langmesh
           key: langmesh-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}-${{ github.run_id }}
@@ -91,15 +87,11 @@ jobs:
           LANGMESH_GIT_EMAIL: ${{ steps.app.outcome == 'success' && format('{0}+{1}[bot]@users.noreply.github.com', env.LANGMESH_APP_ID, steps.app.outputs.app-slug) || '41898282+github-actions[bot]@users.noreply.github.com' }}
       - uses: actions/cache/save@v4
         if: ${{ always() && hashFiles('.venv/pyvenv.cfg') != '' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path: .venv
           key: langmesh-venv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
       - uses: actions/cache/save@v4
         if: ${{ always() && hashFiles('.github/langmesh/session.sqlite') != '' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path: .github/langmesh
           key: langmesh-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}-${{ github.run_id }}
