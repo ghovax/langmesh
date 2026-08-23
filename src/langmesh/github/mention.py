@@ -28,12 +28,10 @@ from typing import Any, Callable, Mapping, Protocol
 
 from langmesh import (
     AgentConfiguration,
-    BashToolConfiguration,
     SandboxConfiguration,
     Session,
     SessionComponents,
     SQLiteCheckpoints,
-    ToolsConfiguration,
 )
 from langmesh.base.confinement import Profile
 from langmesh.base.content.models import split_model_identifier
@@ -49,6 +47,7 @@ from langmesh.runtime.plugins.compaction import (
     KeepRecentTurns,
 )
 from langmesh.runtime.plugins.continuation import Continuation
+from langmesh.runtime.plugins.permission_reviewer import PermissionReviewer
 from langmesh.runtime.plugins.permissions import PermissionReview
 from langmesh.runtime.plugins.web import Web
 
@@ -721,16 +720,20 @@ class UncommittedChanges(Feature):
 def mention_features(reply: GitHubReply, workspace: Path) -> list[Feature]:
     """The plugins one mention session runs, including the comment tool.
 
-    ``PermissionReview`` is what bash asks for after a confinement denial. There is
-    no automatic reviewer: the session runs in ``allow``, so calls are not gated.
+    The session is ``automatic``: a call that stays inside the box runs, and a call
+    that leaves it or matches a destructive bash rule is decided by the reviewer.
+    Ordinary ``git`` and ``gh`` on the topic branch do not raise a gate — network and
+    the job token are already in the box.
     """
+    reviewer = PermissionReviewer()
     return [
         Compaction(
             strategy=KeepRecentTurns(24),
             preparation=DirectCompactionPreparation(),
             summarizer=None,
         ),
-        PermissionReview(),
+        PermissionReview(reviewer=reviewer),
+        reviewer,
         Continuation(),
         BackgroundJobsFeature(),
         Bash(),
@@ -753,7 +756,7 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply, token: str) 
         system_prompt=render("system"),
         provider=provider,
         model=model,
-        permission_mode="allow",
+        permission_mode="automatic",
         tools_enabled=[
             "bash",
             "search_web",
@@ -763,20 +766,12 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply, token: str) 
             "update_tasks",
             "submit_github_comment",
         ],
-        tools=ToolsConfiguration(
-            bash=BashToolConfiguration(
-                permissions={
-                    pattern: "allow"
-                    for pattern in BashToolConfiguration.DESTRUCTIVE_DEFAULTS
-                }
-            )
-        ),
     )
     return Session(
         agent,
         directory=str(workspace),
         session_id=mention.session_id,
-        permission_mode="allow",
+        permission_mode="automatic",
         sandbox=mention_sandbox(token),
         providers={provider: key} if key else None,
         components=SessionComponents(
@@ -801,7 +796,7 @@ async def run_turn(
 
     reply = GitHubReply(publish=publish_working if publish is not None else None)
     async with _session(mention, workspace, reply, token) as session:
-        await session.set_permission_mode("allow")
+        await session.set_permission_mode("automatic")
         await session.ask(prompt_for(mention, checkout=checkout))
         return (reply.comment or "").strip()
 
