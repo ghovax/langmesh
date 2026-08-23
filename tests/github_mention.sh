@@ -23,7 +23,10 @@ git -c init.defaultBranch=main clone "$origin" "$work"
 git -C "$work" config user.name test
 git -C "$work" config user.email test@test
 printf 'base\n' > "$work/README"
-git -C "$work" add README
+printf '.github/langmesh/\n' > "$work/.gitignore"
+mkdir -p "$work/.github/workflows"
+printf 'name: ci\n' > "$work/.github/workflows/ci.yml"
+git -C "$work" add README .gitignore .github/workflows/ci.yml
 git -C "$work" commit -m init
 git -C "$work" push -u origin main
 git -C "$work" checkout -b feature
@@ -47,11 +50,16 @@ from pathlib import Path
 from langmesh.github.mention import tree_is_dirty
 
 work = Path(os.environ["LANGMESH_WORKSPACE"])
-(work / ".langmesh-github").mkdir(parents=True)
-(work / ".langmesh-github" / "session.sqlite").write_text("ckpt\n")
+(work / ".github" / "langmesh").mkdir(parents=True)
+(work / ".github" / "langmesh" / "session.sqlite").write_text("ckpt\n")
 if tree_is_dirty(work):
     raise SystemExit("state directory alone must not look dirty")
+(work / ".github" / "workflows" / "ci.yml").write_text("name: dirty\n")
+if not tree_is_dirty(work):
+    raise SystemExit("a workflow edit under .github must still look dirty")
 PY
+git -C "$work" reset -q
+git -C "$work" checkout -- .github/workflows/ci.yml
 
 printf 'edit\n' > "$work/README"
 "${python[@]}" - <<'PY'
@@ -97,9 +105,10 @@ if grep -R --exclude-dir=.git -q "secret-token" "$work"; then
   fail "token leaked into the checkout"
 fi
 
-mkdir -p "$work/.langmesh-github"
-printf 'ckpt\n' > "$work/.langmesh-github/session.sqlite"
+mkdir -p "$work/.github/langmesh"
+printf 'ckpt\n' > "$work/.github/langmesh/session.sqlite"
 printf 'done\n' >> "$work/feat.txt"
+printf 'name: noted\n' > "$work/.github/workflows/ci.yml"
 "${python[@]}" - <<'PY'
 import os
 from pathlib import Path
@@ -124,9 +133,10 @@ if publish_changes(mention, work, token="") != "":
     raise SystemExit("a pull mention must not create a pull request")
 PY
 [[ "$(git -C "$work" log -1 --format=%s)" == "langmesh: Flaky test" ]] || fail "commit message was not inline"
-if git -C "$work" ls-tree -r --name-only HEAD | grep -q '^\.langmesh-github/'; then
+if git -C "$work" ls-tree -r --name-only HEAD | grep -q '^\.github/langmesh/'; then
   fail "session state was committed"
 fi
+git -C "$work" show HEAD:.github/workflows/ci.yml | grep -q 'name: noted' || fail "workflow edit under .github was not committed"
 git -C "$origin" rev-parse --verify feature >/dev/null
 
 git -C "$work" checkout main

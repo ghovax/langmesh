@@ -33,7 +33,7 @@ wheels/
 /.langmesh/
 
 # Session checkpoints for the GitHub mention Action, restored by the workflow cache.
-/.langmesh-github/
+/.github/langmesh/
 
 # Command Code's per-workspace agent settings (permissions, taste) — personal tooling state.
 /.commandcode/
