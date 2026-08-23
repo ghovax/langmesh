@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Mapping, Mapping
+from typing import Any, Mapping
 
 from langmesh.base.configuration import BashToolConfiguration
 from langmesh.base.identity.providers import PROVIDERS, provider_env_vars, resolve_api_key
