@@ -182,6 +182,6 @@ its approvals, and it is reachable from anywhere you can reach the daemon.
 - The daemon is the single process that needs to stay up; everything else (the app, `serve`) is a
   client you can close and reopen.
 
-## `@langmesh` on GitHub
+## `@langmesh[bot]` on GitHub
 
-An issue or pull-request comment that mentions `@langmesh` can run the library in a GitHub Action. On an issue it can open a draft pull request; on a pull request it updates that branch. Set `LANGMESH_MODEL` to `provider/model` and `LANGMESH_API_KEY` to that provider's key. See [GitHub mentions](github.md).
+An issue or pull-request comment that mentions `@langmesh[bot]` (or `@langmesh`) can run the library in a GitHub Action. On an issue it can open a draft pull request; on a pull request it updates that branch. Set `LANGMESH_MODEL` to `provider/model` and `LANGMESH_API_KEY` to that provider's key. See [GitHub mentions](github.md).
