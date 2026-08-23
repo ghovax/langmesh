@@ -57,7 +57,7 @@ email:
     password: ""
 ```
 
-Gmail needs an [app password](https://support.google.com/accounts/answer/185833) and IMAP enabled. The client fills `imap.gmail.com` / `smtp.gmail.com` from a `gmail.com` address. Fastmail, Outlook, Yahoo, and iCloud (`icloud.com` / `me.com`) are the same. Do not commit the password.
+Gmail needs an [app password](https://support.google.com/accounts/answer/185833) and IMAP enabled. The client fills `imap.gmail.com` / `smtp.gmail.com` from a `gmail.com` address. Fastmail, Outlook, Yahoo, and iCloud (`icloud.com` / `me.com`) are the same. A Gmail plus-address (`agent+mail@gmail.com`) still authenticates as the account without `+mail`. SMTP port `465` uses implicit TLS. Do not commit the password.
 
 ```sh
 uv run langmesh mail
@@ -65,16 +65,22 @@ uv run langmesh mail
 
 `mail` starts `langmeshd` when it is not listening, then IDLEs. If the mailbox is not configured yet, it waits and re-reads the file instead of exiting. Logs go to stderr and `$XDG_STATE_HOME/langmesh/langmesh-mail.log`.
 
-On a VPS, copy `packaging/mail/mail.env.example` to `mail.env`, fill it, and load it with `xargs` so `install.sh` sees the same variables systemd will:
+On a VPS, copy `packaging/mail/mail.env.example` to `mail.env`, fill it, and point `install.sh` at that file so systemd gets every key (including extra provider keys) rather than a reconstructed subset:
 
 ```sh
 cp packaging/mail/mail.env.example mail.env
 chmod 600 mail.env
 # edit mail.env
-sudo env $(grep -vE '^(#|$)' mail.env | xargs -d '\n') packaging/mail/install.sh
+sudo env LANGMESH_MAIL_ENV="$PWD/mail.env" packaging/mail/install.sh
 ```
 
-`install.sh` writes `/srv/langmesh/mail.env` as the systemd `EnvironmentFile` and enables `langmeshd` and `langmesh-mail`. GNU `xargs -d '\n'` keeps values that contain spaces. Filling `mail.env` and re-running that command refreshes `/srv/langmesh/mail.env`; it does not keep a previous empty file. Then send mail to `email.address` from an allowlisted From. Progress and the reply arrive in that thread; a further reply — including a reply to a progress note — continues the same session with only the new body.
+To load the same file into a one-off command without a multiline `sudo VAR=...` list, pipe it through `xargs` so each `KEY=value` line stays one argument:
+
+```sh
+grep -vE '^(#|$)' mail.env | xargs -d '\n' env uv run langmesh mail
+```
+
+`install.sh` copies `mail.env` to `/srv/langmesh/mail.env` as the systemd `EnvironmentFile` and enables `langmeshd` and `langmesh-mail`. Filling `mail.env` and re-running the `LANGMESH_MAIL_ENV` command refreshes that file. Then send mail to `email.address` from an allowlisted From. Progress and the reply arrive in that thread; a further reply — including a reply to a progress note — continues the same session with only the new body.
 
 ## What you still have to supply
 
@@ -82,11 +88,11 @@ The mail client cannot create a mailbox, a DNS name, or a cloud VM by itself. Af
 
 1. **Mailbox credentials.** An address the daemon can IDLE and SMTP from, plus an app password (not the ordinary login) with IMAP enabled. Put them in `mail.env` as `LANGMESH_MAIL_ADDRESS` and `LANGMESH_MAIL_PASSWORD`.
 2. **Allowlisted From.** Your address in `LANGMESH_MAIL_ALLOW_FROM` (comma-separated, or `@domain`).
-3. **Provider key.** The key the `reviewer` profile (or `LANGMESH_MAIL_AGENT`) can use: `OPENCODE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, and so on. The daemon reads the same `mail.env`.
+3. **Provider key.** The key the `reviewer` profile (or `LANGMESH_MAIL_AGENT`) can use. The bundled reviewer talks to OpenCode Zen, so that is `OPENCODE_API_KEY` unless you change `email.agent`. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, and so on also work for those providers. The daemon reads the same `mail.env`.
 4. **A host that stays up**, with `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) persisted across replace. Choose one:
    - You already have a Linux VPS: copy this checkout there, fill `mail.env`, run the `install.sh` command above.
-   - Fly.io: set `FLY_API_TOKEN` (and `LANGMESH_MAIL_ENV=mail.env`) and run `packaging/mail/provision.sh`. The script creates the app, a persistent `langmesh_xdg` volume, imports secrets, and deploys from the checkout root.
-   - Hetzner or DigitalOcean: set `HCLOUD_TOKEN` (with `hcloud` on PATH) or `DIGITALOCEAN_ACCESS_TOKEN` (with `doctl` on PATH), plus `LANGMESH_MAIL_ENV`. Or set `LANGMESH_VPS_HOST` to SSH into a machine you already have.
+   - Fly.io: set `FLY_API_TOKEN` (and `LANGMESH_MAIL_ENV=mail.env`) and run `packaging/mail/provision.sh`. The script creates the app, a persistent `langmesh_xdg` volume, imports secrets (comments and empty lines stripped), and deploys from the checkout root.
+   - Hetzner or DigitalOcean: set `HCLOUD_TOKEN` (with `hcloud` on PATH) and `LANGMESH_HCLOUD_SSH_KEY`, or `DIGITALOCEAN_ACCESS_TOKEN` (with `doctl` on PATH), plus `LANGMESH_MAIL_ENV`. Or set `LANGMESH_VPS_HOST` to SSH into a machine you already have.
 5. **DNS**, only if the mailbox should live on a domain you own. A Gmail/Fastmail/iCloud address does not need this.
 
 The daemon still binds loopback. Mail never exposes the capability token. Do not publish `langmeshd`'s port on the public internet; SSH or Tailscale if you also want the app. Persist `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) across VM and container replacement, or in-flight mail cannot resume.

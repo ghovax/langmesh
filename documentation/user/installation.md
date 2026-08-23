@@ -185,14 +185,15 @@ Mail is a second long-running client, not a second daemon. `langmesh mail` IDLEs
 mailbox, strips quoted reply history, and drives `session.create` / `session.send` on loopback.
 Replies go out over SMTP in the same thread. See [Email](email.md). On a VPS, install both
 systemd units so the mail client comes back with the daemon. Copy `packaging/mail/mail.env.example`
-to `mail.env`, fill it, and load it with `xargs` rather than a multiline `sudo VAR=...` invocation:
+to `mail.env`, fill it, and point `install.sh` at that file rather than a multiline `sudo VAR=...`
+invocation:
 
 ```sh
-sudo env $(grep -vE '^(#|$)' mail.env | xargs -d '\n') packaging/mail/install.sh
+sudo env LANGMESH_MAIL_ENV="$PWD/mail.env" packaging/mail/install.sh
 ```
 
-The script writes `/etc/systemd/system/langmeshd.service` and `langmesh-mail.service`, then
-enables them. The same command refreshes `/srv/langmesh/mail.env` from the values in `mail.env`.
+The script writes `/etc/systemd/system/langmeshd.service` and `langmesh-mail.service`, copies
+`mail.env` to `/srv/langmesh/mail.env`, then enables them. The same command refreshes that file.
 
 ### Keep it small
 
