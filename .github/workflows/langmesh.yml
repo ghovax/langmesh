@@ -1,4 +1,5 @@
-# @langmesh[bot] (also @langmesh) on an issue or pull request runs the library in this job.
+# @langmesh[bot] (also @langmesh), or a reply to the bot, on an issue or pull request
+# runs the library in this job. The ack step decides whether the comment is a turn.
 # A later mention on the same thread continues the saved session.
 # LANGMESH_MODEL is provider/model. LANGMESH_API_KEY is that provider's key.
 # Optional LANGMESH_APP_ID / LANGMESH_APP_PRIVATE_KEY post as langmesh[bot].
@@ -30,9 +31,6 @@ jobs:
       && (github.event.comment.author_association == 'OWNER'
         || github.event.comment.author_association == 'MEMBER'
         || github.event.comment.author_association == 'COLLABORATOR')
-      && (contains(github.event.comment.body, '@langmesh')
-        || startsWith(github.event.comment.body, '>')
-        || github.event.comment.in_reply_to_id)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # Step `if:` cannot read `secrets`. Copy presence into env so the App token step is optional.
@@ -56,10 +54,12 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
         run: python3 src/langmesh/github/ack.py
       - uses: astral-sh/setup-uv@v6
+        if: steps.ack.outputs.start == 'true'
         with:
           python-version: "3.13"
           enable-cache: true
       - uses: actions/cache/restore@v4
+        if: steps.ack.outputs.start == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -68,6 +68,7 @@ jobs:
           restore-keys: |
             langmesh-venv-${{ runner.os }}-
       - uses: actions/cache/restore@v4
+        if: steps.ack.outputs.start == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -75,8 +76,10 @@ jobs:
           key: langmesh-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}-${{ github.run_id }}
           restore-keys: |
             langmesh-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}-
-      - run: uv sync --no-dev --frozen
-      - run: uv run --no-dev --frozen python -m langmesh.github
+      - if: steps.ack.outputs.start == 'true'
+        run: uv sync --no-dev --frozen
+      - if: steps.ack.outputs.start == 'true'
+        run: uv run --no-dev --frozen python -m langmesh.github
         env:
           LANGMESH_MODEL: ${{ vars.LANGMESH_MODEL }}
           LANGMESH_API_KEY: ${{ secrets.LANGMESH_API_KEY }}
