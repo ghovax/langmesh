@@ -191,8 +191,12 @@ sudo packaging/mail/install.sh
 ```
 
 The script writes `/etc/systemd/system/langmeshd.service` and `langmesh-mail.service`, then
-enables them. Mailbox secrets belong in the environment of `langmesh-mail.service` or in
-`configuration.yaml`; they must not be committed.
+enables them. Copy `packaging/mail/mail.env.example` to `mail.env`, fill it, and load it with
+`xargs` rather than a multiline `sudo VAR=...` invocation:
+
+```sh
+sudo env $(grep -vE '^(#|$)' mail.env | xargs -d '\n') packaging/mail/install.sh
+```
 
 ### Keep it small
 

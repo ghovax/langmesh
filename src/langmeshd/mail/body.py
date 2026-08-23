@@ -79,6 +79,18 @@ def _split_message_ids(value: str) -> list[str]:
     return found
 
 
+def in_reply_to_ids(message: Message) -> list[str]:
+    """Message-IDs named by In-Reply-To, in order."""
+    found: list[str] = []
+    seen: set[str] = set()
+    for raw in message.get_all("In-Reply-To", []):
+        for identifier in _split_message_ids(str(raw)):
+            if identifier not in seen:
+                seen.add(identifier)
+                found.append(identifier)
+    return found
+
+
 def referenced_ids(message: Message) -> list[str]:
     """Thread ancestors, oldest first: References, then In-Reply-To if it was missing."""
     ordered: list[str] = []
