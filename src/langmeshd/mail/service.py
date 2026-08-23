@@ -291,6 +291,26 @@ class MailService:
             injected=bool(outcome.get("injected")),
         )
 
+    async def _resume_submitted(self, http, item: MailItem) -> MailItem:
+        """Send again if the daemon lost this turn. The same messageId is idempotent."""
+        if not item.session_id:
+            return await self._submit(http, item)
+        status = await self._session_status(http, item.session_id)
+        if status in {"missing", "ended"}:
+            return await self._submit(http, item)
+        if await self._session_working(http, item.session_id):
+            return item
+        turns = await self._history(http, item.session_id)
+        matched = turn_for_client_message(turns, item.client_message_id)
+        if matched is not None and turn_failed(matched):
+            retried = await self._rpc(http, "session.retry", {"id": item.session_id})
+            if retried.get("retried") is True:
+                return item
+            return await self._submit(http, item)
+        if matched is None:
+            return await self._submit(http, item)
+        return item
+
     async def _post(self, item: MailItem) -> MailItem:
         mailbox = self.configuration.effective_address
         domain = mailbox.rsplit("@", 1)[-1] if "@" in mailbox else "langmesh.local"
@@ -333,6 +353,14 @@ class MailService:
         if current.state == SUBMITTED:
             await self._wait_until_idle(http, current)
             current = self.store.get(current.id) or current
+        if current.state == SUBMITTED:
+            async with self._lock_for(item.thread_key or item.id):
+                current = self.store.get(current.id) or current
+                if current.state == SUBMITTED:
+                    current = await self._resume_submitted(http, current)
+            if current.state == SUBMITTED:
+                await self._wait_until_idle(http, current)
+                current = self.store.get(current.id) or current
         if current.state == COMPLETED:
             current = await self._post(current)
         if current.state == POSTED:
@@ -480,8 +508,8 @@ def load_email_configuration() -> EmailConfiguration:
 
 def validate_ready(configuration: EmailConfiguration) -> str:
     """Why this configuration cannot run, or an empty string when it can."""
-    if not configuration.enabled:
-        return "email.enabled is false."
+    if not configuration.effective_enabled:
+        return "email.enabled is false (set email.enabled or LANGMESH_MAIL_ADDRESS)."
     if not configuration.effective_address:
         return "email.address (or LANGMESH_MAIL_ADDRESS) is required."
     if not configuration.effective_allow_from:

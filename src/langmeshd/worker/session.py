@@ -988,6 +988,11 @@ class SessionExecutor(AgentExecutor):
             permission_mode=self._permission_mode,
             plugin_tools=self._host.plugin_tools(),
         )
+        from langmeshd.features import mailbox_tools
+
+        for tool in mailbox_tools(session_id):
+            if all(getattr(existing, "name", "") != tool.name for existing in composed):
+                composed.append(tool)
         # The permission evaluator refuses what the profile did not declare, so the declared set is exactly the composed set.
         configuration = configuration.model_copy(
             update={"tools_enabled": sorted({tool.name for tool in composed})}

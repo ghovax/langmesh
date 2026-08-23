@@ -92,13 +92,9 @@ class EmailReply(Feature):
         session_id = getattr(getattr(self, "_context", None), "session_id", "")
         if not session_id:
             return False
-        from langmeshd.mail.threads import ThreadStore
+        from langmeshd.mail.threads import session_is_mailbox
 
-        store = ThreadStore()
-        try:
-            self._mail = bool(store.thread_key_for_session(session_id))
-        finally:
-            store.close()
+        self._mail = session_is_mailbox(session_id)
         return self._mail
 
     def compose_prompt(self, variables: dict[str, str]) -> None:
@@ -107,10 +103,16 @@ class EmailReply(Feature):
         variables["channel_guidance"] = _PROMPTS.load("channel_guidance", {}).strip()
 
     def contribute_tools(self) -> list:
+        """The mail tool, for a profile that declared it, or before attachment for discovery.
+
+        The daemon names `submit_email` in `tools_enabled` only for mailbox sessions, the same
+        way the GitHub embedder names `submit_github_comment`.
+        """
         context = getattr(self, "_context", None)
         if context is None:
             return [submit_email]
-        return [submit_email] if self._is_mail() else []
+        declared = getattr(context.agent_configuration, "tools_enabled", None) or []
+        return [submit_email] if "submit_email" in declared else []
 
     async def submit(self, body: str, *, kind: MailKind = "progress") -> None:
         from langmeshd.commons.configuration_file import load as load_document
