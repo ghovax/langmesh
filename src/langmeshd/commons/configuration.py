@@ -28,7 +28,24 @@ _MAIL_HOSTS: dict[str, tuple[str, str]] = {
     "live.com": ("outlook.office365.com", "smtp.office365.com"),
     "msn.com": ("outlook.office365.com", "smtp.office365.com"),
     "yahoo.com": ("imap.mail.yahoo.com", "smtp.mail.yahoo.com"),
+    "icloud.com": ("imap.mail.me.com", "smtp.mail.me.com"),
+    "me.com": ("imap.mail.me.com", "smtp.mail.me.com"),
+    "mac.com": ("imap.mail.me.com", "smtp.mail.me.com"),
 }
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    return int(raw)
 
 
 def _hosts_for(address: str) -> tuple[str, str]:
@@ -153,11 +170,7 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_agent(self) -> str:
-        return (
-            os.environ.get("LANGMESH_MAIL_AGENT", "").strip()
-            or self.agent.strip()
-            or "reviewer"
-        )
+        return os.environ.get("LANGMESH_MAIL_AGENT", "").strip() or self.agent.strip() or "reviewer"
 
     @property
     def effective_allow_from(self) -> list[str]:
@@ -214,3 +227,27 @@ class EmailConfiguration(AppConfigurationSection):
             or self.smtp.password
             or self.effective_imap_password
         )
+
+    @property
+    def effective_imap_port(self) -> int:
+        return _env_int("LANGMESH_MAIL_IMAP_PORT", self.imap.port)
+
+    @property
+    def effective_imap_ssl(self) -> bool:
+        return _env_bool("LANGMESH_MAIL_IMAP_SSL", self.imap.ssl)
+
+    @property
+    def effective_imap_mailbox(self) -> str:
+        return os.environ.get("LANGMESH_MAIL_IMAP_MAILBOX", "").strip() or self.imap.mailbox
+
+    @property
+    def effective_smtp_port(self) -> int:
+        return _env_int("LANGMESH_MAIL_SMTP_PORT", self.smtp.port)
+
+    @property
+    def effective_smtp_start_tls(self) -> bool:
+        return _env_bool("LANGMESH_MAIL_SMTP_STARTTLS", self.smtp.start_tls)
+
+    @property
+    def effective_smtp_use_tls(self) -> bool:
+        return _env_bool("LANGMESH_MAIL_SMTP_USE_TLS", self.smtp.use_tls)

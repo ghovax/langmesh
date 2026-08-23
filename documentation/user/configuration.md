@@ -403,18 +403,18 @@ IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same fil
 | `email.permission_mode` | string | `automatic` | Who answers gates for a mail session: `ask`, `automatic`, or `allow`. |
 | `email.idle_timeout_seconds` | number | `60.0` | How long one IMAP IDLE waits before cycling, so NAT and server idle limits cannot drop the socket silently. |
 | `email.turn_timeout_seconds` | number | `1800.0` | How long to wait for this mail's turn before giving up and retrying on the next reconnect. A timeout never invents a reply. |
-| `email.imap.host` | string | — | IMAP server. Inferred for Gmail, Fastmail, Outlook, and Yahoo from `email.address` when empty. LANGMESH_MAIL_IMAP_HOST wins over this. |
-| `email.imap.port` | integer | `993` | IMAP port. |
+| `email.imap.host` | string | — | IMAP server. Inferred for Gmail, Fastmail, Outlook, Yahoo, and iCloud from `email.address` when empty. LANGMESH_MAIL_IMAP_HOST wins over this. |
+| `email.imap.port` | integer | `993` | IMAP port. LANGMESH_MAIL_IMAP_PORT wins over this. |
 | `email.imap.username` | string | — | IMAP login. LANGMESH_MAIL_IMAP_USER wins; otherwise `email.address`. |
 | `email.imap.password` | string | — | IMAP password. LANGMESH_MAIL_IMAP_PASSWORD or LANGMESH_MAIL_PASSWORD wins. |
-| `email.imap.mailbox` | string | `INBOX` | Which folder to IDLE. |
-| `email.imap.ssl` | boolean | `true` | Implicit TLS (typical for 993). |
+| `email.imap.mailbox` | string | `INBOX` | Which folder to IDLE. LANGMESH_MAIL_IMAP_MAILBOX wins over this. |
+| `email.imap.ssl` | boolean | `true` | Implicit TLS (typical for 993). LANGMESH_MAIL_IMAP_SSL wins (`false`/`0`/`off` to disable). |
 | `email.smtp.host` | string | — | SMTP server. Inferred from `email.address` the same way as IMAP when empty. LANGMESH_MAIL_SMTP_HOST wins over this. |
-| `email.smtp.port` | integer | `587` | SMTP port. |
+| `email.smtp.port` | integer | `587` | SMTP port. LANGMESH_MAIL_SMTP_PORT wins over this. |
 | `email.smtp.username` | string | — | SMTP login. LANGMESH_MAIL_SMTP_USER wins; otherwise the IMAP username. |
 | `email.smtp.password` | string | — | SMTP password. LANGMESH_MAIL_SMTP_PASSWORD or LANGMESH_MAIL_PASSWORD or the IMAP password wins. |
-| `email.smtp.start_tls` | boolean | `true` | Upgrade with STARTTLS (typical for 587). |
-| `email.smtp.use_tls` | boolean | `false` | Implicit TLS (typical for 465). Mutually exclusive with STARTTLS. |
+| `email.smtp.start_tls` | boolean | `true` | Upgrade with STARTTLS (typical for 587). LANGMESH_MAIL_SMTP_STARTTLS wins. |
+| `email.smtp.use_tls` | boolean | `false` | Implicit TLS (typical for 465). Mutually exclusive with STARTTLS. LANGMESH_MAIL_SMTP_USE_TLS wins. |
 
 ### Model providers
 

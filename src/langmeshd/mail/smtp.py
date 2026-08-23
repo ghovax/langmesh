@@ -59,10 +59,14 @@ async def send_reply(configuration: EmailConfiguration, message: EmailMessage) -
     await aiosmtplib.send(
         message,
         hostname=configuration.effective_smtp_host,
-        port=configuration.smtp.port,
+        port=configuration.effective_smtp_port,
         username=configuration.effective_smtp_username or None,
         password=configuration.effective_smtp_password or None,
-        start_tls=configuration.smtp.start_tls if not configuration.smtp.use_tls else False,
-        use_tls=configuration.smtp.use_tls,
+        start_tls=(
+            configuration.effective_smtp_start_tls
+            if not configuration.effective_smtp_use_tls
+            else False
+        ),
+        use_tls=configuration.effective_smtp_use_tls,
         timeout=60,
     )
