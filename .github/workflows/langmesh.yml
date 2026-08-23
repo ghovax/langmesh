@@ -46,19 +46,15 @@ jobs:
         with:
           app-id: ${{ secrets.LANGMESH_APP_ID }}
           private-key: ${{ secrets.LANGMESH_APP_PRIVATE_KEY }}
-      - id: ack
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
-        run: |
-          number="${{ github.event.issue.number || github.event.pull_request.number }}"
-          id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${number}/comments" \
-            -f body="Got it — I'll update this comment when I'm done." \
-            --jq .id)"
-          echo "comment_id=${id}" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
           fetch-depth: 0
+      - id: ack
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
+        run: python3 src/langmesh/github/ack.py
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
