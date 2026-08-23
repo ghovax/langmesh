@@ -162,7 +162,9 @@ def posted_reply(answer: str, pull_url: str = "") -> str:
 
 def model_identifier_from_env(environ: Mapping[str, str] | None = None) -> tuple[str, str]:
     """``LANGMESH_MODEL`` as ``(provider, model)``, split on the first slash."""
-    raw = ((environ or os.environ).get("LANGMESH_MODEL") or "anthropic/claude-sonnet-4-5").strip()
+    raw = (
+        (environ or os.environ).get("LANGMESH_MODEL") or ""
+    ).strip() or "anthropic/claude-sonnet-4-5"
     split = split_model_identifier(raw)
     if split is None or not split[0].strip() or not split[1].strip():
         raise ValueError(raw)
