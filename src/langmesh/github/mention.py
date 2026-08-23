@@ -20,12 +20,11 @@ import re
 import sqlite3
 import subprocess
 import sys
-import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from langmesh import (
     AgentConfiguration,
@@ -41,7 +40,6 @@ from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
 from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features import Feature
-from langmesh.runtime.turn_events import ToolCall
 from langmesh.runtime.plugins.background import BackgroundJobsFeature
 from langmesh.runtime.plugins.bash import Bash
 from langmesh.runtime.plugins.compaction import (
@@ -64,9 +62,6 @@ BRANCH_RECORD = "branch"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 ACKNOWLEDGEMENT = "Got it — I'll update this comment when I'm done."
 ACK_COMMENT_ENV = "LANGMESH_ACK_COMMENT_ID"
-PROGRESS_INTERVAL_SECONDS = 8.0
-PROGRESS_LINE_LIMIT = 8
-PROGRESS_COMMAND_CHARS = 72
 TURN_FAILED = (
     "Something went wrong while I was working on this. "
     "The details are in the Action log."
@@ -181,64 +176,68 @@ def user_failure(message: str) -> str:
     return message
 
 
-def _progress_snippet(text: str) -> str:
-    """One short, mention-safe line for the live acknowledgement."""
-    line = " ".join(text.strip().split())
-    line = re.sub(r"@langmesh(?:-[\w-]+)?(?:\[bot\])?", "", line, flags=re.IGNORECASE)
-    line = " ".join(line.split())
-    if len(line) > PROGRESS_COMMAND_CHARS:
-        line = line[: PROGRESS_COMMAND_CHARS - 1] + "…"
-    return line
+def our_bot_login(login: str) -> bool:
+    """Whether this login is the mention job's bot, not some other App."""
+    name = (login or "").strip()
+    if not name.endswith("[bot]"):
+        return False
+    handle = f"@{name}"
+    if any(handle.lower() == item.lower() for item in mention_handles()):
+        return True
+    if name.lower() == "github-actions[bot]":
+        return True
+    return bool(re.fullmatch(r"langmesh(?:-[\w-]+)?\[bot\]", name, flags=re.IGNORECASE))
 
 
-def progress_line(event: ToolCall) -> str | None:
-    """A user-facing note for one completed tool call, or ``None`` to stay quiet."""
-    if not event.arguments_complete or event.name == "submit_github_comment":
-        return None
-    arguments = event.arguments
-    if event.name == "bash" and isinstance(arguments, Mapping):
-        command = _progress_snippet(str(arguments.get("command") or ""))
-        return f"`{command}`" if command else "Running a command"
-    if event.name == "search_web" and isinstance(arguments, Mapping):
-        query = _progress_snippet(str(arguments.get("query") or arguments.get("q") or ""))
-        return f"Searching for {query}" if query else "Searching the web"
-    if event.name == "fetch_url" and isinstance(arguments, Mapping):
-        url = _progress_snippet(str(arguments.get("url") or ""))
-        return f"Fetching {url}" if url else "Fetching a page"
-    label = event.name.replace("_", " ")
-    return f"Using {label}" if label else None
-
-
-class CommentProgress:
-    """PATCH the acknowledgement as the turn proceeds. Failures here must not stop the job."""
-
-    def __init__(self, repository: str, comment_id: int, token: str, api: str) -> None:
-        self.repository = repository
-        self.comment_id = comment_id
-        self.token = token
-        self.api = api
-        self._notes: list[str] = []
-        self._flushed_at = 0.0
-
-    def note(self, line: str) -> None:
-        text = line.strip()
-        if not text:
-            return
-        self._notes.append(text)
-        now = time.monotonic()
-        if now - self._flushed_at >= PROGRESS_INTERVAL_SECONDS:
-            self.flush()
-
-    def flush(self) -> None:
-        if not self._notes:
-            return
-        recent = self._notes[-PROGRESS_LINE_LIMIT:]
-        body = ACKNOWLEDGEMENT + "\n\n" + "\n".join(f"- {item}" for item in recent)
-        try:
-            update_comment(self.repository, self.comment_id, body, self.token, self.api)
-            self._flushed_at = time.monotonic()
-        except Exception:
-            logger.exception("could not publish progress on comment %s", self.comment_id)
+def reply_to_our_bot(
+    event: Mapping[str, Any],
+    *,
+    repository: str,
+    token: str,
+    api: str,
+) -> bool:
+    """A quote-reply, review reply, or the comment immediately after ours."""
+    if not token:
+        return False
+    comment = event.get("comment") or {}
+    parent_id = comment.get("in_reply_to_id")
+    if parent_id:
+        for path in (
+            f"issues/comments/{int(parent_id)}",
+            f"pulls/comments/{int(parent_id)}",
+        ):
+            try:
+                record = _api_request(f"{api}/repos/{repository}/{path}", token)
+            except (RuntimeError, TypeError, ValueError):
+                continue
+            login = str((record.get("user") or {}).get("login") or "")
+            if our_bot_login(login):
+                return True
+    number = (event.get("issue") or {}).get("number") or (
+        event.get("pull_request") or {}
+    ).get("number")
+    this_id = comment.get("id")
+    if not number or not this_id:
+        return False
+    try:
+        rows = _api_request(
+            f"{api}/repos/{repository}/issues/{int(number)}/comments?per_page=100",
+            token,
+        )
+    except (RuntimeError, TypeError, ValueError):
+        return False
+    if not isinstance(rows, list):
+        return False
+    previous = None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if int(row.get("id") or 0) == int(this_id):
+            break
+        previous = row
+    if previous is None:
+        return False
+    return our_bot_login(str((previous.get("user") or {}).get("login") or ""))
 
 
 def mention_from_event(
@@ -246,11 +245,15 @@ def mention_from_event(
     *,
     repository: str,
     pull: Mapping[str, Any] | None = None,
+    token: str = "",
+    api: str = "",
 ) -> Mention | None:
     """The mention this payload is, or ``None`` when it is not one we answer."""
     comment = event.get("comment") or {}
     body = str(comment.get("body") or "")
-    if not mentioned(body):
+    if not mentioned(body) and not reply_to_our_bot(
+        event, repository=repository, token=token, api=api
+    ):
         return None
     user = str((comment.get("user") or {}).get("login") or "")
     if user.endswith("[bot]"):
@@ -536,7 +539,24 @@ def tree_is_dirty(workspace: Path, *, run: Run = _run) -> bool:
     return bool(staged)
 
 
-def publish_changes(mention: Mention, workspace: Path, *, token: str, run: Run = _run) -> str:
+def commit_subject(mention: Mention, message: str = "") -> str:
+    """A commit subject in the repository's usual sentence style, not ``langmesh: …``."""
+    for raw in message.splitlines():
+        line = raw.strip().lstrip("#").strip()
+        if not line or line.startswith("http") or re.search(r"@langmesh", line, re.I):
+            continue
+        return line[:72]
+    return "Apply requested changes"
+
+
+def publish_changes(
+    mention: Mention,
+    workspace: Path,
+    *,
+    token: str,
+    message: str = "",
+    run: Run = _run,
+) -> str:
     """Commit file edits and push. On an issue, open or reuse a draft PR. On a pull request, only push."""
     cwd = str(workspace)
     branch = current_branch(workspace, run=run)
@@ -558,7 +578,7 @@ def publish_changes(mention: Mention, workspace: Path, *, token: str, run: Run =
             "git",
             "commit",
             "-m",
-            f"langmesh: {mention.title or mention.session_id}",
+            commit_subject(mention, message=message),
         ],
         cwd=cwd,
     )
@@ -728,18 +748,11 @@ async def run_turn(
     workspace: Path,
     *,
     checkout: Checkout,
-    progress: CommentProgress | None = None,
+    publish: Callable[[str], None] | None = None,
 ) -> str:
-    reply = GitHubReply()
+    reply = GitHubReply(publish=publish)
     async with _session(mention, workspace, reply) as session:
-        async for event in session.stream(prompt_for(mention, checkout=checkout)):
-            if progress is None or not isinstance(event, ToolCall):
-                continue
-            line = progress_line(event)
-            if line:
-                progress.note(line)
-        if progress is not None:
-            progress.flush()
+        await session.ask(prompt_for(mention, checkout=checkout))
         return (reply.comment or "").strip()
 
 
@@ -764,7 +777,9 @@ def main() -> None:
     api = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
     event = json.loads(Path(event_path).read_text())
     comment_id = acknowledgement_id()
-    mention = mention_from_event(event, repository=repository)
+    mention = mention_from_event(
+        event, repository=repository, token=token, api=api
+    )
     if mention is None:
         drop_acknowledgement(repository, comment_id, token, api)
         return
@@ -773,6 +788,8 @@ def main() -> None:
             event,
             repository=repository,
             pull=fetch_pull(repository, mention.number, token, api),
+            token=token,
+            api=api,
         )
         if mention is None:
             drop_acknowledgement(repository, comment_id, token, api)
@@ -808,15 +825,24 @@ def main() -> None:
         return
     try:
         checkout = prepare_tree(mention, workspace, token=token)
-        progress = (
-            CommentProgress(repository, comment_id, token, api) if comment_id else None
-        )
+
+        def publish_comment(text: str) -> None:
+            if comment_id:
+                update_comment(repository, comment_id, text[:65536], token, api)
+
         answer = asyncio.run(
-            run_turn(mention, workspace, checkout=checkout, progress=progress)
+            run_turn(
+                mention,
+                workspace,
+                checkout=checkout,
+                publish=publish_comment if comment_id else None,
+            )
         )
         pull_url = ""
         if tree_is_dirty(workspace):
-            pull_url = publish_changes(mention, workspace, token=token)
+            pull_url = publish_changes(
+                mention, workspace, token=token, message=answer
+            )
         publish_thread_comment(
             repository,
             mention.number,
