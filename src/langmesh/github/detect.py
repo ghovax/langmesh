@@ -143,6 +143,46 @@ def reply_to_mention_bot(
     return mention_bot_login(str((previous.get("user") or {}).get("login") or ""))
 
 
+def thread_has_prior_bot_comment(
+    event: Mapping[str, Any],
+    *,
+    repository: str,
+    token: str,
+    api: str,
+) -> bool:
+    """Whether the mention bot already wrote on this collection before this comment.
+
+    Looks at the ten most recent comments on the same collection (issue comments or
+    review comments). It does not load the thread body.
+    """
+    if not token:
+        return False
+    comment = event.get("comment") or {}
+    this_id = comment.get("id")
+    number = (event.get("issue") or {}).get("number") or (
+        event.get("pull_request") or {}
+    ).get("number")
+    if not number:
+        return False
+    collection = "pulls" if _review_comment(comment) else "issues"
+    try:
+        raw = _get(
+            f"{api}/repos/{repository}/{collection}/{int(number)}/comments"
+            "?per_page=10&sort=created&direction=desc",
+            token,
+        )
+    except (RuntimeError, TypeError, ValueError):
+        return False
+    rows = [row for row in raw if isinstance(row, dict)] if isinstance(raw, list) else []
+    for row in rows:
+        if this_id and int(row.get("id") or 0) == int(this_id):
+            continue
+        login = str((row.get("user") or {}).get("login") or "")
+        if mention_bot_login(login):
+            return True
+    return False
+
+
 def is_mention_turn(
     event: Mapping[str, Any],
     *,
