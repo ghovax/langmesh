@@ -357,8 +357,37 @@ class ThreadStore:
         reply_address: str,
         subject: str,
     ) -> None:
+        from langmeshd.mail.body import reference_chain
+
         now = _now()
+        inbound = canonical_message_id(message_id)
         with self._txn() as connection:
+            existing = connection.execute(
+                """
+                SELECT last_message_id, last_references, reply_address, subject
+                FROM threads WHERE thread_key = ?
+                """,
+                (thread_key,),
+            ).fetchone()
+            if existing is None:
+                last_id = inbound
+                last_refs = references
+            else:
+                stored_last = canonical_message_id(str(existing["last_message_id"] or ""))
+                stored_refs = str(existing["last_references"] or "")
+                known = {
+                    token for token in reference_chain(stored_refs, stored_last).split() if token
+                }
+                if inbound and inbound in known:
+                    # Remint of mail already in this thread: keep the latest id, including a
+                    # progress Message-ID, so a later In-Reply-To still names this session.
+                    last_id = stored_last or inbound
+                    last_refs = stored_refs or references
+                else:
+                    last_id = inbound or stored_last
+                    last_refs = reference_chain(stored_refs, stored_last, references, inbound)
+                reply_address = reply_address or str(existing["reply_address"] or "")
+                subject = subject or str(existing["subject"] or "")
             connection.execute(
                 """
                 INSERT INTO threads(
@@ -374,7 +403,7 @@ class ThreadStore:
                     subject = excluded.subject,
                     updated_at = excluded.updated_at
                 """,
-                (thread_key, session_id, message_id, references, reply_address, subject, now),
+                (thread_key, session_id, last_id, last_refs, reply_address, subject, now),
             )
             # Waiting jobs on this thread follow the live session, including a remint after the
             # previous worker disappeared. Finished rows keep the session that already mailed.
@@ -385,7 +414,7 @@ class ThreadStore:
                 """,
                 (session_id, now, thread_key, DISCOVERED, SUBMITTED),
             )
-            self._remember(connection, thread_key, message_id)
+            self._remember(connection, thread_key, inbound)
 
     def item_by_message_id(self, message_id: str) -> MailItem | None:
         message_id = canonical_message_id(message_id)
