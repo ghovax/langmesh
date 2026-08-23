@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 def _client(configuration: EmailConfiguration) -> IMAP4:
     host = configuration.effective_imap_host
-    port = configuration.imap.port
-    if configuration.imap.ssl:
+    port = configuration.effective_imap_port
+    if configuration.effective_imap_ssl:
         return IMAP4_SSL(host=host, port=port, timeout=30)
     return IMAP4(host=host, port=port, timeout=30)
 
@@ -92,7 +92,7 @@ class Inbox:
         )
         if login.result != "OK":
             raise RuntimeError("IMAP login was refused.")
-        selected = await self.imap.select(self.configuration.imap.mailbox)
+        selected = await self.imap.select(self.configuration.effective_imap_mailbox)
         if selected.result != "OK":
             raise RuntimeError("IMAP SELECT was refused.")
         self.uidvalidity = _uidvalidity(list(selected.lines))
@@ -100,7 +100,7 @@ class Inbox:
         logger.info(
             "mail inbox selected",
             extra=log_fields(
-                mailbox=self.configuration.imap.mailbox,
+                mailbox=self.configuration.effective_imap_mailbox,
                 uidvalidity=self.uidvalidity,
             ),
         )
@@ -132,7 +132,6 @@ class Inbox:
         response = await self.imap.noop()
         if response.result != "OK":
             raise RuntimeError("IMAP NOOP failed.")
-
 
     async def close(self) -> None:
         if self.imap is None:

@@ -371,7 +371,7 @@ class MailService:
         )
 
     async def ingest(self, uidvalidity: int, uid: int, message: Message) -> MailItem | None:
-        mailbox = self.configuration.imap.mailbox
+        mailbox = self.configuration.effective_imap_mailbox
         message_id = body.durable_identity(message)
         if self.store.already_finished(mailbox, uidvalidity, uid, message_id):
             existing = self.store.item_by_message_id(message_id) or self.store.item_by_uid(
@@ -450,7 +450,7 @@ class MailService:
         for uid in await self._imap(inbox, inbox.unseen()):
             self._guard()
             existing = self.store.item_by_uid(
-                inbox.configuration.imap.mailbox, inbox.uidvalidity, uid
+                inbox.configuration.effective_imap_mailbox, inbox.uidvalidity, uid
             )
             if existing is not None and existing.state in {POSTED, SEEN, SKIPPED}:
                 if existing.state == POSTED:
@@ -549,7 +549,6 @@ async def run(configuration: Optional[EmailConfiguration] = None) -> int:
                 continue
             service = MailService(current, store, clock)
             try:
-                clock.note()
                 async with daemon_client.connect() as http:
                     if not await daemon_client.health(http):
                         raise StaleConnection("the daemon is not accepting connections")
@@ -557,6 +556,7 @@ async def run(configuration: Optional[EmailConfiguration] = None) -> int:
                     inbox = Inbox(current, clock=clock)
                     try:
                         await clock.await_fresh(inbox.connect())
+                        clock.note()
                         await service.drain(http, inbox)
                         while True:
                             if service._stale.is_set():

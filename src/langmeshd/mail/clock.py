@@ -44,7 +44,7 @@ class ResumeClock:
         return suspend or skew
 
     def note(self) -> None:
-        """Set the baseline after a fresh connect. Do not call this to 'clear' a suspend you have not handled."""
+        """Set the baseline after a fresh IMAP connect. Do not call this to 'clear' a suspend you have not handled."""
         self._boot_ahead = _boot_ahead()
         self._wall = time.time()
         self._mono = time.monotonic()

@@ -133,9 +133,15 @@ class EmailReply(Feature):
             mailbox = configuration.effective_address
             domain = mailbox.rsplit("@", 1)[-1] if "@" in mailbox else "langmesh.local"
             outbound_id = make_msgid(domain=domain)
-            in_reply_to = item.message_id or item.in_reply_to or binding["last_message_id"]
+            in_reply_to = binding["last_message_id"] or item.message_id or item.in_reply_to
             references = " ".join(
-                part for part in (binding["last_references"], in_reply_to, item.message_id) if part
+                part
+                for part in (
+                    binding["last_references"],
+                    in_reply_to,
+                    item.message_id,
+                )
+                if part
             ).strip()
             outbound = reply_message(
                 configuration=configuration,

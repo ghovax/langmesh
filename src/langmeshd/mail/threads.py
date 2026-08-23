@@ -147,8 +147,14 @@ class ThreadStore:
             CREATE INDEX IF NOT EXISTS idx_items_session ON items(session_id);
             CREATE INDEX IF NOT EXISTS idx_items_outbound
                 ON items(outbound_message_id) WHERE outbound_message_id != '';
+            CREATE TABLE IF NOT EXISTS thread_ids (
+                message_id TEXT PRIMARY KEY,
+                thread_key TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_thread_ids_thread ON thread_ids(thread_key);
             """
         )
+        self._backfill_ids()
 
     @contextmanager
     def _txn(self) -> Iterator[sqlite3.Connection]:
@@ -162,6 +168,43 @@ class ThreadStore:
 
     def close(self) -> None:
         self._connection.close()
+
+    def _remember(self, connection: sqlite3.Connection, thread_key: str, message_id: str) -> None:
+        if not thread_key or not message_id:
+            return
+        connection.execute(
+            """
+            INSERT INTO thread_ids(message_id, thread_key) VALUES (?, ?)
+            ON CONFLICT(message_id) DO UPDATE SET thread_key = excluded.thread_key
+            """,
+            (message_id, thread_key),
+        )
+
+    def _backfill_ids(self) -> None:
+        """Existing jobs already know inbound and outbound ids; keep them after this table appears."""
+        if self._connection.execute("SELECT 1 FROM thread_ids LIMIT 1").fetchone() is not None:
+            return
+        with self._txn() as connection:
+            for row in connection.execute(
+                "SELECT thread_key, message_id, outbound_message_id FROM items"
+            ):
+                self._remember(
+                    connection, str(row["thread_key"] or ""), str(row["message_id"] or "")
+                )
+                self._remember(
+                    connection,
+                    str(row["thread_key"] or ""),
+                    str(row["outbound_message_id"] or ""),
+                )
+            for row in connection.execute("SELECT thread_key, last_message_id FROM threads"):
+                self._remember(
+                    connection, str(row["thread_key"] or ""), str(row["last_message_id"] or "")
+                )
+
+    def remember_message_id(self, thread_key: str, message_id: str) -> None:
+        """An inbound or outbound Message-ID that must keep resolving to this thread."""
+        with self._txn() as connection:
+            self._remember(connection, thread_key, message_id)
 
     def session_id(self, thread_key: str) -> str:
         row = self._connection.execute(
@@ -215,10 +258,20 @@ class ThreadStore:
         return _row(row) if row is not None else None
 
     def resolve_thread_key(self, identifiers: list[str], fallback: str) -> str:
-        """The thread an In-Reply-To or References id already belongs to, else `fallback`."""
+        """The thread an In-Reply-To or References id already belongs to, else `fallback`.
+
+        Progress emails are not jobs, so their Message-IDs live here rather than on an item.
+        A reply to a progress note must continue the same session.
+        """
         for identifier in identifiers:
             if not identifier:
                 continue
+            named = self._connection.execute(
+                "SELECT thread_key FROM thread_ids WHERE message_id = ?",
+                (identifier,),
+            ).fetchone()
+            if named is not None and named["thread_key"]:
+                return str(named["thread_key"])
             item = self.item_by_message_id(identifier) or self.item_by_outbound_message_id(
                 identifier
             )
@@ -266,6 +319,7 @@ class ThreadStore:
                 """,
                 (message_id, references, _now(), key),
             )
+            self._remember(connection, key, message_id)
 
     def mark_replied(
         self,
@@ -277,6 +331,7 @@ class ThreadStore:
     ) -> None:
         """One SMTP reply covers every inbound still waiting on this session."""
         now = _now()
+        key = self.thread_key_for_session(session_id)
         with self._txn() as connection:
             connection.execute(
                 f"""
@@ -286,6 +341,7 @@ class ThreadStore:
                 """,
                 (POSTED, reply_text, outbound_message_id, now, session_id, *expected),
             )
+            self._remember(connection, key, outbound_message_id)
 
     def bind(
         self,
@@ -325,6 +381,7 @@ class ThreadStore:
                 """,
                 (session_id, now, thread_key, DISCOVERED, SUBMITTED),
             )
+            self._remember(connection, thread_key, message_id)
 
     def item_by_message_id(self, message_id: str) -> MailItem | None:
         if not message_id:
@@ -407,6 +464,7 @@ class ThreadStore:
                         existing.id,
                     ),
                 )
+                self._remember(connection, thread_key, message_id)
             refreshed = self._connection.execute(
                 "SELECT * FROM items WHERE id = ?", (existing.id,)
             ).fetchone()
@@ -445,6 +503,7 @@ class ThreadStore:
                         now,
                     ),
                 )
+                self._remember(connection, thread_key, message_id)
         except sqlite3.IntegrityError:
             raced = (
                 self.item_by_message_id(message_id)
