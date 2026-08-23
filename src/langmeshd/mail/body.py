@@ -98,6 +98,18 @@ def _split_message_ids(value: str) -> list[str]:
     return found
 
 
+def reference_chain(*parts: str) -> str:
+    """Unique Message-IDs in order, for a References header."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for part in parts:
+        for identifier in _split_message_ids(part) if part else []:
+            if identifier not in seen:
+                seen.add(identifier)
+                ordered.append(identifier)
+    return " ".join(ordered)
+
+
 def in_reply_to_ids(message: Message) -> list[str]:
     """Message-IDs named by In-Reply-To, in order."""
     found: list[str] = []

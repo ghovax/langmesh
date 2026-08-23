@@ -9,7 +9,17 @@ import aiosmtplib
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from langmeshd.commons.configuration import EmailConfiguration
+from langmeshd.mail.body import reference_chain
 from langmeshd.mail.html import html_from_markdown
+
+# Do not mint Message-IDs at gmail.com / outlook / etc: those providers rewrite ids that
+# impersonate their domain, and a later In-Reply-To would miss the thread.
+MESSAGE_ID_DOMAIN = "langmesh.mail"
+
+
+def outbound_message_id() -> str:
+    """A Message-ID the mailbox provider is unlikely to replace."""
+    return make_msgid(domain=MESSAGE_ID_DOMAIN)
 
 
 def reply_message(
@@ -25,11 +35,10 @@ def reply_message(
     """A reply whose preferred body is HTML rendered from the agent's markdown."""
     message = EmailMessage()
     mailbox = configuration.effective_address
-    domain = mailbox.rsplit("@", 1)[-1] if "@" in mailbox else "langmesh.local"
     message["From"] = mailbox
     message["To"] = to_address
     message["Date"] = formatdate(localtime=True)
-    message["Message-ID"] = message_id or make_msgid(domain=domain)
+    message["Message-ID"] = message_id or outbound_message_id()
     reply_subject = (
         subject
         if subject.lower().startswith("re:")
@@ -40,7 +49,7 @@ def reply_message(
     message["Subject"] = reply_subject
     if in_reply_to:
         message["In-Reply-To"] = in_reply_to
-    chain = " ".join(part for part in (references, in_reply_to) if part).strip()
+    chain = reference_chain(references, in_reply_to)
     if chain:
         message["References"] = chain
     message.set_content(body)

@@ -92,7 +92,7 @@ The mail client cannot create a mailbox, a DNS name, or a cloud VM by itself. Af
 4. **A host that stays up**, with `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) persisted across replace. Choose one:
    - You already have a Linux VPS: copy this checkout there, fill `mail.env`, run the `install.sh` command above.
    - Fly.io: set `FLY_API_TOKEN` (and `LANGMESH_MAIL_ENV=mail.env`) and run `packaging/mail/provision.sh`. The script creates the app, a persistent `langmesh_xdg` volume, imports secrets (comments and empty lines stripped), and deploys from the checkout root.
-   - Hetzner or DigitalOcean: set `HCLOUD_TOKEN` (with `hcloud` on PATH) and `LANGMESH_HCLOUD_SSH_KEY`, or `DIGITALOCEAN_ACCESS_TOKEN` (with `doctl` on PATH), plus `LANGMESH_MAIL_ENV`. Or set `LANGMESH_VPS_HOST` to SSH into a machine you already have.
+   - Hetzner or DigitalOcean: set `HCLOUD_TOKEN` (with `hcloud` on PATH) and `LANGMESH_HCLOUD_SSH_KEY`, or `DIGITALOCEAN_ACCESS_TOKEN` (with `doctl` on PATH) and `LANGMESH_DO_SSH_KEY`, plus `LANGMESH_MAIL_ENV`. Or set `LANGMESH_VPS_HOST` to SSH into a machine you already have.
 5. **DNS**, only if the mailbox should live on a domain you own. A Gmail/Fastmail/iCloud address does not need this.
 
 The daemon still binds loopback. Mail never exposes the capability token. Do not publish `langmeshd`'s port on the public internet; SSH or Tailscale if you also want the app. Persist `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) across VM and container replacement, or in-flight mail cannot resume.

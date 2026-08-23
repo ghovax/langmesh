@@ -13,7 +13,6 @@ import asyncio
 import contextlib
 import logging
 from email.message import Message
-from email.utils import make_msgid
 from typing import Any, Optional
 
 from langmesh.base.primitives.errors import log_fields
@@ -23,7 +22,7 @@ from langmeshd.mail import client as daemon_client
 from langmeshd.mail import payload
 from langmeshd.mail.clock import ResumeClock, StaleConnection
 from langmeshd.mail.imap import Inbox
-from langmeshd.mail.smtp import reply_message, send_reply
+from langmeshd.mail.smtp import outbound_message_id, reply_message, send_reply
 from langmeshd.mail.threads import (
     COMPLETED,
     DISCOVERED,
@@ -312,9 +311,7 @@ class MailService:
         return item
 
     async def _post(self, item: MailItem) -> MailItem:
-        mailbox = self.configuration.effective_address
-        domain = mailbox.rsplit("@", 1)[-1] if "@" in mailbox else "langmesh.local"
-        outbound_id = item.outbound_message_id or make_msgid(domain=domain)
+        outbound_id = item.outbound_message_id or outbound_message_id()
         if not item.outbound_message_id:
             item = self.store.update(item.id, outbound_message_id=outbound_id)
         outbound = reply_message(

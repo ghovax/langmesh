@@ -8,7 +8,6 @@ Seen after a reply, and does not harvest assistant prose.
 from __future__ import annotations
 
 import logging
-from email.utils import make_msgid
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -117,7 +116,8 @@ class EmailReply(Feature):
     async def submit(self, body: str, *, kind: MailKind = "progress") -> None:
         from langmeshd.commons.configuration_file import load as load_document
         from langmeshd.commons.configuration import EmailConfiguration
-        from langmeshd.mail.smtp import reply_message, send_reply
+        from langmeshd.mail.body import reference_chain
+        from langmeshd.mail.smtp import outbound_message_id, reply_message, send_reply
         from langmeshd.mail.threads import ThreadStore
 
         session_id = self._context.session_id
@@ -130,19 +130,13 @@ class EmailReply(Feature):
             configuration = EmailConfiguration.model_validate(
                 (load_document() or {}).get("email") or {}
             )
-            mailbox = configuration.effective_address
-            domain = mailbox.rsplit("@", 1)[-1] if "@" in mailbox else "langmesh.local"
-            outbound_id = make_msgid(domain=domain)
+            outbound_id = outbound_message_id()
             in_reply_to = binding["last_message_id"] or item.message_id or item.in_reply_to
-            references = " ".join(
-                part
-                for part in (
-                    binding["last_references"],
-                    in_reply_to,
-                    item.message_id,
-                )
-                if part
-            ).strip()
+            references = reference_chain(
+                binding["last_references"],
+                in_reply_to,
+                item.message_id,
+            )
             outbound = reply_message(
                 configuration=configuration,
                 to_address=item.sender or binding["reply_address"],
