@@ -119,4 +119,4 @@ See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 - [Composition](composition.md) explains every configured value, the plugin seam, and the product boundary.
 - [Lifecycle and driving](lifecycle.md) covers suspension, resume, interrupts, steering, retries, and the complete stream contract.
 - [Compaction, continuation, and persistence](persistence.md) covers history compaction, autonomous work, checkpoints, artifacts, transcripts, observational memory, and background jobs.
-- [GitHub mentions](../user/github.md) is the library running in a GitHub Action when someone writes `@langmesh`. `LANGMESH_MODEL` is `provider/model`. The posted comment comes from `submit_github_comment`; real prompts are markdown under `src/langmesh/github/prompts/`.
+- [GitHub mentions](../user/github.md) is the library running in a GitHub Action when someone writes `@langmesh` on an issue or a pull request. An issue with file edits opens a draft PR; a pull-request mention updates that PR. `LANGMESH_MODEL` is `provider/model`. The posted comment comes from `submit_github_comment`; real prompts are markdown under `src/langmesh/github/prompts/`.

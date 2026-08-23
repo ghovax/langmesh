@@ -85,7 +85,7 @@ A [Tauri](https://tauri.app) shell around a [Next.js](https://nextjs.org) UI (st
 - The app does not contain a daemon. For the default local connection, a release build asks the separately installed daemon bundle to start when nothing is listening, then reads the port and token that `langmeshd` publishes into the runtime directory. The daemon remains independent and outlives the window.
 - The daemon is a separate installable (`packaging/build-daemon.sh`), signed with the same identity as the app so the two share one macOS Accessibility grant.
 - A phone is an Expo client that opens the same web interface in a WebView and adds the two things a page alone cannot do: reading the `langmesh://pair#…` pairing code with the camera, and keeping its token in the keychain. The shared UI and catalogue live in `shared/`.
-- A GitHub mention is the library in a GitHub Action: `@langmesh` on an issue or pull request starts `langmesh.github.mention` with `LANGMESH_MODEL` as `provider/model`. There is no daemon. See [GitHub mentions](../user/github.md).
+- A GitHub mention is the library in a GitHub Action: `@langmesh` on an issue or pull request starts `langmesh.github.mention` with `LANGMESH_MODEL` as `provider/model`. There is no daemon. An issue with file edits opens a draft PR on `langmesh/issue-N`; a pull-request mention pushes to that PR's branch. See [GitHub mentions](../user/github.md).
 
 ## Connections: local, remote, SSH
 
