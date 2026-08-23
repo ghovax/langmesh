@@ -36,9 +36,19 @@ def escape_of(
     held_writes = set(
         _contained_in(request.writes, tuple(profile.filesystem.writable), workspace=workspace)
     )
+
+    def still_outside(paths: tuple[str, ...], held: set[str]) -> tuple[str, ...]:
+        leftover = []
+        for path in paths:
+            resolved = expand(path, workspace=workspace)
+            if resolved and resolved in held:
+                continue
+            leftover.append(path)
+        return tuple(leftover)
+
     return Escape(
-        reads=tuple(path for path in request.reads if path not in held_reads),
-        writes=tuple(path for path in request.writes if path not in held_writes),
+        reads=still_outside(request.reads, held_reads),
+        writes=still_outside(request.writes, held_writes),
         network=bool(request.network) and not profile.network,
     )
 
