@@ -184,4 +184,4 @@ its approvals, and it is reachable from anywhere you can reach the daemon.
 
 ## `@langmesh` on GitHub
 
-An issue or pull-request comment that mentions `@langmesh` can run the library in a GitHub Action. See [GitHub mentions](github.md).
+An issue or pull-request comment that mentions `@langmesh` can run the library in a GitHub Action. Set `LANGMESH_MODEL` to `provider/model` and `LANGMESH_API_KEY` to that provider's key. See [GitHub mentions](github.md).
