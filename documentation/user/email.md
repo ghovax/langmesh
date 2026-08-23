@@ -83,7 +83,7 @@ The mail client cannot create a mailbox or a cloud VM by itself. You need:
 - IMAP and SMTP reachability for `email.address` (an app password, not your ordinary login, on Gmail).
 - At least one allowlisted From (`LANGMESH_MAIL_ALLOW_FROM`).
 - A provider key the agent profile can use.
-- A host that stays up. `packaging/mail/provision.sh` will try Fly.io (with a persistent `langmesh_xdg` volume), Hetzner, or DigitalOcean when those tokens are already in the environment; pass `LANGMESH_MAIL_ENV=mail.env` so the host is installed from that file. Otherwise you bring a VPS and run `install.sh` on it as above.
+- A host that stays up. `packaging/mail/provision.sh` will try Fly.io (with a persistent `langmesh_xdg` volume), Hetzner, or DigitalOcean when those tokens are already in the environment; pass `LANGMESH_MAIL_ENV=mail.env` so the host is installed from that file. Fly deploy is from the checkout root (`fly deploy . --config packaging/mail/fly.toml --dockerfile packaging/mail/Dockerfile`) so the image sees `src` and `.agents`. Otherwise you bring a VPS and run `install.sh` on it as above.
 
 The daemon still binds loopback. Mail never exposes the capability token. Do not publish `langmeshd`'s port on the public internet; SSH or Tailscale if you also want the app. Persist `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) across VM and container replacement, or in-flight mail cannot resume.
 
