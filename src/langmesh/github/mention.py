@@ -30,9 +30,15 @@ from langmesh import (
 )
 from langmesh.base.content.models import split_model_identifier
 from langmesh.base.content.prompts import PackagePromptLoader
+from langmesh.github.reply import TOOL_NAME, GitHubReply
+from langmesh.runtime.features import Feature
 from langmesh.runtime.plugins.background import BackgroundJobsFeature
 from langmesh.runtime.plugins.bash import Bash
-from langmesh.runtime.plugins.compaction import Compaction, DirectCompactionPreparation
+from langmesh.runtime.plugins.compaction import (
+    Compaction,
+    DirectCompactionPreparation,
+    KeepRecentTurns,
+)
 from langmesh.runtime.plugins.continuation import Continuation
 from langmesh.runtime.plugins.permission_reviewer import PermissionReviewer
 from langmesh.runtime.plugins.permissions import PermissionReview
@@ -44,6 +50,16 @@ STATE_DIRECTORY = ".langmesh-github"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 COMMENT_LIMIT = 65536
 DEFAULT_MODEL_IDENTIFIER = "anthropic/claude-sonnet-4-5"
+KEEP_RECENT_TURNS = 24
+MENTION_TOOLS = [
+    "bash",
+    "search_web",
+    "fetch_url",
+    "download",
+    "set_tasks",
+    "update_tasks",
+    TOOL_NAME,
+]
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 
 _BASH_DENY = {
@@ -142,8 +158,16 @@ def mention_from_event(
 
 
 def render(name: str, variables: Mapping[str, object] | None = None) -> str:
-    """A GitHub-mention template from ``prompts/*.md``."""
+    """A GitHub-mention prompt from ``prompts/*.md``."""
     return _PROMPTS.load(name, dict(variables or {})).strip()
+
+
+def posted_reply(answer: str, pull_url: str = "") -> str:
+    """The issue comment: the submitted reply, or ``Done.``, plus a pull-request URL when there is one."""
+    note = answer.strip() or "Done."
+    if pull_url:
+        return f"{note}\n\n{pull_url}"
+    return note
 
 
 def model_identifier_from_env(environ: Mapping[str, str] | None = None) -> tuple[str, str]:
@@ -268,7 +292,7 @@ def publish_changes(mention: Mention, workspace: Path, *, token: str, run: Run =
             "git",
             "commit",
             "-m",
-            render("commit", {"subject": mention.title or mention.session_id}),
+            f"langmesh: {mention.title or mention.session_id}",
         ],
         cwd=cwd,
     )
@@ -299,12 +323,9 @@ def publish_changes(mention: Mention, workspace: Path, *, token: str, run: Run =
                 "--head",
                 branch,
                 "--title",
-                render(
-                    "pull_request_title",
-                    {"title": mention.title or f"langmesh/{mention.number}"},
-                ),
+                mention.title or f"langmesh/{mention.number}",
                 "--body",
-                render("pull_request", {"html_url": mention.html_url}),
+                f"Opened from {mention.html_url}",
             ],
             cwd=cwd,
         ).strip()
@@ -343,12 +364,30 @@ def post_comment(repository: str, number: int, text: str, token: str, api: str) 
     )
 
 
-def _session(mention: Mention, workspace: Path) -> Session:
+def mention_features(reply: GitHubReply) -> list[Feature]:
+    """The plugins one mention session runs, including the comment tool."""
+    reviewer = PermissionReviewer()
+    return [
+        Compaction(
+            strategy=KeepRecentTurns(KEEP_RECENT_TURNS),
+            preparation=DirectCompactionPreparation(),
+            summarizer=None,
+        ),
+        PermissionReview(reviewer=reviewer),
+        reviewer,
+        Continuation(),
+        BackgroundJobsFeature(),
+        Bash(),
+        Web(),
+        reply,
+    ]
+
+
+def _session(mention: Mention, workspace: Path, reply: GitHubReply) -> Session:
     state_path(workspace).parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(
         state_path(workspace), isolation_level=None, check_same_thread=False
     )
-    reviewer = PermissionReviewer()
     provider, model = model_identifier_from_env()
     key = api_key_for(provider)
     agent = AgentConfiguration(
@@ -358,7 +397,7 @@ def _session(mention: Mention, workspace: Path) -> Session:
         provider=provider,
         model=model,
         permission_mode="automatic",
-        tools_enabled=["bash", "search_web", "fetch_url", "download", "set_tasks", "update_tasks"],
+        tools_enabled=list(MENTION_TOOLS),
         tools=ToolsConfiguration(bash=BashToolConfiguration(permissions=dict(_BASH_DENY))),
     )
     return Session(
@@ -370,22 +409,16 @@ def _session(mention: Mention, workspace: Path) -> Session:
         providers={provider: key} if key else None,
         components=SessionComponents(
             checkpoints=SQLiteCheckpoints(connection),
-            features=[
-                Compaction(preparation=DirectCompactionPreparation(), summarizer=None),
-                PermissionReview(reviewer=reviewer),
-                reviewer,
-                Continuation(),
-                BackgroundJobsFeature(),
-                Bash(),
-                Web(),
-            ],
+            features=mention_features(reply),
         ),
     )
 
 
 async def run_turn(mention: Mention, workspace: Path) -> str:
-    async with _session(mention, workspace) as session:
-        return await session.ask(prompt_for(mention))
+    reply = GitHubReply()
+    async with _session(mention, workspace, reply) as session:
+        await session.ask(prompt_for(mention))
+        return (reply.comment or "").strip()
 
 
 def main() -> None:
@@ -426,17 +459,15 @@ def main() -> None:
         post_comment(
             repository,
             mention.number,
-            render("turn_failed", {"error": error}),
+            f"The turn failed: {error}",
             token,
             api,
         )
         raise
-    note = answer.strip() or render("empty_reply")
+    pull_url = ""
     if tree_is_dirty(workspace):
-        url = publish_changes(mention, workspace, token=token)
-        if url:
-            note = render("comment_with_pull", {"answer": note, "url": url})
-    post_comment(repository, mention.number, note, token, api)
+        pull_url = publish_changes(mention, workspace, token=token)
+    post_comment(repository, mention.number, posted_reply(answer, pull_url), token, api)
 
 
 if __name__ == "__main__":
