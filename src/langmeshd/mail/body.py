@@ -1,7 +1,8 @@
-"""The body that becomes a turn: this message's content, with quoted history stripped.
+"""The body that becomes a turn: this message's HTML, as markdown, without the quoted thread.
 
-Inbound MIME is parsed with the stdlib `email` package. HTML is reduced with markdownify.
-Quoted reply tails are removed by email-reply-parser rather than ad-hoc regex.
+Mail is HTML. The HTML part is the body; text/plain is only used when there is no HTML.
+Quoted replies are the containers mail clients wrap around the previous message. Those
+nodes are removed, then the rest is converted with markdownify for the agent.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import hashlib
 from email.message import EmailMessage, Message
 from email.utils import parseaddr
 
-from email_reply_parser import EmailReplyParser
+from bs4 import BeautifulSoup
 from markdownify import markdownify
 
 
@@ -112,11 +113,6 @@ def thread_root_id(message: Message) -> str:
     return message_id_of(message)
 
 
-def _plain_from_html(html: str) -> str:
-    converted = markdownify(html, heading_style="ATX", strip=["script", "style"])
-    return str(converted or "").strip()
-
-
 def _part_text(part: Message) -> str:
     payload = part.get_payload(decode=True)
     if isinstance(payload, bytes):
@@ -131,40 +127,72 @@ def _part_text(part: Message) -> str:
     return str(raw or "").strip()
 
 
-def extracted_body(message: Message) -> str:
-    """The message's own prose: text/plain preferred, HTML reduced if that is all there is."""
+def _part_of(message: Message, subtype: str) -> str:
+    """The first text part of this subtype, or empty."""
     if isinstance(message, EmailMessage):
-        plain = message.get_body(preferencelist=("plain",))
-        if plain is not None:
-            text = _part_text(plain)
+        part = message.get_body(preferencelist=(subtype,))
+        if part is not None:
+            text = _part_text(part)
             if text:
                 return text
-        html = message.get_body(preferencelist=("html",))
-        if html is not None:
-            return _plain_from_html(_part_text(html))
     if message.is_multipart():
-        html_fallback = ""
         for part in message.walk():
             if part.get_content_maintype() != "text":
                 continue
-            subtype = part.get_content_subtype()
-            text = _part_text(part)
-            if subtype == "plain" and text:
-                return text
-            if subtype == "html" and text and not html_fallback:
-                html_fallback = _plain_from_html(text)
-        return html_fallback
-    if message.get_content_subtype() == "html":
-        return _plain_from_html(_part_text(message))
-    return _part_text(message)
+            if part.get_content_subtype() == subtype:
+                text = _part_text(part)
+                if text:
+                    return text
+        return ""
+    if message.get_content_subtype() == subtype:
+        return _part_text(message)
+    return ""
+
+
+def _drop_quoted_html(html: str) -> str:
+    """Remove the previous message as mail clients wrap it, leaving this message's HTML."""
+    soup = BeautifulSoup(html, "html.parser")
+    for node in soup.select("#divRplyFwdMsg, #appendonsend"):
+        for sibling in list(node.next_siblings):
+            sibling.extract()
+        node.decompose()
+    for node in soup.select(
+        ".gmail_quote, .gmail_extra, blockquote[type=cite], .yahoo_quoted, .protonmail_quote"
+    ):
+        node.decompose()
+    root = soup.body if soup.body is not None else soup
+    return root.decode_contents()
+
+
+def _markdown_from_html(html: str) -> str:
+    return str(
+        markdownify(
+            html,
+            heading_style="ATX",
+            strip=["script", "style", "head", "meta", "title", "img"],
+        )
+        or ""
+    ).strip()
+
+
+def _unquoted_plain(text: str) -> str:
+    """text/plain with RFC 3676 quote lines dropped, used only when the message has no HTML."""
+    kept: list[str] = []
+    for line in text.splitlines():
+        if not line.startswith(">"):
+            kept.append(line)
+    return "\n".join(kept).strip()
 
 
 def turn_body(message: Message) -> str:
-    """This specific email's content, with quoted reply history removed."""
-    raw = extracted_body(message)
-    if not raw.strip():
-        return ""
-    return str(EmailReplyParser.parse_reply(raw) or "").strip()
+    """This email's body as markdown: HTML when present, otherwise unquoted text/plain."""
+    html = _part_of(message, "html")
+    if html:
+        return _markdown_from_html(_drop_quoted_html(html))
+    plain = _part_of(message, "plain")
+    if plain:
+        return _unquoted_plain(plain)
+    return ""
 
 
 def is_automatic(message: Message) -> bool:

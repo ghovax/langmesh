@@ -22,7 +22,7 @@ def reply_message(
     references: str,
     message_id: str = "",
 ) -> EmailMessage:
-    """A reply that carries In-Reply-To / References so the next inbound stays on the same thread."""
+    """A reply whose preferred body is HTML rendered from the agent's markdown."""
     message = EmailMessage()
     mailbox = configuration.effective_address
     domain = mailbox.rsplit("@", 1)[-1] if "@" in mailbox else "langmesh.local"
