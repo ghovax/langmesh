@@ -46,7 +46,7 @@ from langmesh.runtime.plugins.web import Web
 
 MENTION = "@langmesh"
 ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
-STATE_DIRECTORY = ".langmesh-github"
+STATE_DIRECTORY = ".github/langmesh"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 
