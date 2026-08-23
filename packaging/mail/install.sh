@@ -57,7 +57,7 @@ write_env_file() {
   cat >"${env_file}" <<EOF
 LANGMESH_MAIL_ADDRESS=${LANGMESH_MAIL_ADDRESS:-}
 LANGMESH_MAIL_ALLOW_FROM=${LANGMESH_MAIL_ALLOW_FROM:-}
-LANGMESH_MAIL_AGENT=${LANGMESH_MAIL_AGENT:-}
+LANGMESH_MAIL_AGENT=${LANGMESH_MAIL_AGENT:-reviewer}
 LANGMESH_MAIL_IMAP_HOST=${LANGMESH_MAIL_IMAP_HOST:-}
 LANGMESH_MAIL_IMAP_USER=${LANGMESH_MAIL_IMAP_USER:-}
 LANGMESH_MAIL_IMAP_PASSWORD=${LANGMESH_MAIL_IMAP_PASSWORD:-${LANGMESH_MAIL_PASSWORD:-}}
@@ -99,7 +99,7 @@ email.setdefault("address", os.environ.get("LANGMESH_MAIL_ADDRESS", ""))
 allow = os.environ.get("LANGMESH_MAIL_ALLOW_FROM", "").strip()
 if allow:
     email["allow_from"] = [item.strip() for item in allow.split(",") if item.strip()]
-email.setdefault("agent", os.environ.get("LANGMESH_MAIL_AGENT", ""))
+email.setdefault("agent", os.environ.get("LANGMESH_MAIL_AGENT", "reviewer") or "reviewer")
 email.setdefault("permission_mode", "automatic")
 imap = email.setdefault("imap", {})
 imap.setdefault("host", os.environ.get("LANGMESH_MAIL_IMAP_HOST", ""))

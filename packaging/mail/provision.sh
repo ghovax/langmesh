@@ -15,7 +15,7 @@ remote_install() {
   ssh "${host}" "sudo env \
     LANGMESH_MAIL_ADDRESS='${LANGMESH_MAIL_ADDRESS:-}' \
     LANGMESH_MAIL_ALLOW_FROM='${LANGMESH_MAIL_ALLOW_FROM:-}' \
-    LANGMESH_MAIL_AGENT='${LANGMESH_MAIL_AGENT:-}' \
+    LANGMESH_MAIL_AGENT='${LANGMESH_MAIL_AGENT:-reviewer}' \
     LANGMESH_MAIL_IMAP_HOST='${LANGMESH_MAIL_IMAP_HOST:-}' \
     LANGMESH_MAIL_IMAP_USER='${LANGMESH_MAIL_IMAP_USER:-}' \
     LANGMESH_MAIL_IMAP_PASSWORD='${LANGMESH_MAIL_IMAP_PASSWORD:-${LANGMESH_MAIL_PASSWORD:-}}' \
@@ -39,15 +39,24 @@ provision_fly() {
   local fly
   fly="$(command -v flyctl || command -v fly)"
   local app="${LANGMESH_FLY_APP:-langmesh-mail}"
+  local region="${LANGMESH_FLY_REGION:-iad}"
   "${fly}" apps create "${app}" --generate-name=false || true
-  "${fly}" machine run . --app "${app}" --region "${LANGMESH_FLY_REGION:-iad}" \
-    --dockerfile packaging/mail/Dockerfile \
-    --env LANGMESH_MAIL_ADDRESS="${LANGMESH_MAIL_ADDRESS:-}" \
-    --env LANGMESH_MAIL_ALLOW_FROM="${LANGMESH_MAIL_ALLOW_FROM:-}" \
-    --env LANGMESH_MAIL_AGENT="${LANGMESH_MAIL_AGENT:-}" \
-    --env LANGMESH_MAIL_IMAP_HOST="${LANGMESH_MAIL_IMAP_HOST:-}" \
-    --env LANGMESH_MAIL_SMTP_HOST="${LANGMESH_MAIL_SMTP_HOST:-}" \
-    || "${fly}" deploy --app "${app}" --dockerfile packaging/mail/Dockerfile
+  "${fly}" volumes create langmesh_xdg --app "${app}" --size 3 --region "${region}" --yes || true
+  if [[ -n "${LANGMESH_MAIL_ADDRESS:-}${LANGMESH_MAIL_PASSWORD:-}${LANGMESH_MAIL_IMAP_PASSWORD:-}" ]]; then
+    "${fly}" secrets set --app "${app}" \
+      LANGMESH_MAIL_ADDRESS="${LANGMESH_MAIL_ADDRESS:-}" \
+      LANGMESH_MAIL_ALLOW_FROM="${LANGMESH_MAIL_ALLOW_FROM:-}" \
+      LANGMESH_MAIL_AGENT="${LANGMESH_MAIL_AGENT:-reviewer}" \
+      LANGMESH_MAIL_IMAP_HOST="${LANGMESH_MAIL_IMAP_HOST:-}" \
+      LANGMESH_MAIL_SMTP_HOST="${LANGMESH_MAIL_SMTP_HOST:-}" \
+      LANGMESH_MAIL_PASSWORD="${LANGMESH_MAIL_IMAP_PASSWORD:-${LANGMESH_MAIL_PASSWORD:-}}" \
+      OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
+      ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+      OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+      OPENCODE_API_KEY="${OPENCODE_API_KEY:-}"
+  fi
+  "${fly}" deploy --app "${app}" --config "${root}/packaging/mail/fly.toml" \
+    --dockerfile "${root}/packaging/mail/Dockerfile" --region "${region}"
 }
 
 if [[ -n "${LANGMESH_VPS_HOST:-}" ]]; then
@@ -90,5 +99,5 @@ log "Bring any small Linux VPS (Oracle Always Free, Hetzner CX22, a leftover dro
 log "copy this checkout there, and run: sudo packaging/mail/install.sh"
 log "Needed on that host: LANGMESH_MAIL_ADDRESS, LANGMESH_MAIL_ALLOW_FROM,"
 log "LANGMESH_MAIL_IMAP_HOST, LANGMESH_MAIL_IMAP_PASSWORD, LANGMESH_MAIL_SMTP_HOST,"
-log "LANGMESH_MAIL_AGENT, and a provider API key."
+log "LANGMESH_MAIL_AGENT (defaults to reviewer), and a provider API key."
 exit 2
