@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# GitHub mention checks: a state matrix, then real git against throwaway remotes.
+set -euo pipefail
+
+repository="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$repository"
+
+if [[ -x "$repository/.venv/bin/python" ]]; then
+  python=("$repository/.venv/bin/python")
+else
+  python=(uv run --project "$repository" python)
+fi
+
+"${python[@]}" "$repository/tests/github_mention_matrix.py"
+
+ephemeral="$(mktemp -d)"
+trap 'rm -rf "$ephemeral"' EXIT
+origin="$ephemeral/origin.git"
+work="$ephemeral/work"
+
+git -c init.defaultBranch=main init --bare "$origin"
+git -c init.defaultBranch=main clone "$origin" "$work"
+git -C "$work" config user.name test
+git -C "$work" config user.email test@test
+printf 'base\n' > "$work/README"
+git -C "$work" add README
+git -C "$work" commit -m init
+git -C "$work" push -u origin main
+git -C "$work" checkout -b feature
+printf 'feat\n' > "$work/feat.txt"
+git -C "$work" add feat.txt
+git -C "$work" commit -m feat
+git -C "$work" push -u origin feature
+git -C "$work" checkout main
+
+export LANGMESH_WORKSPACE="$work"
+
+fail() {
+  printf '%s\n' "$1" >&2
+  exit 1
+}
+
+"${python[@]}" - <<'PY'
+import os
+from pathlib import Path
+
+from langmesh.github.mention import tree_is_dirty
+
+work = Path(os.environ["LANGMESH_WORKSPACE"])
+(work / ".langmesh-github").mkdir(parents=True)
+(work / ".langmesh-github" / "session.sqlite").write_text("ckpt\n")
+if tree_is_dirty(work):
+    raise SystemExit("state directory alone must not look dirty")
+PY
+
+printf 'edit\n' > "$work/README"
+"${python[@]}" - <<'PY'
+import os
+from pathlib import Path
+
+from langmesh.github.mention import tree_is_dirty
+
+if not tree_is_dirty(Path(os.environ["LANGMESH_WORKSPACE"])):
+    raise SystemExit("a tracked edit must look dirty")
+PY
+git -C "$work" reset -q
+git -C "$work" checkout -- README
+
+# Token rides in git -c and must never land in the checkout.
+"${python[@]}" - <<'PY'
+import os
+from pathlib import Path
+
+from langmesh.github.mention import Mention, prepare_tree
+
+work = Path(os.environ["LANGMESH_WORKSPACE"])
+mention = Mention(
+    body="@langmesh",
+    number=12,
+    kind="pull",
+    title="Flaky test",
+    html_url="https://example.test/12",
+    user="owner",
+    association="OWNER",
+    default_branch="main",
+    repository="ghovax/langmesh",
+    head_ref="feature",
+    head_repository="ghovax/langmesh",
+)
+prepare_tree(mention, work, token="secret-token")
+PY
+[[ "$(git -C "$work" rev-parse --abbrev-ref HEAD)" == feature ]] || fail "prepare_tree did not check out the pull head"
+if git -C "$work" config --get http.extraheader >/dev/null; then
+  fail "token extraheader was written into git config"
+fi
+if grep -R --exclude-dir=.git -q "secret-token" "$work"; then
+  fail "token leaked into the checkout"
+fi
+
+mkdir -p "$work/.langmesh-github"
+printf 'ckpt\n' > "$work/.langmesh-github/session.sqlite"
+printf 'done\n' >> "$work/feat.txt"
+"${python[@]}" - <<'PY'
+import os
+from pathlib import Path
+
+from langmesh.github.mention import Mention, publish_changes
+
+work = Path(os.environ["LANGMESH_WORKSPACE"])
+mention = Mention(
+    body="@langmesh",
+    number=12,
+    kind="pull",
+    title="Flaky test",
+    html_url="https://example.test/12",
+    user="owner",
+    association="OWNER",
+    default_branch="main",
+    repository="ghovax/langmesh",
+    head_ref="feature",
+    head_repository="ghovax/langmesh",
+)
+if publish_changes(mention, work, token="") != "":
+    raise SystemExit("a pull mention must not create a pull request")
+PY
+[[ "$(git -C "$work" log -1 --format=%s)" == "langmesh: Flaky test" ]] || fail "commit message was not inline"
+if git -C "$work" ls-tree -r --name-only HEAD | grep -q '^\.langmesh-github/'; then
+  fail "session state was committed"
+fi
+git -C "$origin" rev-parse --verify feature >/dev/null
+
+git -C "$work" checkout main
+printf 'oops\n' >> "$work/README"
+"${python[@]}" - <<'PY'
+import os
+from pathlib import Path
+
+from langmesh.github.mention import Mention, publish_changes
+
+work = Path(os.environ["LANGMESH_WORKSPACE"])
+mention = Mention(
+    body="@langmesh",
+    number=1,
+    kind="issue",
+    title="x",
+    html_url="https://example.test/1",
+    user="owner",
+    association="OWNER",
+    default_branch="main",
+    repository="ghovax/langmesh",
+)
+try:
+    publish_changes(mention, work, token="")
+except RuntimeError as error:
+    if "protected branch" not in str(error):
+        raise SystemExit(error)
+else:
+    raise SystemExit("publish_changes must refuse main")
+PY
+git -C "$work" checkout -- README
+
+git -C "$work" branch langmesh/issue-12 origin/main
+git -C "$work" push origin langmesh/issue-12
+git -C "$work" checkout main
+git -C "$work" branch -D langmesh/issue-12
+"${python[@]}" - <<'PY'
+import os
+from pathlib import Path
+
+from langmesh.github.mention import Mention, current_branch, prepare_tree
+
+work = Path(os.environ["LANGMESH_WORKSPACE"])
+mention = Mention(
+    body="@langmesh",
+    number=12,
+    kind="issue",
+    title="Flaky test",
+    html_url="https://example.test/12",
+    user="owner",
+    association="OWNER",
+    default_branch="main",
+    repository="ghovax/langmesh",
+)
+prepare_tree(mention, work, token="")
+if current_branch(work) != "langmesh/issue-12":
+    raise SystemExit(f"expected topic branch, got {current_branch(work)!r}")
+PY
+
+git -C "$work" checkout main
+git -C "$work" branch -D langmesh/issue-99 2>/dev/null || true
+"${python[@]}" - <<'PY'
+import os
+from pathlib import Path
+
+from langmesh.github.mention import Mention, current_branch, prepare_tree
+
+work = Path(os.environ["LANGMESH_WORKSPACE"])
+mention = Mention(
+    body="@langmesh",
+    number=99,
+    kind="issue",
+    title="New",
+    html_url="https://example.test/99",
+    user="owner",
+    association="OWNER",
+    default_branch="main",
+    repository="ghovax/langmesh",
+)
+prepare_tree(mention, work, token="")
+if current_branch(work) != "langmesh/issue-99":
+    raise SystemExit(f"expected new topic branch, got {current_branch(work)!r}")
+PY
+
+echo "github mention ephemeral git: ok"
