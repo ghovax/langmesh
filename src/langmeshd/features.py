@@ -20,7 +20,6 @@ from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 from langmesh.runtime.plugins.interaction import Interaction
 from langmesh.runtime.plugins.locations import Locations
 from langmesh.runtime.plugins.observations import ObservationMemory
-from langmesh.runtime.plugins.permission_reviewer import PermissionReviewer
 from langmesh.runtime.plugins.permissions import PermissionReview
 from langmesh.runtime.plugins.titling import TitleAssignment
 from langmesh.runtime.plugins.web import Web
@@ -81,7 +80,6 @@ def compose_plugins(
     global_configuration: Any,
 ) -> dict[str, Any]:
     """The plugins a hosted session runs and the ports they need, as one bundle."""
-    reviewer = PermissionReviewer()
     preparation = _compaction_preparation(global_configuration, runtime_directory)
     locations = _session_locations(session_id)
     features = [
@@ -91,8 +89,7 @@ def compose_plugins(
             preparation=preparation,
             summarizer=None,
         ),
-        PermissionReview(reviewer=reviewer),
-        reviewer,
+        PermissionReview(),
         Continuation(policy=None),
         ObservationMemory(),
         BackgroundJobsFeature(store=job_store),
@@ -128,12 +125,10 @@ def compose_plugins(
 
 def contributed_tools() -> dict[str, Any]:
     """Every tool the composed plugins contribute, keyed by name."""
-    reviewer = PermissionReviewer()
     features = [
         GoalReviewFeature(journal=None),
         Compaction(strategy=None, preparation=None, summarizer=None),
-        PermissionReview(reviewer=reviewer),
-        reviewer,
+        PermissionReview(),
         Continuation(policy=None),
         ObservationMemory(),
         BackgroundJobsFeature(store=None),

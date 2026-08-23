@@ -1,9 +1,8 @@
 """The permission-review plugin: the boundary's verdict, the grants it records, and the gates.
 
-Whether a call runs, is asked about, or is refused is one pluggable concern. The automatic
-model evaluator is a separate plugin, injected here as the reviewer; the standing grants a
-session earns are this plugin's own state, and the runtime reaches them through its accessor
-alone.
+Whether a call runs, is asked about, or is refused is one pluggable concern. This feature
+owns the automatic model evaluator; the standing grants a session earns are this plugin's
+own state, and the runtime reaches them through its accessor alone.
 """
 
 from __future__ import annotations
@@ -26,6 +25,7 @@ from langmesh.runtime.values import PermissionAnswer, PermissionReason
 from langmesh.runtime.boundary import RULE_ALLOW, RULE_ASK, escape_of, verdict_for
 from langmesh.runtime.locations import PermissionDecision
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
+from langmesh.runtime.plugins.permission_reviewer import PermissionReviewer
 
 logger = logging.getLogger(__name__)
 
@@ -76,15 +76,18 @@ def _screen_primitive(func: ast.expr) -> str:
 class PermissionReview(Feature):
     """Whether a call runs, is asked about, or is refused, and what approval a session keeps."""
 
-    def __init__(self, reviewer: Any = None) -> None:
-        # The automatic model evaluator, injected by the composer: a separate plugin that owns
-        # the model call. None disables automatic review, leaving only the rule boundary.
-        self._reviewer = reviewer
+    def __init__(self) -> None:
+        self._reviewer = PermissionReviewer()
 
     def attach(self, context: PluginContext, host: PluginHost) -> None:
         self._context = context
         self._host = host
         self._prompts = context.prompts("permissions")
+        self._reviewer.attach(context, host)
+
+    def terminate_tool_call(self, tool_call_id: str) -> bool:
+        """Cancel a live automatic review this feature still holds."""
+        return self._reviewer.terminate_tool_call(tool_call_id)
 
     @property
     def access_grants(self) -> list[Grant]:
@@ -95,18 +98,8 @@ class PermissionReview(Feature):
         """The session's confinement with every standing grant compacted in. What an escape is measured against."""
         return self._host.boundary.granted_profile()
 
-    def terminate_tool_call(self, tool_call_id: str) -> bool:
-        """Gates wait for an answer; they are not a process this plugin owns to kill."""
-        return False
-
     async def review(self, gate: _PreflightGate) -> PermissionDecision:
-        """The verdict on one gate, from the injected automatic reviewer or a denial when absent."""
-        if self._reviewer is None:
-            return PermissionDecision(
-                action="deny",
-                explanation="No automatic reviewer is installed, so this request was refused.",
-                risk="medium",
-            )
+        """The verdict on one gate, from this feature's automatic reviewer."""
         return await self._reviewer.review(gate)
 
     def record_grant(self, grant: Grant) -> None:
@@ -258,9 +251,7 @@ class PermissionReview(Feature):
         return plan
 
     async def review_automatic_gate(self, gate: _PreflightGate) -> Any | None:
-        """The verdict for one automatic gate, from the injected reviewer plugin."""
-        if self._reviewer is None:
-            return None
+        """The verdict for one automatic gate."""
         return await self._reviewer.review_automatic_gate(gate)
 
     def denial_subject(self, tool_name: str) -> str:
@@ -297,9 +288,7 @@ class PermissionReview(Feature):
     def resolved_denial_message(self, gate: _PreflightGate, answer: PermissionAnswer) -> str:
         """Render one denial without losing who decided it or the reason they supplied."""
         if answer.actor == "reviewer":
-            if self._reviewer is not None:
-                return self._reviewer.denied_message(answer.reason or "")
-            return "The permission reviewer did not produce an approval."
+            return self._reviewer.denied_message(answer.reason or "")
         return self._prompts.load(
             "permission_person_denied"
             if answer.actor == "person"
@@ -528,11 +517,7 @@ class PermissionReview(Feature):
             return "ask", None
         decision = await self.review(gate)
         if decision.action != "allow":
-            gate.deny_message = (
-                self._reviewer.denied_message(decision.explanation)
-                if self._reviewer is not None
-                else "The permission reviewer did not produce an approval."
-            )
+            gate.deny_message = self._reviewer.denied_message(decision.explanation)
             self._host.bookkeeping.record_event(
                 "retry_refused",
                 {
