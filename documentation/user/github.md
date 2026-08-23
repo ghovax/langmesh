@@ -1,28 +1,89 @@
 # GitHub mentions
 
-A comment that contains `@langmesh[bot]` on an issue or pull request starts a library session in a GitHub Action. `@langmesh` still works so existing comments keep firing; `@langmesh[bot]` is the handle to use, because GitHub will not treat it as a person. A later mention on the same thread continues that session. The agent answers both: an issue with file edits opens a draft pull request; a pull-request mention updates that PR.
+A comment that contains `@langmesh[bot]` on an issue or pull request starts a library session in a GitHub Action. `@langmesh` still works so existing comments keep firing; `@langmesh[bot]` is the handle to use. A later mention on the same thread continues that session. The agent answers both: an issue with file edits opens a draft pull request; a pull-request mention updates that PR.
 
 This is the library in a short-lived job, not the daemon. The workflow lives at `.github/workflows/langmesh.yml`; the session is composed in `langmesh.github.mention`. The job posts an acknowledgement immediately, then updates that same comment when the work is done. The text that replaces the acknowledgement is collected by the `GitHubReply` plugin through `submit_github_comment` — model prose is not posted. Failures are written to the Action log with the same logger the daemon uses; the thread only gets a short, user-facing note and a link to that log. Real prompts (the system prompt, the turn, the tool description, the missing-call reminder, the invalid-model note) are markdown templates under `src/langmesh/github/prompts/`. Short strings the Action itself writes (the acknowledgement, a commit message, a pull-request title, `Done.`) stay in code.
 
+## How to cite the agent
+
+GitHub's `@` box only suggests **users**, **teams**, and **installed GitHub Apps**. It does not suggest free text.
+
+| What you type | What GitHub does | What LangMesh does |
+|---|---|---|
+| `@langmesh[bot]` | Mentions the App bot, if one is installed. Does **not** notify a person named `langmesh`. After that bot has commented on the thread, GitHub recommends this handle when you type `@lang`. | Starts (or continues) the session. This is the handle to use. |
+| `@langmesh` | Treated as a **user** mention. If someone owns the `langmesh` login, they get a notification. GitHub will not suggest our agent for this spelling. | Still starts the session, so old comments keep working. Do not use this for new mentions. |
+| Quote reply on a bot comment | Inserts a blockquote. It does **not** address the bot and does **not** start a turn. | Nothing, unless the new comment also contains `@langmesh[bot]`. |
+| `` `@langmesh[bot]` `` in backticks, or the handle inside a fenced code block | Rendered as code, not a mention. | Ignored. |
+
+Write the handle in the comment body as `@langmesh[bot]`, the same way you would address a teammate. A follow-up on the same issue or pull request is another comment that cites `@langmesh[bot]` again. You do not need to quote the previous reply.
+
+The agent's own comments must not contain `@langmesh` or `@langmesh[bot]`. That keeps a reply from looking like a new mention; bot authors are ignored in any case.
+
+Until a LangMesh GitHub App is installed and has posted on a thread, GitHub has no bot to suggest, so you type `@langmesh[bot]` yourself. That still runs the Action, and it still will not notify a person named `langmesh`.
+
 ## Turn it on
 
-1. Set the repository secret `LANGMESH_API_KEY` to the API key for the provider you want.
-2. Optionally set the repository variable `LANGMESH_MODEL` to `provider/model`. The value splits on the **first** slash: `anthropic/claude-sonnet-4-5` is Anthropic's `claude-sonnet-4-5`, and `openrouter/anthropic/claude-sonnet-4-5` is OpenRouter's `anthropic/claude-sonnet-4-5`. When the variable is unset, the Action uses `anthropic/claude-sonnet-4-5`.
-3. Keep the workflow file on the default branch. GitHub runs comment workflows from that copy.
+1. Enable Actions on the repository. Under **Settings → Actions → General → Workflow permissions**, allow GitHub Actions to create and approve pull requests. The workflow asks for write access to contents, issues, and pull requests.
+2. Set the repository secret `LANGMESH_API_KEY` to the API key for the provider you want.
+3. Optionally set the repository variable `LANGMESH_MODEL` to `provider/model`. The value splits on the **first** slash: `anthropic/claude-sonnet-4-5` is Anthropic's `claude-sonnet-4-5`, and `openrouter/anthropic/claude-sonnet-4-5` is OpenRouter's `anthropic/claude-sonnet-4-5`. When the variable is unset, the Action uses `anthropic/claude-sonnet-4-5`.
+4. Keep the workflow file on the default branch. GitHub runs comment workflows from that copy.
+5. Optionally install a LangMesh GitHub App so comments come from `langmesh[bot]` and GitHub recommends the handle. See [Make GitHub recommend `@langmesh[bot]`](#make-github-recommend-langmeshbot).
 
 The left-hand side of `LANGMESH_MODEL` is a LangMesh provider name (`anthropic`, `openai`, `openrouter`, and the rest of the catalogue). The Action does not keep a short list of which of those you may pick. `LANGMESH_API_KEY` is tried first, then that provider's catalogue environment variables, then `{PROVIDER}_API_KEY` with hyphens turned into underscores. If you would rather use the provider's usual name (`ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`, `GEMINI_API_KEY`, …), add it to the job `env` in the workflow.
 
-### So GitHub recommends the handle
+## Make GitHub recommend `@langmesh[bot]`
 
-GitHub only autocompletes `@` for users, teams, and installed apps. `@langmesh` is just text, and it can notify a person who happens to have that login. `@langmesh[bot]` is a bot login: it does not notify that person.
+You do this once, in the GitHub UI. The Action cannot register the App for you. After it is installed and has posted once, typing `@lang` on that thread should offer `langmesh[bot]`.
 
-To have GitHub suggest `@langmesh[bot]` when you type `@`, create a GitHub App whose slug is `langmesh`, install it on the repository, and give the Action its credentials:
+### 1. Register the App
 
-1. Create a GitHub App named **LangMesh** (Settings → Developer settings → GitHub Apps). No webhook is required. Grant **Contents: Read and write**, **Issues: Read and write**, and **Pull requests: Read and write**.
-2. Install the app on this repository.
-3. Set repository secrets `LANGMESH_APP_ID` (the numeric app id) and `LANGMESH_APP_PRIVATE_KEY` (the app's PEM). The workflow then posts and pushes as `langmesh[bot]`, and after that bot has appeared on a thread GitHub will recommend the handle.
+On your user account open [Register a new GitHub App](https://github.com/settings/apps/new). For an organization, use **Organization settings → GitHub Apps → New GitHub App**.
 
-If the app's slug is not `langmesh`, set the repository variable `LANGMESH_MENTION` to `@your-slug[bot]` so the Action still answers that handle.
+Fill it in as follows:
+
+- **GitHub App name:** `LangMesh`. The slug becomes `langmesh`, and the bot login is `langmesh[bot]`. The name must be unique on GitHub. If it is taken, pick another name and set `LANGMESH_MENTION` later.
+- **Homepage URL:** `https://github.com/ghovax/langmesh` (or this repository's URL).
+- **Identifying and authorizing users:** leave the callback and setup URLs empty. This App does not sign people in.
+- **Webhook:** uncheck **Active**. The mention job is a comment workflow, not an App webhook.
+- **Repository permissions:**
+  - **Contents:** Read and write (push the topic branch)
+  - **Issues:** Read and write (acknowledgement and reply)
+  - **Pull requests:** Read and write (draft PRs and PR comments)
+  - **Metadata:** Read-only (GitHub adds this)
+- **Account permissions:** none.
+- **Where can this GitHub App be installed?** Only on this account.
+
+Create the App.
+
+### 2. Take the credentials
+
+On the App's settings page (the URL looks like `https://github.com/settings/apps/langmesh`):
+
+1. Copy **App ID**. That integer is `LANGMESH_APP_ID`.
+2. Under **Private keys**, click **Generate a private key**. GitHub downloads a `.pem` file. The whole file, including the `BEGIN` and `END` lines, is `LANGMESH_APP_PRIVATE_KEY`.
+
+Keep the PEM out of git. Repository secrets are the only place it should live.
+
+### 3. Install it on this repository
+
+On the same App page, open **Install App**, choose the account, and grant access to **only** this repository (or to every repository, if you want the same bot everywhere you run the workflow).
+
+You should then see an installation at a URL like `https://github.com/settings/installations/…` with **LangMesh** listed.
+
+### 4. Give the Action the secrets
+
+In the repository: **Settings → Secrets and variables → Actions**.
+
+- Secret `LANGMESH_APP_ID` — the numeric App ID
+- Secret `LANGMESH_APP_PRIVATE_KEY` — the PEM contents
+
+If the App slug is not `langmesh`, also set the repository **variable** `LANGMESH_MENTION` to `@your-slug[bot]`.
+
+The next mention job mints an installation token from those secrets, then posts and pushes as `langmesh[bot]`. Commits use that bot as the author. Without the secrets, the job still runs, but comments come from `github-actions[bot]` and GitHub will not suggest `@langmesh[bot]`.
+
+### 5. Check that citing works
+
+On an issue or a same-repo pull request, comment `@langmesh[bot]` as an owner, member, or collaborator. You should see the acknowledgement appear as **langmesh[bot]**, then that comment update when the turn finishes. On the next comment, type `@lang` — GitHub should offer `langmesh[bot]`.
 
 ## What it will and will not do
 
