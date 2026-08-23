@@ -184,4 +184,4 @@ its approvals, and it is reachable from anywhere you can reach the daemon.
 
 ## `@langmesh[bot]` on GitHub
 
-An issue or pull-request comment that mentions `@langmesh[bot]` (or `@langmesh`) can run the library in a GitHub Action. On an issue it can open a draft pull request; on a pull request it updates that branch. Set `LANGMESH_MODEL` to `provider/model` and `LANGMESH_API_KEY` to that provider's key. See [GitHub mentions](github.md).
+An issue or pull-request comment that mentions `@langmesh[bot]` can run the library in a GitHub Action. Cite `@langmesh[bot]`, not `@langmesh`, so GitHub does not treat it as a person. On an issue it can open a draft pull request; on a pull request it updates that branch. Set `LANGMESH_MODEL` to `provider/model` and `LANGMESH_API_KEY` to that provider's key. To have GitHub suggest the handle, install a LangMesh GitHub App. See [GitHub mentions](github.md).
