@@ -50,13 +50,46 @@ def _uids(response_lines: list) -> list[int]:
     return numbers
 
 
+_FETCH_LITERAL = re.compile(rb"BODY(?:\.PEEK)?\[\]\s*\{(\d+)\}", re.IGNORECASE)
+
+
+def _as_bytes(line: object) -> bytes:
+    if isinstance(line, (bytes, bytearray)):
+        return bytes(line)
+    return str(line).encode("utf-8", errors="replace")
+
+
+def _looks_like_rfc822(payload: bytes) -> bool:
+    if not payload or payload.startswith(b"(") or payload.startswith(b")"):
+        return False
+    lowered = payload[:32].lower()
+    if lowered.startswith(b"from:") or lowered.startswith(b"return-path:"):
+        return True
+    return b"\r\n\r\n" in payload or b"\n\n" in payload
+
+
 def _fetch_payload(lines: list) -> bytes:
-    for line in lines:
-        if isinstance(line, (bytes, bytearray)) and b"\n" in line:
-            return bytes(line)
-    for line in lines:
-        if isinstance(line, (bytes, bytearray)) and len(line) > 80:
-            return bytes(line)
+    """The RFC822 body from UID FETCH. aioimaplib splits `{size}` literals onto their own line."""
+    chunks = [_as_bytes(line) for line in lines]
+    for index, chunk in enumerate(chunks):
+        match = _FETCH_LITERAL.search(chunk)
+        if match:
+            size = int(match.group(1))
+            start = match.end()
+            if chunk[start : start + 2] == b"\r\n":
+                start += 2
+            elif chunk[start : start + 1] == b"\n":
+                start += 1
+            if start < len(chunk):
+                body = chunk[start : start + size] if size else chunk[start:]
+                if body:
+                    return body
+            if index + 1 < len(chunks):
+                nxt = chunks[index + 1]
+                return nxt[:size] if size and size <= len(nxt) else nxt
+    for chunk in chunks:
+        if _looks_like_rfc822(chunk):
+            return chunk
     return b""
 
 

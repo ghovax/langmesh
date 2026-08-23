@@ -12,7 +12,7 @@ mkdir -p "${XDG_RUNTIME_DIR}/langmesh" \
   "${XDG_STATE_HOME}/langmesh"
 chmod 700 "${XDG_RUNTIME_DIR}" "${XDG_RUNTIME_DIR}/langmesh"
 
-python - <<'PY'
+/srv/langmesh/.venv/bin/python - <<'PY'
 import os
 from langmeshd.commons import configuration_file
 from langmeshd.commons.configuration_io import load_configuration
