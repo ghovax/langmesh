@@ -50,7 +50,9 @@ def _uids(response_lines: list) -> list[int]:
     return numbers
 
 
-_FETCH_LITERAL = re.compile(rb"BODY(?:\.PEEK)?\[\]\s*\{(\d+)\}", re.IGNORECASE)
+_FETCH_LITERAL = re.compile(
+    rb"(?:BODY(?:\.PEEK)?\[\]|RFC822(?:\.PEEK)?)\s*\{(\d+)\}", re.IGNORECASE
+)
 
 
 def _as_bytes(line: object) -> bytes:
@@ -196,14 +198,15 @@ class Inbox:
 
     async def fetch(self, uid: int) -> Optional[Message]:
         assert self.imap is not None
-        response = await self.imap.uid("fetch", str(uid), "(BODY.PEEK[])")
-        if response.result != "OK":
-            return None
-        raw = _fetch_payload(list(response.lines))
-        if not raw:
-            return None
-        parsed = message_from_bytes(raw, policy=default)
-        return parsed
+        # BODY.PEEK[] does not set \Seen. RFC822.PEEK is the same payload on older servers.
+        for spec in ("(BODY.PEEK[])", "(RFC822.PEEK)"):
+            response = await self.imap.uid("fetch", str(uid), spec)
+            if response.result != "OK":
+                continue
+            raw = _fetch_payload(list(response.lines))
+            if raw:
+                return message_from_bytes(raw, policy=default)
+        return None
 
     async def mark_seen(self, uid: int) -> None:
         assert self.imap is not None

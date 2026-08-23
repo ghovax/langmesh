@@ -54,6 +54,16 @@ def _hosts_for(address: str) -> tuple[str, str]:
     return _MAIL_HOSTS.get(address.rsplit("@", 1)[-1].lower(), ("", ""))
 
 
+def _account_login(address: str) -> str:
+    """Gmail IMAP/SMTP auth is the account, not a plus-address alias used as From."""
+    if "@" not in address:
+        return address
+    local, domain = address.rsplit("@", 1)
+    if domain.lower() in {"gmail.com", "googlemail.com"} and "+" in local:
+        return f"{local.split('+', 1)[0]}@{domain}"
+    return address
+
+
 class AppConfigurationSection(BaseModel, extra="forbid"):
     """A daemon-owned configuration section that rejects unknown fields."""
 
@@ -192,7 +202,7 @@ class EmailConfiguration(AppConfigurationSection):
         return (
             os.environ.get("LANGMESH_MAIL_IMAP_USER", "").strip()
             or self.imap.username.strip()
-            or self.effective_address
+            or _account_login(self.effective_address)
         )
 
     @property
@@ -245,9 +255,20 @@ class EmailConfiguration(AppConfigurationSection):
         return _env_int("LANGMESH_MAIL_SMTP_PORT", self.smtp.port)
 
     @property
-    def effective_smtp_start_tls(self) -> bool:
-        return _env_bool("LANGMESH_MAIL_SMTP_STARTTLS", self.smtp.start_tls)
+    def effective_smtp_use_tls(self) -> bool:
+        raw = os.environ.get("LANGMESH_MAIL_SMTP_USE_TLS")
+        if raw is not None and raw.strip():
+            return raw.strip().lower() not in {"0", "false", "no", "off"}
+        if self.smtp.use_tls:
+            return True
+        # 465 is implicit TLS; the yaml defaults are the 587/STARTTLS pair.
+        return self.effective_smtp_port == 465
 
     @property
-    def effective_smtp_use_tls(self) -> bool:
-        return _env_bool("LANGMESH_MAIL_SMTP_USE_TLS", self.smtp.use_tls)
+    def effective_smtp_start_tls(self) -> bool:
+        raw = os.environ.get("LANGMESH_MAIL_SMTP_STARTTLS")
+        if raw is not None and raw.strip():
+            return raw.strip().lower() not in {"0", "false", "no", "off"}
+        if self.effective_smtp_use_tls:
+            return False
+        return self.smtp.start_tls
