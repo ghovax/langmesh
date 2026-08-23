@@ -11,6 +11,7 @@ from langmesh.base.identity.providers import PROVIDERS, provider_env_vars, resol
 from langmesh.github.mention import (
     _BASH_DENY,
     api_key_for,
+    branch_slug,
     draft_pull_arguments,
     mention_features,
     mention_from_event,
@@ -20,6 +21,7 @@ from langmesh.github.mention import (
     publication_note,
     publish_changes,
     render,
+    unused_topic_branch,
 )
 from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features.seam import Feature, Features
@@ -77,7 +79,6 @@ def seen(
         "kind": kind,
         "allowed": allowed,
         "session_id": f"github:{REPO}:{kind}:{number}",
-        "topic_branch": f"langmesh/{kind}-{number}",
         "is_fork": is_fork,
         "head_ref": head_ref,
         "title": title,
@@ -92,7 +93,6 @@ def observe(event: dict[str, Any], pull: dict[str, Any] | None = None) -> dict[s
         "kind": mention.kind,
         "allowed": mention.allowed,
         "session_id": mention.session_id,
-        "topic_branch": mention.topic_branch,
         "is_fork": mention.is_fork,
         "head_ref": mention.head_ref,
         "title": mention.title,
@@ -182,7 +182,12 @@ def run_mention_matrix() -> None:
     check("turn includes url", mention.html_url in text, True)
     check(
         "issue publication is a draft",
-        "draft pull request" in publication_note(mention),
+        "draft pull request" in publication_note(mention, "langmesh/flaky-test-ab12"),
+        True,
+    )
+    check(
+        "issue publication names the branch",
+        "langmesh/flaky-test-ab12" in publication_note(mention, "langmesh/flaky-test-ab12"),
         True,
     )
     pull = mention_from_event(issue(pull=True), repository=REPO, pull=same)
@@ -192,11 +197,28 @@ def run_mention_matrix() -> None:
         "does not open another pull request" in publication_note(pull),
         True,
     )
-    created = draft_pull_arguments(mention, mention.topic_branch)
+    created = draft_pull_arguments(mention, "langmesh/flaky-test-ab12")
     check("create is a draft", "--draft" in created, True)
-    check("create uses the issue branch", mention.topic_branch in created, True)
+    check("create uses the issue branch", "langmesh/flaky-test-ab12" in created, True)
     check("create bases on default branch", "main" in created, True)
     check("create is not marked ready", "ready" not in created, True)
+    check("slug from title", branch_slug("Flaky test"), "flaky-test")
+    check("slug strips punctuation", branch_slug("Fix: API / JSON"), "fix-api-json")
+    check("slug empty title", branch_slug(""), "work")
+    check(
+        "new branch shape",
+        unused_topic_branch("Flaky test", code=lambda: "ab12"),
+        "langmesh/flaky-test-ab12",
+    )
+    check(
+        "new branch skips a taken name",
+        unused_topic_branch(
+            "Flaky test",
+            taken=lambda name: name.endswith("-aaaa"),
+            code=iter(["aaaa", "bbbb"]).__next__,
+        ),
+        "langmesh/flaky-test-bbbb",
+    )
 
 
 def run_model_and_reply_matrix() -> None:
@@ -279,7 +301,10 @@ def run_model_and_reply_matrix() -> None:
     )
     issue_mention = mention_from_event(issue(), repository=REPO)
     assert issue_mention is not None
-    prompt = render("system", {"publication": publication_note(issue_mention)})
+    prompt = render(
+        "system",
+        {"publication": publication_note(issue_mention, "langmesh/flaky-test-ab12")},
+    )
     check("system names the comment tool", "submit_github_comment" in prompt, True)
     check("system forbids push", "Do not git push" in prompt, True)
     check("system names the draft", "draft pull request" in prompt, True)
@@ -294,7 +319,7 @@ def run_model_and_reply_matrix() -> None:
     ) -> str:
         recorded.append(list(arguments))
         if arguments[:3] == ["git", "rev-parse", "--abbrev-ref"]:
-            return "langmesh/issue-12"
+            return "langmesh/flaky-test-ab12"
         if arguments[:3] == ["gh", "pr", "list"]:
             return ""
         if arguments[:3] == ["gh", "pr", "create"]:
@@ -316,7 +341,7 @@ def run_model_and_reply_matrix() -> None:
     ) -> str:
         recorded.append(list(arguments))
         if arguments[:3] == ["git", "rev-parse", "--abbrev-ref"]:
-            return "langmesh/issue-12"
+            return "langmesh/flaky-test-ab12"
         if arguments[:3] == ["gh", "pr", "list"]:
             return "https://github.com/ghovax/langmesh/pull/3"
         return ""

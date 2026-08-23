@@ -17,7 +17,7 @@ The left-hand side of `LANGMESH_MODEL` is a LangMesh provider name (`anthropic`,
 - Only **owners**, **members**, and **collaborators** are answered. Other comments are ignored.
 - Pull requests from forks are ignored.
 - Two mentions on the same thread wait their turn rather than overlapping.
-- `@langmesh` on an **issue** does the work. If files changed, the Action commits `langmesh/issue-N` and opens a **draft** pull request. A later mention on that issue updates the same draft. The Action never marks it ready — a person does that.
+- `@langmesh` on an **issue** does the work. If files changed, the Action commits `langmesh/<name>-<4 hex>` — a short name from the issue title plus a random suffix, the same shape as Cursor's `cursor/<name>-<code>` — and opens a **draft** pull request. A later mention on that issue updates the same draft. The Action never marks it ready — a person does that.
 - `@langmesh` on a **pull request** does the work on that PR's own branch and pushes commits. It does not open a second PR and does not change whether the PR is a draft.
 - It never pushes `main` or `master`. Tool children cannot `git push`; the job is the only publisher.
 - Tool calls run unattended (`automatic`). Network is off for shell children; the GitHub token is never written into the checkout.
