@@ -12,6 +12,7 @@ APPLICATION = "langmesh"
 CONFIGURATION_FILENAME = "configuration.yaml"
 DATABASE_FILENAME = "history.sqlite"
 BACKGROUND_DATABASE_FILENAME = "background.sqlite"
+MAIL_DATABASE_FILENAME = "mail-threads.sqlite"
 
 
 def _xdg(variable: str, default: Path) -> Path:
@@ -57,6 +58,11 @@ def configuration_file_path() -> Path:
 
 def database_file_path() -> Path:
     return data_directory() / DATABASE_FILENAME
+
+
+def mail_database_path() -> Path:
+    """Where the mail client maps IMAP threads to daemon sessions."""
+    return data_directory() / MAIL_DATABASE_FILENAME
 
 
 def uploads_directory() -> Path:

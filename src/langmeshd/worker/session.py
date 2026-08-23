@@ -1273,6 +1273,27 @@ class SessionExecutor(AgentExecutor):
         self._context(self._session_id)
         await self.resume_pending_jobs()
 
+    async def user_message_turn(self, message_id: str) -> dict | None:
+        """The turn that already accepted this client message id, so a retry after a crash is not a second copy."""
+        if not message_id:
+            return None
+        turns = await self._turn_store.turns_for_session(self._session_id)
+        for turn in turns:
+            for message in turn.history or []:
+                role = getattr(message, "role", None)
+                role_value = str(getattr(role, "value", role) or "")
+                stored_id = str(getattr(message, "message_id", "") or "")
+                metadata = getattr(message, "metadata", None)
+                if not stored_id and isinstance(metadata, dict):
+                    stored_id = str(metadata.get("messageId") or metadata.get("message_id") or "")
+                if role_value == "user" and stored_id == message_id:
+                    status = getattr(turn, "status", None)
+                    state = getattr(getattr(status, "state", None), "value", None) or str(
+                        getattr(status, "state", "") or ""
+                    )
+                    return {"turn_id": turn.id, "state": state}
+        return None
+
     async def start_turn(self, parts: list, metadata: dict) -> str:
         """Start a turn and answer with its task id as soon as it has one, rather than when the turn is over."""
         handler = self._agent_handler()

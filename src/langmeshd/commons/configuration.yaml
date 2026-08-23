@@ -9,6 +9,10 @@
 # To put it back:                   remove the line, and the default applies
 #
 # A name that is not in the schema is refused rather than written and ignored.
+#
+# Email (IMAP IDLE + SMTP) is an app-owned section. It is off until you enable it;
+# see documentation/user/email.md. Secrets also resolve from LANGMESH_MAIL_* environment
+# variables, which win over anything written here.
 
 # Model provider credentials. Each also resolves from that provider's conventional environment
 # variable, which wins over anything written here. Which model a session runs is chosen by its

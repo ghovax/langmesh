@@ -69,10 +69,11 @@ Both artifacts carry the same `CFBundleName` and identifier, so one certificate 
 
 ## The `langmesh` command
 
-`langmesh` has one task: **serve** — make LangMesh available over HTTP, with the daemon behind it. Everything else a person does with the harness happens in the interface (the desktop app, or the browser the serve command exposes) or over the daemon's API.
+`langmesh` has two long-running clients: **serve** makes the interface available over HTTP with the daemon behind it, and **mail** IDLEs a mailbox and drives the same daemon as a client. Everything else a person does with the harness happens in the interface (the desktop app, or the browser the serve command exposes) or over the daemon's API.
 
 ```shell
 langmesh serve
+langmesh mail
 ```
 
 | Flag | What it does |
@@ -97,7 +98,7 @@ The daemon itself is `langmeshd` — the same binary as `langmesh`, entered by i
 
 ### What is not here
 
-There are no session, configuration, or account verbs. Creating and messaging sessions, answering permission requests, recurring work, remote agents, configuration, and sign-in all happen in the interface, or programmatically against the daemon's API. A session composes with its peers through [tools](agent-system.md), over the same control plane; it does not shell out to this command.
+There are no session, configuration, or account verbs. Creating and messaging sessions, answering permission requests, recurring work, remote agents, configuration, and sign-in all happen in the interface, or programmatically against the daemon's API — except `mail`, which is the IMAP/SMTP client described in [Email](email.md). A session composes with its peers through [tools](agent-system.md), over the same control plane; it does not shell out to this command.
 
 ### Output and exit codes
 
@@ -106,7 +107,7 @@ Diagnostics go to stderr; the exit code carries the outcome.
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | Served, then exited normally. |
-| `1` | The interface could not be served (not built, port taken, daemon failed to start). |
+| `1` | The interface could not be served (not built, port taken, daemon failed to start), or mail was not configured. |
 | `130` | Interrupted with Ctrl-C. |
 | `141` | A pipe closed under it. |
 
@@ -147,6 +148,10 @@ After=network.target
 ExecStart=/srv/langmesh/.venv/bin/langmeshd
 Restart=on-failure
 WorkingDirectory=/srv/langmesh
+Environment=XDG_CONFIG_HOME=/srv/langmesh/xdg/config
+Environment=XDG_DATA_HOME=/srv/langmesh/xdg/data
+Environment=XDG_STATE_HOME=/srv/langmesh/xdg/state
+Environment=XDG_CACHE_HOME=/srv/langmesh/xdg/cache
 
 [Install]
 WantedBy=multi-user.target
@@ -174,13 +179,27 @@ with a transport you choose:
 A remote agent created on the server is a normal session: it keeps its transcript, its goals, and
 its approvals, and it is reachable from anywhere you can reach the daemon.
 
+### Email in front of the daemon
+
+Mail is a second long-running client, not a second daemon. `langmesh mail` IDLEs an allowlisted
+mailbox, strips quoted reply history, and drives `session.create` / `session.send` on loopback.
+Replies go out over SMTP in the same thread. See [Email](email.md). On a VPS, install both
+systemd units so the mail client comes back with the daemon:
+
+```sh
+sudo packaging/mail/install.sh
+```
+
+The script writes `/etc/systemd/system/langmeshd.service` and `langmesh-mail.service`, then
+enables them. Mailbox secrets belong in the environment of `langmesh-mail.service` or in
+`configuration.yaml`; they must not be committed.
+
 ### Keep it small
 
 - The daemon owns one `sqlite` database and the conversation history; a low-end VPS has room for
   thousands of sessions.
 - Set the `LANGMESH` XDG state directories if you want them under `/srv` rather than `/root`.
-- The daemon is the single process that needs to stay up; everything else (the app, `serve`) is a
-  client you can close and reopen.
+- The daemon is the process sessions live in; the app and `serve` are clients you can close and reopen. `langmesh mail` must stay up for IDLE, but unfinished jobs are on disk and resume when it comes back.
 
 ## `@langmesh[bot]` on GitHub
 
