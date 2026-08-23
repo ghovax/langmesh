@@ -23,9 +23,9 @@ from langmesh.runtime.values import ToolStatus
 
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
-# Model openings of this mention job between progress reminders. Opening 1 of a
-# new thread reminds so a direction update lands before other work; then 33, 65, …
-PROGRESS_TURNS = 32
+# Model openings of this mention job between progress reminders. Opening 1
+# reminds so a direction update lands before other work; then 25, 49, …
+PROGRESS_TURNS_INTERVAL = 24
 
 CommentKind = Literal["progress", "reply"]
 
@@ -75,16 +75,10 @@ submit_github_comment = StructuredTool.from_function(
 class GitHubReply(Feature):
     """Write `submit_github_comment` in place and remind until a call is a reply."""
 
-    def __init__(
-        self,
-        publish: Callable[[str], None] | None = None,
-        *,
-        followup: bool = False,
-    ) -> None:
+    def __init__(self, publish: Callable[[str], None] | None = None) -> None:
         self._comment: str | None = None
         self._replied = False
         self._publish = publish
-        self._followup = followup
         self._openings = 0
         self._host: PluginHost | None = None
 
@@ -108,20 +102,16 @@ class GitHubReply(Feature):
             logger.exception("could not write submit_github_comment onto the thread")
 
     def prepare_request(self) -> None:
-        """Append a progress reminder at the first opening of a new thread, then every ``PROGRESS_TURNS``.
+        """Append a progress reminder at the first opening, then every ``PROGRESS_TURNS_INTERVAL``.
 
-        A follow-up mention skips that first note so a continued thread does not get
-        the same "call progress first" instruction again. The note is a harness
-        reminder on the conversation tail. The system prompt and tool schema are not
-        rewritten, so the provider-cache prefix stays intact.
+        The note is a harness reminder on the conversation tail. The system prompt and
+        tool schema are not rewritten, so the provider-cache prefix stays intact.
         """
         host = self._host
         if host is None or host.turn.maintenance_active():
             return
         self._openings += 1
-        if self._followup and self._openings == 1:
-            return
-        if self._openings % PROGRESS_TURNS != 1:
+        if self._openings % PROGRESS_TURNS_INTERVAL != 1:
             return
         name = (
             "github_comment_progress_start"
@@ -155,5 +145,6 @@ __all__ = [
     "GitHubComment",
     "GitHubReply",
     "GitHubReplyCapability",
+    "PROGRESS_TURNS_INTERVAL",
     "submit_github_comment",
 ]
