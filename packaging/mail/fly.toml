@@ -4,9 +4,15 @@
 #   fly volumes create langmesh_xdg --size 3 --region iad --yes
 #   fly secrets import < mail.env
 #   fly deploy . --config packaging/mail/fly.toml --dockerfile packaging/mail/Dockerfile
+#
+# No http_service: Fly Proxy will not autostop a worker with no services.
+# restart always: IMAP IDLE is the process; it must come back after a crash.
 
 app = "langmesh-mail"
 primary_region = "iad"
+
+kill_signal = "SIGTERM"
+kill_timeout = 60
 
 [build]
   dockerfile = "packaging/mail/Dockerfile"
@@ -22,3 +28,7 @@ primary_region = "iad"
   memory = "1gb"
   cpu_kind = "shared"
   cpus = 1
+
+[[restart]]
+  policy = "always"
+  retries = 10
