@@ -54,7 +54,7 @@ start_daemon() {
   rm -f "${XDG_RUNTIME_DIR}/langmesh/langmeshd.sock"
   /srv/langmesh/.venv/bin/langmeshd &
   daemon_pid=$!
-  for _ in $(seq 1 90); do
+  for _ in $(seq 1 300); do
     if [[ -S "${XDG_RUNTIME_DIR}/langmesh/langmeshd.sock" ]]; then
       return 0
     fi
