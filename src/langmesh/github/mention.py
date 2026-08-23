@@ -596,7 +596,9 @@ def publish_changes(
     run(["git", "add", "-A"], cwd=cwd)
     run(["git", "reset", "-q", "--", STATE_DIRECTORY], cwd=cwd)
     if tree_is_dirty(workspace, run=run):
-        raise RuntimeError("uncommitted file changes remain; the agent must commit before finishing")
+        logger.error("uncommitted file changes remain; they will not be pushed")
+    if not commits_to_push(workspace, run=run):
+        return ""
     header = _git_header(token)
     run(["git", "push", "-u", "origin", f"HEAD:{branch}"], cwd=cwd, extraheader=header)
     if mention.kind != "issue":
@@ -700,7 +702,19 @@ def post_comment(repository: str, number: int, text: str, token: str, api: str) 
     create_comment(repository, number, text, token, api)
 
 
-def mention_features(reply: GitHubReply) -> list[Feature]:
+class UncommittedChanges(Feature):
+    """Hold the turn open until the agent commits file edits."""
+
+    def __init__(self, workspace: Path) -> None:
+        self._workspace = workspace
+
+    def incomplete_reminder(self) -> str | None:
+        if not tree_is_dirty(self._workspace):
+            return None
+        return render("uncommitted_changes")
+
+
+def mention_features(reply: GitHubReply, workspace: Path) -> list[Feature]:
     """The plugins one mention session runs, including the comment tool."""
     reviewer = PermissionReviewer()
     return [
@@ -716,6 +730,7 @@ def mention_features(reply: GitHubReply) -> list[Feature]:
         Bash(),
         Web(),
         reply,
+        UncommittedChanges(workspace),
     ]
 
 
@@ -753,7 +768,7 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply) -> Session:
         providers={provider: key} if key else None,
         components=SessionComponents(
             checkpoints=SQLiteCheckpoints(connection),
-            features=mention_features(reply),
+            features=mention_features(reply, workspace),
         ),
     )
 
