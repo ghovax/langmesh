@@ -12,6 +12,29 @@ mkdir -p "${XDG_RUNTIME_DIR}/langmesh" \
   "${XDG_STATE_HOME}/langmesh"
 chmod 700 "${XDG_RUNTIME_DIR}" "${XDG_RUNTIME_DIR}/langmesh"
 
+load_mail_env() {
+  local file="" line
+  if [[ -n "${LANGMESH_MAIL_ENV:-}" && -f "${LANGMESH_MAIL_ENV}" ]]; then
+    file="${LANGMESH_MAIL_ENV}"
+  elif [[ -f /run/secrets/mail.env ]]; then
+    file=/run/secrets/mail.env
+  elif [[ -f /srv/langmesh/mail.env ]]; then
+    file=/srv/langmesh/mail.env
+  fi
+  if [[ -z "${file}" ]]; then
+    return 0
+  fi
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    case "${line}" in
+      ''|'#'*) continue ;;
+    esac
+    [[ "${line}" == *=* ]] || continue
+    export "${line}"
+  done <"${file}"
+}
+load_mail_env
+
 /srv/langmesh/.venv/bin/python - <<'PY'
 import os
 from langmeshd.commons import configuration_file

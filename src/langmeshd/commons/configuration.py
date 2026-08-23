@@ -64,6 +64,21 @@ def _account_login(address: str) -> str:
     return address
 
 
+def _mail_secret(value: str | None) -> str:
+    """IMAP/SMTP secrets as the provider expects them.
+
+    Gmail copies app passwords as four groups of four; those spaces are display-only.
+    Surrounding whitespace from an env file is never part of the secret.
+    """
+    if not value:
+        return ""
+    text = value.strip()
+    compacted = text.replace(" ", "")
+    if len(compacted) == 16 and compacted.isalnum():
+        return compacted
+    return text
+
+
 class AppConfigurationSection(BaseModel, extra="forbid"):
     """A daemon-owned configuration section that rejects unknown fields."""
 
@@ -207,11 +222,15 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_imap_password(self) -> str:
-        return (
-            os.environ.get("LANGMESH_MAIL_IMAP_PASSWORD")
-            or os.environ.get("LANGMESH_MAIL_PASSWORD")
-            or self.imap.password
-        )
+        for candidate in (
+            os.environ.get("LANGMESH_MAIL_IMAP_PASSWORD"),
+            os.environ.get("LANGMESH_MAIL_PASSWORD"),
+            self.imap.password,
+        ):
+            secret = _mail_secret(candidate)
+            if secret:
+                return secret
+        return ""
 
     @property
     def effective_smtp_host(self) -> str:
@@ -231,13 +250,14 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_smtp_password(self) -> str:
-        explicit = (
-            os.environ.get("LANGMESH_MAIL_SMTP_PASSWORD")
-            or os.environ.get("LANGMESH_MAIL_PASSWORD")
-            or self.smtp.password
-        )
-        if explicit:
-            return explicit
+        for candidate in (
+            os.environ.get("LANGMESH_MAIL_SMTP_PASSWORD"),
+            os.environ.get("LANGMESH_MAIL_PASSWORD"),
+            self.smtp.password,
+        ):
+            secret = _mail_secret(candidate)
+            if secret:
+                return secret
         # Same-provider inferred SMTP shares the IMAP app password. A custom
         # relay host is not authenticated with that secret.
         inferred = _hosts_for(self.effective_address)[1]
