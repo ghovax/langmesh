@@ -80,7 +80,7 @@ To load the same file into a one-off command without a multiline `sudo VAR=...` 
 grep -vE '^(#|$)' mail.env | xargs -d '\n' env uv run langmesh mail
 ```
 
-`install.sh` copies `mail.env` to `/srv/langmesh/mail.env` as the systemd `EnvironmentFile` and enables `langmeshd` and `langmesh-mail`. Filling `mail.env` and re-running the `LANGMESH_MAIL_ENV` command refreshes that file. Then send mail to `email.address` from an allowlisted From. Progress and the reply arrive in that thread; a further reply — including a reply to a progress note — continues the same session with only the new body.
+`install.sh` copies `mail.env` to `/srv/langmesh/mail.env` as the systemd `EnvironmentFile` and enables `langmeshd` and `langmesh-mail`. Filling `mail.env` and re-running the `LANGMESH_MAIL_ENV` command refreshes that file. A later install does not replace `/srv/langmesh/xdg` (the job queue and daemon history) or an existing `mail.env` unless you point `LANGMESH_MAIL_ENV` at a new file. Then send mail to `email.address` from an allowlisted From. Progress and the reply arrive in that thread; a further reply — including a reply to a progress note — continues the same session with only the new body.
 
 ## What you still have to supply
 
