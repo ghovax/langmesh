@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
+from langmesh.base.configuration import BashToolConfiguration
+from langmesh.base.identity.providers import PROVIDERS, provider_env_vars, resolve_api_key
 from langmesh.github.mention import (
+    _BASH_DENY,
     api_key_for,
     mention_features,
     mention_from_event,
@@ -199,13 +203,52 @@ def run_model_and_reply_matrix() -> None:
     )
     check("LANGMESH_API_KEY", api_key_for("anthropic", {"LANGMESH_API_KEY": "sk-any"}), "sk-any")
     check("provider env", api_key_for("groq", {"GROQ_API_KEY": "g"}), "g")
-    check("hyphenated provider env", api_key_for("open-router", {"OPEN_ROUTER_API_KEY": "x"}), "x")
+    check("alibaba catalogue env", api_key_for("alibaba", {"DASHSCOPE_API_KEY": "d"}), "d")
+    check("google gemini env", api_key_for("google", {"GEMINI_API_KEY": "g"}), "g")
+    check("google api env", api_key_for("google", {"GOOGLE_API_KEY": "g"}), "g")
+    check("meta llama env", api_key_for("meta_llama", {"LLAMA_API_KEY": "l"}), "l")
+    check("conventional fallback", api_key_for("alibaba", {"ALIBABA_API_KEY": "a"}), "a")
+    check("hyphenated conventional", api_key_for("open-router", {"OPEN_ROUTER_API_KEY": "x"}), "x")
+    check("custom conventional", api_key_for("custom", {"CUSTOM_API_KEY": "c"}), "c")
+    check("native has no key env", api_key_for("chatgpt", {"CHATGPT_API_KEY": "x"}), "")
+    check("opencode anonymous", api_key_for("opencode", {}), "public")
     check("wrong provider env ignored", api_key_for("anthropic", {"OPENAI_API_KEY": "ignored"}), "")
     check(
         "LANGMESH_API_KEY wins",
         api_key_for("anthropic", {"LANGMESH_API_KEY": "a", "ANTHROPIC_API_KEY": "b"}),
         "a",
     )
+    check(
+        "alibaba names include catalogue and conventional",
+        provider_env_vars("alibaba"),
+        ("DASHSCOPE_API_KEY", "ALIBABA_API_KEY"),
+    )
+    check("native providers have no env", provider_env_vars("chatgpt"), ())
+    check("hyphen conventional names", provider_env_vars("open-router"), ("OPEN_ROUTER_API_KEY",))
+    for identifier, definition in PROVIDERS.items():
+        names = provider_env_vars(identifier)
+        if definition.native:
+            check(f"{identifier} native empty", names, ())
+            continue
+        if not names:
+            failures.append(f"{identifier}: expected env names")
+        conventional = f"{identifier.upper().replace('-', '_')}_API_KEY"
+        if conventional not in names:
+            failures.append(f"{identifier}: missing {conventional}")
+    previous = os.environ.get("DASHSCOPE_API_KEY")
+    os.environ["DASHSCOPE_API_KEY"] = "from-env"
+    try:
+        check("resolve_api_key reads catalogue env", resolve_api_key("alibaba", {}), "from-env")
+    finally:
+        if previous is None:
+            del os.environ["DASHSCOPE_API_KEY"]
+        else:
+            os.environ["DASHSCOPE_API_KEY"] = previous
+    bash = BashToolConfiguration(permissions=dict(_BASH_DENY))
+    check("deny git push", bash.evaluate_permission("git push origin feature"), "deny")
+    check("deny force-push", bash.evaluate_permission("git push --force origin feature"), "deny")
+    check("deny -f push", bash.evaluate_permission("git push -f origin feature"), "deny")
+    check("allow git commit", bash.evaluate_permission("git commit -am x"), "allow")
     check("empty reply", posted_reply(""), "Done.")
     check("stripped reply", posted_reply("  All green.  "), "All green.")
     check(

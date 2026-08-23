@@ -30,6 +30,7 @@ from langmesh import (
 )
 from langmesh.base.content.models import split_model_identifier
 from langmesh.base.content.prompts import PackagePromptLoader
+from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
 from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features import Feature
 from langmesh.runtime.plugins.background import BackgroundJobsFeature
@@ -50,17 +51,11 @@ STATE_DIRECTORY = ".github/langmesh"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 
+# The job is the only publisher. Longest-match would otherwise keep force-push at "ask".
 _BASH_DENY = {
+    "git push*": "deny",
     "git push --force*": "deny",
     "git push -f*": "deny",
-    "git push origin main*": "deny",
-    "git push origin master*": "deny",
-    "git push -u origin main*": "deny",
-    "git push -u origin master*": "deny",
-    "git push --set-upstream origin main*": "deny",
-    "git push --set-upstream origin master*": "deny",
-    "git push origin HEAD:main*": "deny",
-    "git push origin HEAD:master*": "deny",
 }
 
 
@@ -172,10 +167,15 @@ def model_identifier_from_env(environ: Mapping[str, str] | None = None) -> tuple
 
 
 def api_key_for(provider: str, environ: Mapping[str, str] | None = None) -> str:
-    """The key for ``provider``: ``LANGMESH_API_KEY``, else that provider's usual env var."""
+    """``LANGMESH_API_KEY``, then this provider's catalogue env vars, else its anonymous sentinel."""
     env = environ or os.environ
-    named = f"{provider.upper().replace('-', '_')}_API_KEY"
-    return (env.get("LANGMESH_API_KEY") or env.get(named) or "").strip()
+    if key := (env.get("LANGMESH_API_KEY") or "").strip():
+        return key
+    for name in provider_env_vars(provider):
+        if value := (env.get(name) or "").strip():
+            return value
+    definition = get_provider_definition(provider)
+    return (definition.anonymous_api_key if definition is not None else "").strip()
 
 
 def prompt_for(mention: Mention) -> str:

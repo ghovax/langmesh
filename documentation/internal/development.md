@@ -99,14 +99,13 @@ The symlink is what puts `langmesh` and `langmeshd` on your `PATH`, both enterin
 
 ## Checks
 
-The repository ships **no unit-test suite**. It ships two guards, a verification harness, and a GitHub mention matrix:
+The repository ships **no unit-test suite**. It ships two guards and one verification harness:
 
 | Command | What it does |
 |---|---|
 | `uv run ruff check src/` | Lint. |
 | `uv run basedpyright` | Type-check the library and daemon as one import graph; a library file that reaches into `langmeshd` is flagged the same way a stale attribute is. |
 | `uv run pytest` | The retrieval harness under `tests/retrieval/`, plus any tests you add (`testpaths = ["tests"]`, `asyncio_mode = "auto"`). |
-| `./tests/github_mention.sh` | GitHub mention state matrix, then throwaway-git checks for checkout, commit, and cache-dir exclusion. |
 | `cd web && bun run build` | Regenerates and diffs the event schema, then type-checks the UI. |
 
 ## Project layout
