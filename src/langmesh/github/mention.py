@@ -4,9 +4,10 @@ The daemon is not involved. Follow-up mentions on the same issue or pull request
 the saved session. The process may use GitHub's token; tool children cannot, because
 confinement strips it from their environment and credentials are never written into the
 checkout. On an issue the agent reuses a branch that already is this work when one exists,
-otherwise creates ``langmesh/<name>-<code>`` itself; the wrapper
-commits, pushes, and opens a draft. On a pull request, file edits are pushed to that
-branch. Never to main. Thread replies stay user-facing; failures go to the logger.
+otherwise creates ``langmesh/<slug>-<code>`` itself; the agent
+commits, and the wrapper pushes and opens a draft. On a pull request, file edits are
+pushed to that branch. Never to main. Thread replies stay user-facing; failures go to
+the logger.
 """
 
 from __future__ import annotations
@@ -491,6 +492,7 @@ def prepare_tree(mention: Mention, workspace: Path, *, token: str, run: Run = _r
     cwd = str(workspace)
     # Checkout writes safe.directory under a temporary HOME; later git uses the runner's HOME.
     run(["git", "config", "--global", "--add", "safe.directory", cwd], cwd=cwd)
+    configure_git_author(workspace, run=run)
     header = _git_header(token)
     run(["git", "fetch", "origin", "--prune"], cwd=cwd, extraheader=header)
     if mention.kind == "pull" and mention.head_ref and not mention.is_fork:
@@ -539,14 +541,29 @@ def tree_is_dirty(workspace: Path, *, run: Run = _run) -> bool:
     return bool(staged)
 
 
-def commit_subject(mention: Mention, message: str = "") -> str:
-    """A commit subject in the repository's usual sentence style, not ``langmesh: …``."""
-    for raw in message.splitlines():
-        line = raw.strip().lstrip("#").strip()
-        if not line or line.startswith("http") or re.search(r"@langmesh", line, re.I):
-            continue
-        return line[:72]
-    return "Apply requested changes"
+def commits_to_push(workspace: Path, *, run: Run = _run) -> bool:
+    """Whether HEAD has commits that are not on ``origin`` for this branch."""
+    cwd = str(workspace)
+    branch = current_branch(workspace, run=run)
+    try:
+        count = run(
+            ["git", "rev-list", "--count", f"origin/{branch}..HEAD"],
+            cwd=cwd,
+        ).strip()
+    except (OSError, RuntimeError, subprocess.CalledProcessError):
+        return True
+    return int(count or 0) > 0
+
+
+def configure_git_author(workspace: Path, *, run: Run = _run) -> None:
+    """So commits the agent makes are authored as the job's bot."""
+    cwd = str(workspace)
+    actor = (os.environ.get("LANGMESH_GIT_NAME") or "github-actions[bot]").strip()
+    email = (
+        os.environ.get("LANGMESH_GIT_EMAIL") or "41898282+github-actions[bot]@users.noreply.github.com"
+    ).strip()
+    run(["git", "config", "user.name", actor], cwd=cwd)
+    run(["git", "config", "user.email", email], cwd=cwd)
 
 
 def publish_changes(
@@ -554,10 +571,9 @@ def publish_changes(
     workspace: Path,
     *,
     token: str,
-    message: str = "",
     run: Run = _run,
 ) -> str:
-    """Commit file edits and push. On an issue, open or reuse a draft PR. On a pull request, only push."""
+    """Push the agent's commits. On an issue, open or reuse a draft PR. On a pull request, only push."""
     cwd = str(workspace)
     branch = current_branch(workspace, run=run)
     protected = PROTECTED_BRANCHES | {mention.default_branch}
@@ -567,21 +583,8 @@ def publish_changes(
         remember_branch(workspace, branch)
     run(["git", "add", "-A"], cwd=cwd)
     run(["git", "reset", "-q", "--", STATE_DIRECTORY], cwd=cwd)
-    actor = (os.environ.get("LANGMESH_GIT_NAME") or "github-actions[bot]").strip()
-    email = (
-        os.environ.get("LANGMESH_GIT_EMAIL") or "41898282+github-actions[bot]@users.noreply.github.com"
-    ).strip()
-    run(["git", "config", "user.name", actor], cwd=cwd)
-    run(["git", "config", "user.email", email], cwd=cwd)
-    run(
-        [
-            "git",
-            "commit",
-            "-m",
-            commit_subject(mention, message=message),
-        ],
-        cwd=cwd,
-    )
+    if tree_is_dirty(workspace, run=run):
+        raise RuntimeError("uncommitted file changes remain; the agent must commit before finishing")
     header = _git_header(token)
     run(["git", "push", "-u", "origin", f"HEAD:{branch}"], cwd=cwd, extraheader=header)
     if mention.kind != "issue":
@@ -839,10 +842,8 @@ def main() -> None:
             )
         )
         pull_url = ""
-        if tree_is_dirty(workspace):
-            pull_url = publish_changes(
-                mention, workspace, token=token, message=answer
-            )
+        if tree_is_dirty(workspace) or commits_to_push(workspace):
+            pull_url = publish_changes(mention, workspace, token=token)
         publish_thread_comment(
             repository,
             mention.number,
