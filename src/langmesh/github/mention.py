@@ -456,7 +456,8 @@ def open_issue_head(mention: Mention, *, run: Run, cwd: str) -> str:
 def prepare_tree(mention: Mention, workspace: Path, *, token: str, run: Run = _run) -> Checkout:
     """Check out an existing thread branch, or the default branch so the agent can choose."""
     cwd = str(workspace)
-    # Checkout writes safe.directory under a temporary HOME; later git uses the runner's HOME.
+    # The checkout action writes safe.directory under a temporary HOME, but later git
+    # commands use the runner HOME, so we add it explicitly for the workspace.
     run(["git", "config", "--global", "--add", "safe.directory", cwd], cwd=cwd)
     configure_git_author(workspace, run=run)
     header = _git_header(token)
