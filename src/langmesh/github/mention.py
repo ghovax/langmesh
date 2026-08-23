@@ -716,7 +716,7 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply) -> Session:
     key = api_key_for(provider)
     agent = AgentConfiguration(
         name="langmesh",
-        description="Does the work asked in a GitHub mention.",
+        description="Does the work asked in a GitHub mention, in the repository that comment is on.",
         system_prompt=render("system"),
         provider=provider,
         model=model,
