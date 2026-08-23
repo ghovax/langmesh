@@ -240,6 +240,7 @@ class _RunsTurns(_DispatchesTools, ABC):
                 "mcp_servers": mcp_servers,
                 "observational_memory": "",
                 "computer_control_guidance": "",
+                "channel_guidance": "",
                 "task_guidance": "",
             }
             self._features.compose_prompt(variables)

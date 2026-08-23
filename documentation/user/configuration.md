@@ -21,7 +21,7 @@ LangMesh follows the XDG Base Directory convention rather than one dot-directory
 | Path                         | What is there                                                               |
 | ---------------------------- | --------------------------------------------------------------------------- |
 | `$XDG_CONFIG_HOME/langmesh/` | `configuration.yaml`                                                        |
-| `$XDG_DATA_HOME/langmesh/`   | `history.sqlite`, `background.sqlite`, `mail-threads.sqlite`, uploads, `oauths/`, the file-URL signing secret, the reach pairing token |
+| `$XDG_DATA_HOME/langmesh/`   | `history.sqlite`, `background.sqlite`, `mail.sqlite`, uploads, `oauths/`, the file-URL signing secret, the reach pairing token |
 | `$XDG_STATE_HOME/langmesh/`  | logs (`langmeshd.log`)                                                      |
 | `$XDG_CACHE_HOME/langmesh/`  | caches                                                                      |
 | `$XDG_RUNTIME_DIR/langmesh/` | the daemon's socket, port, pid, lock, and token                             |
@@ -391,7 +391,7 @@ Process-level timings owned by the daemon and read only from the configuration f
 
 ### Email
 
-IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same file. Off until you enable it. The mail process (`langmesh mail`) is a **client** of `langmeshd`, the same way the app is: it never embeds a library session. See [Email](email.md).
+IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same file. Off until you enable it. The mail process (`langmesh mail`) is a **client** of `langmeshd`. Mail sessions speak through `submit_email` (`progress` or `reply`); markdown is rendered as HTML in the outbound message. See [Email](email.md).
 
 | Setting | Type | Default | What it is for |
 | ------- | ---- | ------- | -------------- |

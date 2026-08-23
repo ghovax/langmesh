@@ -12,7 +12,7 @@ APPLICATION = "langmesh"
 CONFIGURATION_FILENAME = "configuration.yaml"
 DATABASE_FILENAME = "history.sqlite"
 BACKGROUND_DATABASE_FILENAME = "background.sqlite"
-MAIL_DATABASE_FILENAME = "mail-threads.sqlite"
+MAIL_DATABASE_FILENAME = "mail.sqlite"
 
 
 def _xdg(variable: str, default: Path) -> Path:

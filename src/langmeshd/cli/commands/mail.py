@@ -1,4 +1,4 @@
-"""`langmesh mail`: IDLE a mailbox and drive the daemon, one turn per inbound message."""
+"""`langmesh mail`: IDLE a mailbox and drive the daemon. The session mails through `submit_email`."""
 
 from __future__ import annotations
 
