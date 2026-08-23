@@ -18,7 +18,7 @@ The interface is the surface you work in; the daemon it talks to is started by `
 uv run python -m langmeshd langmeshd
 ```
 
-- One image, two entry points, chosen by the first argument: `langmesh` (the CLI, whose only verb is serving) and `langmeshd` (the daemon that hosts sessions). A bare launch lands in the CLI.
+- One image, two entry points, chosen by the first argument: `langmesh` (the CLI: `serve` and `mail`) and `langmeshd` (the daemon that hosts sessions). A bare launch lands in the CLI.
 - A session is an object the daemon builds and holds, not a process; creating one costs about as much as constructing the object, so there is no pool waiting.
 - It listens on a unix socket in your runtime directory, and for GUI clients on an ephemeral loopback port. The port, the capability token, the pid, and the lock are published under the runtime directory.
 
@@ -128,7 +128,8 @@ The repository ships **no unit-test suite**. It ships two guards and one verific
 | `daemon/` | `langmeshd`: registry, lifecycle, host, machine loaders, agent files, API, scheduler, observation watcher |
 | `worker/` | What a hosted session is made of: its executor, its verbs, its turn loop, peers |
 | `rest/` | The FastAPI surface the browser uses |
-| `cli/` | The `langmesh serve` command |
+| `cli/` | The `langmesh serve` and `langmesh mail` commands |
+| `mail/` | IMAP IDLE + SMTP client of the daemon |
 | `dictation/` | The local speech transcriber |
 | `features.py` | The daemon's plugin assembly: which features a hosted session runs |
 | `__main__.py` | argv dispatch: `langmesh`, `langmeshd` |

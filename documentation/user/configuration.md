@@ -12,7 +12,7 @@ Two ways to change it, both writing the same file:
 
 A change applies to whatever starts **next**. A running session keeps the configuration it was built with, with a few exceptions the daemon pushes out: configuration, sandbox, computer control, and the user-context snapshot each ask live sessions to rebuild.
 
-Three places say something about a setting, and each says a different thing. **This document** is the narrative, for the settings worth explaining at length. The **settings panel** reads the running schema, so it can tell you what _this machine_ is set to. A name the schema does not define is **refused**, not ignored. The daemon validates its `daemon`, `dictation`, and `composio` sections separately and passes only library-owned sections to `langmesh.Configuration`.
+Three places say something about a setting, and each says a different thing. **This document** is the narrative, for the settings worth explaining at length. The **settings panel** reads the running schema, so it can tell you what _this machine_ is set to. A name the schema does not define is **refused**, not ignored. The daemon validates its `daemon`, `dictation`, `composio`, and `email` sections separately and passes only library-owned sections to `langmesh.Configuration`.
 
 ## Where everything lives
 
@@ -21,7 +21,7 @@ LangMesh follows the XDG Base Directory convention rather than one dot-directory
 | Path                         | What is there                                                               |
 | ---------------------------- | --------------------------------------------------------------------------- |
 | `$XDG_CONFIG_HOME/langmesh/` | `configuration.yaml`                                                        |
-| `$XDG_DATA_HOME/langmesh/`   | `history.sqlite`, `background.sqlite`, uploads, `oauths/`, the file-URL signing secret, the reach pairing token |
+| `$XDG_DATA_HOME/langmesh/`   | `history.sqlite`, `background.sqlite`, `mail-threads.sqlite`, uploads, `oauths/`, the file-URL signing secret, the reach pairing token |
 | `$XDG_STATE_HOME/langmesh/`  | logs (`langmeshd.log`)                                                      |
 | `$XDG_CACHE_HOME/langmesh/`  | caches                                                                      |
 | `$XDG_RUNTIME_DIR/langmesh/` | the daemon's socket, port, pid, lock, and token                             |
@@ -388,6 +388,33 @@ Process-level timings owned by the daemon and read only from the configuration f
 | `daemon.probe_interval_seconds`      | number | `0.05`    | How often a client checks whether a daemon is listening or has exited. |
 | `daemon.probe_connect_seconds`       | number | `0.5`     | How long one daemon connection probe may wait. |
 | `daemon.session_idle_sleep_seconds`  | number | `18000.0` | How long an idle hosted session retains its worker before sleeping. |
+
+### Email
+
+IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same file. Off until you enable it. The mail process (`langmesh mail`) is a **client** of `langmeshd`, the same way the app is: it never embeds a library session. See [Email](email.md).
+
+| Setting | Type | Default | What it is for |
+| ------- | ---- | ------- | -------------- |
+| `email.enabled` | boolean | `false` | Run the mail client against this mailbox. |
+| `email.address` | string | — | The From address replies are sent as. LANGMESH_MAIL_ADDRESS wins over this. |
+| `email.allow_from` | list | `[]` | Mailboxes (or `@domain`) whose mail is taken. Everyone else is ignored. LANGMESH_MAIL_ALLOW_FROM is a comma-separated override. |
+| `email.agent` | string | — | The agent profile each mail thread session runs. LANGMESH_MAIL_AGENT wins over this. |
+| `email.working_directory` | string | — | Where that session's tools run. Empty means the mail process's current directory. |
+| `email.permission_mode` | string | `automatic` | Who answers gates for a mail session: `ask`, `automatic`, or `allow`. |
+| `email.idle_timeout_seconds` | number | `60.0` | How long one IMAP IDLE waits before cycling, so NAT and server idle limits cannot drop the socket silently. |
+| `email.turn_timeout_seconds` | number | `1800.0` | How long to wait for this mail's turn before giving up and retrying on the next reconnect. A timeout never invents a reply. |
+| `email.imap.host` | string | — | IMAP server. LANGMESH_MAIL_IMAP_HOST wins over this. |
+| `email.imap.port` | integer | `993` | IMAP port. |
+| `email.imap.username` | string | — | IMAP login. LANGMESH_MAIL_IMAP_USER wins; otherwise `email.address`. |
+| `email.imap.password` | string | — | IMAP password. LANGMESH_MAIL_IMAP_PASSWORD or LANGMESH_MAIL_PASSWORD wins. |
+| `email.imap.mailbox` | string | `INBOX` | Which folder to IDLE. |
+| `email.imap.ssl` | boolean | `true` | Implicit TLS (typical for 993). |
+| `email.smtp.host` | string | — | SMTP server. LANGMESH_MAIL_SMTP_HOST wins over this. |
+| `email.smtp.port` | integer | `587` | SMTP port. |
+| `email.smtp.username` | string | — | SMTP login. LANGMESH_MAIL_SMTP_USER wins; otherwise the IMAP username. |
+| `email.smtp.password` | string | — | SMTP password. LANGMESH_MAIL_SMTP_PASSWORD or LANGMESH_MAIL_PASSWORD or the IMAP password wins. |
+| `email.smtp.start_tls` | boolean | `true` | Upgrade with STARTTLS (typical for 587). |
+| `email.smtp.use_tls` | boolean | `false` | Implicit TLS (typical for 465). Mutually exclusive with STARTTLS. |
 
 ### Model providers
 

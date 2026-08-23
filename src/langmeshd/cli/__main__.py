@@ -1,8 +1,11 @@
 """`langmesh`, the command: serve the interface, with the daemon behind it.
 
-The command line has exactly one task: make LangMesh available. Everything a person
-does with the harness happens in the interface or over the daemon's API, so there are
-no session, configuration, or account verbs here.
+The command line has two long-running clients: `serve` makes the interface available, and
+`mail` IDLEs a mailbox and drives the daemon over its API. Creating and messaging sessions,
+answering permission requests, recurring work, remote agents, configuration, and sign-in
+otherwise happen in the interface, or programmatically against the daemon's API. A session
+composes with its peers through [tools](agent-system.md), over the same control plane; it
+does not shell out to this command.
 """
 
 from __future__ import annotations
@@ -26,9 +29,17 @@ def _command_serve(arguments: argparse.Namespace) -> int:
     return serve.run(arguments)
 
 
+def _command_mail(arguments: argparse.Namespace) -> int:
+    """IDLE a mailbox and drive the daemon as a client, one turn per inbound message."""
+    from langmeshd.cli.commands import mail
+
+    return mail.run(arguments)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="langmesh", description="Serve the interface, with the daemon behind it."
+        prog="langmesh",
+        description="Serve the interface, or sit in front of the daemon as a mail client.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -59,6 +70,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="serve the paired door: a durable pairing link, token-gated, for your own devices over your tailnet",
     )
     serve.set_defaults(handler=_command_serve)
+
+    mail = subparsers.add_parser(
+        "mail",
+        help="IDLE an allowlisted mailbox and drive the daemon; replies go out over SMTP",
+    )
+    mail.set_defaults(handler=_command_mail)
 
     return parser
 

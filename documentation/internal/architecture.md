@@ -18,7 +18,7 @@
 
 LangMesh is two Python packages that ship together as one image. The **library** (`src/langmesh`) is the harness: `langmesh.Session` drives an agent turn by turn in your process. It reads no machine configuration, starts nothing, and composes nothing you did not hand it — every tool and sub-behavior is a feature. The **product** (`src/langmeshd`) is everything that makes sessions durable and addressable: the machine loaders that turn your `.agents` trees into what the library takes, the daemon that hosts sessions, the CLI, the REST surface, dictation, and the worker machinery. The library never imports the product; the product hosts the library.
 
-The product is one executable entered two ways. `langmesh` is the command a person runs (whose one verb is `serve`); `langmeshd` is the daemon that hosts sessions. They are the same image, not two binaries, so packaging stays a single specification and every session carries the signed bundle's code identity. One macOS Accessibility grant covers the whole fleet instead of prompting per session.
+The product is one executable entered two ways. `langmesh` is the command a person runs (`serve` for the interface, `mail` for IMAP/SMTP in front of the daemon); `langmeshd` is the daemon that hosts sessions. They are the same image, not two binaries, so packaging stays a single specification and every session carries the signed bundle's code identity. One macOS Accessibility grant covers the whole fleet instead of prompting per session.
 
 ```mermaid
 sequenceDiagram
@@ -72,9 +72,9 @@ The two answers are one fact read in two directions. What the kernel calls a ses
 
 ## The CLI
 
-`langmesh` adds nothing the control plane does not have; its one verb, `serve`, makes the interface available over HTTP with the daemon behind it. It is a reverse proxy in front of the daemon plus a static interface server: the browser page never sees the daemon's capability token. `serve` starts the daemon if it is not running and stops a daemon it started, leaving a pre-existing daemon alone. With `--reach` it adds a token-gated pairing door for your own devices. The [CLI guide](../user/installation.md) is the reference.
+`langmesh` adds nothing the control plane does not have. `serve` makes the interface available over HTTP with the daemon behind it. `mail` IDLEs a mailbox and drives the same control plane as a client; see [Email](../user/email.md). `serve` is a reverse proxy in front of the daemon plus a static interface server: the browser page never sees the daemon's capability token. `serve` starts the daemon if it is not running and stops a daemon it started, leaving a pre-existing daemon alone. With `--reach` it adds a token-gated pairing door for your own devices. The [CLI guide](../user/installation.md) is the reference.
 
-Everything a person does — creating and messaging sessions, answering permission requests, schedules, configuration, sign-in — happens in the interface or over the daemon's API, never through CLI verbs.
+Creating and messaging sessions, answering permission requests, schedules, configuration, and sign-in otherwise happen in the interface or over the daemon's API, never through extra CLI verbs.
 
 ## The app
 
