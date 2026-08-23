@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from langmeshd.commons.paths import mail_database_path
+from langmeshd.mail.body import canonical_message_id
 
 DISCOVERED = "discovered"
 SUBMITTED = "submitted"
@@ -170,6 +171,7 @@ class ThreadStore:
         self._connection.close()
 
     def _remember(self, connection: sqlite3.Connection, thread_key: str, message_id: str) -> None:
+        message_id = canonical_message_id(message_id)
         if not thread_key or not message_id:
             return
         connection.execute(
@@ -246,6 +248,7 @@ class ThreadStore:
         return _row(row) if row is not None else None
 
     def item_by_outbound_message_id(self, message_id: str) -> MailItem | None:
+        message_id = canonical_message_id(message_id)
         if not message_id:
             return None
         row = self._connection.execute(
@@ -264,6 +267,7 @@ class ThreadStore:
         A reply to a progress note must continue the same session.
         """
         for identifier in identifiers:
+            identifier = canonical_message_id(identifier)
             if not identifier:
                 continue
             named = self._connection.execute(
@@ -384,6 +388,7 @@ class ThreadStore:
             self._remember(connection, thread_key, message_id)
 
     def item_by_message_id(self, message_id: str) -> MailItem | None:
+        message_id = canonical_message_id(message_id)
         if not message_id:
             return None
         row = self._connection.execute(

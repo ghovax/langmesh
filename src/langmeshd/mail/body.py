@@ -41,8 +41,22 @@ def subject_of(message: Message) -> str:
     return " ".join(str(message.get("Subject") or "").split())
 
 
+def canonical_message_id(value: str) -> str:
+    """Message-IDs as `<id@host>`, so In-Reply-To matches what we stored."""
+    token = " ".join(str(value or "").split())
+    if not token or token.startswith("sha256:"):
+        return token
+    if not token.startswith("<"):
+        token = f"<{token}"
+    if not token.endswith(">"):
+        token = f"{token}>"
+    return token
+
+
 def message_id_of(message: Message) -> str:
-    return str(message.get("Message-ID") or message.get("Message-Id") or "").strip()
+    return canonical_message_id(
+        str(message.get("Message-ID") or message.get("Message-Id") or "")
+    )
 
 
 def durable_identity(message: Message) -> str:
@@ -73,10 +87,14 @@ def _split_message_ids(value: str) -> list[str]:
         elif current:
             current.append(character)
             if character == ">":
-                token = "".join(current).strip()
-                if token != "<>":
+                token = canonical_message_id("".join(current))
+                if token and token != "<>":
                     found.append(token)
                 current = []
+    if not found:
+        token = canonical_message_id(value)
+        if token and "@" in token and " " not in token.strip("<>"):
+            found.append(token)
     return found
 
 
@@ -152,13 +170,16 @@ def _part_of(message: Message, subtype: str) -> str:
 def _drop_quoted_html(html: str) -> str:
     """Remove the previous message as mail clients wrap it, leaving this message's HTML."""
     soup = BeautifulSoup(html, "html.parser")
-    for node in soup.select("#divRplyFwdMsg, #appendonsend"):
+    # These markers sit *above* the quoted thread rather than wrapping it.
+    for node in soup.select(
+        '[id$="divRplyFwdMsg"], #appendonsend, .moz-cite-prefix, .OutlookMessageHeader'
+    ):
         for sibling in list(node.next_siblings):
             sibling.extract()
         node.decompose()
     for node in soup.select(
         ".gmail_quote, .gmail_quote_container, .gmail_extra, "
-        "blockquote[type=cite], .yahoo_quoted, .protonmail_quote, .moz-cite-prefix"
+        "blockquote[type=cite], .yahoo_quoted, .protonmail_quote"
     ):
         node.decompose()
     root = soup.body if soup.body is not None else soup
