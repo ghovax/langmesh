@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -30,25 +29,12 @@ def acknowledgement() -> str:
     return render_file(_PROMPTS / "acknowledgement.md", {})
 
 
-def working_comment(text: str, *, started: float) -> str:
+def working_comment(text: str) -> str:
     url = run_log_url()
     body = (text or acknowledgement()).strip()
     if not url:
         return body
-    minutes = int((time.monotonic() - started) // 60)
-    elapsed = ""
-    if minutes >= 1:
-        elapsed = render_file(
-            _PROMPTS / "working_elapsed.md",
-            {
-                "minutes": str(minutes),
-                "unit": "minute" if minutes == 1 else "minutes",
-            },
-        )
-    return render_file(
-        _PROMPTS / "working_comment.md",
-        {"body": body, "url": url, "elapsed": elapsed},
-    )
+    return render_file(_PROMPTS / "working_comment.md", {"body": body, "url": url})
 
 
 def _post(repository: str, number: int, text: str, token: str, api: str) -> int:
@@ -84,7 +70,7 @@ def main() -> None:
     comment_id = _post(
         repository,
         int(number),
-        working_comment(acknowledgement(), started=time.monotonic()),
+        working_comment(acknowledgement()),
         token,
         api,
     )
