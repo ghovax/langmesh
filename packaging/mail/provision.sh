@@ -59,8 +59,10 @@ provision_fly() {
   if file="$(env_file)"; then
     "${fly}" secrets import --app "${app}" < "${file}"
   fi
-  "${fly}" deploy --app "${app}" --config "${root}/packaging/mail/fly.toml" \
-    --dockerfile "${root}/packaging/mail/Dockerfile" --region "${region}"
+  (cd "${root}" && "${fly}" deploy . --app "${app}" \
+    --config packaging/mail/fly.toml \
+    --dockerfile packaging/mail/Dockerfile \
+    --region "${region}")
 }
 
 if [[ -n "${LANGMESH_VPS_HOST:-}" ]]; then

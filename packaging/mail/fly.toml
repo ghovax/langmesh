@@ -1,8 +1,9 @@
 # Fly.io: daemon + mail client with a persistent XDG volume.
-# Create the volume once, then deploy:
+# Deploy from the checkout root so the Docker context is the repository (the
+# Dockerfile copies pyproject.toml, src, and .agents from there):
 #   fly volumes create langmesh_xdg --size 3 --region iad --yes
 #   fly secrets import < mail.env
-#   fly deploy --config packaging/mail/fly.toml --dockerfile packaging/mail/Dockerfile
+#   fly deploy . --config packaging/mail/fly.toml --dockerfile packaging/mail/Dockerfile
 
 app = "langmesh-mail"
 primary_region = "iad"
