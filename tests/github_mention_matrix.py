@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from langmesh.base.configuration import BashToolConfiguration
@@ -10,11 +11,14 @@ from langmesh.base.identity.providers import PROVIDERS, provider_env_vars, resol
 from langmesh.github.mention import (
     _BASH_DENY,
     api_key_for,
+    draft_pull_arguments,
     mention_features,
     mention_from_event,
     model_identifier_from_env,
     posted_reply,
     prompt_for,
+    publication_note,
+    publish_changes,
     render,
 )
 from langmesh.github.reply import GitHubReply
@@ -176,6 +180,23 @@ def run_mention_matrix() -> None:
     check("turn includes title", "Flaky test" in text, True)
     check("turn includes mention", "@langmesh" in text, True)
     check("turn includes url", mention.html_url in text, True)
+    check(
+        "issue publication is a draft",
+        "draft pull request" in publication_note(mention),
+        True,
+    )
+    pull = mention_from_event(issue(pull=True), repository=REPO, pull=same)
+    assert pull is not None
+    check(
+        "pull publication does not open another PR",
+        "does not open another pull request" in publication_note(pull),
+        True,
+    )
+    created = draft_pull_arguments(mention, mention.topic_branch)
+    check("create is a draft", "--draft" in created, True)
+    check("create uses the issue branch", mention.topic_branch in created, True)
+    check("create bases on default branch", "main" in created, True)
+    check("create is not marked ready", "ready" not in created, True)
 
 
 def run_model_and_reply_matrix() -> None:
@@ -256,9 +277,84 @@ def run_model_and_reply_matrix() -> None:
         posted_reply("All green.", "https://example.test/pr"),
         "All green.\n\nhttps://example.test/pr",
     )
-    prompt = render("system")
+    issue_mention = mention_from_event(issue(), repository=REPO)
+    assert issue_mention is not None
+    prompt = render("system", {"publication": publication_note(issue_mention)})
     check("system names the comment tool", "submit_github_comment" in prompt, True)
     check("system forbids push", "Do not git push" in prompt, True)
+    check("system names the draft", "draft pull request" in prompt, True)
+    recorded: list[list[str]] = []
+
+    def fake_create(
+        arguments: list[str],
+        *,
+        cwd: str,
+        env: dict[str, str] | None = None,
+        extraheader: str = "",
+    ) -> str:
+        recorded.append(list(arguments))
+        if arguments[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return "langmesh/issue-12"
+        if arguments[:3] == ["gh", "pr", "list"]:
+            return ""
+        if arguments[:3] == ["gh", "pr", "create"]:
+            return "https://github.com/ghovax/langmesh/pull/99\n"
+        return ""
+
+    opened = publish_changes(issue_mention, Path("/tmp"), token="t", run=fake_create)
+    check("issue publish returns the draft url", opened, "https://github.com/ghovax/langmesh/pull/99")
+    created = next(call for call in recorded if call[:3] == ["gh", "pr", "create"])
+    check("issue publish creates a draft", "--draft" in created, True)
+    recorded.clear()
+
+    def fake_existing(
+        arguments: list[str],
+        *,
+        cwd: str,
+        env: dict[str, str] | None = None,
+        extraheader: str = "",
+    ) -> str:
+        recorded.append(list(arguments))
+        if arguments[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return "langmesh/issue-12"
+        if arguments[:3] == ["gh", "pr", "list"]:
+            return "https://github.com/ghovax/langmesh/pull/3"
+        return ""
+
+    reused = publish_changes(issue_mention, Path("/tmp"), token="t", run=fake_existing)
+    check("follow-up reuses the existing PR", reused, "https://github.com/ghovax/langmesh/pull/3")
+    check(
+        "follow-up does not create",
+        all(call[:3] != ["gh", "pr", "create"] for call in recorded),
+        True,
+    )
+    check("follow-up does not mark ready", all("ready" not in call for call in recorded), True)
+    recorded.clear()
+
+    def fake_on_pull(
+        arguments: list[str],
+        *,
+        cwd: str,
+        env: dict[str, str] | None = None,
+        extraheader: str = "",
+    ) -> str:
+        recorded.append(list(arguments))
+        if arguments[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return "feature"
+        return ""
+
+    pull_mention = mention_from_event(issue(pull=True), repository=REPO)
+    assert pull_mention is not None
+    check(
+        "pull mention does not open a PR",
+        publish_changes(pull_mention, Path("/tmp"), token="t", run=fake_on_pull),
+        "",
+    )
+    check(
+        "pull mention does not call gh pr",
+        all(call[:2] != ["gh", "pr"] for call in recorded),
+        True,
+    )
     check(
         "invalid model prompt",
         "provider/model" in render("invalid_model", {"value": "gpt-4"}),

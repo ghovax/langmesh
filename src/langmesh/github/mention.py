@@ -3,7 +3,8 @@
 The daemon is not involved. Follow-up mentions on the same issue or pull request restore
 the saved session. The process may use GitHub's token; tool children cannot, because
 confinement strips it from their environment and credentials are never written into the
-checkout. File edits are committed after the turn, on a topic branch, never to main.
+checkout. File edits on an issue are committed on ``langmesh/issue-N`` and opened as a
+draft pull request; file edits on a pull request are pushed to that branch. Never to main.
 """
 
 from __future__ import annotations
@@ -93,6 +94,7 @@ class Mention:
 
     @property
     def topic_branch(self) -> str:
+        """Stable per thread, so a later mention on this issue updates the same draft."""
         return f"langmesh/{self.kind}-{self.number}"
 
     @property
@@ -186,6 +188,37 @@ def prompt_for(mention: Mention) -> str:
     )
 
 
+def publication_note(mention: Mention) -> str:
+    """What the wrapper will do with file edits, for the system prompt."""
+    if mention.kind == "issue":
+        return (
+            f"If you leave file changes, a wrapper commits them on `{mention.topic_branch}` "
+            "and opens a draft pull request. It stays a draft until a person marks it ready."
+        )
+    return (
+        "If you leave file changes, a wrapper commits them on this pull request's branch. "
+        "It does not open another pull request and does not change whether this one is a draft."
+    )
+
+
+def draft_pull_arguments(mention: Mention, branch: str) -> list[str]:
+    """Open a draft PR from this issue's topic branch. Never marks an existing PR ready."""
+    return [
+        "gh",
+        "pr",
+        "create",
+        "--draft",
+        "--head",
+        branch,
+        "--base",
+        mention.default_branch,
+        "--title",
+        mention.title or f"langmesh/{mention.number}",
+        "--body",
+        f"Opened from {mention.html_url}",
+    ]
+
+
 def state_path(workspace: Path) -> Path:
     return workspace / STATE_DIRECTORY / "session.sqlite"
 
@@ -266,7 +299,7 @@ def tree_is_dirty(workspace: Path, *, run: Run = _run) -> bool:
 
 
 def publish_changes(mention: Mention, workspace: Path, *, token: str, run: Run = _run) -> str:
-    """Commit file edits and push a topic branch. Never pushes a protected or default branch."""
+    """Commit file edits and push. On an issue, open or reuse a draft PR. On a pull request, only push."""
     cwd = str(workspace)
     branch = current_branch(workspace, run=run)
     protected = PROTECTED_BRANCHES | {mention.default_branch}
@@ -290,38 +323,25 @@ def publish_changes(mention: Mention, workspace: Path, *, token: str, run: Run =
     )
     header = _git_header(token)
     run(["git", "push", "-u", "origin", f"HEAD:{branch}"], cwd=cwd, extraheader=header)
-    if mention.kind == "issue":
-        existing = run(
-            [
-                "gh",
-                "pr",
-                "list",
-                "--head",
-                branch,
-                "--json",
-                "url",
-                "--jq",
-                ".[0].url // empty",
-            ],
-            cwd=cwd,
-        ).strip()
-        if existing:
-            return existing
-        return run(
-            [
-                "gh",
-                "pr",
-                "create",
-                "--head",
-                branch,
-                "--title",
-                mention.title or f"langmesh/{mention.number}",
-                "--body",
-                f"Opened from {mention.html_url}",
-            ],
-            cwd=cwd,
-        ).strip()
-    return ""
+    if mention.kind != "issue":
+        return ""
+    existing = run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--json",
+            "url",
+            "--jq",
+            ".[0].url // empty",
+        ],
+        cwd=cwd,
+    ).strip()
+    if existing:
+        return existing
+    return run(draft_pull_arguments(mention, branch), cwd=cwd).strip()
 
 
 def _api_request(url: str, token: str, *, data: bytes | None = None) -> Any:
@@ -385,7 +405,7 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply) -> Session:
     agent = AgentConfiguration(
         name="langmesh",
         description="Does the work asked in a GitHub mention.",
-        system_prompt=render("system"),
+        system_prompt=render("system", {"publication": publication_note(mention)}),
         provider=provider,
         model=model,
         permission_mode="automatic",
