@@ -1,13 +1,12 @@
 """A GitHub Action embedder: one @langmesh[bot] mention drives one library session.
 
 The daemon is not involved. Follow-up mentions on the same issue or pull request restore
-the saved session. The process may use GitHub's token; tool children cannot, because
-confinement strips it from their environment and credentials are never written into the
-checkout. On an issue the agent reuses a branch that already is this work when one exists,
-otherwise creates ``langmesh/<slug>-<code>`` itself; the agent
-commits, and the wrapper pushes and opens a draft. On a pull request, file edits are
-pushed to that branch. Never to main. Thread replies stay user-facing; failures go to
-the logger.
+the saved session. The agent commits and pushes on topic branches. It is told not to
+commit or push to the default branch unless the person who mentioned it asked. On an
+issue it reuses a branch that already is this work when one exists, otherwise creates
+``langmesh/<slug>-<code>`` itself, and opens a draft. On a pull request it works on that
+branch. The wrapper can still push leftover commits and open a draft; it will not push
+the default branch. Thread replies stay user-facing; failures go to the logger.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
@@ -36,6 +35,7 @@ from langmesh import (
     SQLiteCheckpoints,
     ToolsConfiguration,
 )
+from langmesh.base.confinement import Profile
 from langmesh.base.content.models import split_model_identifier
 from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
@@ -49,7 +49,6 @@ from langmesh.runtime.plugins.compaction import (
     KeepRecentTurns,
 )
 from langmesh.runtime.plugins.continuation import Continuation
-from langmesh.runtime.plugins.permission_reviewer import PermissionReviewer
 from langmesh.runtime.plugins.permissions import PermissionReview
 from langmesh.runtime.plugins.web import Web
 
@@ -72,14 +71,6 @@ INVALID_MODEL = (
 )
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
-
-# The job is the only publisher. Longest-match would otherwise keep force-push at "ask".
-_BASH_DENY = {
-    "git push*": "deny",
-    "git push --force*": "deny",
-    "git push -f*": "deny",
-}
-
 
 class Run(Protocol):
     def __call__(
@@ -441,6 +432,19 @@ def _git_header(token: str) -> str:
     return f"AUTHORIZATION: basic {credential}"
 
 
+def mention_sandbox(token: str) -> Profile:
+    """Open network, and give tool children the job token so they can git push and use gh."""
+    profile = SandboxConfiguration(enforce="required", network=True).to_profile()
+    environment = {"GIT_TERMINAL_PROMPT": "0"}
+    if token:
+        environment["GITHUB_TOKEN"] = token
+        environment["GH_TOKEN"] = token
+        environment["GIT_CONFIG_COUNT"] = "1"
+        environment["GIT_CONFIG_KEY_0"] = _git_header_key()
+        environment["GIT_CONFIG_VALUE_0"] = _git_header(token)
+    return replace(profile, environment=environment)
+
+
 def _remote_has(name: str, *, cwd: str, header: str, run: Run) -> bool:
     return bool(
         run(
@@ -585,7 +589,7 @@ def publish_changes(
     token: str,
     run: Run = _run,
 ) -> str:
-    """Push the agent's commits. On an issue, open or reuse a draft PR. On a pull request, only push."""
+    """Push leftover commits if the agent did not. On an issue, open or reuse a draft PR. Never the default branch."""
     cwd = str(workspace)
     branch = current_branch(workspace, run=run)
     protected = PROTECTED_BRANCHES | {mention.default_branch}
@@ -715,16 +719,18 @@ class UncommittedChanges(Feature):
 
 
 def mention_features(reply: GitHubReply, workspace: Path) -> list[Feature]:
-    """The plugins one mention session runs, including the comment tool."""
-    reviewer = PermissionReviewer()
+    """The plugins one mention session runs, including the comment tool.
+
+    ``PermissionReview`` is what bash asks for after a confinement denial. There is
+    no automatic reviewer: the session runs in ``allow``, so calls are not gated.
+    """
     return [
         Compaction(
             strategy=KeepRecentTurns(24),
             preparation=DirectCompactionPreparation(),
             summarizer=None,
         ),
-        PermissionReview(reviewer=reviewer),
-        reviewer,
+        PermissionReview(),
         Continuation(),
         BackgroundJobsFeature(),
         Bash(),
@@ -734,7 +740,7 @@ def mention_features(reply: GitHubReply, workspace: Path) -> list[Feature]:
     ]
 
 
-def _session(mention: Mention, workspace: Path, reply: GitHubReply) -> Session:
+def _session(mention: Mention, workspace: Path, reply: GitHubReply, token: str) -> Session:
     state_path(workspace).parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(
         state_path(workspace), isolation_level=None, check_same_thread=False
@@ -747,7 +753,7 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply) -> Session:
         system_prompt=render("system"),
         provider=provider,
         model=model,
-        permission_mode="automatic",
+        permission_mode="allow",
         tools_enabled=[
             "bash",
             "search_web",
@@ -757,14 +763,21 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply) -> Session:
             "update_tasks",
             "submit_github_comment",
         ],
-        tools=ToolsConfiguration(bash=BashToolConfiguration(permissions=dict(_BASH_DENY))),
+        tools=ToolsConfiguration(
+            bash=BashToolConfiguration(
+                permissions={
+                    pattern: "allow"
+                    for pattern in BashToolConfiguration.DESTRUCTIVE_DEFAULTS
+                }
+            )
+        ),
     )
     return Session(
         agent,
         directory=str(workspace),
         session_id=mention.session_id,
-        permission_mode="automatic",
-        sandbox=SandboxConfiguration(enforce="required", network=False),
+        permission_mode="allow",
+        sandbox=mention_sandbox(token),
         providers={provider: key} if key else None,
         components=SessionComponents(
             checkpoints=SQLiteCheckpoints(connection),
@@ -779,6 +792,7 @@ async def run_turn(
     *,
     checkout: Checkout,
     publish: Callable[[str], None] | None = None,
+    token: str = "",
 ) -> str:
     def publish_working(text: str) -> None:
         if publish is None:
@@ -786,7 +800,8 @@ async def run_turn(
         publish(working_comment(text))
 
     reply = GitHubReply(publish=publish_working if publish is not None else None)
-    async with _session(mention, workspace, reply) as session:
+    async with _session(mention, workspace, reply, token) as session:
+        await session.set_permission_mode("allow")
         await session.ask(prompt_for(mention, checkout=checkout))
         return (reply.comment or "").strip()
 
@@ -877,6 +892,7 @@ def main() -> None:
                 workspace,
                 checkout=checkout,
                 publish=publish_comment if comment_id else None,
+                token=token,
             )
         )
         pull_url = ""
