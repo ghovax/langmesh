@@ -1,4 +1,4 @@
-"""A GitHub Action embedder: one @langmesh mention drives one library session.
+"""A GitHub Action embedder: one @langmesh[bot] mention drives one library session.
 
 The daemon is not involved. Follow-up mentions on the same issue or pull request restore
 the saved session. The process may use GitHub's token; tool children cannot, because
@@ -6,7 +6,7 @@ confinement strips it from their environment and credentials are never written i
 checkout. On an issue the agent reuses a branch that already is this work when one exists,
 otherwise creates ``langmesh/<name>-<code>`` itself; the wrapper
 commits, pushes, and opens a draft. On a pull request, file edits are pushed to that
-branch. Never to main.
+branch. Never to main. Thread replies stay user-facing; failures go to the logger.
 """
 
 from __future__ import annotations
@@ -14,7 +14,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -50,12 +52,23 @@ from langmesh.runtime.plugins.permission_reviewer import PermissionReviewer
 from langmesh.runtime.plugins.permissions import PermissionReview
 from langmesh.runtime.plugins.web import Web
 
-MENTION = "@langmesh"
+MENTION = "@langmesh[bot]"
+MENTION_ALIASES = (MENTION, "@langmesh")
 ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 STATE_DIRECTORY = ".github/langmesh"
 BRANCH_RECORD = "branch"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
+ACKNOWLEDGEMENT = "Got it — I'll update this comment when I'm done."
+TURN_FAILED = (
+    "Something went wrong while I was working on this. "
+    "The details are in the Action log."
+)
+INVALID_MODEL = (
+    "I couldn't start this turn because the model setting isn't in the form I need. "
+    "It has to be `provider/model`. The Action log has the exact value."
+)
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
+logger = logging.getLogger("langmesh.github")
 
 # The job is the only publisher. Longest-match would otherwise keep force-push at "ask".
 _BASH_DENY = {
@@ -86,7 +99,7 @@ class Checkout:
 
 @dataclass(frozen=True)
 class Mention:
-    """One @langmesh comment the Action will answer."""
+    """One @langmesh[bot] comment the Action will answer."""
 
     body: str
     number: int
@@ -110,6 +123,52 @@ class Mention:
         return self.association in ALLOWED_ASSOCIATIONS and not self.is_fork
 
 
+def configure_logging() -> None:
+    """The same stderr logger the daemon uses: timestamp, level, logger name, message."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        handlers=[logging.StreamHandler(sys.stderr)],
+        force=True,
+    )
+    logging.getLogger("langmesh").setLevel(logging.INFO)
+
+
+def mention_handles() -> tuple[str, ...]:
+    """`@langmesh[bot]` first, then `@langmesh`, then an optional custom handle."""
+    extra = (os.environ.get("LANGMESH_MENTION") or "").strip()
+    handles: list[str] = list(MENTION_ALIASES)
+    if extra and extra.lower() not in {name.lower() for name in handles}:
+        handles.insert(0, extra)
+    return tuple(handles)
+
+
+def mentioned(body: str) -> bool:
+    """Whether the comment addressed the bot, not some longer `@langmesh…` login."""
+    text = body.lower()
+    for handle in mention_handles():
+        if re.search(re.escape(handle.lower()) + r"(?![\w-])", text):
+            return True
+    return False
+
+
+def run_log_url() -> str:
+    server = (os.environ.get("GITHUB_SERVER_URL") or "https://github.com").rstrip("/")
+    repository = os.environ.get("GITHUB_REPOSITORY") or ""
+    run_id = os.environ.get("GITHUB_RUN_ID") or ""
+    if repository and run_id:
+        return f"{server}/{repository}/actions/runs/{run_id}"
+    return ""
+
+
+def user_failure(message: str) -> str:
+    """A thread reply that stays helpful and leaves the cause in the Action log."""
+    log = run_log_url()
+    if log:
+        return f"{message} See the [Action log]({log})."
+    return message
+
+
 def mention_from_event(
     event: Mapping[str, Any],
     *,
@@ -119,7 +178,7 @@ def mention_from_event(
     """The mention this payload is, or ``None`` when it is not one we answer."""
     comment = event.get("comment") or {}
     body = str(comment.get("body") or "")
-    if MENTION.lower() not in body.lower():
+    if not mentioned(body):
         return None
     user = str((comment.get("user") or {}).get("login") or "")
     if user.endswith("[bot]"):
@@ -275,7 +334,7 @@ def _run(
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
         shown = " ".join(arguments)
-        print(detail, file=sys.stderr)
+        logger.error("%s failed: %s", shown, detail or f"exit {completed.returncode}")
         raise RuntimeError(f"{shown} failed: {detail or f'exit {completed.returncode}'}")
     return completed.stdout
 
@@ -416,11 +475,12 @@ def publish_changes(mention: Mention, workspace: Path, *, token: str, run: Run =
         remember_branch(workspace, branch)
     run(["git", "add", "-A"], cwd=cwd)
     run(["git", "reset", "-q", "--", STATE_DIRECTORY], cwd=cwd)
-    run(["git", "config", "user.name", "github-actions[bot]"], cwd=cwd)
-    run(
-        ["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"],
-        cwd=cwd,
-    )
+    actor = (os.environ.get("LANGMESH_GIT_NAME") or "github-actions[bot]").strip()
+    email = (
+        os.environ.get("LANGMESH_GIT_EMAIL") or "41898282+github-actions[bot]@users.noreply.github.com"
+    ).strip()
+    run(["git", "config", "user.name", actor], cwd=cwd)
+    run(["git", "config", "user.email", email], cwd=cwd)
     run(
         [
             "git",
@@ -453,11 +513,12 @@ def publish_changes(mention: Mention, workspace: Path, *, token: str, run: Run =
     return run(draft_pull_arguments(mention, branch), cwd=cwd).strip()
 
 
-def _api_request(url: str, token: str, *, data: bytes | None = None) -> Any:
+def _api_request(url: str, token: str, *, data: bytes | None = None, method: str = "") -> Any:
+    verb = method or ("POST" if data is not None else "GET")
     request = urllib.request.Request(
         url,
         data=data,
-        method="POST" if data is not None else "GET",
+        method=verb,
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
@@ -477,12 +538,45 @@ def fetch_pull(repository: str, number: int, token: str, api: str) -> dict[str, 
     return _api_request(f"{api}/repos/{repository}/pulls/{number}", token)
 
 
-def post_comment(repository: str, number: int, text: str, token: str, api: str) -> None:
-    _api_request(
+def create_comment(repository: str, number: int, text: str, token: str, api: str) -> int:
+    record = _api_request(
         f"{api}/repos/{repository}/issues/{number}/comments",
         token,
         data=json.dumps({"body": text[:65536]}).encode(),
     )
+    return int(record["id"])
+
+
+def update_comment(repository: str, comment_id: int, text: str, token: str, api: str) -> None:
+    _api_request(
+        f"{api}/repos/{repository}/issues/comments/{comment_id}",
+        token,
+        data=json.dumps({"body": text[:65536]}).encode(),
+        method="PATCH",
+    )
+
+
+def publish_thread_comment(
+    repository: str,
+    number: int,
+    text: str,
+    token: str,
+    api: str,
+    *,
+    comment_id: int | None = None,
+) -> int:
+    """Update the acknowledgement in place, or post a new comment if that is not possible."""
+    if comment_id:
+        try:
+            update_comment(repository, comment_id, text, token, api)
+            return comment_id
+        except Exception:
+            logger.exception("could not update acknowledgement comment %s", comment_id)
+    return create_comment(repository, number, text, token, api)
+
+
+def post_comment(repository: str, number: int, text: str, token: str, api: str) -> None:
+    create_comment(repository, number, text, token, api)
 
 
 def mention_features(reply: GitHubReply) -> list[Feature]:
@@ -551,6 +645,7 @@ async def run_turn(mention: Mention, workspace: Path, *, checkout: Checkout) -> 
 
 
 def main() -> None:
+    configure_logging()
     event_path = os.environ["GITHUB_EVENT_PATH"]
     repository = os.environ["GITHUB_REPOSITORY"]
     workspace = Path(os.environ.get("GITHUB_WORKSPACE") or os.getcwd()).resolve()
@@ -569,16 +664,31 @@ def main() -> None:
         if mention is None:
             return
     if not mention.allowed:
+        logger.info("ignoring mention from %s (%s)", mention.user, mention.association)
         return
+    logger.info(
+        "mention %s %s#%s by %s",
+        mention.kind,
+        repository,
+        mention.number,
+        mention.user,
+    )
+    comment_id: int | None = None
+    try:
+        comment_id = create_comment(repository, mention.number, ACKNOWLEDGEMENT, token, api)
+    except Exception:
+        logger.exception("could not post acknowledgement")
     try:
         model_identifier_from_env()
     except ValueError as error:
-        post_comment(
+        logger.error("%s", render("invalid_model", {"value": str(error)}))
+        publish_thread_comment(
             repository,
             mention.number,
-            render("invalid_model", {"value": str(error)}),
+            user_failure(INVALID_MODEL),
             token,
             api,
+            comment_id=comment_id,
         )
         return
     try:
@@ -587,18 +697,27 @@ def main() -> None:
         pull_url = ""
         if tree_is_dirty(workspace):
             pull_url = publish_changes(mention, workspace, token=token)
-        post_comment(repository, mention.number, posted_reply(answer, pull_url), token, api)
-    except Exception as error:
+        publish_thread_comment(
+            repository,
+            mention.number,
+            posted_reply(answer, pull_url),
+            token,
+            api,
+            comment_id=comment_id,
+        )
+    except Exception:
+        logger.exception("mention turn failed")
         try:
-            post_comment(
+            publish_thread_comment(
                 repository,
                 mention.number,
-                f"The turn failed: {error}",
+                user_failure(TURN_FAILED),
                 token,
                 api,
+                comment_id=comment_id,
             )
         except Exception:
-            pass
+            logger.exception("could not publish the user-facing failure comment")
         raise
 
 
