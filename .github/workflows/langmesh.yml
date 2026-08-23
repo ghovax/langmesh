@@ -52,7 +52,9 @@ jobs:
         run: |
           number="${{ github.event.issue.number || github.event.pull_request.number }}"
           id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${number}/comments" \
-            -f body="Got it — I'll update this comment when I'm done." \
+            -f body="$(printf '%s\n\n%s' \
+              "Got it — I'll update this comment when I'm done." \
+              "Watch this turn in the [Action log](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}).")" \
             --jq .id)"
           echo "comment_id=${id}" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
