@@ -297,6 +297,7 @@ class ThreadStore:
         reply_address: str,
         subject: str,
     ) -> None:
+        now = _now()
         with self._txn() as connection:
             connection.execute(
                 """
@@ -313,7 +314,16 @@ class ThreadStore:
                     subject = excluded.subject,
                     updated_at = excluded.updated_at
                 """,
-                (thread_key, session_id, message_id, references, reply_address, subject, _now()),
+                (thread_key, session_id, message_id, references, reply_address, subject, now),
+            )
+            # Waiting jobs on this thread follow the live session, including a remint after the
+            # previous worker disappeared. Finished rows keep the session that already mailed.
+            connection.execute(
+                f"""
+                UPDATE items SET session_id = ?, updated_at = ?
+                WHERE thread_key = ? AND state IN ({",".join("?" * 2)})
+                """,
+                (session_id, now, thread_key, DISCOVERED, SUBMITTED),
             )
 
     def item_by_message_id(self, message_id: str) -> MailItem | None:
@@ -524,3 +534,17 @@ class ThreadStore:
         if item is None:
             return False
         return item.state in {POSTED, SEEN, SKIPPED}
+
+
+def session_is_mailbox(session_id: str) -> bool:
+    """Whether this daemon session is a mailbox thread. Does not create the job file."""
+    if not session_id:
+        return False
+    path = mail_database_path()
+    if not path.is_file():
+        return False
+    store = ThreadStore(path)
+    try:
+        return bool(store.thread_key_for_session(session_id))
+    finally:
+        store.close()

@@ -141,6 +141,13 @@ class EmailConfiguration(AppConfigurationSection):
     smtp: EmailSmtpConfiguration = Field(default_factory=EmailSmtpConfiguration)
 
     @property
+    def effective_enabled(self) -> bool:
+        """A filled LANGMESH_MAIL_ADDRESS is enough to turn the client on without editing yaml."""
+        if os.environ.get("LANGMESH_MAIL_ADDRESS", "").strip():
+            return True
+        return self.enabled
+
+    @property
     def effective_address(self) -> str:
         return os.environ.get("LANGMESH_MAIL_ADDRESS", "").strip() or self.address.strip()
 

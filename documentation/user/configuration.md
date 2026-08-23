@@ -395,7 +395,7 @@ IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same fil
 
 | Setting | Type | Default | What it is for |
 | ------- | ---- | ------- | -------------- |
-| `email.enabled` | boolean | `false` | Run the mail client against this mailbox. |
+| `email.enabled` | boolean | `false` | Run the mail client against this mailbox. `LANGMESH_MAIL_ADDRESS` in the environment also enables it. |
 | `email.address` | string | — | The From address replies are sent as. LANGMESH_MAIL_ADDRESS wins over this. |
 | `email.allow_from` | list | `[]` | Mailboxes (or `@domain`) whose mail is taken. Everyone else is ignored. LANGMESH_MAIL_ALLOW_FROM is a comma-separated override. |
 | `email.agent` | string | `reviewer` | The agent profile each mail thread session runs. Defaults to the bundled `reviewer`. LANGMESH_MAIL_AGENT wins over this. |
