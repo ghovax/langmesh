@@ -30,13 +30,21 @@ from langmesh import (
     SandboxConfiguration,
     Session,
     SessionComponents,
+    SessionPhase,
     SQLiteCheckpoints,
 )
 from langmesh.base.confinement import Profile
 from langmesh.base.content.models import resolve_litellm, split_model_identifier
 from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
-from langmesh.github.detect import is_mention_turn, thread_has_prior_bot_comment
+from langmesh.github.detect import (
+    ALLOWED_ASSOCIATIONS,
+    comment_key,
+    fetch_tagged_comments,
+    is_mention_turn,
+    thread_has_prior_bot_comment,
+)
+from langmesh.github.ingest import load_ingested, record_ingested
 from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features import Feature
 from langmesh.runtime.plugins.background import BackgroundJobsFeature
@@ -50,11 +58,11 @@ from langmesh.runtime.plugins.continuation import Continuation
 from langmesh.runtime.plugins.permissions import PermissionReview
 from langmesh.runtime.plugins.web import Web
 
-ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 STATE_DIRECTORY = ".github/langmesh"
 BRANCH_RECORD = "branch"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 ACK_COMMENT_ENV = "LANGMESH_ACK_COMMENT_ID"
+STEER_POLL_SECONDS = 8.0
 TURN_FAILED = (
     "Something went wrong while I was working on this. "
     "The details are in the Action log."
@@ -102,6 +110,9 @@ class Mention:
     head_ref: str = ""
     head_repository: str = ""
     is_fork: bool = False
+    comment_id: int = 0
+    comment_created_at: str = ""
+    ingest_key: str = ""
 
     @property
     def session_id(self) -> str:
@@ -214,6 +225,9 @@ def mention_from_event(
         head_ref=str(head.get("ref") or ""),
         head_repository=head_repository,
         is_fork=bool(head_repository and head_repository != repository),
+        comment_id=int(comment.get("id") or 0),
+        comment_created_at=str(comment.get("created_at") or ""),
+        ingest_key=comment_key(comment),
     )
 
 
@@ -693,6 +707,76 @@ def mention_features(reply: GitHubReply, workspace: Path) -> list[Feature]:
     ]
 
 
+def steering_mention(mention: Mention, comment: Mapping[str, Any]) -> Mention:
+    """The running turn's thread, with this later tagged comment as the payload."""
+    return replace(
+        mention,
+        body=str(comment.get("body") or ""),
+        comment_url=comment_pointer(comment, mention.html_url),
+        user=str((comment.get("user") or {}).get("login") or ""),
+        association=str(comment.get("author_association") or ""),
+        comment_id=int(comment.get("id") or 0),
+        comment_created_at=str(comment.get("created_at") or ""),
+        ingest_key=comment_key(comment),
+    )
+
+
+async def steer_tagged_comments(
+    session: Session,
+    mention: Mention,
+    workspace: Path,
+    *,
+    token: str,
+    api: str,
+) -> None:
+    """Watch the thread and ``session.steer`` each new bot tag at the next opening."""
+    if mention.ingest_key:
+        record_ingested(workspace, mention.ingest_key)
+
+    async def _steer(comment: Mapping[str, Any]) -> tuple[str, bool]:
+        key = comment_key(comment)
+        try:
+            accepted = await session.steer(
+                prompt_for(steering_mention(mention, comment), followup=True),
+                message_id=f"github:{key}",
+            )
+        except Exception:
+            logger.exception("steer %s failed", key)
+            return key, False
+        return key, bool(accepted)
+
+    while True:
+        await asyncio.sleep(STEER_POLL_SECONDS)
+        if session.state.phase is not SessionPhase.RUNNING:
+            continue
+        ingested = load_ingested(workspace)
+        try:
+            pending = fetch_tagged_comments(
+                repository=mention.repository,
+                number=mention.number,
+                kind=mention.kind,
+                token=token,
+                api=api,
+                after_created_at=mention.comment_created_at,
+                ingested=ingested,
+            )
+        except Exception:
+            logger.exception("steering poll failed")
+            continue
+        if not pending:
+            continue
+        results = await asyncio.gather(*(_steer(comment) for comment in pending))
+        for key, accepted in results:
+            if accepted:
+                record_ingested(workspace, key)
+                logger.info("steered GitHub comment %s into the running mention", key)
+            else:
+                logger.info(
+                    "steering for GitHub comment %s was not taken; the next job may start a turn",
+                    key,
+                )
+
+
 def _session(mention: Mention, workspace: Path, reply: GitHubReply, token: str) -> Session:
     state_path(workspace).parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(
@@ -738,6 +822,7 @@ async def run_turn(
     checkout: Checkout,
     publish: Callable[[str], None] | None = None,
     token: str = "",
+    api: str = "",
     thread_followup: bool = False,
 ) -> str:
     def publish_working(text: str) -> None:
@@ -765,7 +850,17 @@ async def run_turn(
             followup,
         )
         await session.set_permission_mode("automatic")
-        await session.ask(prompt_for(mention, checkout=checkout, followup=followup))
+        watcher = asyncio.create_task(
+            steer_tagged_comments(session, mention, workspace, token=token, api=api)
+        )
+        try:
+            await session.ask(prompt_for(mention, checkout=checkout, followup=followup))
+        finally:
+            watcher.cancel()
+            try:
+                await watcher
+            except asyncio.CancelledError:
+                pass
         return (reply.comment or "").strip()
 
 
@@ -864,6 +959,7 @@ def main() -> None:
                 checkout=checkout,
                 publish=publish_comment if comment_id else None,
                 token=token,
+                api=api,
                 thread_followup=thread_followup,
             )
         )
