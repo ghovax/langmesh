@@ -59,7 +59,7 @@ def restore(workspace: Path, event: dict, repository: str) -> bool:
     if artifact is None:
         print(f"session artifact {name} not found", flush=True)
         return False
-    target_dir = workspace / STATE_DIRECTORY
+    target = workspace / STATE_DIRECTORY / SESSION_FILE
     with tempfile.TemporaryDirectory() as temporary:
         archive = Path(temporary) / "session.zip"
         extracted = Path(temporary) / "extracted"
@@ -71,13 +71,8 @@ def restore(workspace: Path, event: dict, repository: str) -> bool:
         if not matches:
             print(f"session artifact {name} had no {SESSION_FILE}", flush=True)
             return False
-        target_dir.mkdir(parents=True, exist_ok=True)
-        for item in matches[0].parent.iterdir():
-            destination = target_dir / item.name
-            if item.is_file():
-                shutil.copy2(item, destination)
-            elif item.is_dir():
-                shutil.copytree(item, destination, dirs_exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(matches[0], target)
     print(
         f"restored session artifact {name} id={artifact['id']} "
         f"from run {artifact.get('workflow_run', {}).get('id') or artifact.get('workflow_run_id')}",
