@@ -39,12 +39,13 @@ jobs:
           key: langmesh-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}-${{ github.run_id }}
           restore-keys: |
             langmesh-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}-
-      - run: uv sync --no-dev
-      - run: uv run python -m langmesh.github.mention
+      - run: uv sync --no-dev --frozen
+      - run: uv run --no-dev --frozen python -m langmesh.github
         env:
           LANGMESH_MODEL: ${{ vars.LANGMESH_MODEL }}
           LANGMESH_API_KEY: ${{ secrets.LANGMESH_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/cache/save@v4
         if: ${{ always() && hashFiles('.github/langmesh/session.sqlite') != '' }}
         with:

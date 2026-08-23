@@ -12,10 +12,12 @@ branch. Never to main.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import sqlite3
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -265,22 +267,31 @@ def _run(
     """Run a process in ``cwd`` and return stdout. ``extraheader`` is GitHub auth that never hits disk."""
     command = list(arguments)
     if extraheader and command and command[0] == "git":
-        command = ["git", "-c", f"http.extraheader={extraheader}", *command[1:]]
+        command = ["git", "-c", f"{_git_header_key()}={extraheader}", *command[1:]]
     merged = dict(os.environ if env is None else env)
+    if command and command[0] == "git":
+        merged.setdefault("GIT_TERMINAL_PROMPT", "0")
     completed = subprocess.run(command, cwd=cwd, env=merged, capture_output=True, text=True)
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
-        raise subprocess.CalledProcessError(
-            completed.returncode,
-            command,
-            completed.stdout,
-            completed.stderr or detail or f"exit {completed.returncode}",
-        )
+        shown = " ".join(arguments)
+        print(detail, file=sys.stderr)
+        raise RuntimeError(f"{shown} failed: {detail or f'exit {completed.returncode}'}")
     return completed.stdout
 
 
+def _git_header_key() -> str:
+    """The ``http.<url>.extraheader`` key ``actions/checkout`` uses for this host."""
+    host = (os.environ.get("GITHUB_SERVER_URL") or "https://github.com").rstrip("/")
+    return f"http.{host}/.extraheader"
+
+
 def _git_header(token: str) -> str:
-    return f"AUTHORIZATION: bearer {token}" if token else ""
+    """Git HTTPS wants Basic ``x-access-token``, not the REST API's Bearer scheme."""
+    if not token:
+        return ""
+    credential = base64.b64encode(f"x-access-token:{token}".encode()).decode("ascii")
+    return f"AUTHORIZATION: basic {credential}"
 
 
 def _remote_has(name: str, *, cwd: str, header: str, run: Run) -> bool:
@@ -324,7 +335,7 @@ def open_issue_head(mention: Mention, *, run: Run, cwd: str) -> str:
             ],
             cwd=cwd,
         )
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, RuntimeError, subprocess.CalledProcessError):
         return ""
     try:
         rows = json.loads(raw) if raw.strip() else []
@@ -344,6 +355,8 @@ def open_issue_head(mention: Mention, *, run: Run, cwd: str) -> str:
 def prepare_tree(mention: Mention, workspace: Path, *, token: str, run: Run = _run) -> Checkout:
     """Check out an existing thread branch, or the default branch so the agent can choose."""
     cwd = str(workspace)
+    # Checkout writes safe.directory under a temporary HOME; later git uses the runner's HOME.
+    run(["git", "config", "--global", "--add", "safe.directory", cwd], cwd=cwd)
     header = _git_header(token)
     run(["git", "fetch", "origin", "--prune"], cwd=cwd, extraheader=header)
     if mention.kind == "pull" and mention.head_ref and not mention.is_fork:
@@ -387,12 +400,9 @@ def tree_is_dirty(workspace: Path, *, run: Run = _run) -> bool:
     cwd = str(workspace)
     run(["git", "add", "-A"], cwd=cwd)
     run(["git", "reset", "-q", "--", STATE_DIRECTORY], cwd=cwd)
-    try:
-        run(["git", "diff", "--cached", "--quiet"], cwd=cwd)
-    except subprocess.CalledProcessError:
-        return True
+    staged = run(["git", "diff", "--cached", "--name-only"], cwd=cwd).strip()
     run(["git", "reset", "-q"], cwd=cwd)
-    return False
+    return bool(staged)
 
 
 def publish_changes(mention: Mention, workspace: Path, *, token: str, run: Run = _run) -> str:
@@ -571,22 +581,25 @@ def main() -> None:
             api,
         )
         return
-    checkout = prepare_tree(mention, workspace, token=token)
     try:
+        checkout = prepare_tree(mention, workspace, token=token)
         answer = asyncio.run(run_turn(mention, workspace, checkout=checkout))
+        pull_url = ""
+        if tree_is_dirty(workspace):
+            pull_url = publish_changes(mention, workspace, token=token)
+        post_comment(repository, mention.number, posted_reply(answer, pull_url), token, api)
     except Exception as error:
-        post_comment(
-            repository,
-            mention.number,
-            f"The turn failed: {error}",
-            token,
-            api,
-        )
+        try:
+            post_comment(
+                repository,
+                mention.number,
+                f"The turn failed: {error}",
+                token,
+                api,
+            )
+        except Exception:
+            pass
         raise
-    pull_url = ""
-    if tree_is_dirty(workspace):
-        pull_url = publish_changes(mention, workspace, token=token)
-    post_comment(repository, mention.number, posted_reply(answer, pull_url), token, api)
 
 
 if __name__ == "__main__":
