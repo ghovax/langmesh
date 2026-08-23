@@ -149,11 +149,13 @@ def thread_has_prior_bot_comment(
     repository: str,
     token: str,
     api: str,
+    ignore_ids: tuple[int, ...] = (),
 ) -> bool:
     """Whether the mention bot already wrote on this collection before this comment.
 
     Looks at the ten most recent comments on the same collection (issue comments or
-    review comments). It does not load the thread body.
+    review comments). It does not load the thread body. ``ignore_ids`` skips comments
+    this job just posted, so the acknowledgement is not treated as an earlier turn.
     """
     if not token:
         return False
@@ -164,6 +166,8 @@ def thread_has_prior_bot_comment(
     ).get("number")
     if not number:
         return False
+    ignored = {int(this_id)} if this_id else set()
+    ignored.update(int(item) for item in ignore_ids if item)
     collection = "pulls" if _review_comment(comment) else "issues"
     try:
         raw = _get(
@@ -175,7 +179,7 @@ def thread_has_prior_bot_comment(
         return False
     rows = [row for row in raw if isinstance(row, dict)] if isinstance(raw, list) else []
     for row in rows:
-        if this_id and int(row.get("id") or 0) == int(this_id):
+        if int(row.get("id") or 0) in ignored:
             continue
         login = str((row.get("user") or {}).get("login") or "")
         if mention_bot_login(login):
