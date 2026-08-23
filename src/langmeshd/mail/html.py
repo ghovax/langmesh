@@ -1,4 +1,9 @@
-"""Markdown as a multipart email: plain text plus HTML a mail client can render."""
+"""Render the agent's markdown as HTML email.
+
+Inbound mail is HTML; outbound mail is HTML too. The markdown the agent writes is converted
+here. `multipart/alternative` still carries the markdown as `text/plain` so a client that
+cannot show HTML has something to read; HTML is the last part, which is the one clients prefer.
+"""
 
 from __future__ import annotations
 
