@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, AsyncIterator, Callable, ClassVar, Optional, Sequence, cast
 from uuid import uuid4
 
+import httpx
 import litellm
 from langchain_core.language_models.chat_models import BaseChatModel
 
@@ -419,14 +422,8 @@ class ChatLiteLLMModel(BaseChatModel):
             params["max_tokens"] = self.maximum_tokens  # litellm/OpenAI API param name
         if self.timeout is not None:
             params["timeout"] = self.timeout
-        if self.default_headers or self._opencode_host():
-            headers = dict(self.default_headers)
-            if self._opencode_host():
-                headers.setdefault("x-opencode-client", "langmesh")
-                if self.session_id:
-                    headers["x-opencode-session"] = self.session_id
-            if headers:
-                params["extra_headers"] = headers
+        if self.default_headers and not self._opencode_host():
+            params["extra_headers"] = dict(self.default_headers)
         if self._route() == self._GATEWAY_ROUTE:
             # A gateway rewrites the request for whichever provider it routes to, so it is the only thing that can place breakpoints.
             params["extra_body"] = {**params.get("extra_body", {}), "gateway": {"caching": "auto"}}
@@ -450,10 +447,165 @@ class ChatLiteLLMModel(BaseChatModel):
         params["prompt_cache_key"] = self._provider_cache_key(params, sent)
 
     @staticmethod
-    def _empty_model_refusal(error: BaseException) -> bool:
-        """OpenCode has returned `Model  is not supported` with an empty id."""
+    def _empty_model_refusal(error: BaseException | str) -> bool:
+        """OpenCode answers some refusals as 401 `Model  is not supported` with an empty id."""
         text = str(error)
         return "Model  is not supported" in text or "Model is not supported" in text
+
+    def _wire_model(self) -> str:
+        suffix = self.model.split("/", 1)[-1].strip()
+        if not suffix:
+            raise ValueError(f"empty model suffix: {self.model!r}")
+        return suffix
+
+    def _opencode_headers(self, *, anonymous: bool = False) -> dict[str, str]:
+        """The few headers a curl that works against Zen actually sends.
+
+        The OpenAI Python client adds ``x-stainless-*`` fields. Zen has been
+        answering those requests as an empty-model 401 even when ``model`` is set.
+        """
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            "User-Agent": "opencode/0.0.0",
+        }
+        key = ""
+        if self.api_key is not None:
+            key = self.api_key.get_secret_value().strip()
+        if not anonymous and key and key != "public":
+            headers["Authorization"] = f"Bearer {key}"
+        return headers
+
+    def _opencode_payload(
+        self, sent: list[dict[str, Any]], params: dict[str, Any], *, stream: bool
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self._wire_model(),
+            "messages": sent,
+            "stream": stream,
+        }
+        if params.get("temperature") is not None:
+            payload["temperature"] = params["temperature"]
+        if params.get("tools"):
+            payload["tools"] = params["tools"]
+        if params.get("tool_choice"):
+            payload["tool_choice"] = params["tool_choice"]
+        if params.get("stop"):
+            payload["stop"] = params["stop"]
+        if params.get("max_tokens"):
+            payload["max_tokens"] = params["max_tokens"]
+        return payload
+
+    @staticmethod
+    def _namespace(value: Any) -> Any:
+        if isinstance(value, dict):
+            return SimpleNamespace(
+                **{key: ChatLiteLLMModel._namespace(item) for key, item in value.items()}
+            )
+        if isinstance(value, list):
+            return [ChatLiteLLMModel._namespace(item) for item in value]
+        return value
+
+    async def _opencode_events(
+        self, payload: dict[str, Any], headers: dict[str, str]
+    ) -> AsyncIterator[dict[str, Any]]:
+        url = f"{(self.api_base or '').rstrip('/')}/chat/completions"
+        timeout = self.timeout if self.timeout is not None else 300.0
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("POST", url, headers=headers, json=payload) as response:
+                if response.status_code >= 400:
+                    text = (await response.aread()).decode("utf-8", "replace")[:800]
+                    raise RuntimeError(f"OpenCode {response.status_code}: {text}")
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        return
+                    if not data:
+                        continue
+                    yield json.loads(data)
+
+    async def _opencode_stream_events(
+        self, payload: dict[str, Any]
+    ) -> AsyncIterator[dict[str, Any]]:
+        last_error: Exception | None = None
+        for anonymous in (False, True):
+            headers = self._opencode_headers(anonymous=anonymous)
+            try:
+                async for event in self._opencode_events(payload, headers):
+                    yield event
+                return
+            except Exception as error:
+                last_error = error
+                if not ChatLiteLLMModel._empty_model_refusal(error):
+                    raise
+                logger.warning(
+                    "OpenCode refused the model id; retrying after a pause (anonymous=%s)",
+                    anonymous,
+                )
+                await asyncio.sleep(8)
+        assert last_error is not None
+        raise last_error
+
+    async def _opencode_completion(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        url = f"{(self.api_base or '').rstrip('/')}/chat/completions"
+        timeout = self.timeout if self.timeout is not None else 300.0
+        last_error: Exception | None = None
+        for anonymous in (False, True):
+            headers = self._opencode_headers(anonymous=anonymous)
+            if payload.get("stream"):
+                headers["Accept"] = "text/event-stream"
+            else:
+                headers["Accept"] = "application/json"
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.post(url, headers=headers, json=payload)
+                    if response.status_code >= 400:
+                        raise RuntimeError(
+                            f"OpenCode {response.status_code}: {response.text[:800]}"
+                        )
+                    return response.json()
+            except Exception as error:
+                last_error = error
+                if not ChatLiteLLMModel._empty_model_refusal(error):
+                    raise
+                logger.warning(
+                    "OpenCode refused the model id; retrying after a pause (anonymous=%s)",
+                    anonymous,
+                )
+                await asyncio.sleep(8)
+        assert last_error is not None
+        raise last_error
+
+    def _opencode_completion_sync(self, payload: dict[str, Any]) -> dict[str, Any]:
+        url = f"{(self.api_base or '').rstrip('/')}/chat/completions"
+        timeout = self.timeout if self.timeout is not None else 300.0
+        last_error: Exception | None = None
+        for anonymous in (False, True):
+            headers = self._opencode_headers(anonymous=anonymous)
+            headers["Accept"] = "application/json"
+            try:
+                with httpx.Client(timeout=timeout) as client:
+                    response = client.post(url, headers=headers, json=payload)
+                    if response.status_code >= 400:
+                        raise RuntimeError(
+                            f"OpenCode {response.status_code}: {response.text[:800]}"
+                        )
+                    return response.json()
+            except Exception as error:
+                last_error = error
+                if not ChatLiteLLMModel._empty_model_refusal(error):
+                    raise
+                logger.warning(
+                    "OpenCode refused the model id; retrying after a pause (anonymous=%s)",
+                    anonymous,
+                )
+                time.sleep(8)
+        assert last_error is not None
+        raise last_error
 
     def _trace_request(self, params: dict[str, Any], sent: list[dict[str, Any]]) -> RequestTrace:
         """Cut the outgoing request into the pieces a prompt cache matches on, in wire order."""
@@ -538,14 +690,26 @@ class ChatLiteLLMModel(BaseChatModel):
         # The baseline advances when the request is sent, so a usage-less or interrupted response still leaves the next request a true comparison.
         diagnosis = self._cache_diagnosis(current_trace)
         reported = False
-        try:
-            stream = cast(AsyncIterator[Any], await litellm.acompletion(messages=sent, **params))
-        except Exception as error:
-            if not ChatLiteLLMModel._empty_model_refusal(error):
-                raise
-            logger.warning("provider refused an empty model id; retrying the same completion once")
-            await asyncio.sleep(1.5)
-            stream = cast(AsyncIterator[Any], await litellm.acompletion(messages=sent, **params))
+        if self._opencode_host():
+            payload = self._opencode_payload(sent, params, stream=True)
+            logger.info("opencode http model=%s stream=true", payload["model"])
+            async for event in self._opencode_stream_events(payload):
+                generation_chunk = self._litellm_chunk_to_generation_chunk(
+                    self._namespace(event), block
+                )
+                if generation_chunk is None:
+                    continue
+                usage = getattr(generation_chunk.message, "usage_metadata", None)
+                if usage and not reported:
+                    reported = True
+                    reconcile(
+                        diagnosis,
+                        int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0),
+                    )
+                    generation_chunk.message.additional_kwargs["cache_trace"] = diagnosis
+                yield generation_chunk
+            return
+        stream = cast(AsyncIterator[Any], await litellm.acompletion(messages=sent, **params))
         async for chunk in stream:
             generation_chunk = self._litellm_chunk_to_generation_chunk(chunk, block)
             if generation_chunk is not None:
@@ -706,16 +870,11 @@ class ChatLiteLLMModel(BaseChatModel):
         self._remember_cache_candidate(cache_candidate)
         # Same outgoing-boundary advance as the streaming path: the comparison chain moves with the request.
         diagnosis = self._cache_diagnosis(current_trace)
-        try:
-            response = await litellm.acompletion(
-                messages=sent,
-                **params,
-            )
-        except Exception as error:
-            if not ChatLiteLLMModel._empty_model_refusal(error):
-                raise
-            logger.warning("provider refused an empty model id; retrying the same completion once")
-            await asyncio.sleep(1.5)
+        if self._opencode_host():
+            payload = self._opencode_payload(sent, params, stream=False)
+            logger.info("opencode http model=%s stream=false", payload["model"])
+            response = self._namespace(await self._opencode_completion(payload))
+        else:
             response = await litellm.acompletion(
                 messages=sent,
                 **params,
@@ -745,13 +904,10 @@ class ChatLiteLLMModel(BaseChatModel):
         sent, cache_candidate = self._apply_cache_breakpoints(translated)
         self._remember_cache_candidate(cache_candidate)
         diagnosis = self._cache_diagnosis(current_trace)
-        try:
-            response = litellm.completion(messages=sent, **params)
-        except Exception as error:
-            if not ChatLiteLLMModel._empty_model_refusal(error):
-                raise
-            logger.warning("provider refused an empty model id; retrying the same completion once")
-            time.sleep(1.5)
+        if self._opencode_host():
+            payload = self._opencode_payload(sent, params, stream=False)
+            response = self._namespace(self._opencode_completion_sync(payload))
+        else:
             response = litellm.completion(messages=sent, **params)
         reported_usage = self._usage_metadata(getattr(response, "usage", None)) or {}
         reconcile(
