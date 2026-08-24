@@ -13,11 +13,13 @@
 #
 # Email (IMAP IDLE + SMTP) is an app-owned section. It is off until you enable it;
 # see documentation/user/email.md. Passwords live as 0600 files under
-# $XDG_DATA_HOME/langmesh/secrets/, not in this document.
+# $XDG_DATA_HOME/langmesh/secrets/, not in this document. Mailbox sessions may
+# overlay email.provider and email.model onto the agent profile.
 
 # Model provider credentials. API keys live as secret files
 # (providers.<id>.api_key). Which model a session runs is chosen by its
-# agent profile, not here. The full provider list is in langmesh.base.identity.providers.
+# agent profile, except mailbox sessions which may overlay email.provider
+# and email.model. The full provider list is in langmesh.base.identity.providers.
 providers:
   anthropic:
     api_key: ""
