@@ -268,6 +268,25 @@ function Workspace() {
         reportError({ component: "workspace-page", operation: "list the workspaces" }, caught),
       );
   }, []);
+  const loadSettings = useCallback(() => {
+    fetchSettings()
+      .then((settings) => {
+        setSelectedPermissionMode(settings.permission_mode);
+        setSandboxEnforceState(settings.sandbox.enforce);
+        setSandboxBackend(settings.sandbox_backend);
+        setWorktreeStrategy(settings.worktree_strategy);
+      })
+      .catch((caught) =>
+        reportError({ component: "workspace-page", operation: "read the settings" }, caught),
+      );
+  }, []);
+  const loadHomeDirectory = useCallback(() => {
+    fetchHomeDirectory()
+      .then(setHomeWorkspace)
+      .catch((caught) =>
+        reportError({ component: "workspace-page", operation: "read the home directory" }, caught),
+      );
+  }, []);
   const loadAgents = useCallback(() => {
     fetchAgents(workingDirectoryRef.current)
       .then((agentList) => {
@@ -384,6 +403,20 @@ function Workspace() {
     setSessionsLoaded(true);
   }, [mapSessions, daemonId]);
 
+  const hydrateActiveDaemon = useCallback(() => {
+    loadAgents();
+    loadAgentCards();
+    loadModelCatalog();
+    loadSettings();
+    loadHomeDirectory();
+    fetchRecentModels()
+      .then(setRecentModels)
+      .catch((caught) =>
+        reportError({ component: "workspace-page", operation: "read the recent models" }, caught),
+      );
+    return loadSessions();
+  }, [loadAgents, loadAgentCards, loadHomeDirectory, loadModelCatalog, loadSessions, loadSettings]);
+
   // Everything a lost connection took away, asked for again, so the daemon going away is recoverable without a relaunch.
   useEffect(
     () =>
@@ -401,7 +434,7 @@ function Workspace() {
     setIsReconnecting(true);
     try {
       await reconnectDaemon();
-      await Promise.all([loadAgents(), loadAgentCards(), loadModelCatalog(), loadSessions()]);
+      await hydrateActiveDaemon();
       setIsConnected(true);
     } catch {
       setIsConnected(false);
@@ -409,33 +442,45 @@ function Workspace() {
       reconnectingRef.current = false;
       setIsReconnecting(false);
     }
-  }, [loadAgents, loadAgentCards, loadModelCatalog, loadSessions]);
+  }, [hydrateActiveDaemon]);
   reconnectRef.current = reconnect;
 
-  function applyDaemon(target: DaemonTarget) {
-    if (target.id === daemonId && target.id === activeDaemonId()) {
-      setChatKey((current) => current + 1);
-      void loadAgents();
-      void loadAgentCards();
-      void loadModelCatalog();
-      void loadSessions();
-      return;
+  async function applyDaemon(target: DaemonTarget) {
+    const same = target.id === daemonId && target.id === activeDaemonId();
+    if (!same) {
+      switchDaemon(target);
+      setDaemonId(target.id);
+      setActiveSessionId(null);
+      setWorkingDirectory("");
+      setRestoredContext(null);
     }
-    switchDaemon(target);
-    setDaemonId(target.id);
-    setActiveSessionId(null);
     setChatKey((current) => current + 1);
-    setWorkingDirectory("");
-    setRestoredContext(null);
-    const params = new URLSearchParams(window.location.search);
-    if (target.id === LOCAL_DAEMON_ID) params.delete("daemon");
-    else params.set("daemon", target.id);
-    params.delete("session");
-    router.replace(`?${params.toString()}`, { scroll: false });
-    void loadAgents();
-    void loadAgentCards();
-    void loadModelCatalog();
-    void loadSessions();
+    void hydrateActiveDaemon();
+    if (same) return;
+    try {
+      const workspaces = await listWorkspaces({ apiBase: target.endpoint, token: target.token });
+      const last = readLastWorkspace();
+      const next = workspaces.find((workspace) => workspace.id === last) ?? workspaces[0];
+      const params = new URLSearchParams(window.location.search);
+      if (target.id === LOCAL_DAEMON_ID) params.delete("daemon");
+      else params.set("daemon", target.id);
+      params.delete("session");
+      if (next) {
+        writeLastWorkspace(next.id);
+        params.set("workspace", next.id);
+        const detailed = await getWorkspace(next.id, {
+          apiBase: target.endpoint,
+          token: target.token,
+        });
+        const local = (detailed?.locations ?? []).find((location) => location.kind === "local");
+        setWorkingDirectory(local?.base_directory || "");
+      } else {
+        params.delete("workspace");
+      }
+      router.replace(`?${params.toString()}`, { scroll: false });
+    } catch (caught) {
+      reportError({ component: "workspace-page", operation: "open a machine" }, caught);
+    }
   }
 
   // Coalesce the burst of events a single turn emits into one trailing refetch, so the list settles once.
@@ -658,9 +703,13 @@ function Workspace() {
     if (target && nextDaemonId !== activeDaemonId()) {
       switchDaemon(target);
       setDaemonId(target.id);
-      void loadAgents();
-      void loadAgentCards();
-      void loadModelCatalog();
+      void hydrateActiveDaemon();
+      void getWorkspace(nextWorkspaceId, { apiBase: target.endpoint, token: target.token }).then(
+        (workspace) => {
+          const local = (workspace?.locations ?? []).find((location) => location.kind === "local");
+          setWorkingDirectory(local?.base_directory || "");
+        },
+      );
     } else {
       setDaemonId(nextDaemonId);
     }
@@ -679,10 +728,16 @@ function Workspace() {
   }
 
   // Open a workspace's Settings from its sidebar menu, resetting the workspace only when it is a different one.
-  function openWorkspaceSettings(nextWorkspaceId: string, section: string = "locations") {
-    const switchingWorkspaces = nextWorkspaceId !== workspaceId;
+  function openWorkspaceSettings(nextWorkspaceId: string, nextDaemonId: string = daemonId) {
+    const switching = nextWorkspaceId !== workspaceId || nextDaemonId !== daemonId;
+    const target = daemonTargets.find((candidate) => candidate.id === nextDaemonId);
+    if (target && nextDaemonId !== activeDaemonId()) {
+      switchDaemon(target);
+      setDaemonId(target.id);
+      void hydrateActiveDaemon();
+    }
     writeLastWorkspace(nextWorkspaceId);
-    if (switchingWorkspaces) {
+    if (switching) {
       setActiveSessionId(null);
       setChatKey((current) => current + 1);
       setWorkingDirectory("");
@@ -690,8 +745,10 @@ function Workspace() {
     }
     const params = new URLSearchParams(window.location.search);
     params.set("workspace", nextWorkspaceId);
-    if (switchingWorkspaces) params.delete("session");
-    params.set("settings", section);
+    if (nextDaemonId === LOCAL_DAEMON_ID) params.delete("daemon");
+    else params.set("daemon", nextDaemonId);
+    if (switching) params.delete("session");
+    params.set("settings", "locations");
     router.replace(`?${params.toString()}`, { scroll: false });
     if (isCompactViewport()) setMobileHistoryOpen(false);
   }
@@ -717,9 +774,7 @@ function Workspace() {
       if (target) {
         switchDaemon(target);
         setDaemonId(target.id);
-        void loadAgents();
-        void loadAgentCards();
-        void loadModelCatalog();
+        void hydrateActiveDaemon();
       }
     } else {
       setDaemonId(host);
@@ -752,6 +807,7 @@ function Workspace() {
 
   function handleOpenDelegatedSession(entry: SessionEntry) {
     const identity = sessionIdentity(entry);
+    const host = entry.daemonId || LOCAL_DAEMON_ID;
     setUnseenCompletions((current) => {
       if (!current.has(identity) && !current.has(entry.sessionId)) return current;
       const next = new Set(current);
@@ -759,11 +815,22 @@ function Workspace() {
       next.delete(entry.sessionId);
       return next;
     });
+    if (host !== activeDaemonId()) {
+      const target = daemonTargets.find((candidate) => candidate.id === host);
+      if (target) {
+        switchDaemon(target);
+        setDaemonId(target.id);
+        void hydrateActiveDaemon();
+      }
+    }
     setWorkingDirectory(entry.workingDirectory);
     setActiveSessionId(entry.sessionId);
     void rememberLastSession(entry.workspaceId || workspaceId, entry.sessionId);
     const params = new URLSearchParams(window.location.search);
+    if (entry.workspaceId) params.set("workspace", entry.workspaceId);
     params.set("session", entry.sessionId);
+    if (host === LOCAL_DAEMON_ID) params.delete("daemon");
+    else params.set("daemon", host);
     router.replace(`?${params.toString()}`, { scroll: false });
   }
 
@@ -897,7 +964,7 @@ function Workspace() {
       .then((workspace) => {
         if (cancelled) return;
         if (!workspace) {
-          router.replace("/");
+          // A daemon switch can briefly ask this host for the previous host's workspace id.
           return;
         }
         const local = (workspace.locations ?? []).find((location) => location.kind === "local");

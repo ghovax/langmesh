@@ -75,14 +75,20 @@ def _hosts_for(address: str) -> tuple[str, str]:
     return _MAIL_HOSTS.get(_domain(address), ("", ""))
 
 
-def _account_login(address: str) -> str:
-    """Gmail IMAP/SMTP auth is the account, not a plus-address alias used as From."""
+def _untagged_local(address: str) -> tuple[str, str]:
+    """Local part without a plus-tag, and domain. Empty domain when the address has no @."""
     if "@" not in address:
-        return address
+        return address, ""
     local, domain = address.rsplit("@", 1)
-    if domain.lower() in {"gmail.com", "googlemail.com"} and "+" in local:
-        return f"{local.split('+', 1)[0]}@{domain}"
-    return address
+    return local.split("+", 1)[0], domain
+
+
+def _account_login(address: str) -> str:
+    """IMAP/SMTP auth is the account, not the plus-address used as From."""
+    local, domain = _untagged_local(address)
+    if not domain:
+        return local
+    return f"{local}@{domain}"
 
 
 def _address_plus_tag(address: str) -> str:
@@ -93,14 +99,6 @@ def _address_plus_tag(address: str) -> str:
     if "+" not in local:
         return ""
     return local.split("+", 1)[1].lower()
-
-
-def _untagged_local(address: str) -> tuple[str, str]:
-    """Local part without a plus-tag, and domain. Empty domain when the address has no @."""
-    if "@" not in address:
-        return address, ""
-    local, domain = address.rsplit("@", 1)
-    return local.split("+", 1)[0], domain
 
 
 def compact_mail_secret(value: str | None) -> str:
