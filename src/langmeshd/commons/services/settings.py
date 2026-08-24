@@ -17,6 +17,11 @@ from langmeshd.commons import state
 def _persist_app_section(section: str, changes: dict) -> None:
     """Write one of the app's own configuration-file sections, preserving the rest of the file."""
     document = configuration_file.load()
+    if section == "composio" and "api_key" in changes:
+        from langmesh.base.secrets import COMPOSIO_API_KEY, write_secret
+
+        write_secret(COMPOSIO_API_KEY, str(changes.get("api_key") or ""))
+        changes = {**changes, "api_key": ""}
     document.setdefault(section, {}).update(changes)
     invalid = configuration_file.rejects(document)
     if invalid:

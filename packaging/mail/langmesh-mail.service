@@ -1,0 +1,21 @@
+## /etc/systemd/system/langmesh-mail.service
+[Unit]
+Description=LangMesh IMAP/SMTP client
+After=network.target langmeshd.service
+Requires=langmeshd.service
+
+[Service]
+Type=simple
+ExecStart=/srv/langmesh/.venv/bin/langmesh mail
+Restart=always
+RestartSec=3
+TimeoutStopSec=60
+WorkingDirectory=/srv/langmesh
+Environment=XDG_CONFIG_HOME=/srv/langmesh/xdg/config
+Environment=XDG_DATA_HOME=/srv/langmesh/xdg/data
+Environment=XDG_STATE_HOME=/srv/langmesh/xdg/state
+Environment=XDG_CACHE_HOME=/srv/langmesh/xdg/cache
+Environment=XDG_RUNTIME_DIR=/srv/langmesh/xdg/runtime
+
+[Install]
+WantedBy=multi-user.target
