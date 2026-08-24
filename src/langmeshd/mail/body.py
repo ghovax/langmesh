@@ -15,6 +15,21 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify
 
 
+_GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
+
+
+def canonical_mailbox(address: str) -> str:
+    """Gmail plus-addresses and googlemail.com are the same account as user@gmail.com."""
+    mailbox = address.strip().lower()
+    if "@" not in mailbox:
+        return mailbox
+    local, domain = mailbox.rsplit("@", 1)
+    if domain in _GMAIL_DOMAINS:
+        local = local.split("+", 1)[0]
+        domain = "gmail.com"
+    return f"{local}@{domain}"
+
+
 def sender_address(message: Message) -> str:
     """The mailbox the message claims to be from, lowercased, or empty."""
     _, address = parseaddr(str(message.get("From") or ""))
@@ -29,6 +44,14 @@ def header_addresses(message: Message, name: str) -> list[str]:
         if address.strip():
             values.append(address.strip().lower())
     return values
+
+
+def reply_address(message: Message) -> str:
+    """Where a reply should be sent: Reply-To, otherwise From."""
+    for address in header_addresses(message, "Reply-To"):
+        if address:
+            return address
+    return sender_address(message)
 
 
 def display_from(message: Message) -> str:
@@ -54,9 +77,7 @@ def canonical_message_id(value: str) -> str:
 
 
 def message_id_of(message: Message) -> str:
-    return canonical_message_id(
-        str(message.get("Message-ID") or message.get("Message-Id") or "")
-    )
+    return canonical_message_id(str(message.get("Message-ID") or message.get("Message-Id") or ""))
 
 
 def durable_identity(message: Message) -> str:
@@ -250,19 +271,31 @@ def is_automatic(message: Message) -> bool:
 
 
 def sender_allowed(address: str, allow_from: list[str]) -> bool:
-    """Whether `address` is on the allow-list: an exact mailbox, or `@domain` for a whole domain."""
+    """Whether `address` is on the allow-list: an exact mailbox, a Gmail alias of one, or `@domain`.
+
+    Gmail plus-addresses and googlemail.com are the same account, matching how IMAP login
+    already authenticates `user+tag@gmail.com` as `user@gmail.com`.
+    """
     mailbox = address.strip().lower()
     if not mailbox or "@" not in mailbox:
         return False
-    _, domain = mailbox.rsplit("@", 1)
+    sender = canonical_mailbox(mailbox)
+    _, sender_domain = sender.rsplit("@", 1)
+    raw_domain = mailbox.rsplit("@", 1)[1]
     for entry in allow_from:
         token = entry.strip().lower()
         if not token:
             continue
-        if token == mailbox:
-            return True
-        if token.startswith("@") and domain == token[1:]:
-            return True
-        if token.startswith("*@") and domain == token[2:]:
+        listed_domain = ""
+        if token.startswith("*@"):
+            listed_domain = token[2:]
+        elif token.startswith("@"):
+            listed_domain = token[1:]
+        if listed_domain:
+            listed = canonical_mailbox(f"placeholder@{listed_domain}").rsplit("@", 1)[1]
+            if sender_domain == listed or raw_domain == listed_domain:
+                return True
+            continue
+        if token == mailbox or canonical_mailbox(token) == sender:
             return True
     return False
