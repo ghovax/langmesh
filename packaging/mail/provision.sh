@@ -22,6 +22,42 @@ env_file() {
   return 1
 }
 
+mail_python() {
+  if [[ -x "${root}/.venv/bin/python" ]]; then
+    "${root}/.venv/bin/python"
+    return
+  fi
+  if command -v uv >/dev/null 2>&1; then
+    (cd "${root}" && uv run python)
+    return
+  fi
+  return 1
+}
+
+compacted_env_copy() {
+  local source="$1"
+  local dest
+  dest="$(mktemp)"
+  chmod 600 "${dest}"
+  if LANGMESH_MAIL_ENV_SOURCE="${source}" LANGMESH_MAIL_ENV_DEST="${dest}" mail_python <<'PY'
+import os
+from pathlib import Path
+
+from langmeshd.mail.envfile import install_mail_env
+
+install_mail_env(
+    Path(os.environ["LANGMESH_MAIL_ENV_SOURCE"]),
+    Path(os.environ["LANGMESH_MAIL_ENV_DEST"]),
+)
+PY
+  then
+    printf '%s\n' "${dest}"
+    return 0
+  fi
+  rm -f "${dest}"
+  printf '%s\n' "${source}"
+}
+
 remote_install() {
   local host="$1"
   local file
@@ -57,14 +93,18 @@ provision_fly() {
     curl -L https://fly.io/install.sh | sh
     export PATH="${HOME}/.fly/bin:${PATH}"
   fi
-  local fly file
+  local fly file imported
   fly="$(command -v flyctl || command -v fly)"
   local app="${LANGMESH_FLY_APP:-langmesh-mail}"
   local region="${LANGMESH_FLY_REGION:-iad}"
   "${fly}" apps create "${app}" --generate-name=false || true
   "${fly}" volumes create langmesh_xdg --app "${app}" --size 3 --region "${region}" --yes || true
   if file="$(env_file)"; then
-    grep -vE '^(#|$)' "${file}" | grep -vE '^[^=]+=[[:space:]]*$' | "${fly}" secrets import --app "${app}"
+    imported="$(compacted_env_copy "${file}")"
+    grep -vE '^(#|$)' "${imported}" | grep -vE '^[^=]+=[[:space:]]*$' | "${fly}" secrets import --app "${app}"
+    if [[ "${imported}" != "${file}" ]]; then
+      rm -f "${imported}"
+    fi
   fi
   (cd "${root}" && "${fly}" deploy . --app "${app}" \
     --config packaging/mail/fly.toml \

@@ -1,4 +1,4 @@
-"""The IMAP IDLE loop: wait for EXISTS, then fetch UNSEEN. No polling from inside a turn."""
+"""The IMAP IDLE loop: wait for EXISTS or RECENT, then fetch UNSEEN. No polling from inside a turn."""
 
 from __future__ import annotations
 
@@ -117,13 +117,15 @@ def _fetch_payload(lines: list) -> bytes:
     return b""
 
 
-def _push_has_exists(payload: object) -> bool:
+def _push_has_new_mail(payload: object) -> bool:
+    """Whether an IDLE push is new mail: EXISTS, or RECENT when the server omitted EXISTS."""
     if payload == STOP_WAIT_SERVER_PUSH:
         return False
     chunks = payload if isinstance(payload, (list, tuple)) else [payload]
     for chunk in chunks:
         text = chunk.decode() if isinstance(chunk, (bytes, bytearray)) else str(chunk)
-        if "EXISTS" in text.upper():
+        upper = text.upper()
+        if "EXISTS" in upper or "RECENT" in upper:
             return True
     return False
 
@@ -148,9 +150,7 @@ class Inbox:
             self.configuration.effective_imap_password,
         )
         if login.result != "OK":
-            raise RuntimeError(
-                imap_reason(login, self.configuration.effective_imap_password)
-            )
+            raise RuntimeError(imap_reason(login, self.configuration.effective_imap_password))
         selected = await self.imap.select(self.configuration.effective_imap_mailbox)
         if selected.result != "OK":
             raise RuntimeError(imap_reason(selected, self.configuration.effective_imap_password))
@@ -249,7 +249,7 @@ class Inbox:
                 logger.debug("mail idle_done from wake failed", exc_info=True)
 
     async def idle_until_exists(self) -> None:
-        """Block in IDLE until EXISTS, a command wants the socket, or the RFC timeout.
+        """Block in IDLE until new mail, a command wants the socket, or the RFC timeout.
 
         FETCH never runs from inside IDLE. Every two seconds we check whether the host slept.
         """
@@ -268,7 +268,7 @@ class Inbox:
                     if self.clock.jumped():
                         raise StaleConnection("the host slept or the clock jumped") from None
                     continue
-                if pushed == STOP_WAIT_SERVER_PUSH or _push_has_exists(pushed):
+                if pushed == STOP_WAIT_SERVER_PUSH or _push_has_new_mail(pushed):
                     break
         finally:
             if self.imap.has_pending_idle():
