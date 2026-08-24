@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Install langmeshd and the IMAP/SMTP client as systemd services on this Linux host.
-# Point LANGMESH_MAIL_ENV at a filled mail.env so the file is copied intact:
-#   sudo env LANGMESH_MAIL_ENV="$PWD/mail.env" packaging/mail/install.sh
+# Policy is configuration.yaml. Secrets are 0600 files under xdg/data/langmesh/secrets.
+#   sudo env LANGMESH_CONFIG="$PWD/packaging/mail/configuration.yaml" \
+#            LANGMESH_SECRETS="$PWD/secrets" packaging/mail/install.sh
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -30,8 +31,7 @@ sync_checkout() {
   mkdir -p "${prefix}"
   if [[ "${root}" != "${prefix}" ]]; then
     log "syncing checkout into ${prefix}"
-    # Never replace xdg or mail.env: those are the job queue, history, and secrets.
-    local exclude=(--exclude '.venv' --exclude '.git' --exclude 'xdg' --exclude 'mail.env' --exclude 'web/node_modules' --exclude 'web/.next')
+    local exclude=(--exclude '.venv' --exclude '.git' --exclude 'xdg' --exclude 'mail.env' --exclude 'secrets' --exclude 'web/node_modules' --exclude 'web/.next')
     if command -v rsync >/dev/null 2>&1; then
       rsync -a --delete "${exclude[@]}" "${root}/" "${prefix}/"
     else
@@ -40,71 +40,58 @@ sync_checkout() {
   fi
   mkdir -p \
     "${prefix}/xdg/config/langmesh" \
-    "${prefix}/xdg/data/langmesh" \
+    "${prefix}/xdg/data/langmesh/secrets" \
     "${prefix}/xdg/state/langmesh" \
     "${prefix}/xdg/cache/langmesh" \
     "${prefix}/xdg/runtime/langmesh"
-  chmod 700 "${prefix}/xdg/runtime" "${prefix}/xdg/runtime/langmesh"
+  chmod 700 "${prefix}/xdg/runtime" "${prefix}/xdg/runtime/langmesh" \
+    "${prefix}/xdg/data/langmesh/secrets"
   (
     cd "${prefix}"
     uv sync --no-dev
   )
 }
 
-install_env_file() {
-  local source="$1"
-  local dest="$2"
-  LANGMESH_MAIL_ENV_SOURCE="${source}" LANGMESH_MAIL_ENV_DEST="${dest}" \
-    "${prefix}/.venv/bin/python" - <<'PY'
-import os
-from pathlib import Path
-
-from langmeshd.mail.envfile import install_mail_env
-
-install_mail_env(Path(os.environ["LANGMESH_MAIL_ENV_SOURCE"]), Path(os.environ["LANGMESH_MAIL_ENV_DEST"]))
-PY
-  chmod 600 "${dest}"
-}
-
-write_env_file() {
-  local env_file="${prefix}/mail.env"
+install_secrets() {
+  local dest="${prefix}/xdg/data/langmesh/secrets"
   local source=""
   umask 077
-  if [[ -n "${LANGMESH_MAIL_ENV:-}" && -f "${LANGMESH_MAIL_ENV}" ]]; then
-    source="${LANGMESH_MAIL_ENV}"
-  elif [[ -f "${root}/mail.env" ]]; then
-    source="${root}/mail.env"
-  elif [[ -f "${PWD}/mail.env" ]]; then
-    source="${PWD}/mail.env"
+  mkdir -p "${dest}"
+  chmod 700 "${dest}"
+  if [[ -n "${LANGMESH_SECRETS:-}" && -d "${LANGMESH_SECRETS}" ]]; then
+    source="${LANGMESH_SECRETS}"
+  elif [[ -d "${root}/secrets" ]]; then
+    source="${root}/secrets"
+  elif [[ -d "${PWD}/secrets" ]]; then
+    source="${PWD}/secrets"
   fi
   if [[ -n "${source}" ]]; then
-    install_env_file "${source}" "${env_file}"
-    log "installed ${env_file} from ${source}"
-    return
+    local file
+    for file in "${source}"/*; do
+      [[ -f "${file}" ]] || continue
+      case "$(basename "${file}")" in
+        README|README.md) continue ;;
+      esac
+      install -m 600 "${file}" "${dest}/$(basename "${file}")"
+    done
+    log "installed secrets from ${source}"
   fi
-  if [[ -n "${LANGMESH_MAIL_ADDRESS:-}${LANGMESH_MAIL_PASSWORD:-}${LANGMESH_MAIL_ALLOW_FROM:-}${LANGMESH_MAIL_IMAP_PASSWORD:-}${LANGMESH_MAIL_SMTP_PASSWORD:-}" ]]; then
-    env | grep -E '^(LANGMESH_MAIL_|LANGMESH_API_KEY=|LANGMESH_SANDBOX_|[A-Z][A-Z0-9_]*_API_KEY=)' >"${env_file}" || true
-    install_env_file "${env_file}" "${env_file}"
-    log "wrote ${env_file} from the environment (mode 0600)"
-    return
+}
+
+install_policy() {
+  local dest="${prefix}/xdg/config/langmesh/configuration.yaml"
+  local source=""
+  if [[ -n "${LANGMESH_CONFIG:-}" && -f "${LANGMESH_CONFIG}" ]]; then
+    source="${LANGMESH_CONFIG}"
+  elif [[ -f "${root}/packaging/mail/configuration.yaml" && ! -f "${dest}" ]]; then
+    source="${root}/packaging/mail/configuration.yaml"
+  elif [[ -f "${prefix}/packaging/mail/configuration.yaml" && ! -f "${dest}" ]]; then
+    source="${prefix}/packaging/mail/configuration.yaml"
   fi
-  if [[ -f "${env_file}" ]]; then
-    install_env_file "${env_file}" "${env_file}"
-    log "keeping existing ${env_file}"
-    return
+  if [[ -n "${source}" && ! -f "${dest}" ]]; then
+    install -m 600 "${source}" "${dest}"
+    log "installed ${dest} from ${source}"
   fi
-  cat >"${env_file}" <<EOF
-LANGMESH_MAIL_ADDRESS=${LANGMESH_MAIL_ADDRESS:-}
-LANGMESH_MAIL_ALLOW_FROM=${LANGMESH_MAIL_ALLOW_FROM:-}
-LANGMESH_MAIL_AGENT=${LANGMESH_MAIL_AGENT:-reviewer}
-LANGMESH_MAIL_PASSWORD=${LANGMESH_MAIL_PASSWORD:-}
-OPENCODE_API_KEY=${OPENCODE_API_KEY:-}
-ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-OPENAI_API_KEY=${OPENAI_API_KEY:-}
-OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-EOF
-  chmod 600 "${env_file}"
-  log "wrote ${env_file} (mode 0600)"
 }
 
 write_configuration() {
@@ -114,40 +101,38 @@ write_configuration() {
   export XDG_STATE_HOME="${prefix}/xdg/state"
   export XDG_CACHE_HOME="${prefix}/xdg/cache"
   export XDG_RUNTIME_DIR="${prefix}/xdg/runtime"
+  if [[ -n "${LANGMESH_MAIL_ENV:-}" ]]; then
+    export LANGMESH_MAIL_ENV
+  elif [[ -f "${root}/mail.env" ]]; then
+    export LANGMESH_MAIL_ENV="${root}/mail.env"
+  elif [[ -f "${PWD}/mail.env" ]]; then
+    export LANGMESH_MAIL_ENV="${PWD}/mail.env"
+  elif [[ -f "${prefix}/mail.env" ]]; then
+    export LANGMESH_MAIL_ENV="${prefix}/mail.env"
+  fi
   "${prefix}/.venv/bin/python" - <<'PY'
 import os
 from pathlib import Path
 
 from langmeshd.commons import configuration_file
 from langmeshd.commons.configuration_io import load_configuration
-from langmeshd.mail.envfile import apply_mail_env
+from langmeshd.commons.secret_import import import_into_files
 
-apply_mail_env()
 load_configuration(seed=True)
+import_into_files()
 document = configuration_file.load() or {}
 sandbox = document.setdefault("sandbox", {})
-sandbox["enforce"] = os.environ.get("LANGMESH_SANDBOX_ENFORCE", sandbox.get("enforce") or "preferred")
+sandbox["enforce"] = sandbox.get("enforce") or "preferred"
 sandbox["network"] = True
 email = document.setdefault("email", {})
-email["enabled"] = True
-email.setdefault("address", os.environ.get("LANGMESH_MAIL_ADDRESS", ""))
-allow = os.environ.get("LANGMESH_MAIL_ALLOW_FROM", "").strip()
-if allow:
-    email["allow_from"] = [item.strip() for item in allow.split(",") if item.strip()]
-email.setdefault("agent", os.environ.get("LANGMESH_MAIL_AGENT", "reviewer") or "reviewer")
+email.setdefault("agent", "reviewer")
 email.setdefault(
     "working_directory",
-    os.environ.get("LANGMESH_MAIL_WORKING_DIRECTORY")
-    or os.environ.get("LANGMESH_PREFIX")
-    or "/srv/langmesh",
+    os.environ.get("LANGMESH_PREFIX") or "/srv/langmesh",
 )
 email.setdefault("permission_mode", "automatic")
-imap = email.setdefault("imap", {})
-imap.setdefault("host", os.environ.get("LANGMESH_MAIL_IMAP_HOST", ""))
-imap.setdefault("username", os.environ.get("LANGMESH_MAIL_IMAP_USER", ""))
-smtp = email.setdefault("smtp", {})
-smtp.setdefault("host", os.environ.get("LANGMESH_MAIL_SMTP_HOST", ""))
-smtp.setdefault("username", os.environ.get("LANGMESH_MAIL_SMTP_USER", ""))
+if email.get("address"):
+    email["enabled"] = True
 invalid = configuration_file.rejects(document)
 if invalid:
     raise SystemExit(f"invalid configuration: {invalid}")
@@ -174,7 +159,8 @@ install_units() {
 need_root
 install_uv
 sync_checkout
-write_env_file
+install_policy
+install_secrets
 write_configuration
 install_units
-log "langmeshd and langmesh-mail are enabled. Send mail to LANGMESH_MAIL_ADDRESS from an allowlisted From."
+log "langmeshd and langmesh-mail are enabled. Send mail to email.address from an allowlisted From."

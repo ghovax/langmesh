@@ -185,7 +185,7 @@ async def get_settings():
     return {
         "permission_mode": permission_mode,
         "exa_api_key": state.global_configuration.exa.api_key,
-        "composio_api_key": state.composio_configuration.api_key,
+        "composio_api_key": state.composio_configuration.effective_api_key,
         "jina_api_key": state.global_configuration.jina.api_key,
         "firecrawl_api_key": state.global_configuration.firecrawl.api_key,
         "web_fetch_proxy_url": state.global_configuration.web_fetch.proxy_url,

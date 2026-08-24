@@ -33,10 +33,12 @@ from langmesh import (
     SQLiteCheckpoints,
 )
 from langmesh.base.confinement import Profile
-from langmesh.base.content.models import resolve_litellm, split_model_identifier
+from langmesh.base.content.models import resolve_litellm
 from langmesh.base.content.prompts import PackagePromptLoader
-from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
+from langmesh.base.identity.providers import get_provider_definition
+from langmesh.base.secrets import GITHUB_API_KEY, provider_api_key_name, read_secret
 from langmesh.github.detect import is_mention_turn, thread_has_prior_bot_comment
+from langmesh.github.policy import load_github_policy
 from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features import Feature
 from langmesh.runtime.plugins.background import BackgroundJobsFeature
@@ -60,8 +62,8 @@ TURN_FAILED = (
     "The details are in the Action log."
 )
 INVALID_MODEL = (
-    "I couldn't start this turn because the model setting isn't in the form I need. "
-    "It has to be `provider/model`. The Action log has the exact value."
+    "I couldn't start this turn because the GitHub agent profile has no provider/model. "
+    "Set those in `.agents/agents/<name>/AGENT.md`. The Action log has the details."
 )
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
@@ -232,25 +234,44 @@ def posted_reply(answer: str, pull_url: str = "") -> str:
 {pull_url}"""
 
 
-def model_identifier_from_env(environ: Mapping[str, str] | None = None) -> tuple[str, str]:
-    """``LANGMESH_MODEL`` as ``(provider, model)``, split on the first slash."""
-    raw = (
-        (environ or os.environ).get("LANGMESH_MODEL") or ""
-    ).strip() or "anthropic/claude-sonnet-4-5"
-    split = split_model_identifier(raw)
-    if split is None or not split[0].strip() or not split[1].strip():
-        raise ValueError(raw)
-    return split[0].strip(), split[1].strip()
+def mention_agent_profile(workspace: Path, name: str) -> tuple[str, str]:
+    """``(provider, model)`` from ``.agents/agents/<name>/AGENT.md``."""
+    path = workspace / ".agents" / "agents" / name / "AGENT.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ValueError(f"{path} is missing") from error
+    if not text.startswith("---"):
+        raise ValueError(f"{path} has no YAML frontmatter")
+    rest = text[3:]
+    end = rest.find("\n---")
+    if end < 0:
+        raise ValueError(f"{path} has no YAML frontmatter")
+    import yaml
+
+    front = yaml.safe_load(rest[:end]) or {}
+    provider = str(front.get("provider") or "").strip()
+    model = str(front.get("model") or "").strip()
+    if not provider or not model:
+        raise ValueError(f"{path} needs provider and model")
+    return provider, model
+
+
+def model_identifier_from_profile(
+    workspace: Path, *, environ: Mapping[str, str] | None = None
+) -> tuple[str, str]:
+    """Provider and model from the committed GitHub policy and agent profile."""
+    del environ
+    policy = load_github_policy(workspace)
+    return mention_agent_profile(workspace, policy.get("agent") or "github")
 
 
 def api_key_for(provider: str, environ: Mapping[str, str] | None = None) -> str:
-    """``LANGMESH_API_KEY``, then this provider's catalogue env vars, else its anonymous sentinel."""
-    env = environ or os.environ
-    if key := (env.get("LANGMESH_API_KEY") or "").strip():
-        return key
-    for name in provider_env_vars(provider):
-        if value := (env.get(name) or "").strip():
-            return value
+    """The secret file for this provider, then github.api_key, else the anonymous sentinel."""
+    del environ
+    key = read_secret(provider_api_key_name(provider)) or read_secret(GITHUB_API_KEY)
+    if key.strip():
+        return key.strip()
     definition = get_provider_definition(provider)
     return (definition.anonymous_api_key if definition is not None else "").strip()
 
@@ -698,7 +719,7 @@ def _session(mention: Mention, workspace: Path, reply: GitHubReply, token: str) 
     connection = sqlite3.connect(
         state_path(workspace), isolation_level=None, check_same_thread=False
     )
-    provider, model = model_identifier_from_env()
+    provider, model = model_identifier_from_profile(workspace)
     key = api_key_for(provider)
     agent = AgentConfiguration(
         name="langmesh",
@@ -749,7 +770,7 @@ async def run_turn(
     async with _session(mention, workspace, reply, token) as session:
         restored = await session.restore()
         followup = restored or thread_followup
-        provider, model = model_identifier_from_env()
+        provider, model = model_identifier_from_profile(workspace)
         key = api_key_for(provider)
         resolved = resolve_litellm(
             f"{provider}/{model}", {provider: key} if key else {}, {}
@@ -835,7 +856,7 @@ def main() -> None:
         except Exception:
             logger.exception("could not post acknowledgement")
     try:
-        model_identifier_from_env()
+        model_identifier_from_profile(workspace)
     except ValueError as error:
         logger.error("%s", render("invalid_model", {"value": str(error)}))
         publish_thread_comment(

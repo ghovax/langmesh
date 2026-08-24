@@ -11,7 +11,6 @@ recent comments on the same collection. It does not load the thread into memory.
 from __future__ import annotations
 
 import json
-import os
 import re
 import urllib.error
 import urllib.request
@@ -23,9 +22,18 @@ MENTION_ALIASES = (MENTION, "@langmesh")
 _HYPHENATED_BOT = re.compile(r"@langmesh-[\w-]+\[bot\](?![\w-])", re.IGNORECASE)
 
 
+def _policy_mention() -> str:
+    try:
+        from langmesh.github.policy import load_github_policy
+    except ImportError:
+        from policy import load_github_policy
+
+    return (load_github_policy().get("mention") or "").strip()
+
+
 def mention_handles() -> tuple[str, ...]:
-    """`@langmesh[bot]` first, then `@langmesh`, then an optional custom handle."""
-    extra = (os.environ.get("LANGMESH_MENTION") or "").strip()
+    """`@langmesh[bot]` first, then `@langmesh`, then an optional handle from `.github/langmesh.yaml`."""
+    extra = _policy_mention()
     handles: list[str] = list(MENTION_ALIASES)
     if extra and extra.lower() not in {name.lower() for name in handles}:
         handles.insert(0, extra)
@@ -36,7 +44,8 @@ def mentioned(body: str) -> bool:
     """Whether the comment addressed the bot, not some longer `@langmesh…` login.
 
     `@langmesh-agent[bot]` and other `@langmesh-…[bot]` slugs count even when
-    ``LANGMESH_MENTION`` is unset, because ``LangMesh`` itself cannot be an App.
+    `.github/langmesh.yaml` has no ``mention`` key, because ``LangMesh`` itself
+    cannot be an App.
     """
     text = body.lower()
     for handle in mention_handles():

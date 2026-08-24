@@ -24,9 +24,9 @@
 
 # Credentials
 
-# Each provider also resolves from its own conventional environment variable, which wins over
-# anything written here. Which model a session runs is chosen by its agent profile, not here.
-# The full list is in langmesh.base.identity.providers.
+# API keys live as 0600 files under $XDG_DATA_HOME/langmesh/secrets/
+# (providers.<id>.api_key). Which model a session runs is chosen by its agent
+# profile, not here. The full list is in langmesh.base.identity.providers.
 
 providers: {}
   # anthropic:
@@ -34,7 +34,7 @@ providers: {}
   # openai:
   #   api_key: ""
 
-# Exa backs the built-in web search. EXA_API_KEY supplies this instead.
+# Exa backs the built-in web search. The key is the secret file exa.api_key.
 exa:
   api_key: ""
 
@@ -197,7 +197,7 @@ daemon:
 
 
 # IMAP IDLE plus SMTP in front of the daemon. Off until you enable it.
-# Secrets also resolve from LANGMESH_MAIL_* environment variables, which win.
+# Passwords are secret files email.imap.password and email.smtp.password.
 # See documentation/user/email.md.
 email:
   enabled: false
