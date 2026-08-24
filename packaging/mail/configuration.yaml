@@ -2,11 +2,17 @@
 # $XDG_CONFIG_HOME/langmesh/configuration.yaml (mode 0600). Secrets are not
 # in this file: they live as 0600 files under $XDG_DATA_HOME/langmesh/secrets/
 #   email.imap.password
-#   providers.opencode.api_key   # reviewer talks to OpenCode Go
+#   providers.<id>.api_key   # catalogue id, or its credential_identifier
+#                            # (opencode-go bills as providers.opencode.api_key)
 #
 #   printf '%s' 'the-app-password' > secrets/email.imap.password
-#   printf '%s' 'the-provider-key' > secrets/providers.opencode.api_key
+#   printf '%s' 'the-provider-key' > secrets/providers.<id>.api_key
 #   chmod 600 secrets/*
+#
+# Any providers.<id> key is valid: each entry is an empty api_key placeholder
+# and an optional base_url. Set email.provider and email.model to overlay the
+# agent profile; omit both to keep the profile's own provider/model. custom
+# needs a base_url.
 #
 # Gmail, Fastmail, Yahoo, and iCloud fill IMAP/SMTP hosts from the address.
 # install.sh copies this file if the host has none yet, and copies ./secrets
@@ -20,8 +26,31 @@ email:
   address: ""
   allow_from: []
   agent: reviewer
+  provider: ""
+  model: ""
   working_directory: /srv/langmesh
   permission_mode: automatic
+
+# API keys live as secret files (providers.<id>.api_key). Add any catalogue
+# id the same way; unknown names are refused only if they are not a
+# ProviderCredential object. The full list is in langmesh.base.identity.providers.
+providers:
+  anthropic:
+    api_key: ""
+  openai:
+    api_key: ""
+  google:
+    api_key: ""
+  openrouter:
+    api_key: ""
+  xai:
+    api_key: ""
+  opencode:
+    api_key: ""
+    base_url: "https://opencode.ai/zen/v1"
+  custom:
+    api_key: ""
+    base_url: ""
 
 sandbox:
   enforce: preferred

@@ -30,7 +30,7 @@ The runtime directory is `0700`, and its daemon handshake files are `0600`. When
 
 ## Model providers
 
-Set an `api_key` for the providers you use, as a secret file named `providers.<id>.api_key`. Most resolve through LiteLLM's built-in endpoints; any OpenAI-compatible provider may also set `base_url` in this YAML file.
+Set an `api_key` for the providers you use, as a secret file named `providers.<id>.api_key`. Most resolve through LiteLLM's built-in endpoints; any OpenAI-compatible provider may also set `base_url` in this YAML file. Mailbox sessions use the same map: add any catalogue id under `providers:` and point `email.provider` / `email.model` at it (or keep the agent profile's pair).
 
 ```yaml
 providers:
@@ -389,14 +389,16 @@ Process-level timings owned by the daemon and read only from the configuration f
 
 ### Email
 
-IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same file. Off until you enable it. The mail process (`langmesh mail`) is a **client** of `langmeshd`. `langmesh mail check` proves IMAP and SMTP without IDLEing. Mail sessions speak through `submit_email` (`progress` or `reply`); markdown is rendered as HTML in the outbound message. See [Email](email.md). Passwords are the secret files `email.imap.password` and `email.smtp.password`.
+IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same file. Off until you enable it. The mail process (`langmesh mail`) is a **client** of `langmeshd`. `langmesh mail check` proves IMAP and SMTP without IDLEing. Mail sessions speak through `submit_email` (`progress` or `reply`); markdown is rendered as HTML in the outbound message. See [Email](email.md). Passwords are the secret files `email.imap.password` and `email.smtp.password`. The model key is `providers.<id>.api_key` for whatever catalogue provider mailbox sessions call.
 
 | Setting | Type | Default | What it is for |
 | ------- | ---- | ------- | -------------- |
 | `email.enabled` | boolean | `false` | Run the mail client against this mailbox. |
 | `email.address` | string | — | The From address replies are sent as. |
 | `email.allow_from` | list | `[]` | Mailboxes (or `@domain`) whose mail is taken. Everyone else is ignored. A Gmail plus-address or `googlemail.com` alias matches `user@gmail.com` and `@gmail.com`. |
-| `email.agent` | string | `reviewer` | The agent profile each mail thread session runs. Defaults to the bundled `reviewer`. |
+| `email.agent` | string | `reviewer` | The agent profile each mail thread session runs. Defaults to the bundled `reviewer`. Tools and the prompt come from this profile. |
+| `email.provider` | string | — | Optional catalogue provider overlay for mailbox sessions. Must be set together with `email.model`. Omit both to keep the profile's provider. |
+| `email.model` | string | — | Optional catalogue model overlay for mailbox sessions. Must be set together with `email.provider`. |
 | `email.working_directory` | string | — | Where that session's tools run. Empty means the daemon's current directory. `install.sh` and the Docker entrypoint set this to `/srv/langmesh`. |
 | `email.permission_mode` | string | `automatic` | Who answers gates for a mail session: `ask`, `automatic`, or `allow`. |
 | `email.idle_timeout_seconds` | number | `60.0` | How long one IMAP IDLE waits before cycling, so NAT and server idle limits cannot drop the socket silently. |
