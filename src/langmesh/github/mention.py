@@ -259,18 +259,14 @@ def mention_agent_profile(workspace: Path, name: str) -> tuple[str, str]:
     return provider, model
 
 
-def model_identifier_from_profile(
-    workspace: Path, *, environ: Mapping[str, str] | None = None
-) -> tuple[str, str]:
+def model_identifier_from_profile(workspace: Path) -> tuple[str, str]:
     """Provider and model from the committed GitHub policy and agent profile."""
-    del environ
     policy = load_github_policy(workspace)
     return mention_agent_profile(workspace, policy.get("agent") or "github")
 
 
-def api_key_for(provider: str, environ: Mapping[str, str] | None = None) -> str:
+def api_key_for(provider: str) -> str:
     """The secret file for this provider, then github.api_key, else the anonymous sentinel."""
-    del environ
     key = read_secret(provider_api_key_name(provider)) or read_secret(GITHUB_API_KEY)
     if key.strip():
         return key.strip()

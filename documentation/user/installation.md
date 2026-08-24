@@ -201,7 +201,7 @@ somewhere other than `/srv/langmesh`.
 
 - The daemon owns one `sqlite` database and the conversation history; a low-end VPS has room for
   thousands of sessions.
-- Set the `LANGMESH` XDG state directories if you want them under `/srv` rather than `/root`.
+- Set the XDG directories if you want them under `/srv` rather than `/root`.
 - The daemon is the process sessions live in; the app and `serve` are clients you can close and reopen. `langmesh mail` must stay up for IDLE, but unfinished jobs are on disk and resume when it comes back.
 
 ## `@langmesh[bot]` on GitHub
