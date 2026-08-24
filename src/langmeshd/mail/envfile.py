@@ -73,7 +73,12 @@ def apply_mail_env() -> Path | None:
             logger.debug("%s", problem)
         return None
     loaded = 0
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        logger.warning("could not read %s: %s", path, error)
+        return None
+    for raw in lines:
         parsed = _parse_line(raw.rstrip("\r"))
         if parsed is None:
             continue
@@ -85,5 +90,8 @@ def apply_mail_env() -> Path | None:
             continue
         os.environ[key] = value
         loaded += 1
-    logger.info("loaded %s from %s", loaded, path)
+    if loaded:
+        logger.info("loaded %s from %s", loaded, path)
+    else:
+        logger.debug("mail.env %s", path)
     return path
