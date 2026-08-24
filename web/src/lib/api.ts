@@ -24,7 +24,7 @@ let homeToken = DEVELOPMENT_TOKEN;
 // The token for the daemon the page is talking to right now (home, or a remote we switched to).
 let localDaemonToken = DEVELOPMENT_TOKEN;
 let daemonEndpointPromise: Promise<void> | null = null;
-let remoteOverride: { id: string; endpoint: string; token: string } | null = null;
+let remoteOverride: { id: string; name: string; endpoint: string; token: string } | null = null;
 
 export const LOCAL_DAEMON_ID = "local";
 
@@ -90,8 +90,15 @@ export function activeDaemonId(): string {
   return remoteOverride?.id ?? LOCAL_DAEMON_ID;
 }
 
+function rememberedHomeBase(): string {
+  if (homeEndpoint) return homeEndpoint.replace(/\/+$/, "");
+  if (typeof window !== "undefined") return window.location.origin.replace(/\/+$/, "");
+  return "";
+}
+
 export function homeApiOptions(): ApiRequestOptions {
-  return { apiBase: homeEndpoint || API_BASE, token: homeToken || localDaemonToken };
+  // Home credentials only: never the remote we switched a session to.
+  return { apiBase: rememberedHomeBase(), token: homeToken };
 }
 
 export function switchDaemon(target: DaemonTarget | "local"): void {
@@ -100,7 +107,16 @@ export function switchDaemon(target: DaemonTarget | "local"): void {
     API_BASE = homeEndpoint || DEFAULT_API_BASE;
     localDaemonToken = homeToken;
   } else {
-    remoteOverride = { id: target.id, endpoint: target.endpoint, token: target.token };
+    if (!homeEndpoint && typeof window !== "undefined") {
+      homeEndpoint = window.location.origin.replace(/\/+$/, "");
+    }
+    if (!homeToken) homeToken = localDaemonToken;
+    remoteOverride = {
+      id: target.id,
+      name: target.name,
+      endpoint: target.endpoint,
+      token: target.token,
+    };
     API_BASE = target.endpoint.replace(/\/+$/, "");
     localDaemonToken = target.token;
   }
@@ -179,6 +195,7 @@ async function rpc<T>(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ method, params }),
     apiBase: options.apiBase,
+    token: options.token,
     signal: options.signal,
   });
   const payload = (await response.json().catch(() => ({}))) as {
@@ -411,10 +428,14 @@ export interface Machine {
 }
 
 export async function listMachines(): Promise<Machine[]> {
-  const response = await apiFetch(`/machines`, homeApiOptions());
-  if (!response.ok) return [];
-  const data = await response.json();
-  return Array.isArray(data.machines) ? (data.machines as Machine[]) : [];
+  try {
+    const response = await apiFetch(`/machines`, homeApiOptions());
+    if (!response.ok) return [];
+    const data = await response.json();
+    return Array.isArray(data.machines) ? (data.machines as Machine[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Remember a machine from the `langmesh://pair#…` link `langmesh reach` prints. */
@@ -481,8 +502,8 @@ export async function fetchDaemonTargets(): Promise<DaemonTarget[]> {
     id: LOCAL_DAEMON_ID,
     name: "",
     kind: "local",
-    endpoint: (homeEndpoint || API_BASE).replace(/\/+$/, ""),
-    token: homeToken || localDaemonToken,
+    endpoint: rememberedHomeBase(),
+    token: homeToken,
   };
   const machines = await listMachines();
   const remotes = await Promise.all(
@@ -507,6 +528,20 @@ export async function fetchDaemonTargets(): Promise<DaemonTarget[]> {
       }
     }),
   );
+  const activeRemote = remoteOverride;
+  if (
+    activeRemote &&
+    activeRemote.id !== LOCAL_DAEMON_ID &&
+    !remotes.some((remote) => remote.id === activeRemote.id)
+  ) {
+    remotes.unshift({
+      id: activeRemote.id,
+      name: activeRemote.name,
+      kind: "remote",
+      endpoint: activeRemote.endpoint.replace(/\/+$/, ""),
+      token: activeRemote.token,
+    });
+  }
   watchDaemons([local, ...remotes]);
   return [local, ...remotes];
 }
