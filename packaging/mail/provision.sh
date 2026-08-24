@@ -7,10 +7,6 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 log() { printf '%s\n' "$*" >&2; }
 
 policy_file() {
-  if [[ -n "${LANGMESH_CONFIG:-}" && -f "${LANGMESH_CONFIG}" ]]; then
-    printf '%s\n' "${LANGMESH_CONFIG}"
-    return 0
-  fi
   if [[ -f "${root}/packaging/mail/configuration.yaml" ]]; then
     printf '%s\n' "${root}/packaging/mail/configuration.yaml"
     return 0
@@ -19,10 +15,6 @@ policy_file() {
 }
 
 secrets_dir() {
-  if [[ -n "${LANGMESH_SECRETS:-}" && -d "${LANGMESH_SECRETS}" ]]; then
-    printf '%s\n' "${LANGMESH_SECRETS}"
-    return 0
-  fi
   if [[ -d "${root}/secrets" ]]; then
     printf '%s\n' "${root}/secrets"
     return 0
@@ -31,10 +23,6 @@ secrets_dir() {
 }
 
 leftover_mail_env() {
-  if [[ -n "${LANGMESH_MAIL_ENV:-}" && -f "${LANGMESH_MAIL_ENV}" ]]; then
-    printf '%s\n' "${LANGMESH_MAIL_ENV}"
-    return 0
-  fi
   if [[ -f "${root}/mail.env" ]]; then
     printf '%s\n' "${root}/mail.env"
     return 0
@@ -71,13 +59,11 @@ remote_install() {
     scp -o StrictHostKeyChecking=accept-new -r "${secrets}/." "${host}:/tmp/langmesh-secrets/"
     ssh "${host}" "sudo find /tmp/langmesh-secrets -maxdepth 1 -type f ! -name 'README' ! -name 'README.md' -exec install -m 600 {} /srv/langmesh/xdg/data/langmesh/secrets/ \\; && sudo rm -rf /tmp/langmesh-secrets"
   fi
-  extra=()
   if envf="$(leftover_mail_env)"; then
     scp -o StrictHostKeyChecking=accept-new "${envf}" "${host}:/tmp/langmesh-mail.env"
     ssh "${host}" "sudo mv /tmp/langmesh-mail.env /srv/langmesh/mail.env && sudo chmod 600 /srv/langmesh/mail.env"
-    extra+=(LANGMESH_MAIL_ENV=/srv/langmesh/mail.env)
   fi
-  ssh "${host}" "sudo env ${extra[*]+"${extra[*]}"} bash /srv/langmesh/packaging/mail/install.sh"
+  ssh "${host}" "sudo bash /srv/langmesh/packaging/mail/install.sh"
 }
 
 provision_fly() {
@@ -145,5 +131,5 @@ fi
 log "No cloud token or LANGMESH_VPS_HOST was set, so no VM was created."
 log "Bring any small Linux VPS, copy this checkout there, fill packaging/mail/configuration.yaml"
 log "and a secrets directory, and run:"
-log "  sudo env LANGMESH_CONFIG=\"\$PWD/packaging/mail/configuration.yaml\" LANGMESH_SECRETS=\"\$PWD/secrets\" packaging/mail/install.sh"
+log "  sudo packaging/mail/install.sh"
 exit 2

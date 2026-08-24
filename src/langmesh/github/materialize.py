@@ -13,9 +13,6 @@ from pathlib import Path
 
 
 def _directory() -> Path:
-    explicit = os.environ.get("LANGMESH_SECRETS_DIR", "").strip()
-    if explicit:
-        return Path(explicit).expanduser()
     xdg = os.environ.get("XDG_DATA_HOME", "").strip()
     if xdg.startswith("/"):
         return Path(xdg) / "langmesh" / "secrets"

@@ -6,7 +6,6 @@ The live configuration is configuration.yaml plus ``$XDG_DATA_HOME/langmesh/secr
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from langmeshd.commons.configuration import compact_mail_secret
@@ -25,11 +24,7 @@ def _repo_root() -> Path:
 
 
 def mail_env_path() -> Path | None:
-    """The mail.env this command should load, or None when none is present."""
-    explicit = os.environ.get("LANGMESH_MAIL_ENV", "").strip()
-    if explicit:
-        path = Path(explicit).expanduser()
-        return path if path.is_file() else None
+    """A leftover mail.env at a conventional path, or None when none is present."""
     for candidate in (
         Path.cwd() / "mail.env",
         Path("/run/secrets/mail.env"),
