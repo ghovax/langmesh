@@ -13,14 +13,6 @@ mkdir -p "${XDG_RUNTIME_DIR}/langmesh" \
 chmod 700 "${XDG_RUNTIME_DIR}" "${XDG_RUNTIME_DIR}/langmesh" \
   "${XDG_DATA_HOME}/langmesh/secrets"
 
-if [[ -z "${LANGMESH_MAIL_ENV:-}" ]]; then
-  if [[ -f /run/secrets/mail.env ]]; then
-    export LANGMESH_MAIL_ENV=/run/secrets/mail.env
-  elif [[ -f /srv/langmesh/mail.env ]]; then
-    export LANGMESH_MAIL_ENV=/srv/langmesh/mail.env
-  fi
-fi
-
 policy="${XDG_CONFIG_HOME}/langmesh/configuration.yaml"
 if [[ ! -f "${policy}" && -f /srv/langmesh/packaging/mail/configuration.yaml ]]; then
   install -m 600 /srv/langmesh/packaging/mail/configuration.yaml "${policy}"

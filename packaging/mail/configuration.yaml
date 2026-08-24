@@ -9,8 +9,8 @@
 #   chmod 600 secrets/*
 #
 # Gmail, Fastmail, Yahoo, and iCloud fill IMAP/SMTP hosts from the address.
-# install.sh copies this file if the host has none yet, and copies a secrets
-# directory from LANGMESH_SECRETS.
+# install.sh copies this file if the host has none yet, and copies ./secrets
+# onto $XDG_DATA_HOME/langmesh/secrets.
 
 email:
   enabled: true
