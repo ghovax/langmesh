@@ -95,7 +95,7 @@
     "compactingTooltip": "会話を圧縮中…",
     "dictationCouldNotOpen": "マイクを開けませんでした: {reason}",
     "dictationFailed": "音声入力を処理できませんでした",
-    "dictationInsecureOrigin": "ブラウザーは安全な接続でしかマイクを開きません。このページは安全な接続で読み込まれていません。HTTPS で配信される Tailscale のアドレスからこの Mac に接続してください。",
+    "dictationInsecureOrigin": "ブラウザーは安全な接続でしかマイクを開きません。このページは安全な接続で読み込まれていません。ループバックの扉を HTTPS で開いてください。Tailscale の serve、証明書付きの SSH トンネルなど、TLS で届ける方法ならどれでも構いません。",
     "dictationLoading": "音声入力モデルを読み込み中…",
     "dictationNoDevice": "利用できるマイクがありません。",
     "dictationNoMicrophone": "このブラウザーはマイクを利用できません。",
@@ -268,17 +268,13 @@
     "savingChanges": "変更を保存しています…"
   },
   "ConnectionSettings": {
-    "connect": "開く",
-    "connected": "接続済み",
     "couldNotConnect": "接続できませんでした",
-    "couldNotReach": "{name} に到達できませんでした",
     "deleteConnection": "{url} を削除",
     "noSavedConnections": "保存済みの接続はありません",
-    "noSavedConnectionsHint": "後で接続できるよう、下にサーバーアドレスを追加してください",
+    "noSavedConnectionsHint": "後でそのマシンに届くよう、下にペアリングリンクを貼り付けてください",
     "pairingLink": "ペアリングリンク",
     "pairingLinkHelper": "そのマシンで発行された <code>langmesh://pair#…</code> リンクを貼り付けてください。アドレスとトークンが含まれ、どちらもこのマシンから出ません。",
     "pairingLinkPlaceholder": "langmesh://pair#…",
-    "retry": "再試行",
     "saveConnection": "接続を保存",
     "savedConnections": "保存済みの接続",
     "thisMachine": "このマシン",
@@ -538,10 +534,10 @@
     "fieldWorkspace": "ワークスペース",
     "fieldMachine": "マシン",
     "thisMachine": "このマシン",
-    "remote": "リモート",
     "hideWorkspace": "このワークスペースの会話を非表示",
     "showWorkspace": "このワークスペースの会話を表示",
-    "openFolder": "フォルダを開く"
+    "openFolder": "フォルダを開く",
+    "pairedMachine": "ペアしたマシン"
   },
   "Settings": {
     "agent": {

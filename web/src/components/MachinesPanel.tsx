@@ -11,11 +11,12 @@ import { LuTrash2 } from "react-icons/lu";
 
 import { toaster } from "@/components/ui/Toaster";
 import {
-  LOCAL_DAEMON_ID,
+  HOME_DAEMON_ID,
   activeDaemonId,
   addMachine,
   fetchDaemonTargets,
   forgetMachine,
+  isHomeDaemon,
   probeDaemon,
   subscribeEvents,
   switchDaemon,
@@ -84,8 +85,8 @@ export function MachinesPanel({
     onSelect?.(target);
   }
 
-  const remotes = targets.filter((target) => target.kind === "remote");
-  const local = targets.find((target) => target.kind === "local");
+  const pairedTargets = targets.filter((target) => !target.home);
+  const homeTarget = targets.find((target) => target.home);
 
   return (
     <Flex direction="column" gap={4} w="100%">
@@ -94,15 +95,15 @@ export function MachinesPanel({
           {translation("savedConnections")}
         </Text>
         <Flex direction="column" gap={2}>
-          {local ? (
+          {homeTarget ? (
             <MachineRow
-              target={{ ...local, name: translation("thisMachine") }}
-              active={activeId === LOCAL_DAEMON_ID}
-              online={reachable[LOCAL_DAEMON_ID] !== false}
+              target={{ ...homeTarget, name: translation("thisMachine") }}
+              active={isHomeDaemon(activeId)}
+              online={reachable[HOME_DAEMON_ID] !== false}
               onSelect={select}
             />
           ) : null}
-          {remotes.length === 0 && !local ? (
+          {pairedTargets.length === 0 && !homeTarget ? (
             <Box borderWidth="1px" borderColor="border" borderRadius="md" px={3} py={4}>
               <Text fontSize="sm" color="fg.muted">
                 {translation("noSavedConnections")}
@@ -112,7 +113,7 @@ export function MachinesPanel({
               </Text>
             </Box>
           ) : null}
-          {remotes.map((machine) => (
+          {pairedTargets.map((machine) => (
             <MachineRow
               key={machine.id}
               target={machine}
@@ -123,14 +124,14 @@ export function MachinesPanel({
                 void forgetMachine(machine.id)
                   .then(() => {
                     if (activeDaemonId() === machine.id) {
-                      switchDaemon("local");
-                      setActiveId(LOCAL_DAEMON_ID);
+                      switchDaemon("home");
+                      setActiveId(HOME_DAEMON_ID);
                       onSelect?.({
-                        id: LOCAL_DAEMON_ID,
+                        id: HOME_DAEMON_ID,
                         name: translation("thisMachine"),
-                        kind: "local",
-                        endpoint: local?.endpoint ?? "",
-                        token: local?.token ?? "",
+                        home: true,
+                        endpoint: homeTarget?.endpoint ?? "",
+                        token: homeTarget?.token ?? "",
                       });
                     }
                     refresh();
