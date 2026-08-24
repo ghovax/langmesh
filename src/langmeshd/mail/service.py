@@ -381,7 +381,12 @@ class MailService:
                 return self.store.update(existing.id, uid=uid, uidvalidity=uidvalidity)
             return existing
         sender = body.sender_address(message)
-        if sender == self.configuration.effective_address.lower():
+        mailbox_address = self.configuration.effective_address.lower()
+        if sender == mailbox_address or (
+            sender
+            and mailbox_address
+            and body.canonical_mailbox(sender) == body.canonical_mailbox(mailbox_address)
+        ):
             self.store.mark_skipped(
                 mailbox=mailbox,
                 uidvalidity=uidvalidity,
@@ -433,7 +438,7 @@ class MailService:
             uid=uid,
             message_id=message_id,
             thread_key=thread_key,
-            sender=sender,
+            sender=body.reply_address(message) or sender,
             subject=subject,
             references=_references(message),
             in_reply_to=body.message_id_of(message) or message_id,

@@ -397,7 +397,7 @@ IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same fil
 | ------- | ---- | ------- | -------------- |
 | `email.enabled` | boolean | `false` | Run the mail client against this mailbox. `LANGMESH_MAIL_ADDRESS` in the environment also enables it. |
 | `email.address` | string | — | The From address replies are sent as. LANGMESH_MAIL_ADDRESS wins over this. |
-| `email.allow_from` | list | `[]` | Mailboxes (or `@domain`) whose mail is taken. Everyone else is ignored. LANGMESH_MAIL_ALLOW_FROM is a comma-separated override. |
+| `email.allow_from` | list | `[]` | Mailboxes (or `@domain`) whose mail is taken. Everyone else is ignored. LANGMESH_MAIL_ALLOW_FROM is a comma-separated override. A Gmail plus-address or `googlemail.com` alias matches `user@gmail.com` and `@gmail.com`. |
 | `email.agent` | string | `reviewer` | The agent profile each mail thread session runs. Defaults to the bundled `reviewer`. LANGMESH_MAIL_AGENT wins over this. |
 | `email.working_directory` | string | — | Where that session's tools run. Empty means the daemon's current directory. `LANGMESH_MAIL_WORKING_DIRECTORY` wins. `install.sh` and the Docker entrypoint set this to `/srv/langmesh`. |
 | `email.permission_mode` | string | `automatic` | Who answers gates for a mail session: `ask`, `automatic`, or `allow`. |
