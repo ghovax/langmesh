@@ -6,7 +6,7 @@ This is not XMPP and not the GitHub mention Action. GitHub mentions run the libr
 
 ## What happens
 
-1. `langmesh mail` starts the daemon if it is not up, then IDLEs the mailbox (`aioimaplib`, RFC 2177). It does not poll from inside a running turn.
+1. `langmesh mail` starts the daemon if it is not up, then proves IMAP login and SMTP auth and IDLEs the mailbox (`aioimaplib`, RFC 2177). It does not poll from inside a running turn.
 2. A new UNSEEN message from an allowlisted sender is fetched. Automatic replies, bounces, and mail from the mailbox itself are ignored.
 3. The HTML part is the body. Quoted replies are the containers the mail client wrapped around the previous message; those nodes are removed and the rest is converted with `markdownify` so the agent sees markdown. `text/plain` is used only when there is no HTML, or when the HTML is only the quoted thread.
 4. The thread is keyed as `email:{mailbox}:{root-message-id}` from `References` / `In-Reply-To` / `Message-ID`. An In-Reply-To of a prior outbound also continues the same session. That key maps to one daemon session, stored under `$XDG_DATA_HOME/langmesh/mail.sqlite`.
@@ -63,7 +63,7 @@ Gmail needs an [app password](https://support.google.com/accounts/answer/185833)
 uv run langmesh mail
 ```
 
-`mail` starts `langmeshd` when it is not listening, then IDLEs. If the mailbox is not configured yet, it waits and re-reads the file instead of exiting. Logs go to stderr and `$XDG_STATE_HOME/langmesh/langmesh-mail.log`.
+`mail` starts `langmeshd` when it is not listening, then proves IMAP and SMTP and IDLEs. If the mailbox is not configured yet, it waits and re-reads the file instead of exiting. Logs go to stderr and `$XDG_STATE_HOME/langmesh/langmesh-mail.log`.
 
 On a VPS, copy `packaging/mail/mail.env.example` to `mail.env`, fill it, and point `install.sh` at that file so systemd gets every key (including extra provider keys) rather than a reconstructed subset:
 
