@@ -8,11 +8,11 @@ Two ways to change policy, both writing the same YAML file. Settings also writes
 - **Editing the file directly**, which the daemon watches and the next session build reads.
 
 > [!IMPORTANT]
-> Credentials live as `0600` files under `$XDG_DATA_HOME/langmesh/secrets/`, one file per value (`providers.anthropic.api_key`, `email.imap.password`). Policy — address, allow-lists, agent names, ports — lives in this YAML document. Never commit a filled secret file on a public repository; see the [security policy](https://github.com/ghovax/langmesh/blob/main/SECURITY.md). A platform that only injects environment variables (Fly leftover secrets) is copied into empty secret files at start, then ignored. The mention Action reads `.github/secrets/` in the checkout, or the XDG directory on a self-hosted runner.
+> Credentials live as `0600` files under `$XDG_DATA_HOME/langmesh/secrets/`, one file per value (`providers.anthropic.api_key`, `email.imap.password`). Policy — address, allow-lists, agent names, ports — lives in this YAML document. Never commit a filled secret file on a public repository; see the [security policy](https://github.com/ghovax/langmesh/blob/main/SECURITY.md). A platform that only injects vendor environment variables (Fly leftover `OPENCODE_API_KEY`) is copied into empty secret files at start, then ignored. `LANGMESH_*` is not read. The mention Action reads `.github/secrets/` in the checkout, or the XDG directory on a self-hosted runner.
 
 A change applies to whatever starts **next**. A running session keeps the configuration it was built with, with a few exceptions the daemon pushes out: configuration, sandbox, computer control, and the user-context snapshot each ask live sessions to rebuild.
 
-Three places say something about a setting, and each says a different thing. **This document** is the narrative, for the settings worth explaining at length. The **settings panel** reads the running schema, so it can tell you what _this machine_ is set to. A name the schema does not define is **refused**, not ignored. The daemon validates its `daemon`, `dictation`, `composio`, and `email` sections separately and passes only library-owned sections to `langmesh.Configuration`.
+Three places say something about a setting, and each says a different thing. **This document** is the narrative, for the settings worth explaining at length. The **settings panel** reads the running schema, so it can tell you what _this machine_ is set to. A name the schema does not define is **refused**, not ignored. The daemon validates its `daemon`, `dictation`, `composio`, `email`, and `provision` sections separately and passes only library-owned sections to `langmesh.Configuration`.
 
 ## Where everything lives
 
@@ -413,6 +413,23 @@ IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same fil
 | `email.smtp.password` | string | — | Unused in YAML. The live secret is the file `email.smtp.password`. The IMAP password is used when SMTP is the inferred provider host. A custom relay is not authenticated with the IMAP secret. |
 | `email.smtp.start_tls` | boolean | `true` | Upgrade with STARTTLS (typical for 587). |
 | `email.smtp.use_tls` | boolean | `false` | Implicit TLS (typical for 465). Mutually exclusive with STARTTLS. Port 465 implies this. |
+
+### Provision
+
+`packaging/mail/provision.sh` reads this section from `packaging/mail/configuration.yaml`. The running daemon and mail client do not. Cloud CLIs still take their own tokens (`FLY_API_TOKEN`, `HCLOUD_TOKEN`, `DIGITALOCEAN_ACCESS_TOKEN`).
+
+| Setting | Type | Default | What it is for |
+| ------- | ---- | ------- | -------------- |
+| `provision.host` | string | — | SSH target for a machine you already have (`root@203.0.113.10`). When set, no VM is created. |
+| `provision.name` | string | `langmesh-mail` | Hetzner server or DigitalOcean droplet name. |
+| `provision.fly.app` | string | `langmesh-mail` | Fly.io app name. |
+| `provision.fly.region` | string | `iad` | Fly.io region. |
+| `provision.hetzner.image` | string | `ubuntu-24.04` | Hetzner image. |
+| `provision.hetzner.type` | string | `cpx11` | Hetzner type. |
+| `provision.hetzner.location` | string | `fsn1` | Hetzner location. |
+| `provision.hetzner.ssh_key` | string | — | hcloud SSH key name. Required to create a Hetzner server. |
+| `provision.digitalocean.region` | string | `nyc1` | DigitalOcean region. |
+| `provision.digitalocean.ssh_key` | string | — | DigitalOcean SSH key fingerprint or id. Required to create a droplet. |
 
 ### Model providers
 
