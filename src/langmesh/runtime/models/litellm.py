@@ -438,9 +438,7 @@ class ChatLiteLLMModel(BaseChatModel):
         params.update({key: value for key, value in kwargs.items() if value is not None})
         return params
 
-    def _attach_prompt_cache_key(
-        self, params: dict[str, Any], sent: list[dict[str, Any]]
-    ) -> None:
+    def _attach_prompt_cache_key(self, params: dict[str, Any], sent: list[dict[str, Any]]) -> None:
         """OpenAI's routing hint. Custom openai-compatible hosts do not take it."""
         if self._custom_chat_endpoint():
             return
@@ -557,9 +555,7 @@ class ChatLiteLLMModel(BaseChatModel):
         assert last_error is not None
         raise last_error
 
-    async def _opencode_completion(
-        self, payload: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def _opencode_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{(self.api_base or '').rstrip('/')}/chat/completions"
         timeout = self.timeout if self.timeout is not None else 300.0
         last_error: Exception | None = None
@@ -761,8 +757,11 @@ class ChatLiteLLMModel(BaseChatModel):
             if isinstance(usage, dict)
             else getattr(usage, "prompt_tokens_details", None)
         )
-        cache_read = _value(prompt_details, "cached_tokens") or _value(
-            usage, "cache_read_input_tokens"
+        cache_read = (
+            _value(prompt_details, "cached_tokens")
+            or _value(usage, "cache_read_input_tokens")
+            or _value(usage, "cached_tokens")
+            or _value(usage, "prompt_cache_hit_tokens")
         )
         cache_write = (
             _value(prompt_details, "cache_creation_tokens")

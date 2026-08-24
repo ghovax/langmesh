@@ -2,11 +2,15 @@
 # runs the library in this job. The ack step decides whether the comment is a turn.
 # A later mention on the same thread continues the saved session.
 # Model and provider come from .agents/agents/<name>/AGENT.md, named in
-# .github/langmesh.yaml. Keys are files: .github/secrets/github.api_key and
-# optional github.app.private_key, copied onto $XDG_DATA_HOME/langmesh/secrets.
+# .github/langmesh.yaml. Keys are files: github.api_key and optional
+# github.app.private_key, copied onto $XDG_DATA_HOME/langmesh/secrets.
+# On a hosted runner those files are written from Actions secrets github_api_key
+# and github_app_private_key (GitHub names cannot contain dots).
 # .github/langmesh holds the checkpoint (conversation and provider cache state),
-# the acknowledgement comment id, and the App slug. Those job files are not env vars.
-# issue_comment cannot write the Actions cache, so the session is an artifact.
+# the acknowledgement comment id, the App slug, and mention_trace rows.
+# Those job files are not env vars. issue_comment cannot write the Actions cache
+# for the session, so the session is an artifact. PYTHONUNBUFFERED keeps the
+# turn log on stderr even when the process is killed.
 
 name: langmesh
 
@@ -47,6 +51,9 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - run: python3 src/langmesh/github/materialize.py
+        env:
+          github_api_key: ${{ secrets.github_api_key }}
+          github_app_private_key: ${{ secrets.github_app_private_key }}
       - id: app
         run: python3 src/langmesh/github/app_token.py
       - id: ack
@@ -77,6 +84,7 @@ jobs:
       - if: steps.ack.outputs.start == 'true'
         run: uv run --no-dev --frozen python -m langmesh.github
         env:
+          PYTHONUNBUFFERED: "1"
           GITHUB_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
       - uses: actions/cache/save@v4
