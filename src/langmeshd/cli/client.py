@@ -1,7 +1,6 @@
 """Starting the daemon, and checking whether it is up.
 
-The command line's only verb is serving, which needs the daemon; this is how it starts
-and probes the daemon, and the only surface this module exists for.
+`serve` and `mail` both need the daemon; this is how they start and probe it.
 """
 
 from __future__ import annotations
