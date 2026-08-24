@@ -22,7 +22,7 @@ uv run python -m langmeshd langmeshd
 - A session is an object the daemon builds and holds, not a process; creating one costs about as much as constructing the object, so there is no pool waiting.
 - It listens on a unix socket in your runtime directory, and for GUI clients on an ephemeral loopback port. The port, the capability token, the pid, and the lock are published under the runtime directory.
 
-State follows XDG, all of it created on first run: configuration in `~/.config/langmesh/`, durable state in `~/.local/share/langmesh/`, logs in `~/.local/state/langmesh/`. Add provider keys in the configuration file, in the settings panel, or through environment variables. See the [Configuration guide](../user/configuration.md).
+State follows XDG, all of it created on first run: configuration in `~/.config/langmesh/`, durable state in `~/.local/share/langmesh/` (including `secrets/`), logs in `~/.local/state/langmesh/`. Add provider keys as secret files or in the settings panel. See the [Configuration guide](../user/configuration.md).
 
 ## Running the web UI
 
