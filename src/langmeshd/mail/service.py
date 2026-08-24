@@ -673,7 +673,9 @@ async def check(configuration: Optional[EmailConfiguration] = None) -> int:
     if env_path is not None:
         note.info("mail.env %s", env_path)
     else:
-        note.info("mail.env not found (LANGMESH_MAIL_ENV, ./mail.env, or /srv/langmesh/mail.env)")
+        note.info(
+            "mail.env not found (LANGMESH_MAIL_ENV, ./mail.env, /run/secrets/mail.env, or /srv/langmesh/mail.env)"
+        )
     if current.effective_address:
         note.info("address %s", current.effective_address)
     if current.effective_allow_from:
