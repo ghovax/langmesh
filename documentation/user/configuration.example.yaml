@@ -203,6 +203,7 @@ daemon:
 # IMAP IDLE plus SMTP in front of the daemon. Off until you enable it.
 # Passwords are secret files email.imap.password and email.smtp.password.
 # email.provider and email.model overlay the agent profile for mailbox sessions.
+# OAuth is email.auth: oauth plus email.oauth.refresh_token (`langmesh mail auth`).
 # See documentation/user/email.md.
 email:
   enabled: false
@@ -211,10 +212,21 @@ email:
   agent: "reviewer"
   provider: ""
   model: ""
+  auth: "password"
   working_directory: ""
   permission_mode: "automatic"
   idle_timeout_seconds: 60.0
   turn_timeout_seconds: 1800.0
+  oauth:
+    issuer: ""
+    client_id: ""
+    tenant: "common"
+    token_url: ""
+    authorize_url: ""
+    scopes: []
+    redirect_uri: "http://127.0.0.1:8765/callback"
+    client_secret: ""
+    refresh_token: ""
   imap:
     host: ""
     port: 993
