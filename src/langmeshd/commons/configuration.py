@@ -7,11 +7,15 @@ shared configuration file.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from langmesh.base.secrets import (
     COMPOSIO_API_KEY,
     EMAIL_IMAP_PASSWORD,
+    EMAIL_OAUTH_CLIENT_SECRET,
+    EMAIL_OAUTH_REFRESH_TOKEN,
     EMAIL_SMTP_PASSWORD,
     read_secret,
 )
@@ -34,13 +38,39 @@ _MAIL_HOSTS: dict[str, tuple[str, str]] = {
     "icloud.com": ("imap.mail.me.com", "smtp.mail.me.com"),
     "me.com": ("imap.mail.me.com", "smtp.mail.me.com"),
     "mac.com": ("imap.mail.me.com", "smtp.mail.me.com"),
+    # Proton Mail has no public IMAP. These point at Proton Bridge on the same host.
+    "proton.me": ("127.0.0.1", "127.0.0.1"),
+    "protonmail.com": ("127.0.0.1", "127.0.0.1"),
+    "protonmail.ch": ("127.0.0.1", "127.0.0.1"),
+    "pm.me": ("127.0.0.1", "127.0.0.1"),
 }
+
+_PROTON_DOMAINS = frozenset({"proton.me", "protonmail.com", "protonmail.ch", "pm.me"})
+_OAUTH_DOMAINS = {
+    "gmail.com": "google",
+    "googlemail.com": "google",
+    "outlook.com": "microsoft",
+    "hotmail.com": "microsoft",
+    "live.com": "microsoft",
+    "msn.com": "microsoft",
+    "yahoo.com": "yahoo",
+}
+
+
+def _domain(address: str) -> str:
+    if "@" not in address:
+        return ""
+    return address.rsplit("@", 1)[-1].lower()
+
+
+def _is_proton(address: str) -> bool:
+    return _domain(address) in _PROTON_DOMAINS
 
 
 def _hosts_for(address: str) -> tuple[str, str]:
     if "@" not in address:
         return "", ""
-    return _MAIL_HOSTS.get(address.rsplit("@", 1)[-1].lower(), ("", ""))
+    return _MAIL_HOSTS.get(_domain(address), ("", ""))
 
 
 def _account_login(address: str) -> str:
@@ -132,6 +162,23 @@ class ComposioConfiguration(AppConfigurationSection):
         return read_secret(COMPOSIO_API_KEY)
 
 
+class EmailOAuthConfiguration(AppConfigurationSection):
+    """OAuth2 for IMAP/SMTP XOAUTH2. Tokens live as secret files, not in this document.
+
+    Proton Mail is not an issuer: it has no IMAP OAuth. Paid Proton uses Bridge and a password.
+    """
+
+    issuer: str = Field(default="")
+    client_id: str = Field(default="")
+    tenant: str = Field(default="common")
+    token_url: str = Field(default="")
+    authorize_url: str = Field(default="")
+    scopes: list[str] = Field(default_factory=list)
+    redirect_uri: str = Field(default="http://127.0.0.1:8765/callback")
+    client_secret: str = Field(default="", json_schema_extra={"secret": True})
+    refresh_token: str = Field(default="", json_schema_extra={"secret": True})
+
+
 class EmailImapConfiguration(AppConfigurationSection):
     """The mailbox the mail client IDLEs on. The password is the secret file email.imap.password."""
 
@@ -198,9 +245,9 @@ class ProvisionConfiguration(AppConfigurationSection):
 class EmailConfiguration(AppConfigurationSection):
     """IMAP IDLE plus SMTP in front of the daemon: a client, not a second session embedder.
 
-    Off by default. Passwords live as secret files, not in this document. The mail
-    process reads this section; the library never does. ``provider`` and ``model``
-    overlay the agent profile for mailbox sessions only.
+    Off by default. Passwords and OAuth refresh tokens live as secret files, not
+    in this document. The mail process reads this section; the library never does.
+    ``provider`` and ``model`` overlay the agent profile for mailbox sessions only.
     """
 
     enabled: bool = Field(default=False)
@@ -209,10 +256,12 @@ class EmailConfiguration(AppConfigurationSection):
     agent: str = Field(default="reviewer")
     provider: str = Field(default="")
     model: str = Field(default="")
+    auth: Literal["password", "oauth"] = Field(default="password")
     working_directory: str = Field(default="")
     permission_mode: str = Field(default="automatic")
     idle_timeout_seconds: float = Field(default=60.0, gt=0)
     turn_timeout_seconds: float = Field(default=1800.0, gt=0)
+    oauth: EmailOAuthConfiguration = Field(default_factory=EmailOAuthConfiguration)
     imap: EmailImapConfiguration = Field(default_factory=EmailImapConfiguration)
     smtp: EmailSmtpConfiguration = Field(default_factory=EmailSmtpConfiguration)
 
@@ -239,6 +288,38 @@ class EmailConfiguration(AppConfigurationSection):
         return self.model.strip()
 
     @property
+    def uses_oauth(self) -> bool:
+        return self.auth.strip().lower() == "oauth"
+
+    @property
+    def is_proton(self) -> bool:
+        """Proton Mail has no public IMAP; inferred hosts are Proton Bridge on this machine."""
+        return _is_proton(self.effective_address)
+
+    @property
+    def effective_oauth_issuer(self) -> str:
+        named = self.oauth.issuer.strip().lower()
+        if named:
+            return named
+        return _OAUTH_DOMAINS.get(_domain(self.effective_address), "")
+
+    @property
+    def effective_oauth_client_id(self) -> str:
+        return self.oauth.client_id.strip()
+
+    @property
+    def effective_oauth_client_secret(self) -> str:
+        return read_secret(EMAIL_OAUTH_CLIENT_SECRET)
+
+    @property
+    def effective_oauth_refresh_token(self) -> str:
+        return read_secret(EMAIL_OAUTH_REFRESH_TOKEN)
+
+    @property
+    def effective_oauth_redirect_uri(self) -> str:
+        return self.oauth.redirect_uri.strip() or "http://127.0.0.1:8765/callback"
+
+    @property
     def effective_working_directory(self) -> str:
         """Where mail sessions run. Empty leaves the daemon's current directory."""
         return self.working_directory.strip()
@@ -257,6 +338,8 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_imap_password(self) -> str:
+        if self.uses_oauth:
+            return ""
         return compact_mail_secret(read_secret(EMAIL_IMAP_PASSWORD))
 
     @property
@@ -269,6 +352,8 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_smtp_password(self) -> str:
+        if self.uses_oauth:
+            return ""
         secret = compact_mail_secret(read_secret(EMAIL_SMTP_PASSWORD))
         if secret:
             return secret
@@ -279,7 +364,9 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_imap_port(self) -> int:
-        return self.imap.port
+        if self.imap.port != 993:
+            return self.imap.port
+        return 1143 if _is_proton(self.effective_address) else self.imap.port
 
     @property
     def effective_imap_ssl(self) -> bool:
@@ -291,7 +378,9 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_smtp_port(self) -> int:
-        return self.smtp.port
+        if self.smtp.port != 587:
+            return self.smtp.port
+        return 1025 if _is_proton(self.effective_address) else self.smtp.port
 
     @property
     def effective_smtp_use_tls(self) -> bool:

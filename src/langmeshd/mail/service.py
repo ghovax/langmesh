@@ -634,7 +634,12 @@ def readiness_problems(configuration: EmailConfiguration) -> list[str]:
         problems.append("email.imap.host is required.")
     if not configuration.effective_imap_username:
         problems.append("email.imap.username is required.")
-    if not configuration.effective_imap_password:
+    from langmeshd.mail.oauth import oauth_readiness_problem
+
+    oauth = oauth_readiness_problem(configuration)
+    if oauth:
+        problems.append(oauth)
+    elif not configuration.uses_oauth and not configuration.effective_imap_password:
         problems.append("the secret file email.imap.password is required.")
     if not configuration.effective_smtp_host:
         problems.append("email.smtp.host is required.")
@@ -699,6 +704,9 @@ async def check(configuration: Optional[EmailConfiguration] = None) -> int:
         note.info("agent %s", current.effective_agent)
     if current.effective_provider:
         note.info("provider %s model %s", current.effective_provider, current.effective_model)
+    note.info("auth %s", "oauth" if current.uses_oauth else "password")
+    if current.uses_oauth and current.effective_oauth_issuer:
+        note.info("oauth.issuer %s", current.effective_oauth_issuer)
     if problems:
         note.error("mail not ready:")
         for problem in problems:

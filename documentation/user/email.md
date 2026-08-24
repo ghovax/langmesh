@@ -35,7 +35,7 @@ On the machine that runs `langmeshd`:
 1. The bundled `reviewer` profile is the default (`~/.agents/agents/reviewer/AGENT.md` on a laptop, or `.agents/agents/reviewer` in this checkout on a VPS). It owns tools and the prompt. Set `email.agent` only if you want a different profile.
 2. Pick which catalogue provider mailbox sessions call. Set `email.provider` and `email.model` in `configuration.yaml` to overlay the profile (both, or neither). Add that provider under `providers:` the same way the rest of LangMesh does — empty `api_key` placeholder, and `base_url` when the provider needs one (`custom` always does). Write the matching secret file `providers.<id>.api_key`. Mail waits until that key is present, the same way it waits for the mailbox password. ChatGPT and Cursor subscription providers skip the key file.
 3. On a headless Linux host, set `sandbox.enforce` to `preferred` (or `off`) so sessions can start without a confinement backend. Set `sandbox.network: true` if the agent should reach the network. `install.sh` already does this.
-4. Put the mailbox in `configuration.yaml`. Gmail, Fastmail, Yahoo, and iCloud fill IMAP/SMTP hosts from the address; you still need an app password as the secret file `email.imap.password`. Outlook and Hotmail hosts are inferred too, but many of those accounts want OAuth, which this client does not speak.
+4. Put the mailbox in `configuration.yaml`. Gmail, Fastmail, Yahoo, and iCloud fill IMAP/SMTP hosts from the address. Password auth uses the secret file `email.imap.password` (an app password). Outlook and Hotmail hosts are inferred too; those accounts usually need OAuth instead of a password (`email.auth: oauth`). Proton Mail has **no** IMAP OAuth — a paid plan uses [Proton Bridge](https://proton.me/mail/bridge) on the same host with `email.auth: password` and the Bridge password.
 
 ```yaml
 email:
@@ -53,6 +53,8 @@ providers:
     api_key: ""
 ```
 
+Password (Gmail app password, Fastmail, Yahoo, iCloud, Proton Bridge):
+
 ```sh
 mkdir -p "$XDG_DATA_HOME/langmesh/secrets"
 chmod 700 "$XDG_DATA_HOME/langmesh/secrets"
@@ -63,14 +65,39 @@ chmod 600 "$XDG_DATA_HOME/langmesh/secrets"/*
 
 Omit `email.provider` and `email.model` to keep the profile's own pair. The bundled reviewer is OpenCode Go (`opencode-go` / `deepseek-v4-flash`), which bills as `providers.opencode.api_key`. Any other catalogue id is the same shape: `providers.openai`, `providers.groq`, `providers.custom` with a `base_url`, and so on. The id in the secret file is the catalogue provider or its `credential_identifier`.
 
-Gmail needs an [app password](https://support.google.com/accounts/answer/185833) and IMAP enabled. The client fills `imap.gmail.com` / `smtp.gmail.com` from a `gmail.com` address. Fastmail, Yahoo, and iCloud (`icloud.com` / `me.com`) are the same. Outlook and Hotmail still get inferred hosts, but many of those accounts no longer accept an app password (they want OAuth, which this client does not speak). A Gmail plus-address (`custom+mail@gmail.com`) still authenticates as the account without `+mail`. Gmail copies the 16-character app password with spaces; those spaces are display-only and are stripped when the secret file is written. SMTP port `465` uses implicit TLS. If a VPS blocks outbound `587`, the client retries `465` on the same host. Do not commit the password.
+OAuth (Gmail, Microsoft 365 / Outlook, Yahoo, or a custom issuer). Authlib refreshes the token; IMAP and SMTP use the libraries' built-in XOAUTH2:
+
+```yaml
+email:
+  enabled: true
+  address: "agent@outlook.com"
+  allow_from:
+    - "you@example.com"
+  auth: oauth
+  oauth:
+    issuer: microsoft   # google | microsoft | yahoo | custom
+    client_id: "your-app-id"
+```
+
+```sh
+# optional, if the OAuth app is a confidential client
+printf '%s' 'the-client-secret' > "$XDG_DATA_HOME/langmesh/secrets/email.oauth.client_secret"
+uv run langmesh mail auth    # browser sign-in; writes email.oauth.refresh_token
+chmod 600 "$XDG_DATA_HOME/langmesh/secrets"/*
+```
+
+Register `http://127.0.0.1:8765/callback` as the redirect URI on that OAuth app (override with `email.oauth.redirect_uri`). Google needs a Desktop client and the Gmail API. Microsoft needs IMAP.AccessAsUser.All and SMTP.Send. Copy the refresh-token file onto a VPS if you signed in on a laptop.
+
+Gmail also still accepts an [app password](https://support.google.com/accounts/answer/185833) with IMAP enabled. The client fills `imap.gmail.com` / `smtp.gmail.com` from a `gmail.com` address. Fastmail, Yahoo, and iCloud (`icloud.com` / `me.com`) are the same with that provider's app password. A Gmail plus-address (`custom+mail@gmail.com`) still authenticates as the account without `+mail`. Gmail copies the 16-character app password with spaces; those spaces are display-only and are stripped when the secret file is written. SMTP port `465` uses implicit TLS. If a VPS blocks outbound `587`, the client retries `465` on the same host. Do not commit passwords or refresh tokens.
+
+Proton Mail cannot be reached with OAuth. Paid Bridge listens on `127.0.0.1` (inferred from a `proton.me` / `protonmail.com` / `pm.me` address): IMAP 1143 and SMTP 1025. Set Bridge to **SSL** for IMAP (this client speaks implicit TLS, not IMAP STARTTLS). The secret is the Bridge password, not the Proton account password. Tuta has no IMAP.
 
 ```sh
 uv run langmesh mail check
 uv run langmesh mail
 ```
 
-`mail check` reads `configuration.yaml` and the secret files, lists anything still missing, and proves IMAP login, `UID SEARCH UNSEEN`, and SMTP auth without IDLEing and without starting the daemon. A refused login includes the server's reason (wrong app password versus IMAP disabled). `mail` starts `langmeshd` when it is not listening, then proves IMAP and SMTP and IDLEs. If the mailbox, allow-list, or the mailbox provider key is not configured yet, `mail` waits and re-reads the configuration file and secret files instead of exiting. A systemd or Docker `langmeshd` that is already binding the socket is waited on rather than started a second time. Logs go to stderr and `$XDG_STATE_HOME/langmesh/langmesh-mail.log`.
+`mail check` reads `configuration.yaml` and the secret files, lists anything still missing, and proves IMAP login, `UID SEARCH UNSEEN`, and SMTP auth without IDLEing and without starting the daemon. A refused login includes the server's reason (wrong app password versus IMAP disabled). `mail auth` signs in with OAuth and writes `email.oauth.refresh_token`. `mail` starts `langmeshd` when it is not listening, then proves IMAP and SMTP and IDLEs. If the mailbox, allow-list, or the mailbox provider key is not configured yet, `mail` waits and re-reads the configuration file and secret files instead of exiting. A systemd or Docker `langmeshd` that is already binding the socket is waited on rather than started a second time. Logs go to stderr and `$XDG_STATE_HOME/langmesh/langmesh-mail.log`.
 
 On a VPS, fill `packaging/mail/configuration.yaml` and a `secrets/` directory (see `packaging/mail/secrets/README`), run `uv run langmesh mail check`, then install:
 
@@ -92,7 +119,7 @@ The mail client cannot create a mailbox, a DNS name, or a cloud VM by itself. Af
 
 1. **Gmail IMAP.** Settings → See all settings → Forwarding and POP/IMAP → Enable IMAP.
 2. **App password.** Google Account → Security → 2-Step Verification → [App passwords](https://support.google.com/accounts/answer/185833). Mint one for Mail. Gmail shows it as four groups of four; the spaces are display-only.
-3. **Policy and secrets.** Fill `email.address` and `email.allow_from` in `configuration.yaml`. Set `email.provider` and `email.model` to overlay the agent profile, or omit both to keep the profile's pair. Write `email.imap.password` and `providers.<id>.api_key` under `$XDG_DATA_HOME/langmesh/secrets/` (mode `0600`). Add that provider under `providers:` (empty `api_key`, plus `base_url` when the provider needs one). Allowlisting `custom@gmail.com` also takes `custom+tag@gmail.com` and `custom@googlemail.com`. Fastmail, Yahoo, and iCloud are the same with that provider's app password; a non-Gmail address still infers hosts when the domain is known.
+3. **Policy and secrets.** Fill `email.address` and `email.allow_from` in `configuration.yaml`. Set `email.provider` and `email.model` to overlay the agent profile, or omit both to keep the profile's pair. For password auth, write `email.imap.password`. For OAuth, set `email.auth: oauth` and `email.oauth.client_id`, then `uv run langmesh mail auth` (or copy `email.oauth.refresh_token`). Write `providers.<id>.api_key` under `$XDG_DATA_HOME/langmesh/secrets/` (mode `0600`). Add that provider under `providers:` (empty `api_key`, plus `base_url` when the provider needs one). Allowlisting `custom@gmail.com` also takes `custom+tag@gmail.com` and `custom@googlemail.com`. Fastmail, Yahoo, and iCloud are the same with that provider's app password. Outlook uses OAuth. Proton uses Bridge and a password, not OAuth.
 4. **Prove it.** `uv run langmesh mail check` must print `ready` (IMAP login, UNSEEN search, and SMTP auth) before you leave this machine or install systemd. Anything it lists is still HITL. A Gmail refusal names Authentication failed versus IMAP not enabled.
 5. **A host that stays up**, with `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) persisted across replace. Choose one:
    - This machine: `uv run langmesh mail`, then send mail to `email.address` from the allowlisted From.

@@ -5,16 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from langmesh.base.content.prompts import PackagePromptLoader
+
+_MESSAGES = PackagePromptLoader(Path(__file__).parent / "messages")
+
 
 def _message(name: str, **variables: str) -> str:
     """One of this module's messages, read directly because the screen child is kept thin."""
-    try:
-        text = (Path(__file__).parent / "messages" / f"{name}.md").read_text().strip()
-    except OSError:
-        return ""
-    for key, value in variables.items():
-        text = text.replace("{{ " + key + " }}", value)
-    return text
+    return _MESSAGES.load(name, variables).strip()
 
 
 # How a call reaches the live surface, installed by the runner and unset outside a session.

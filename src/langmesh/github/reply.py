@@ -15,7 +15,7 @@ from typing import Any, Callable, Literal, Protocol, runtime_checkable
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from langmesh.base.content.prompts import PackagePromptLoader
+from langmesh import PackagePromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.tools.execution import current_tool_services

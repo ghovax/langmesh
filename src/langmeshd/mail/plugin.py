@@ -14,19 +14,13 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from langmesh.base.content.prompts import PromptTemplates
+from langmesh import PackagePromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.tools.execution import current_tool_services
 from langmesh.runtime.values import ToolStatus
 
-_PROMPTS = PromptTemplates(
-    {
-        path.stem: path.read_text()
-        for path in (Path(__file__).resolve().parent / "prompts").glob("*.md")
-        if path.is_file()
-    }
-)
+_PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmeshd.mail")
 PROGRESS_TURNS_INTERVAL = 24
 

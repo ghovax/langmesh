@@ -18,10 +18,30 @@ def check_mailbox() -> int:
     return asyncio.run(check_mail())
 
 
+def authorize_mailbox() -> int:
+    """Browser OAuth sign-in; writes email.oauth.refresh_token."""
+    from langmeshd.mail.oauth import MailOAuthError, authorize
+    from langmeshd.mail.service import load_email_configuration
+
+    import_into_files()
+    configuration = load_email_configuration()
+    try:
+        asyncio.run(authorize(configuration))
+    except MailOAuthError as error:
+        logging.getLogger("langmesh").error("%s", error)
+        return 1
+    logging.getLogger("langmesh").info(
+        "wrote the secret file email.oauth.refresh_token. `langmesh mail check` next."
+    )
+    return 0
+
+
 def run(arguments) -> int:  # noqa: ANN001 — argparse namespace, matching serve.run
     import_into_files()
     if getattr(arguments, "mail_command", None) == "check":
         return check_mailbox()
+    if getattr(arguments, "mail_command", None) == "auth":
+        return authorize_mailbox()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",

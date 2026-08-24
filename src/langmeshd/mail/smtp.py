@@ -29,7 +29,25 @@ def outbound_message_id() -> str:
 
 
 def _smtp_kwargs(configuration: EmailConfiguration) -> dict[str, Any]:
-    """The aiosmtplib connect options for this mailbox. No password means no AUTH."""
+    """The aiosmtplib connect options for this mailbox. OAuth and password are mutually exclusive."""
+    if configuration.uses_oauth:
+        from langmeshd.mail.oauth import access_token
+
+        async def token() -> str:
+            return await access_token(configuration)
+
+        return {
+            "hostname": configuration.effective_smtp_host,
+            "port": configuration.effective_smtp_port,
+            "username": configuration.effective_smtp_username,
+            "oauth_token_generator": token,
+            "start_tls": (
+                configuration.effective_smtp_start_tls
+                if not configuration.effective_smtp_use_tls
+                else False
+            ),
+            "use_tls": configuration.effective_smtp_use_tls,
+        }
     password = configuration.effective_smtp_password or None
     username = configuration.effective_smtp_username or None if password else None
     return {
