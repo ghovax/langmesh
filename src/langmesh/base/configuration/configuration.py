@@ -33,7 +33,7 @@ class ExaConfiguration(Section):
 
     @property
     def effective_api_key(self) -> str:
-        return read_secret(EXA_API_KEY) or self.api_key
+        return read_secret(EXA_API_KEY)
 
 
 class JinaConfiguration(Section):
@@ -43,7 +43,7 @@ class JinaConfiguration(Section):
 
     @property
     def effective_api_key(self) -> str:
-        return read_secret(JINA_API_KEY) or self.api_key
+        return read_secret(JINA_API_KEY)
 
 
 class FirecrawlConfiguration(Section):
@@ -54,7 +54,7 @@ class FirecrawlConfiguration(Section):
 
     @property
     def effective_api_key(self) -> str:
-        return read_secret(FIRECRAWL_API_KEY) or self.api_key
+        return read_secret(FIRECRAWL_API_KEY)
 
     @property
     def effective_api_url(self) -> str:
@@ -358,7 +358,11 @@ class Configuration(Section):
     agent: AgentDefaults = Field(default_factory=AgentDefaults)
 
     def configured_provider_keys(self) -> dict[str, str]:
-        """The non-empty API keys per provider, for credential resolution and for filtering the model picker."""
+        """The non-empty API keys per provider, for credential resolution and for filtering the model picker.
+
+        Secret files are the configuration. An in-memory value on this object is a
+        caller-supplied Session credential, used only when that file is absent.
+        """
         from langmesh.base.secrets import provider_keys_from_files
 
         keys = provider_keys_from_files()

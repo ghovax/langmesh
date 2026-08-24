@@ -369,8 +369,8 @@ def resolve_api_key(
     provider_identifier: str,
     configured_keys: dict[str, str],
 ) -> str:
-    """Resolve a provider key from secret files, then an in-memory map, else the anonymous sentinel."""
-    from langmesh.base.secrets import GITHUB_API_KEY, provider_api_key_name, read_secret
+    """Resolve a provider key from an in-memory map, then secret files, else the anonymous sentinel."""
+    from langmesh.base.secrets import provider_api_key_name, read_secret
 
     identifier = provider_identifier.strip()
     definition = PROVIDERS.get(identifier) or PROVIDERS.get(identifier.lower())
@@ -389,9 +389,6 @@ def resolve_api_key(
         file_key = read_secret(provider_api_key_name(identifier))
         if file_key:
             return file_key
-    github = read_secret(GITHUB_API_KEY)
-    if github:
-        return github
     return definition.anonymous_api_key if definition is not None else ""
 
 
