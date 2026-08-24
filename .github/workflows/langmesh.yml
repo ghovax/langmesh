@@ -2,8 +2,8 @@
 # runs the library in this job. The ack step decides whether the comment is a turn.
 # A later mention on the same thread continues the saved session.
 # Model and provider come from .agents/agents/<name>/AGENT.md, named in
-# .github/langmesh.yaml. LANGMESH_API_KEY is written to a secret file at job start.
-# Optional LANGMESH_APP_PRIVATE_KEY plus app_id in .github/langmesh.yaml post as the App.
+# .github/langmesh.yaml. Keys are files: .github/secrets/github.api_key and
+# optional github.app.private_key, copied onto $XDG_DATA_HOME/langmesh/secrets.
 # .github/langmesh holds the checkpoint (conversation and provider cache state).
 # issue_comment cannot write the Actions cache, so the session is an artifact.
 
@@ -40,9 +40,6 @@ jobs:
       pull-requests: write
       issues: write
       actions: write
-    env:
-      XDG_DATA_HOME: ${{ runner.temp }}/xdg/data
-      HAVE_LANGMESH_APP_KEY: ${{ secrets.LANGMESH_APP_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,12 +47,9 @@ jobs:
           fetch-depth: 0
       - id: policy
         run: python3 src/langmesh/github/policy.py
-      - uses: actions/create-github-app-token@v2
-        id: app
-        if: env.HAVE_LANGMESH_APP_KEY == 'true' && steps.policy.outputs.app_id != ''
-        with:
-          app-id: ${{ steps.policy.outputs.app_id }}
-          private-key: ${{ secrets.LANGMESH_APP_PRIVATE_KEY }}
+      - run: python3 src/langmesh/github/materialize.py
+      - id: app
+        run: python3 src/langmesh/github/app_token.py
       - id: ack
         env:
           GH_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
@@ -82,18 +76,13 @@ jobs:
       - if: steps.ack.outputs.start == 'true'
         run: uv sync --no-dev --frozen
       - if: steps.ack.outputs.start == 'true'
-        env:
-          LANGMESH_API_KEY: ${{ secrets.LANGMESH_API_KEY }}
-          LANGMESH_APP_PRIVATE_KEY: ${{ secrets.LANGMESH_APP_PRIVATE_KEY }}
-        run: python3 src/langmesh/github/materialize.py
-      - if: steps.ack.outputs.start == 'true'
         run: uv run --no-dev --frozen python -m langmesh.github
         env:
           LANGMESH_ACK_COMMENT_ID: ${{ steps.ack.outputs.comment_id }}
           GITHUB_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
-          LANGMESH_GIT_NAME: ${{ steps.app.outcome == 'success' && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
-          LANGMESH_GIT_EMAIL: ${{ steps.app.outcome == 'success' && format('{0}+{1}[bot]@users.noreply.github.com', steps.policy.outputs.app_id, steps.app.outputs.app-slug) || '41898282+github-actions[bot]@users.noreply.github.com' }}
+          LANGMESH_GIT_NAME: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
+          LANGMESH_GIT_EMAIL: ${{ steps.app.outputs.app-slug && format('{0}+{1}[bot]@users.noreply.github.com', steps.policy.outputs.app_id, steps.app.outputs.app-slug) || '41898282+github-actions[bot]@users.noreply.github.com' }}
       - uses: actions/cache/save@v4
         if: ${{ always() && hashFiles('.venv/pyvenv.cfg') != '' }}
         env:
