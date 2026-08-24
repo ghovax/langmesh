@@ -17,8 +17,8 @@ import {
 const MotionFlex = motion.create(Flex);
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  LOCAL_DAEMON_ID,
   activeDaemonId,
+  canonicalDaemonId,
   deleteSession,
   fetchAllSessions,
   fetchDaemonTargets,
@@ -32,6 +32,7 @@ import {
   fetchSessionDraft,
   fetchSettings,
   getWorkspace,
+  isHomeDaemon,
   listWorkspaces,
   rememberLastSession,
   reconnectDaemon,
@@ -41,6 +42,7 @@ import {
   subscribeConnection,
   subscribeEvents,
   switchDaemon,
+  sameDaemon,
   updateComputerControlSetting,
   type AgentCard,
   type AgentSummary,
@@ -63,11 +65,16 @@ import { isCompactViewport, useCompactViewport } from "@/lib/viewport";
 // The last workspace the user was in and the last conversation within it, both kept by the daemon so a fresh launch reopens them.
 
 // The conversation a session belongs to: itself, or the one at the top of the chain that created it.
+function writeDaemonQuery(params: URLSearchParams, id: string): void {
+  if (isHomeDaemon(id)) params.delete("daemon");
+  else params.set("daemon", id);
+}
+
 function rootSessionOf(sessions: SessionEntry[], sessionId: string | null, daemonId: string): string | null {
   if (!sessionId) return null;
   const byId = new Map(
     sessions
-      .filter((session) => (session.daemonId || LOCAL_DAEMON_ID) === daemonId)
+      .filter((session) => sameDaemon(session.daemonId, daemonId))
       .map((session) => [session.sessionId, session]),
   );
   const seen = new Set<string>();
@@ -97,7 +104,7 @@ function Workspace() {
   // The app opens straight into a workspace addressed by `?workspace=`, resolving the last used or the first available.
   const requestedWorkspaceId = searchParams.get("workspace") ?? "";
   const requestedSessionId = searchParams.get("session") ?? "";
-  const requestedDaemonId = searchParams.get("daemon") || LOCAL_DAEMON_ID;
+  const requestedDaemonId = canonicalDaemonId(searchParams.get("daemon"));
   const [workspaceId, setWorkspaceId] = useState(requestedWorkspaceId);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(requestedSessionId || null);
   const [daemonId, setDaemonId] = useState(requestedDaemonId);
@@ -129,13 +136,13 @@ function Workspace() {
         if (cancelled) return;
         setDaemonTargets(targets);
         let daemon =
-          targets.find((candidate) => candidate.id === requestedDaemonId) ??
-          targets.find((candidate) => candidate.kind === "local");
-        if (requestedSessionId && requestedDaemonId === LOCAL_DAEMON_ID) {
-          const localHit = await fetchSession(requestedSessionId);
-          if (!localHit) {
+          targets.find((candidate) => sameDaemon(candidate.id, requestedDaemonId)) ??
+          targets.find((candidate) => candidate.home);
+        if (requestedSessionId && isHomeDaemon(requestedDaemonId)) {
+          const homeHit = await fetchSession(requestedSessionId);
+          if (!homeHit) {
             for (const candidate of targets) {
-              if (candidate.kind === "local") continue;
+              if (candidate.home) continue;
               const found = await fetchSession(requestedSessionId, {
                 apiBase: candidate.endpoint,
                 token: candidate.token,
@@ -147,7 +154,7 @@ function Workspace() {
             }
           }
         }
-        if (daemon && daemon.id !== activeDaemonId()) {
+        if (daemon && !sameDaemon(daemon.id, activeDaemonId())) {
           switchDaemon(daemon);
         }
         if (daemon) setDaemonId(daemon.id);
@@ -183,13 +190,13 @@ function Workspace() {
         setRememberedSession(target.last_session_id ?? "");
         const params = new URLSearchParams(window.location.search);
         params.set("workspace", target.id);
-        if (daemon && daemon.id !== LOCAL_DAEMON_ID) params.set("daemon", daemon.id);
+        if (daemon && !isHomeDaemon(daemon.id)) params.set("daemon", daemon.id);
         else params.delete("daemon");
         if (requestedSessionId && !keepRequestedSession) params.delete("session");
         if (
           requestedWorkspaceId !== target.id ||
           (requestedSessionId && !keepRequestedSession) ||
-          (daemon && requestedDaemonId !== daemon.id)
+          (daemon && !sameDaemon(requestedDaemonId, daemon.id))
         ) {
           router.replace(`?${params.toString()}`, { scroll: false });
         }
@@ -333,7 +340,7 @@ function Workspace() {
         goal: session.goal ?? null,
         daemonId: session.daemonId,
         daemonName: session.daemonName,
-        remote: session.remote,
+        paired: session.paired,
       }));
     },
     [],
@@ -465,8 +472,7 @@ function Workspace() {
       const last = readLastWorkspace();
       const next = workspaces.find((workspace) => workspace.id === last) ?? workspaces[0];
       const params = new URLSearchParams(window.location.search);
-      if (target.id === LOCAL_DAEMON_ID) params.delete("daemon");
-      else params.set("daemon", target.id);
+      writeDaemonQuery(params, target.id);
       params.delete("session");
       if (next) {
         writeLastWorkspace(next.id);
@@ -564,7 +570,7 @@ function Workspace() {
     if (activeSessionId) {
       const session = sessions.find(
         (entry) =>
-          entry.sessionId === activeSessionId && (entry.daemonId || LOCAL_DAEMON_ID) === daemonId,
+          entry.sessionId === activeSessionId && sameDaemon(entry.daemonId, daemonId),
       );
       if (session) {
         setRestoredContext(contextKey);
@@ -584,7 +590,7 @@ function Workspace() {
     agentCards.find((card) => card.url.endsWith(`/agents/${selectedAgent}`)) ?? null;
   const activeSession = sessions.find(
     (entry) =>
-      entry.sessionId === activeSessionId && (entry.daemonId || LOCAL_DAEMON_ID) === daemonId,
+      entry.sessionId === activeSessionId && sameDaemon(entry.daemonId, daemonId),
   );
   // There is one backend now, so a session is openable as soon as it is known.
   const activeSessionKnown = !activeSessionId || sessionsLoaded || !!activeSession;
@@ -625,7 +631,7 @@ function Workspace() {
     const candidates = sessions.filter(
       (entry) =>
         (!workspaceId || entry.workspaceId === workspaceId) &&
-        (entry.daemonId || LOCAL_DAEMON_ID) === daemonId,
+        sameDaemon(entry.daemonId, daemonId),
     );
     if (candidates.length === 0) return;
     const target =
@@ -650,7 +656,7 @@ function Workspace() {
       sortedSessions.filter(
         (session) =>
           session.workspaceId === workspaceId &&
-          (session.daemonId || LOCAL_DAEMON_ID) === daemonId,
+          sameDaemon(session.daemonId, daemonId),
       ),
     [sortedSessions, workspaceId, daemonId],
   );
@@ -674,7 +680,7 @@ function Workspace() {
       void rememberLastSession(workspaceId, sessionId);
       const params = new URLSearchParams(window.location.search);
       params.set("session", sessionId);
-      if (daemonId !== LOCAL_DAEMON_ID) params.set("daemon", daemonId);
+      writeDaemonQuery(params, daemonId);
       router.replace(`?${params.toString()}`, { scroll: false });
       if (isCompactViewport()) setMobileHistoryOpen(false);
       refreshSessions();
@@ -704,9 +710,9 @@ function Workspace() {
   // Switch the active workspace from its sidebar row, starting a fresh chat and swapping the `?workspace=` param.
   function handleSwitchWorkspace(nextWorkspaceId: string, nextDaemonId: string = daemonId) {
     if (!nextWorkspaceId) return;
-    if (nextWorkspaceId === workspaceId && nextDaemonId === daemonId) return;
-    const target = daemonTargets.find((candidate) => candidate.id === nextDaemonId);
-    if (target && nextDaemonId !== activeDaemonId()) {
+    if (nextWorkspaceId === workspaceId && sameDaemon(nextDaemonId, daemonId)) return;
+    const target = daemonTargets.find((candidate) => sameDaemon(candidate.id, nextDaemonId));
+    if (target && !sameDaemon(nextDaemonId, activeDaemonId())) {
       switchDaemon(target);
       setDaemonId(target.id);
       void hydrateActiveDaemon();
@@ -717,7 +723,7 @@ function Workspace() {
         },
       );
     } else {
-      setDaemonId(nextDaemonId);
+      setDaemonId(canonicalDaemonId(nextDaemonId));
     }
     writeLastWorkspace(nextWorkspaceId);
     setWorkspaceId(nextWorkspaceId);
@@ -727,8 +733,7 @@ function Workspace() {
     setRestoredContext(null);
     const params = new URLSearchParams(window.location.search);
     params.set("workspace", nextWorkspaceId);
-    if (nextDaemonId === LOCAL_DAEMON_ID) params.delete("daemon");
-    else params.set("daemon", nextDaemonId);
+    writeDaemonQuery(params, nextDaemonId);
     params.delete("session");
     router.replace(`?${params.toString()}`, { scroll: false });
     if (isCompactViewport()) setMobileHistoryOpen(false);
@@ -736,9 +741,9 @@ function Workspace() {
 
   // Open a workspace's Settings from its sidebar menu, resetting the workspace only when it is a different one.
   function openWorkspaceSettings(nextWorkspaceId: string, nextDaemonId: string = daemonId) {
-    const switching = nextWorkspaceId !== workspaceId || nextDaemonId !== daemonId;
-    const target = daemonTargets.find((candidate) => candidate.id === nextDaemonId);
-    if (target && nextDaemonId !== activeDaemonId()) {
+    const switching = nextWorkspaceId !== workspaceId || !sameDaemon(nextDaemonId, daemonId);
+    const target = daemonTargets.find((candidate) => sameDaemon(candidate.id, nextDaemonId));
+    if (target && !sameDaemon(nextDaemonId, activeDaemonId())) {
       switchDaemon(target);
       setDaemonId(target.id);
       void hydrateActiveDaemon();
@@ -753,8 +758,7 @@ function Workspace() {
     }
     const params = new URLSearchParams(window.location.search);
     params.set("workspace", nextWorkspaceId);
-    if (nextDaemonId === LOCAL_DAEMON_ID) params.delete("daemon");
-    else params.set("daemon", nextDaemonId);
+    writeDaemonQuery(params, nextDaemonId);
     if (switching) params.delete("session");
     params.set("settings", "locations");
     router.replace(`?${params.toString()}`, { scroll: false });
@@ -762,23 +766,23 @@ function Workspace() {
   }
 
   async function handleDeleteSession(sessionId: string, entry?: SessionEntry) {
-    const host = entry?.daemonId || daemonId;
-    const target = daemonTargets.find((candidate) => candidate.id === host);
+    const host = canonicalDaemonId(entry?.daemonId || daemonId);
+    const target = daemonTargets.find((candidate) => sameDaemon(candidate.id, host));
     const ok = await deleteSession(
       sessionId,
       target ? { apiBase: target.endpoint, token: target.token } : undefined,
     );
     if (ok) {
       refreshSessions();
-      if (sessionId === activeSessionId && host === daemonId) handleNewChat();
+      if (sessionId === activeSessionId && sameDaemon(host, daemonId)) handleNewChat();
     }
   }
 
   function handleResumeSession(entry: SessionEntry) {
-    const host = entry.daemonId || LOCAL_DAEMON_ID;
+    const host = canonicalDaemonId(entry.daemonId);
     const identity = sessionIdentity(entry);
-    if (host !== activeDaemonId()) {
-      const target = daemonTargets.find((candidate) => candidate.id === host);
+    if (!sameDaemon(host, activeDaemonId())) {
+      const target = daemonTargets.find((candidate) => sameDaemon(candidate.id, host));
       if (target) {
         switchDaemon(target);
         setDaemonId(target.id);
@@ -808,15 +812,14 @@ function Workspace() {
       setRestoredContext(null);
     }
     params.set("session", entry.sessionId);
-    if (host === LOCAL_DAEMON_ID) params.delete("daemon");
-    else params.set("daemon", host);
+    writeDaemonQuery(params, host);
     router.replace(`?${params.toString()}`, { scroll: false });
     if (isCompactViewport()) setMobileHistoryOpen(false);
   }
 
   function handleOpenDelegatedSession(entry: SessionEntry) {
     const identity = sessionIdentity(entry);
-    const host = entry.daemonId || LOCAL_DAEMON_ID;
+    const host = canonicalDaemonId(entry.daemonId);
     setUnseenCompletions((current) => {
       if (!current.has(identity) && !current.has(entry.sessionId)) return current;
       const next = new Set(current);
@@ -824,8 +827,8 @@ function Workspace() {
       next.delete(entry.sessionId);
       return next;
     });
-    if (host !== activeDaemonId()) {
-      const target = daemonTargets.find((candidate) => candidate.id === host);
+    if (!sameDaemon(host, activeDaemonId())) {
+      const target = daemonTargets.find((candidate) => sameDaemon(candidate.id, host));
       if (target) {
         switchDaemon(target);
         setDaemonId(target.id);
@@ -841,8 +844,7 @@ function Workspace() {
       params.set("workspace", entry.workspaceId);
     }
     params.set("session", entry.sessionId);
-    if (host === LOCAL_DAEMON_ID) params.delete("daemon");
-    else params.set("daemon", host);
+    writeDaemonQuery(params, host);
     router.replace(`?${params.toString()}`, { scroll: false });
   }
 
@@ -1076,7 +1078,7 @@ function Workspace() {
           initialInputDraft={activeSessionDraft}
           onDeleteSession={activeSessionId ? handleDeleteSession : undefined}
           sessions={sessions.filter(
-            (entry) => (entry.daemonId || LOCAL_DAEMON_ID) === daemonId,
+            (entry) => sameDaemon(entry.daemonId, daemonId),
           )}
           unseenCompletions={unseenCompletions}
           rootSessionId={rootSessionId}
