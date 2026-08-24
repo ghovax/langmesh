@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from email.message import Message
 from typing import Any, Optional
 
@@ -154,7 +155,7 @@ class MailService:
             "session.create",
             {
                 "agent": self.configuration.effective_agent,
-                "working_directory": self.configuration.working_directory,
+                "working_directory": self.configuration.effective_working_directory,
                 "permission_mode": self.configuration.permission_mode,
                 "title": title,
             },
@@ -503,6 +504,65 @@ def load_email_configuration() -> EmailConfiguration:
     return EmailConfiguration.model_validate(document.get("email") or {})
 
 
+def _agent_credential_problem(configuration: EmailConfiguration) -> str:
+    """Why this agent cannot take a turn, or empty when the profile and its key are present.
+
+    IMAP can IDLE without a model key; the turn then 401s until turn_timeout_seconds.
+    Fail here so a missing OPENCODE_API_KEY shows up in the mail log, like a missing
+    mailbox password, instead of after someone has already emailed.
+    """
+    name = configuration.effective_agent
+    try:
+        from langmeshd.commons.agent_files import load_agent_configuration
+        from langmeshd.commons.configuration_locations import agent_directories
+
+        agent = load_agent_configuration(
+            name, agent_directories(configuration.effective_working_directory)
+        )
+    except FileNotFoundError:
+        return (
+            f"email.agent {name!r} is not an available profile "
+            "(set LANGMESH_MAIL_AGENT, or install the bundled reviewer)."
+        )
+    provider = (agent.provider or "").strip()
+    if not provider:
+        return ""
+    identifier = agent.model_identifier
+    if identifier:
+        from langmesh.base.content.models import find_model
+
+        find_model(identifier)
+    from langmesh.base.identity.providers import (
+        get_provider_definition,
+        provider_env_vars,
+        resolve_api_key,
+    )
+
+    definition = get_provider_definition(provider) or get_provider_definition(provider.lower())
+    if definition is not None and definition.native:
+        return ""
+    if (os.environ.get("LANGMESH_API_KEY") or "").strip():
+        return ""
+    configured: dict[str, str] = {}
+    try:
+        from langmeshd.commons.configuration_io import load_configuration
+
+        configured = load_configuration(seed=False).configured_provider_keys()
+    except Exception:  # noqa: BLE001 — an unreadable file still allows env-only keys
+        configured = {}
+    key = resolve_api_key(provider, configured)
+    anonymous = (definition.anonymous_api_key if definition is not None else "") or ""
+    if key.strip() and key.strip() != anonymous:
+        return ""
+    names = list(provider_env_vars(provider))
+    if provider.lower().startswith("opencode") and "OPENCODE_API_KEY" not in names:
+        names.insert(0, "OPENCODE_API_KEY")
+    if any((os.environ.get(name) or "").strip() for name in names):
+        return ""
+    shown = ", ".join(names) if names else "a provider API key"
+    return f"the {name} profile needs {shown} (or LANGMESH_API_KEY / providers.{provider}.api_key)."
+
+
 def validate_ready(configuration: EmailConfiguration) -> str:
     """Why this configuration cannot run, or an empty string when it can."""
     if not configuration.effective_enabled:
@@ -521,7 +581,7 @@ def validate_ready(configuration: EmailConfiguration) -> str:
         return "email.imap.password (or LANGMESH_MAIL_IMAP_PASSWORD) is required."
     if not configuration.effective_smtp_host:
         return "email.smtp.host (or LANGMESH_MAIL_SMTP_HOST) is required."
-    return ""
+    return _agent_credential_problem(configuration)
 
 
 async def run(configuration: Optional[EmailConfiguration] = None) -> int:

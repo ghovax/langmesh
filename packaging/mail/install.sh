@@ -120,6 +120,12 @@ allow = os.environ.get("LANGMESH_MAIL_ALLOW_FROM", "").strip()
 if allow:
     email["allow_from"] = [item.strip() for item in allow.split(",") if item.strip()]
 email.setdefault("agent", os.environ.get("LANGMESH_MAIL_AGENT", "reviewer") or "reviewer")
+email.setdefault(
+    "working_directory",
+    os.environ.get("LANGMESH_MAIL_WORKING_DIRECTORY")
+    or os.environ.get("LANGMESH_PREFIX")
+    or "/srv/langmesh",
+)
 email.setdefault("permission_mode", "automatic")
 imap = email.setdefault("imap", {})
 imap.setdefault("host", os.environ.get("LANGMESH_MAIL_IMAP_HOST", ""))
