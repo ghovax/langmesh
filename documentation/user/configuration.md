@@ -391,7 +391,7 @@ Process-level timings owned by the daemon and read only from the configuration f
 
 ### Email
 
-IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same file. Off until you enable it. The mail process (`langmesh mail`) is a **client** of `langmeshd`. Mail sessions speak through `submit_email` (`progress` or `reply`); markdown is rendered as HTML in the outbound message. See [Email](email.md).
+IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same file. Off until you enable it. The mail process (`langmesh mail`) is a **client** of `langmeshd`. `langmesh mail check` proves IMAP and SMTP without IDLEing. Mail sessions speak through `submit_email` (`progress` or `reply`); markdown is rendered as HTML in the outbound message. See [Email](email.md).
 
 | Setting | Type | Default | What it is for |
 | ------- | ---- | ------- | -------------- |
