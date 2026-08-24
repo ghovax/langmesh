@@ -12,5 +12,5 @@ permission_mode: automatic
 
 This profile is the mention Action's model and provider. The job keeps its own
 system prompt and tools; change `model` and `provider` here to pick what it calls.
-The API key is the repository secret `LANGMESH_API_KEY`, written to a secret file
-at the start of the job. Do not put a key in this file.
+The API key is the secret file `github.api_key` (or `providers.<id>.api_key`).
+Do not put a key in this file.

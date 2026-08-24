@@ -37,5 +37,10 @@ wheels/
 # Session checkpoints for the GitHub mention Action, restored by the workflow cache.
 /.github/langmesh/
 
+# Mention Action secret files (github.api_key, github.app.private_key). Same names
+# as $XDG_DATA_HOME/langmesh/secrets. A self-hosted runner can keep them only there.
+/.github/secrets/*
+!/.github/secrets/README
+
 # Command Code's per-workspace agent settings (permissions, taste) — personal tooling state.
 /.commandcode/
