@@ -7,7 +7,7 @@ This is not XMPP and not the GitHub mention Action. GitHub mentions run the libr
 ## What happens
 
 1. `langmesh mail` starts the daemon if it is not up, then proves IMAP login and SMTP auth and IDLEs the mailbox (`aioimaplib`, RFC 2177). It does not poll from inside a running turn.
-2. A new UNSEEN message from an allowlisted sender is fetched. Automatic replies, bounces, and mail from the mailbox itself are ignored.
+2. A new UNSEEN message from an allowlisted sender is fetched. Automatic replies, bounces, and mail from the mailbox itself are ignored. Gmail plus-addresses and `googlemail.com` count as the same account as `user@gmail.com`, so allowlisting that address (or `@gmail.com`) takes those aliases too. Replies go to `Reply-To` when the message has one.
 3. The HTML part is the body. Quoted replies are the containers the mail client wrapped around the previous message; those nodes are removed and the rest is converted with `markdownify` so the agent sees markdown. `text/plain` is used only when there is no HTML, or when the HTML is only the quoted thread.
 4. The thread is keyed as `email:{mailbox}:{root-message-id}` from `References` / `In-Reply-To` / `Message-ID`. An In-Reply-To of a prior outbound also continues the same session. That key maps to one daemon session, stored under `$XDG_DATA_HOME/langmesh/mail.sqlite`.
 5. The opening turn is one JSON object with `subject` and `message`. Later mail on the same thread is only `message`. `session.create` mints the session on the first mail (`permission_mode: automatic` by default). IDLE keeps running while a turn is in flight: a follow-up on a live session is steered into that turn; a mail that arrives when the session is idle starts a new turn.
