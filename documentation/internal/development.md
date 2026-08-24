@@ -128,7 +128,7 @@ The repository ships **no unit-test suite**. It ships two guards and one verific
 | `daemon/` | `langmeshd`: registry, lifecycle, host, machine loaders, agent files, API, scheduler, observation watcher |
 | `worker/` | What a hosted session is made of: its executor, its verbs, its turn loop, peers |
 | `rest/` | The FastAPI surface the browser uses |
-| `cli/` | The `langmesh serve` and `langmesh mail` commands |
+| `cli/` | The `langmesh serve` and `langmesh mail` / `langmesh mail check` commands |
 | `mail/` | IMAP IDLE + SMTP client of the daemon |
 | `dictation/` | The local speech transcriber |
 | `features.py` | The daemon's plugin assembly: which features a hosted session runs |
