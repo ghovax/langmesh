@@ -589,25 +589,92 @@ def _agent_credential_problem(configuration: EmailConfiguration) -> str:
     return f"the {name} profile needs {shown} (or LANGMESH_API_KEY / providers.{provider}.api_key)."
 
 
+def readiness_problems(configuration: EmailConfiguration) -> list[str]:
+    """Every reason this configuration cannot IDLE, so `langmesh mail check` can list them all."""
+    problems: list[str] = []
+    if not configuration.effective_enabled:
+        problems.append("email.enabled is false (set email.enabled or LANGMESH_MAIL_ADDRESS).")
+    if not configuration.effective_address:
+        problems.append("email.address (or LANGMESH_MAIL_ADDRESS) is required.")
+    if not configuration.effective_allow_from:
+        problems.append("email.allow_from (or LANGMESH_MAIL_ALLOW_FROM) is required.")
+    if not configuration.effective_agent:
+        problems.append("email.agent (or LANGMESH_MAIL_AGENT) is required.")
+    if not configuration.effective_imap_host:
+        problems.append("email.imap.host (or LANGMESH_MAIL_IMAP_HOST) is required.")
+    if not configuration.effective_imap_username:
+        problems.append("email.imap.username (or LANGMESH_MAIL_IMAP_USER) is required.")
+    if not configuration.effective_imap_password:
+        problems.append("email.imap.password (or LANGMESH_MAIL_IMAP_PASSWORD) is required.")
+    if not configuration.effective_smtp_host:
+        problems.append("email.smtp.host (or LANGMESH_MAIL_SMTP_HOST) is required.")
+    agent = _agent_credential_problem(configuration)
+    if agent:
+        problems.append(agent)
+    return problems
+
+
 def validate_ready(configuration: EmailConfiguration) -> str:
     """Why this configuration cannot run, or an empty string when it can."""
-    if not configuration.effective_enabled:
-        return "email.enabled is false (set email.enabled or LANGMESH_MAIL_ADDRESS)."
-    if not configuration.effective_address:
-        return "email.address (or LANGMESH_MAIL_ADDRESS) is required."
-    if not configuration.effective_allow_from:
-        return "email.allow_from (or LANGMESH_MAIL_ALLOW_FROM) is required."
-    if not configuration.effective_agent:
-        return "email.agent (or LANGMESH_MAIL_AGENT) is required."
-    if not configuration.effective_imap_host:
-        return "email.imap.host (or LANGMESH_MAIL_IMAP_HOST) is required."
-    if not configuration.effective_imap_username:
-        return "email.imap.username (or LANGMESH_MAIL_IMAP_USER) is required."
-    if not configuration.effective_imap_password:
-        return "email.imap.password (or LANGMESH_MAIL_IMAP_PASSWORD) is required."
-    if not configuration.effective_smtp_host:
-        return "email.smtp.host (or LANGMESH_MAIL_SMTP_HOST) is required."
-    return _agent_credential_problem(configuration)
+    problems = readiness_problems(configuration)
+    return problems[0] if problems else ""
+
+
+async def prove_mailbox(configuration: EmailConfiguration) -> list[str]:
+    """IMAP login and SMTP auth, or the failures. Does not IDLE or start the daemon."""
+    problems = readiness_problems(configuration)
+    if problems:
+        return problems
+    inbox = Inbox(configuration)
+    try:
+        await inbox.connect()
+    except Exception as error:  # noqa: BLE001 — check must report the provider error, not crash
+        problems.append(f"IMAP {configuration.effective_imap_host} refused login ({error}).")
+    finally:
+        with contextlib.suppress(Exception):
+            await inbox.close()
+    try:
+        await probe_smtp(configuration)
+    except Exception as error:  # noqa: BLE001
+        problems.append(f"SMTP {configuration.effective_smtp_host} refused auth ({error}).")
+    return problems
+
+
+async def check(configuration: Optional[EmailConfiguration] = None) -> int:
+    """Prove the mailbox is ready to IDLE. Exit 0 when IMAP and SMTP succeed."""
+    from langmeshd.cli.client import daemon_is_up
+    from langmeshd.mail.envfile import mail_env_path, mail_env_problem
+
+    note = logging.getLogger("langmesh")
+    current = configuration or load_email_configuration()
+    problems = await prove_mailbox(current)
+    explicit = mail_env_problem()
+    if explicit:
+        problems.insert(0, explicit)
+    env_path = mail_env_path()
+    if env_path is not None:
+        note.info("mail.env %s", env_path)
+    else:
+        note.info("mail.env not found (LANGMESH_MAIL_ENV, ./mail.env, or /srv/langmesh/mail.env)")
+    if current.effective_address:
+        note.info("address %s", current.effective_address)
+    if current.effective_allow_from:
+        note.info("allow_from %s", ",".join(current.effective_allow_from))
+    if current.effective_agent:
+        note.info("agent %s", current.effective_agent)
+    if problems:
+        note.error("mail not ready:")
+        for problem in problems:
+            note.error("- %s", problem)
+        return 1
+    note.info("imap %s login ok", current.effective_imap_host)
+    note.info("smtp %s auth ok", current.effective_smtp_host)
+    if daemon_is_up():
+        note.info("daemon listening")
+    else:
+        note.info("daemon not listening (`langmesh mail` will start it)")
+    note.info("ready. `langmesh mail` will IDLE this mailbox.")
+    return 0
 
 
 async def run(configuration: Optional[EmailConfiguration] = None) -> int:

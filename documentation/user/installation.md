@@ -74,7 +74,10 @@ Both artifacts carry the same `CFBundleName` and identifier, so one certificate 
 ```shell
 langmesh serve
 langmesh mail
+langmesh mail check
 ```
+
+`mail check` proves `mail.env` / configuration, IMAP login, and SMTP auth without IDLEing or starting the daemon. See [Email](email.md).
 
 | Flag | What it does |
 |---|---|
@@ -183,10 +186,11 @@ its approvals, and it is reachable from anywhere you can reach the daemon.
 
 Mail is a second long-running client, not a second daemon. `langmesh mail` IDLEs an allowlisted
 mailbox, strips quoted reply history, and drives `session.create` / `session.send` on loopback.
-Replies go out over SMTP in the same thread. See [Email](email.md). On a VPS, install both
-systemd units so the mail client comes back with the daemon. Copy `packaging/mail/mail.env.example`
-to `mail.env`, fill it, and point `install.sh` at that file rather than a multiline `sudo VAR=...`
-invocation:
+Replies go out over SMTP in the same thread. See [Email](email.md). Fill `mail.env`, run
+`uv run langmesh mail check` until it prints `ready`, then either `uv run langmesh mail` on this
+machine or, on a VPS, install both systemd units so the mail client comes back with the daemon.
+Copy `packaging/mail/mail.env.example` to `mail.env`, fill it, and point `install.sh` at that file
+rather than a multiline `sudo VAR=...` invocation:
 
 ```sh
 sudo env LANGMESH_MAIL_ENV="$PWD/mail.env" packaging/mail/install.sh

@@ -1,9 +1,10 @@
 """`langmesh`, the command: serve the interface, with the daemon behind it.
 
 The command line has two long-running clients: `serve` makes the interface available, and
-`mail` IDLEs a mailbox and drives the daemon over its API. Creating and messaging sessions,
-answering permission requests, recurring work, remote agents, configuration, and sign-in
-otherwise happen in the interface, or programmatically against the daemon's API. A session
+`mail` IDLEs a mailbox and drives the daemon over its API. `mail check` proves that mailbox
+without IDLEing. Creating and messaging sessions, answering permission requests, recurring
+work, remote agents, configuration, and sign-in otherwise happen in the interface, or
+programmatically against the daemon's API. A session
 composes with its peers through [tools](agent-system.md), over the same control plane; it
 does not shell out to this command.
 """
@@ -74,6 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
     mail = subparsers.add_parser(
         "mail",
         help="IDLE an allowlisted mailbox and drive the daemon; replies go out over SMTP",
+    )
+    mail_sub = mail.add_subparsers(dest="mail_command", required=False)
+    mail_sub.add_parser(
+        "check",
+        help="prove mailbox config, IMAP login, and SMTP auth without IDLEing",
     )
     mail.set_defaults(handler=_command_mail)
 
