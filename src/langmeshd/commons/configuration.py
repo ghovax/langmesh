@@ -64,11 +64,12 @@ def _account_login(address: str) -> str:
     return address
 
 
-def _mail_secret(value: str | None) -> str:
+def compact_mail_secret(value: str | None) -> str:
     """IMAP/SMTP secrets as the provider expects them.
 
     Gmail copies app passwords as four groups of four; those spaces are display-only.
-    Surrounding whitespace from an env file is never part of the secret.
+    Surrounding whitespace from an env file is never part of the secret. systemd
+    EnvironmentFile cannot parse unquoted spaces, so install.sh writes this compacted form.
     """
     if not value:
         return ""
@@ -235,7 +236,7 @@ class EmailConfiguration(AppConfigurationSection):
             os.environ.get("LANGMESH_MAIL_PASSWORD"),
             self.imap.password,
         ):
-            secret = _mail_secret(candidate)
+            secret = compact_mail_secret(candidate)
             if secret:
                 return secret
         return ""
@@ -263,7 +264,7 @@ class EmailConfiguration(AppConfigurationSection):
             os.environ.get("LANGMESH_MAIL_PASSWORD"),
             self.smtp.password,
         ):
-            secret = _mail_secret(candidate)
+            secret = compact_mail_secret(candidate)
             if secret:
                 return secret
         # Same-provider inferred SMTP shares the IMAP app password. A custom

@@ -51,6 +51,21 @@ sync_checkout() {
   )
 }
 
+install_env_file() {
+  local source="$1"
+  local dest="$2"
+  LANGMESH_MAIL_ENV_SOURCE="${source}" LANGMESH_MAIL_ENV_DEST="${dest}" \
+    "${prefix}/.venv/bin/python" - <<'PY'
+import os
+from pathlib import Path
+
+from langmeshd.mail.envfile import install_mail_env
+
+install_mail_env(Path(os.environ["LANGMESH_MAIL_ENV_SOURCE"]), Path(os.environ["LANGMESH_MAIL_ENV_DEST"]))
+PY
+  chmod 600 "${dest}"
+}
+
 write_env_file() {
   local env_file="${prefix}/mail.env"
   local source=""
@@ -63,20 +78,18 @@ write_env_file() {
     source="${PWD}/mail.env"
   fi
   if [[ -n "${source}" ]]; then
-    if [[ "${source}" != "${env_file}" ]]; then
-      cp "${source}" "${env_file}"
-    fi
-    chmod 600 "${env_file}"
+    install_env_file "${source}" "${env_file}"
     log "installed ${env_file} from ${source}"
     return
   fi
   if [[ -n "${LANGMESH_MAIL_ADDRESS:-}${LANGMESH_MAIL_PASSWORD:-}${LANGMESH_MAIL_ALLOW_FROM:-}${LANGMESH_MAIL_IMAP_PASSWORD:-}${LANGMESH_MAIL_SMTP_PASSWORD:-}" ]]; then
     env | grep -E '^(LANGMESH_MAIL_|LANGMESH_API_KEY=|LANGMESH_SANDBOX_|[A-Z][A-Z0-9_]*_API_KEY=)' >"${env_file}" || true
-    chmod 600 "${env_file}"
+    install_env_file "${env_file}" "${env_file}"
     log "wrote ${env_file} from the environment (mode 0600)"
     return
   fi
   if [[ -f "${env_file}" ]]; then
+    install_env_file "${env_file}" "${env_file}"
     log "keeping existing ${env_file}"
     return
   fi
