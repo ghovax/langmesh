@@ -68,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--reach",
         action="store_true",
-        help="serve the paired door: a durable pairing link, token-gated, for your own devices over your tailnet",
+        help="serve the paired door: a durable pairing link, token-gated, for your own devices over a transport you choose",
     )
     serve.set_defaults(handler=_command_serve)
 

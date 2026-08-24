@@ -152,6 +152,11 @@ def _tuning_limits(prefix: str) -> list[Setting]:
     ]
 
 
+def walk(model: type[BaseModel], prefix: str = "") -> list[Setting]:
+    """Every setting on a model, addressed from ``prefix`` the way a person would write it."""
+    return _walk(model, prefix)
+
+
 def _walk(model: type[BaseModel], prefix: str) -> list[Setting]:
     settings: list[Setting] = []
     for name, field in model.model_fields.items():

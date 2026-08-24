@@ -37,7 +37,7 @@ def _location_uri(address: LocationAddress) -> str:
 
 
 def _serialize_location(record: LocationRecord) -> dict[str, Any]:
-    """A location for the API: its generated URI, derived name, connection and execution policy."""
+    """A location for the API: its generated URI, derived name, kind, host, and path."""
     try:
         uri = _location_uri(_location_address(record))
     except Exception:
@@ -93,7 +93,7 @@ def _derive_location_name(
     *,
     exclude_id: str = "",
 ) -> str:
-    """The agent-facing name for a location, derived from its connection rather than entered."""
+    """The agent-facing name for a location, derived from its host and path rather than entered."""
     if kind == "remote":
         base = (host_alias or "").strip() or "remote"
     else:

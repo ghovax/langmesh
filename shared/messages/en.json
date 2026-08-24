@@ -95,7 +95,7 @@
     "compactingTooltip": "Compacting the conversation…",
     "dictationCouldNotOpen": "The microphone could not be opened: {reason}",
     "dictationFailed": "Couldn't take that dictation",
-    "dictationInsecureOrigin": "A browser only opens a microphone over a secure connection, and this page did not arrive over one. Reach this machine over its Tailscale address, which is served over HTTPS.",
+    "dictationInsecureOrigin": "A browser only opens a microphone over a secure connection, and this page did not arrive over one. Open this machine over HTTPS — Tailscale serve, an SSH tunnel with a certificate, or any other TLS front for the loopback door.",
     "dictationLoading": "Loading the dictation model…",
     "dictationNoDevice": "No microphone is available.",
     "dictationNoMicrophone": "This browser cannot reach a microphone.",
@@ -216,7 +216,7 @@
     "deleteSession": "Delete session",
     "deleteSessionConfirmBody": "This permanently removes the conversation and its tasks. This can’t be undone.",
     "deleteSessionConfirmTitle": "Delete this session?",
-    "disconnectedDescription": "The daemon is not answering. It may have stopped, or been restarted.",
+    "disconnectedDescription": "This daemon is not answering. Reconnect, or pick another machine.",
     "disconnectedTitle": "Not connected to LangMesh",
     "environmentsAvailable": "Environments available",
     "environmentsDescription": "The places this conversation can work in — a folder on this Mac, or one on an SSH host.",
@@ -268,19 +268,58 @@
     "savingChanges": "Saving changes…"
   },
   "ConnectionSettings": {
-    "connect": "Open",
-    "connected": "Connected",
-    "couldNotConnect": "Couldn't connect",
-    "couldNotReach": "Couldn't reach {name}",
-    "deleteConnection": "Delete {url}",
-    "noSavedConnections": "No saved connections",
-    "noSavedConnectionsHint": "Add a server address below to reach it later",
+    "couldNotRemember": "Couldn't remember that machine",
+    "forgetMachine": "Forget {name}",
+    "machines": "Machines",
+    "noPairedMachines": "No machines yet",
+    "noPairedMachinesHint": "Paste a pairing link below to reach a machine",
     "pairingLink": "Pairing link",
     "pairingLinkHelper": "Paste the <code>langmesh://pair#…</code> link that machine printed when it exposed its door. It carries the address and a token, and both stay on this machine.",
     "pairingLinkPlaceholder": "langmesh://pair#…",
-    "retry": "Retry",
-    "saveConnection": "Save connection",
-    "savedConnections": "Saved connections"
+    "rememberMachine": "Remember",
+    "thisMachine": "This machine",
+    "switchTo": "Use",
+    "using": "Using",
+    "unreachable": "Unreachable"
+  },
+  "InterfaceScreen": {
+    "lookingFor": "Looking for {machine}…",
+    "notAnswering": "{machine} is not answering.",
+    "openLangMesh": "Open LangMesh",
+    "otherMachines": "Other machines",
+    "pairedWith": "Paired with {machine}",
+    "thisMachine": "This machine",
+    "tried": "Tried {address}",
+    "tryAgain": "Try again",
+    "wouldNotLoad": "The interface would not load",
+    "wouldNotLoadBody": "{machine} answered, then the page failed."
+  },
+  "MachinesScreen": {
+    "cancel": "Cancel",
+    "forget": "Forget",
+    "forgetBody": "This phone will drop the token. Pair again to reach it.",
+    "forgetTitle": "Forget {machine}?",
+    "noneBody": "Pair a machine by scanning or pasting the link its door printed.",
+    "noneTitle": "No paired machines",
+    "pairAnother": "Pair a machine",
+    "title": "Machines"
+  },
+  "PairScreen": {
+    "cameraRefused": "The camera is off for this app. Turn it on in Settings, or paste the link.",
+    "clipboardUnavailable": "Couldn't read the clipboard.",
+    "instructions": "Run <command>langmesh serve --reach</command> on the machine, then scan or paste the pairing link it prints.",
+    "linkPlaceholder": "langmesh://pair#…",
+    "missingTokenOrAddress": "That link is missing its address or its token.",
+    "noCameraHere": "A browser has no camera to point. Paste the link instead.",
+    "notAPairingCode": "That is not a LangMesh pairing link.",
+    "openSettings": "Open Settings",
+    "paste": "Paste",
+    "pasteLink": "Paste link",
+    "remember": "Remember",
+    "scan": "Scan",
+    "title": "Pair a machine",
+    "tokenWarning": "The link carries a token. Keep it to your devices.",
+    "waitingForCamera": "Waiting for the camera…"
   },
   "CursorAuthControl": {
     "signInError": "Could not start sign-in.",
@@ -532,9 +571,12 @@
     "fieldLocation": "Location",
     "fieldConversations": "Conversations",
     "fieldWorkspace": "Workspace",
+    "fieldMachine": "Machine",
+    "thisMachine": "This machine",
     "hideWorkspace": "Hide this workspace's conversations",
     "showWorkspace": "Show this workspace's conversations",
-    "openFolder": "Open folder"
+    "openFolder": "Open folder",
+    "pairedMachine": "Paired machine"
   },
   "Settings": {
     "agent": {
@@ -574,6 +616,51 @@
         "transcription_timeout_realtime_multiplier": "Added per second of audio",
         "maximum_attempts": "Attempts per recording",
         "worker_shutdown_seconds": "Worker shutdown grace (seconds)"
+      }
+    },
+    "email": {
+      "_": "Mail",
+      "enabled": "Run the mail client",
+      "address": "Mailbox address",
+      "machine": "This machine's plus-tag",
+      "allow_from": "Allowed senders",
+      "agent": "Agent profile",
+      "provider": "Provider overlay",
+      "model": "Model overlay",
+      "auth": "Authentication",
+      "working_directory": "Working directory",
+      "permission_mode": "Permission mode",
+      "idle_timeout_seconds": "IMAP IDLE timeout (seconds)",
+      "turn_timeout_seconds": "Turn timeout (seconds)",
+      "oauth": {
+        "_": "OAuth",
+        "issuer": "Issuer",
+        "client_id": "Client id",
+        "tenant": "Microsoft tenant",
+        "token_url": "Token URL",
+        "authorize_url": "Authorize URL",
+        "scopes": "Scopes",
+        "redirect_uri": "Redirect URI",
+        "client_secret": "Client secret",
+        "refresh_token": "Refresh token"
+      },
+      "imap": {
+        "_": "IMAP",
+        "host": "Host",
+        "port": "Port",
+        "username": "Username",
+        "password": "Password",
+        "mailbox": "Mailbox",
+        "ssl": "TLS"
+      },
+      "smtp": {
+        "_": "SMTP",
+        "host": "Host",
+        "port": "Port",
+        "username": "Username",
+        "password": "Password",
+        "start_tls": "STARTTLS",
+        "use_tls": "Implicit TLS"
       }
     },
     "exa": {
@@ -756,6 +843,51 @@
         "transcription_timeout_realtime_multiplier": "Added to the floor, per second of audio. Transcription runs comfortably faster than real time on Apple Silicon, so reaching the limit means stuck, not busy.",
         "maximum_attempts": "How many workers one recording may be given.",
         "worker_shutdown_seconds": "How long a worker is given to exit on its own before it is killed."
+      }
+    },
+    "email": {
+      "_": "IMAP IDLE plus SMTP in front of this daemon. A new thread addressed to local+machine@domain starts a session here; a reply steers that conversation.",
+      "enabled": "Run the mail client against this mailbox.",
+      "address": "The mailbox. IMAP logs in as the account; SMTP From uses local+machine@domain so replies stay tagged.",
+      "machine": "This host's plus-tag. New threads must be addressed here; replies follow the thread even if the tag is missing.",
+      "allow_from": "Mailboxes (or @domain) whose mail is taken. Everyone else is ignored.",
+      "agent": "The agent profile each mail thread session runs.",
+      "provider": "Optional catalogue provider overlay for mailbox sessions. Set together with email.model.",
+      "model": "Optional catalogue model overlay for mailbox sessions. Set together with email.provider.",
+      "auth": "How IMAP and SMTP authenticate: password or oauth.",
+      "working_directory": "Where mail sessions' tools run. Empty leaves the daemon's current directory.",
+      "permission_mode": "Who answers gates for a mail session.",
+      "idle_timeout_seconds": "How long one IMAP IDLE waits before cycling.",
+      "turn_timeout_seconds": "How long to wait for this mail's turn before giving up.",
+      "oauth": {
+        "_": "OAuth2 for IMAP/SMTP. Tokens live as secret files.",
+        "issuer": "google, microsoft, yahoo, or custom. Empty infers from the address.",
+        "client_id": "OAuth app id.",
+        "tenant": "Microsoft tenant.",
+        "token_url": "Token endpoint, for a custom issuer.",
+        "authorize_url": "Authorize endpoint, for a custom issuer.",
+        "scopes": "Override the issuer's scopes.",
+        "redirect_uri": "Loopback URI langmesh mail auth listens on.",
+        "client_secret": "Unused in YAML. The live secret is the file email.oauth.client_secret.",
+        "refresh_token": "Unused in YAML. The live secret is the file email.oauth.refresh_token."
+      },
+      "imap": {
+        "_": "The mailbox the mail client IDLEs on.",
+        "host": "IMAP server. Inferred from the address when empty.",
+        "port": "IMAP port.",
+        "username": "IMAP login. Empty means the account without a plus-tag.",
+        "password": "Unused in YAML. The live secret is the file email.imap.password.",
+        "mailbox": "Which folder to IDLE.",
+        "ssl": "Implicit TLS."
+      },
+      "smtp": {
+        "_": "Where replies are sent.",
+        "host": "SMTP server. Inferred from the address when empty.",
+        "port": "SMTP port.",
+        "username": "SMTP login. Empty means the IMAP username.",
+        "password": "Unused in YAML. The live secret is the file email.smtp.password.",
+        "start_tls": "Upgrade with STARTTLS.",
+        "use_tls": "Implicit TLS. Port 465 implies this."
       }
     },
     "exa": {
