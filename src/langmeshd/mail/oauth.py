@@ -13,6 +13,7 @@ import urllib.parse
 import webbrowser
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Any
 
 from langmesh.base.secrets import EMAIL_OAUTH_REFRESH_TOKEN, write_secret
@@ -176,12 +177,12 @@ async def access_token(configuration: EmailConfiguration) -> str:
         return access
 
 
+_CALLBACK_TEMPLATE = (Path(__file__).resolve().parent / "callback.html").read_text()
+
+
 def _callback_page(message: str) -> str:
-    return (
-        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\">"
-        "<title>LangMesh mail</title><body><main><h1>"
-        f"{html.escape(message)}</h1></main></body></html>"
-    )
+    """The page the browser shows after the OAuth provider redirects to this loopback."""
+    return _CALLBACK_TEMPLATE.replace("{{message}}", html.escape(message))
 
 
 async def authorize(configuration: EmailConfiguration) -> str:
