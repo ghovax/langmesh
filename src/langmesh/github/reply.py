@@ -35,8 +35,9 @@ class GitHubComment(BaseModel):
 
     comment: str = Field(
         description=(
-            "The text that replaces the acknowledgement. Say it in one breath, "
-            "in everyday English. A URL is ok if they need it."
+            "The text that replaces the acknowledgement. Everyday English, "
+            "kept compact. A short list or URL is welcome when it carries "
+            "the answer; don't omit what they asked."
         )
     )
     kind: CommentKind = Field(
