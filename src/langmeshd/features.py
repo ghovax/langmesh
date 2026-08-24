@@ -164,3 +164,14 @@ def mailbox_tools(session_id: str) -> list:
     from langmeshd.mail.threads import session_is_mailbox
 
     return [submit_email] if session_is_mailbox(session_id) else []
+
+
+def mailbox_agent(agent: Any, session_id: str) -> Any:
+    """Overlay YAML ``email.provider``/``email.model`` onto mailbox sessions only."""
+    from langmeshd.mail.threads import session_is_mailbox
+
+    if not session_is_mailbox(session_id):
+        return agent
+    from langmeshd.mail.agent import overlay_mailbox_agent
+
+    return overlay_mailbox_agent(agent)

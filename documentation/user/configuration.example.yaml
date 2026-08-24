@@ -26,13 +26,17 @@
 
 # API keys live as 0600 files under $XDG_DATA_HOME/langmesh/secrets/
 # (providers.<id>.api_key). Which model a session runs is chosen by its agent
-# profile, not here. The full list is in langmesh.base.identity.providers.
+# profile, except mailbox sessions which may overlay email.provider and
+# email.model. The full list is in langmesh.base.identity.providers.
 
 providers: {}
   # anthropic:
   #   api_key: ""
   # openai:
   #   api_key: ""
+  # custom:
+  #   api_key: ""
+  #   base_url: "https://…"
 
 # Exa backs the built-in web search. The key is the secret file exa.api_key.
 exa:
@@ -198,12 +202,15 @@ daemon:
 
 # IMAP IDLE plus SMTP in front of the daemon. Off until you enable it.
 # Passwords are secret files email.imap.password and email.smtp.password.
+# email.provider and email.model overlay the agent profile for mailbox sessions.
 # See documentation/user/email.md.
 email:
   enabled: false
   address: ""
   allow_from: []
   agent: "reviewer"
+  provider: ""
+  model: ""
   working_directory: ""
   permission_mode: "automatic"
   idle_timeout_seconds: 60.0

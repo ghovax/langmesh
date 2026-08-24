@@ -199,13 +199,16 @@ class EmailConfiguration(AppConfigurationSection):
     """IMAP IDLE plus SMTP in front of the daemon: a client, not a second session embedder.
 
     Off by default. Passwords live as secret files, not in this document. The mail
-    process reads this section; the library never does.
+    process reads this section; the library never does. ``provider`` and ``model``
+    overlay the agent profile for mailbox sessions only.
     """
 
     enabled: bool = Field(default=False)
     address: str = Field(default="")
     allow_from: list[str] = Field(default_factory=list)
     agent: str = Field(default="reviewer")
+    provider: str = Field(default="")
+    model: str = Field(default="")
     working_directory: str = Field(default="")
     permission_mode: str = Field(default="automatic")
     idle_timeout_seconds: float = Field(default=60.0, gt=0)
@@ -224,6 +227,16 @@ class EmailConfiguration(AppConfigurationSection):
     @property
     def effective_agent(self) -> str:
         return self.agent.strip() or "reviewer"
+
+    @property
+    def effective_provider(self) -> str:
+        """Catalogue provider overlay for mailbox sessions. Empty keeps the agent profile's provider."""
+        return self.provider.strip()
+
+    @property
+    def effective_model(self) -> str:
+        """Catalogue model overlay for mailbox sessions. Empty keeps the agent profile's model."""
+        return self.model.strip()
 
     @property
     def effective_working_directory(self) -> str:
