@@ -84,14 +84,14 @@ langmesh mail check
 | `-p`, `--port` | Port to listen on. Default `8824` (`8825` with `--reach`). |
 | `--host` | Address to bind. Default `127.0.0.1`. |
 | `--open` | Also open a browser at the served address. Off by default. |
-| `--reach` | Serve the paired door: a durable pairing token, a `langmesh://pair#…` link to scan, and every request gated by the token. For your own devices over your tailnet. |
+| `--reach` | Serve the paired door: a durable pairing token, a `langmesh://pair#…` link to scan, and every request gated by the token. For your own devices, over a transport you choose. |
 
 This serves the same interface the desktop app embeds, so a browser is a client like any other. It **proxies** the daemon rather than pointing the browser at it: the page never sees the daemon's capability token, and there is no CORS to configure. `serve` starts the daemon if it is not running, and stops a daemon it started when it exits; a daemon someone else was already running is left alone.
 
 > [!WARNING]
 > Whatever can reach this address can drive the daemon, because this server holds the token. It binds `127.0.0.1` for that reason. `--host` exists for tunnelling deliberately; if you use it, put authentication in front.
 
-**The paired door (`--reach`) is for your devices only.** It prints a `langmesh://pair#…` link carrying the address and a durable token; a phone scans or pastes it and is then the only thing the door answers to. What carries the door off the machine is your tailnet — `tailscale serve` terminates TLS at your `*.ts.net` name and proxies to the loopback port — so the tailnet identity is the outer gate and the pairing token the inner one. Nothing binds past loopback, and deleting the pairing token unpairs every device.
+**The paired door (`--reach`) is for your devices only.** It prints a `langmesh://pair#…` link carrying the address and a durable token; a phone scans or pastes it and is then the only thing the door answers to. What carries the door off the machine is a transport you choose — `tailscale serve` terminates TLS at your `*.ts.net` name and proxies to the loopback port; an SSH tunnel is the other common path — so the outer path is yours and the pairing token the inner one. Nothing binds past loopback, and deleting the pairing token unpairs every device.
 
 Needs the interface to have been built (`cd web && bun run build` in a checkout). The packaged build carries it.
 
@@ -175,8 +175,7 @@ with a transport you choose:
 
 - **SSH tunnel.** Forward the daemon's port to your laptop. The port the daemon publishes is
   written under its runtime directory; the token sits beside it.
-- **Tailscale.** Install Tailscale on the VPS and on your laptop, then point the desktop app's
-  connect flow at the machine's tailnet address.
+- **Tailscale.** Install Tailscale on the VPS and on your laptop, then pair from **Settings, then Connection** using the `langmesh://pair#…` link `langmesh serve --reach` prints at the machine's tailnet address.
 
 A remote agent created on the server is a normal session: it keeps its transcript, its goals, and
 its approvals, and it is reachable from anywhere you can reach the daemon.

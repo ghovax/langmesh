@@ -95,7 +95,7 @@
     "compactingTooltip": "Compacting the conversation…",
     "dictationCouldNotOpen": "The microphone could not be opened: {reason}",
     "dictationFailed": "Couldn't take that dictation",
-    "dictationInsecureOrigin": "A browser only opens a microphone over a secure connection, and this page did not arrive over one. Reach this machine over its Tailscale address, which is served over HTTPS.",
+    "dictationInsecureOrigin": "A browser only opens a microphone over a secure connection, and this page did not arrive over one. Open this machine over HTTPS — Tailscale serve, an SSH tunnel with a certificate, or any other TLS front for the loopback door.",
     "dictationLoading": "Loading the dictation model…",
     "dictationNoDevice": "No microphone is available.",
     "dictationNoMicrophone": "This browser cannot reach a microphone.",
@@ -268,17 +268,13 @@
     "savingChanges": "Saving changes…"
   },
   "ConnectionSettings": {
-    "connect": "Open",
-    "connected": "Connected",
     "couldNotConnect": "Couldn't connect",
-    "couldNotReach": "Couldn't reach {name}",
     "deleteConnection": "Delete {url}",
     "noSavedConnections": "No saved connections",
-    "noSavedConnectionsHint": "Add a server address below to reach it later",
+    "noSavedConnectionsHint": "Paste a pairing link below to reach that machine later",
     "pairingLink": "Pairing link",
     "pairingLinkHelper": "Paste the <code>langmesh://pair#…</code> link that machine printed when it exposed its door. It carries the address and a token, and both stay on this machine.",
     "pairingLinkPlaceholder": "langmesh://pair#…",
-    "retry": "Retry",
     "saveConnection": "Save connection",
     "savedConnections": "Saved connections",
     "thisMachine": "This machine",
@@ -538,10 +534,10 @@
     "fieldWorkspace": "Workspace",
     "fieldMachine": "Machine",
     "thisMachine": "This machine",
-    "remote": "Remote",
     "hideWorkspace": "Hide this workspace's conversations",
     "showWorkspace": "Show this workspace's conversations",
-    "openFolder": "Open folder"
+    "openFolder": "Open folder",
+    "pairedMachine": "Paired machine"
   },
   "Settings": {
     "agent": {

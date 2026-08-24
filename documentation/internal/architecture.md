@@ -9,7 +9,9 @@
 | **Harness**             | The code between the model and your machine: the turn loop, tools, plugins, prompts, permissions. `langmesh.Session` is the harness. |
 | **Feature** (plugin)    | A replaceable sub-behavior composed onto the core — a tool, goal review, compaction, permissions. The core names none of them. |
 | **Control plane**       | The daemon's RPC/API. Every client reaches a session through it, so a caller is identified and scoped in one place. |
-| **Location**            | Where a session's tools actually run: this machine, or an SSH host. Distinct from the working directory, which is where on that location. |
+| **Location**            | Where a session's tools actually run: this machine, or an SSH host. Distinct from which daemon the interface is talking to. |
+| **Home daemon**         | The `langmeshd` that owns this page — this machine's. Tauri reports it; next-dev injects it; `langmesh serve` is same-origin. |
+| **Paired machine**      | Another `langmeshd` remembered from a pairing link. Switching stays on this page; address and token travel together. |
 | **Peer**                | A session created by another session. Not a special kind of thing, an ordinary session. |
 
 [A2A](https://github.com/google/A2A) is Agent-to-Agent, Google's JSON-RPC protocol for one agent to call another. The daemon serves it for every session it hosts, so a peer and a person reach a session the same way.
@@ -87,22 +89,20 @@ A [Tauri](https://tauri.app) shell around a [Next.js](https://nextjs.org) UI (st
 - A phone is an Expo client that opens the same web interface in a WebView and adds the two things a page alone cannot do: reading the `langmesh://pair#…` pairing code with the camera, and keeping its token in the keychain. The shared UI and catalogue live in `shared/`.
 - A GitHub mention is the library in a GitHub Action: `@langmesh[bot]` on an issue or pull request, or a reply to the bot, starts `langmesh.github.mention` with provider and model from the profile named in `.github/langmesh.yaml` (`.agents/agents/github/AGENT.md` by default). There is no daemon. The job copies `.github/secrets/` onto `$XDG_DATA_HOME/langmesh/secrets`, acknowledges from the mention prompt files after checkout, links the live Action log on that comment, and updates it; failures go to the Action log, not the thread. On an issue the agent reuses a branch that already is this work when one exists, otherwise creates `langmesh/<slug>-<code>` itself, commits, pushes, and opens a draft PR; a pull-request mention commits and pushes on that PR's branch. It is told not to touch the default branch unless asked. The workflow caches `.github/langmesh` per thread, including provider cache state, and the mention system prompt is byte-stable so follow-up jobs reuse the prefix. The job points at the thread and the comment; the agent reads earlier comments with `gh`. See [GitHub mentions](../user/github.md).
 
-## Connections: local, remote, SSH
+## Connections: which daemon, where work runs, how a door leaves the machine
 
-A daemon's address and its token belong together. Each `langmeshd` mints its own token at boot, so a remote daemon does not accept the local one. A saved connection profile therefore carries both. The client resolves, in order:
+Three questions that look alike and are not.
 
-1. a connection/machine you activated in **Settings, then Connection** (its URL and its token),
-2. the endpoint the desktop shell reports for the local daemon,
-3. the build-time default `NEXT_PUBLIC_API_BASE`,
-4. the conventional local address.
+**Which daemon the interface talks to.** A daemon's address and its token belong together. Each `langmeshd` mints its own token at boot, so a paired daemon does not accept this machine's. The client has one **home** connection (this page's daemon) and zero or more **paired** machines:
 
-That yields three ways to run:
+- **Home.** The release app starts the separately installed daemon when needed, then reads the port and token `langmeshd` published into the runtime directory. A next-dev page is the same home connection, learned from the env `web-development.sh` writes. A page `langmesh serve` hosts talks same-origin through the proxy, so the browser never sees the capability token.
+- **Paired.** Run `langmeshd` on another host, expose its loopback door behind a transport you choose, paste the `langmesh://pair#…` link under **Settings, then Connection**, and switch in the same window. Sessions from that host appear in the sidebar as that machine. Pairing lives on the home daemon; a switch does not navigate away.
 
-- **Local (default).** The release app starts the separately installed daemon when needed, then reads the port and token `langmeshd` published into the runtime directory.
-- **Remote URL.** Run `langmeshd` on another host, expose its loopback port behind your own transport security, and add the URL plus the token. The app becomes a native front end to a remote backend; the agent's shell, files, and network all live on that host.
-- **Over SSH.** Add an SSH host as a location. LangMesh forwards a local port to a command channel on the remote machine, so the harness can work on a machine you reach only over SSH while the daemon stays local.
+**Where a session's tools run.** That is a **location**, not a daemon. `kind: local` is this machine's filesystem; `kind: remote` is an SSH host from `~/.ssh/config`. LangMesh forwards a local port to a command channel on that host, so the harness can work there while the daemon you are talking to stays the one you chose above.
 
-Keeping the halves apart serves one goal: **put the compute, the files, and the credentials wherever they belong, and keep the interface native and local.**
+**How a pairing door leaves the machine.** `--reach` binds loopback and gates every request with a pairing token. What carries that door off the machine is a transport you choose — Tailscale `serve`, an SSH tunnel, or any other TLS front. Tailscale is one documented way, not a product type: see [installation](../user/installation.md) and [SECURITY.md](../../SECURITY.md).
+
+Keeping them apart serves one goal: **put the compute, the files, and the credentials wherever they belong, and keep the interface native.**
 
 ## What a session has, and what it may reach
 

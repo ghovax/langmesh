@@ -37,9 +37,11 @@ import { PanelBody, PanelCard } from "@/components/ui/Panel";
 import { FadeSwitch } from "@/components/ui/FadeIn";
 import { Tooltip } from "@/components/ui/Tooltip";
 import {
+  canonicalDaemonId,
   deleteWorkspace,
   fetchAllWorkspaces,
   fetchDaemonTargets,
+  isHomeDaemon,
   listSshHosts,
   subscribeEvents,
   type AgentSummary,
@@ -171,7 +173,7 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
     for (const session of shownSessions) {
       // Only the conversations you started; a session a session created is listed in the delegated panel.
       if (session.parentSessionId) continue;
-      const key = `${session.daemonId || "local"}:${session.workspaceId ?? ""}`;
+      const key = `${canonicalDaemonId(session.daemonId)}:${session.workspaceId ?? ""}`;
       const held = byWorkspace.get(key);
       if (held) held.push(session);
       else byWorkspace.set(key, [session]);
@@ -179,7 +181,7 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
     return workspaces
       .map((workspace) => ({
         workspace,
-        sessions: byWorkspace.get(`${workspace.daemonId}:${workspace.id}`) ?? [],
+        sessions: byWorkspace.get(`${canonicalDaemonId(workspace.daemonId)}:${workspace.id}`) ?? [],
       }))
       .filter(({ sessions: workspaceSessions }) => !searchQuery || workspaceSessions.length > 0);
   }, [workspaces, shownSessions, searchQuery]);
@@ -188,21 +190,21 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
     const groups: {
       id: string;
       name: string;
-      remote: boolean;
+      paired: boolean;
       items: typeof visibleWorkspaces;
     }[] = [];
     const index = new Map<string, number>();
     for (const item of visibleWorkspaces) {
-      const id = item.workspace.daemonId;
+      const id = canonicalDaemonId(item.workspace.daemonId);
       const existing = index.get(id);
       if (existing === undefined) {
         index.set(id, groups.length);
         groups.push({
           id,
-          name: item.workspace.remote
-            ? item.workspace.daemonName || translation("remote")
+          name: item.workspace.paired
+            ? item.workspace.daemonName || translation("pairedMachine")
             : translation("thisMachine"),
-          remote: item.workspace.remote,
+          paired: item.workspace.paired,
           items: [item],
         });
       } else {
@@ -212,7 +214,7 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
     return groups;
   }, [visibleWorkspaces, translation]);
 
-  const showDaemonHeaders = daemonGroups.length > 1 || daemonGroups.some((group) => group.remote);
+  const showDaemonHeaders = daemonGroups.length > 1 || daemonGroups.some((group) => group.paired);
 
   if (!sessionsLoaded || workspaces.length === 0) return null;
   if (visibleWorkspaces.length === 0) {
@@ -239,8 +241,8 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
             </Text>
           ) : null}
           {group.items.map(({ workspace, sessions: workspaceSessions }) => {
-        const workspaceKey = `${workspace.daemonId}:${workspace.id}`;
-        const currentKey = `${currentDaemonId}:${currentWorkspaceId}`;
+        const workspaceKey = `${canonicalDaemonId(workspace.daemonId)}:${workspace.id}`;
+        const currentKey = `${canonicalDaemonId(currentDaemonId)}:${currentWorkspaceId}`;
         const label = workspaceTitle(workspace, locale, translation("untitledWorkspace"));
         // Keyed by the workspace alone: including the search text made every keystroke discard the choice.
         const workspaceOpen =
@@ -350,7 +352,8 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
                     entry={entry}
                     agents={agents}
                     isActive={
-                      sessionIdentity(entry) === `${currentDaemonId}:${activeSessionId ?? ""}`
+                      sessionIdentity(entry) ===
+                      `${canonicalDaemonId(currentDaemonId)}:${activeSessionId ?? ""}`
                     }
                     unseenCompletions={unseenCompletions}
                     onResume={onResume}
@@ -711,7 +714,7 @@ export function SessionsSidebar({
               ...workspace,
               daemonId: currentDaemonId,
               daemonName: "",
-              remote: currentDaemonId !== "local",
+              paired: !isHomeDaemon(currentDaemonId),
             };
             setWorkspaces((current) => [
               located,

@@ -1,67 +1,78 @@
-// Where the daemon lives, and the capability token that proves we may talk to it.
+// Which langmeshd this page talks to. Address and token are one fact.
+//
+// Home is this machine's daemon. Next-dev learns it from the env that
+// web-development.sh writes; Tauri overwrites it with `daemon_endpoint`; a
+// page `langmesh serve` hosts uses the current origin. Pairing remembers
+// other daemons. Switching stays on this page. Location.kind (`local` /
+// `remote`) is a different question: filesystem here vs an SSH host.
 import { setFaultSender, reportError } from "./faults";
 
-// The development server is pointed straight at the daemon by web-development.sh; a built page
-// is served by the daemon itself (or by Tauri, which reports the endpoint below).
-const DEFAULT_API_BASE =
-  typeof process !== "undefined" ? process.env.NEXT_PUBLIC_API_BASE || "" : "";
-
-// The token a development page presents, and only ever a development page.
-const DEVELOPMENT_TOKEN =
-  typeof process !== "undefined" && process.env.NODE_ENV !== "production"
-    ? process.env.NEXT_PUBLIC_TOKEN || ""
-    : "";
+type Connection = { endpoint: string; token: string };
 
 function runningInTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-let API_BASE = DEFAULT_API_BASE;
+function seedHomeConnection(): Connection {
+  const endpoint =
+    typeof process !== "undefined" ? (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/+$/, "") : "";
+  // Only a next-dev page inlines the token. A production build is same-origin
+  // behind `serve`, or Tauri, which fills the home connection in below.
+  const token =
+    typeof process !== "undefined" && process.env.NODE_ENV !== "production"
+      ? process.env.NEXT_PUBLIC_TOKEN || ""
+      : "";
+  return { endpoint, token };
+}
 
-// This machine's daemon, kept even while a session's RPCs go to a paired remote.
-let homeEndpoint = DEFAULT_API_BASE;
-let homeToken = DEVELOPMENT_TOKEN;
-// The token for the daemon the page is talking to right now (home, or a remote we switched to).
-let localDaemonToken = DEVELOPMENT_TOKEN;
+const seededHome = seedHomeConnection();
+let home: Connection = { ...seededHome };
+let active: Connection = { ...seededHome };
+let paired: { id: string; name: string } | null = null;
 let daemonEndpointPromise: Promise<void> | null = null;
-let remoteOverride: { id: string; name: string; endpoint: string; token: string } | null = null;
 
-export const LOCAL_DAEMON_ID = "local";
-
-export type DaemonKind = "local" | "remote";
+/** This page's own daemon. `"local"` still reads as home so an older `?daemon=local` bookmark keeps working. */
+export const HOME_DAEMON_ID = "home";
 
 export type DaemonTarget = {
   id: string;
   name: string;
-  kind: DaemonKind;
+  home: boolean;
   endpoint: string;
   token: string;
 };
 
+/** Home, including a `?daemon=local` bookmark from the first in-page switcher. */
+export function isHomeDaemon(id: string | null | undefined): boolean {
+  return !id || id === HOME_DAEMON_ID || id === "local";
+}
+
+export function canonicalDaemonId(id: string | null | undefined): string {
+  return isHomeDaemon(id) ? HOME_DAEMON_ID : id!;
+}
+
+export function sameDaemon(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  return canonicalDaemonId(left) === canonicalDaemonId(right);
+}
+
 async function resolveDaemonEndpoint(): Promise<void> {
   if (!runningInTauri()) {
-    // The daemon's address comes from the environment in development; nothing to discover on the page.
-    homeEndpoint = DEFAULT_API_BASE;
-    homeToken = DEVELOPMENT_TOKEN;
-    if (!remoteOverride) {
-      API_BASE = homeEndpoint;
-      localDaemonToken = homeToken;
-    }
+    home = seedHomeConnection();
+    if (!paired) active = { ...home };
     return;
   }
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     const endpoint = await invoke<{ url: string; token: string }>("daemon_endpoint");
     if (endpoint?.url) {
-      homeEndpoint = endpoint.url.replace(/\/+$/, "");
-      homeToken = endpoint.token ?? "";
+      home = { endpoint: endpoint.url.replace(/\/+$/, ""), token: endpoint.token ?? "" };
     }
-    if (!remoteOverride) {
-      API_BASE = homeEndpoint;
-      localDaemonToken = homeToken;
-    }
+    if (!paired) active = { ...home };
   } catch {
-    // No endpoint reported: leave the defaults, and let the failing request surface it.
+    // No endpoint reported: leave the seeded home connection, and let the failing request surface it.
   }
 }
 
@@ -76,9 +87,9 @@ export function forgetDaemonEndpoint(): void {
   daemonEndpointPromise = null;
 }
 
-/** Resolve the daemon again and prove it is answering, starting the installed local one in Tauri when absent. */
+/** Resolve the home daemon again and prove the active one is answering. */
 export async function reconnectDaemon(): Promise<void> {
-  if (!remoteOverride) {
+  if (!paired) {
     forgetDaemonEndpoint();
     invalidateDiscoveryCache();
   }
@@ -87,38 +98,37 @@ export async function reconnectDaemon(): Promise<void> {
 }
 
 export function activeDaemonId(): string {
-  return remoteOverride?.id ?? LOCAL_DAEMON_ID;
+  return paired?.id ?? HOME_DAEMON_ID;
 }
 
 function rememberedHomeBase(): string {
-  if (homeEndpoint) return homeEndpoint.replace(/\/+$/, "");
+  if (home.endpoint) return home.endpoint.replace(/\/+$/, "");
   if (typeof window !== "undefined") return window.location.origin.replace(/\/+$/, "");
   return "";
 }
 
 export function homeApiOptions(): ApiRequestOptions {
-  // Home credentials only: never the remote we switched a session to.
-  return { apiBase: rememberedHomeBase(), token: homeToken };
+  // Home credentials only: never the paired daemon a session was switched to.
+  return { apiBase: rememberedHomeBase(), token: home.token };
 }
 
-export function switchDaemon(target: DaemonTarget | "local"): void {
-  if (target === "local" || target.kind === "local") {
-    remoteOverride = null;
-    API_BASE = homeEndpoint || DEFAULT_API_BASE;
-    localDaemonToken = homeToken;
+function homeConnection(): Connection {
+  const endpoint = rememberedHomeBase();
+  return { endpoint, token: home.token };
+}
+
+export function switchDaemon(target: DaemonTarget | "home"): void {
+  const goingHome = target === "home" || (typeof target !== "string" && target.home);
+  if (goingHome) {
+    paired = null;
+    active = homeConnection();
   } else {
-    if (!homeEndpoint && typeof window !== "undefined") {
-      homeEndpoint = window.location.origin.replace(/\/+$/, "");
+    if (!home.endpoint && typeof window !== "undefined") {
+      home = { ...home, endpoint: window.location.origin.replace(/\/+$/, "") };
     }
-    if (!homeToken) homeToken = localDaemonToken;
-    remoteOverride = {
-      id: target.id,
-      name: target.name,
-      endpoint: target.endpoint,
-      token: target.token,
-    };
-    API_BASE = target.endpoint.replace(/\/+$/, "");
-    localDaemonToken = target.token;
+    if (!home.token) home = { ...home, token: active.token };
+    paired = { id: target.id, name: target.name };
+    active = { endpoint: target.endpoint.replace(/\/+$/, ""), token: target.token };
   }
   restartEventStream();
 }
@@ -141,7 +151,7 @@ export interface ApiRequestOptions {
 }
 
 function apiBase(options?: ApiRequestOptions): string {
-  return (options?.apiBase || API_BASE).replace(/\/+$/, "");
+  return (options?.apiBase || active.endpoint).replace(/\/+$/, "");
 }
 
 function apiUrl(path: string, options?: ApiRequestOptions): string {
@@ -149,7 +159,7 @@ function apiUrl(path: string, options?: ApiRequestOptions): string {
 }
 
 function requestToken(options?: ApiRequestOptions): string {
-  return options?.token ?? localDaemonToken;
+  return options?.token ?? active.token;
 }
 
 // The token as a query parameter, for transports that carry no header: a websocket, an iframe, a download.
@@ -338,7 +348,7 @@ export function invalidateDiscoveryCache(): void {
 // The URL serving a local file for display, each segment encoded and the slashes kept.
 export function localFileUrl(path: string): string {
   const encoded = path.split("/").map(encodeURIComponent).join("/");
-  return withDaemonToken(`${API_BASE}/files/${encoded}`);
+  return withDaemonToken(`${active.endpoint}/files/${encoded}`);
 }
 
 // A generic uploaded file: the core knows the stored file and its metadata, and nothing more.
@@ -475,11 +485,6 @@ export async function machineDoor(machineId: string): Promise<MachineDoor> {
   return { url, endpoint, token };
 }
 
-/** @deprecated Use machineDoor. Kept for anything that still wants the tab URL. */
-export async function machineAddress(machineId: string): Promise<string> {
-  return (await machineDoor(machineId)).url;
-}
-
 export async function renameMachine(machineId: string, name: string): Promise<void> {
   await apiFetch(`/machines/${encodeURIComponent(machineId)}`, {
     method: "PUT",
@@ -498,22 +503,22 @@ export async function forgetMachine(machineId: string): Promise<void> {
 
 export async function fetchDaemonTargets(): Promise<DaemonTarget[]> {
   await ensureDaemonEndpoint();
-  const local: DaemonTarget = {
-    id: LOCAL_DAEMON_ID,
+  const homeTarget: DaemonTarget = {
+    id: HOME_DAEMON_ID,
     name: "",
-    kind: "local",
+    home: true,
     endpoint: rememberedHomeBase(),
-    token: homeToken,
+    token: home.token,
   };
   const machines = await listMachines();
-  const remotes = await Promise.all(
+  const pairedTargets = await Promise.all(
     machines.map(async (machine) => {
       try {
         const door = await machineDoor(machine.id);
         return {
           id: machine.id,
           name: machine.name,
-          kind: "remote" as const,
+          home: false,
           endpoint: door.endpoint || machine.endpoint.replace(/\/+$/, ""),
           token: door.token,
         };
@@ -521,29 +526,25 @@ export async function fetchDaemonTargets(): Promise<DaemonTarget[]> {
         return {
           id: machine.id,
           name: machine.name,
-          kind: "remote" as const,
+          home: false,
           endpoint: machine.endpoint.replace(/\/+$/, ""),
           token: "",
         };
       }
     }),
   );
-  const activeRemote = remoteOverride;
-  if (
-    activeRemote &&
-    activeRemote.id !== LOCAL_DAEMON_ID &&
-    !remotes.some((remote) => remote.id === activeRemote.id)
-  ) {
-    remotes.unshift({
-      id: activeRemote.id,
-      name: activeRemote.name,
-      kind: "remote",
-      endpoint: activeRemote.endpoint.replace(/\/+$/, ""),
-      token: activeRemote.token,
+  const activePaired = paired;
+  if (activePaired && !pairedTargets.some((target) => target.id === activePaired.id)) {
+    pairedTargets.unshift({
+      id: activePaired.id,
+      name: activePaired.name,
+      home: false,
+      endpoint: active.endpoint.replace(/\/+$/, ""),
+      token: active.token,
     });
   }
-  watchDaemons([local, ...remotes]);
-  return [local, ...remotes];
+  watchDaemons([homeTarget, ...pairedTargets]);
+  return [homeTarget, ...pairedTargets];
 }
 
 export async function probeDaemon(target: Pick<DaemonTarget, "endpoint" | "token">): Promise<boolean> {
@@ -562,20 +563,20 @@ export async function probeDaemon(target: Pick<DaemonTarget, "endpoint" | "token
 export interface FederatedSession extends SessionSummary {
   daemonId: string;
   daemonName: string;
-  remote: boolean;
+  paired: boolean;
 }
 
 export interface FederatedWorkspace extends Workspace {
   daemonId: string;
   daemonName: string;
-  remote: boolean;
-};
+  paired: boolean;
+}
 
 export async function fetchAllSessions(): Promise<FederatedSession[]> {
   const targets = await fetchDaemonTargets();
   const results = await Promise.allSettled(
     targets.map(async (target) => {
-      if (!target.endpoint || (target.kind === "remote" && !target.token)) return [];
+      if (!target.endpoint || (!target.home && !target.token)) return [];
       const sessions = await fetchSessions({
         all: true,
         apiBase: target.endpoint,
@@ -585,7 +586,7 @@ export async function fetchAllSessions(): Promise<FederatedSession[]> {
         ...session,
         daemonId: target.id,
         daemonName: target.name,
-        remote: target.kind === "remote",
+        paired: !target.home,
       }));
     }),
   );
@@ -600,7 +601,7 @@ export async function fetchAllWorkspaces(): Promise<FederatedWorkspace[]> {
   const targets = await fetchDaemonTargets();
   const results = await Promise.allSettled(
     targets.map(async (target) => {
-      if (!target.endpoint || (target.kind === "remote" && !target.token)) return [];
+      if (!target.endpoint || (!target.home && !target.token)) return [];
       const workspaces = await listWorkspaces({
         apiBase: target.endpoint,
         token: target.token,
@@ -609,7 +610,7 @@ export async function fetchAllWorkspaces(): Promise<FederatedWorkspace[]> {
         ...workspace,
         daemonId: target.id,
         daemonName: target.name,
-        remote: target.kind === "remote",
+        paired: !target.home,
       }));
     }),
   );
@@ -1541,7 +1542,7 @@ function ensureEventStream(): void {
       if (connected === lastReportedConnection) return;
       lastReportedConnection = connected;
       // What comes back may be a different daemon, so forgetting the endpoint is what reaches it.
-      if (!connected && !remoteOverride) forgetDaemonEndpoint();
+      if (!connected && !paired) forgetDaemonEndpoint();
       connectionListeners.forEach((listener) => listener(connected));
     },
   );
