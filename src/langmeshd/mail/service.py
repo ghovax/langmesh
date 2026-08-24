@@ -525,7 +525,9 @@ class MailService:
 
 def load_email_configuration() -> EmailConfiguration:
     from langmeshd.commons.configuration_file import load as load_document
+    from langmeshd.mail.envfile import apply_mail_env
 
+    apply_mail_env()
     document = load_document() or {}
     return EmailConfiguration.model_validate(document.get("email") or {})
 

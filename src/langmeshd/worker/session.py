@@ -989,7 +989,9 @@ class SessionExecutor(AgentExecutor):
             plugin_tools=self._host.plugin_tools(),
         )
         from langmeshd.features import mailbox_tools
+        from langmeshd.mail.envfile import apply_mail_env
 
+        apply_mail_env()
         for tool in mailbox_tools(session_id):
             if all(getattr(existing, "name", "") != tool.name for existing in composed):
                 composed.append(tool)

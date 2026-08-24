@@ -581,6 +581,9 @@ def main() -> int:
             logging.FileHandler(daemon_log_path()),
         ],
     )
+    from langmeshd.mail.envfile import apply_mail_env
+
+    apply_mail_env()
     try:
         return asyncio.run(_serve())
     except KeyboardInterrupt:
