@@ -64,7 +64,7 @@ uv run langmesh mail check
 uv run langmesh mail
 ```
 
-`mail check` loads `mail.env`, lists anything still missing, and proves IMAP login plus SMTP auth without IDLEing and without starting the daemon. `mail` starts `langmeshd` when it is not listening, then proves IMAP and SMTP and IDLEs. Both commands load `mail.env` from `LANGMESH_MAIL_ENV`, `./mail.env`, `/srv/langmesh/mail.env`, or `packaging/mail/mail.env` — already-set environment values win, so you do not need `xargs`. The daemon and each mailbox session load that file the same way, so an already-running `langmeshd` still sees a `mail.env` you fill after it started. If the mailbox, allow-list, or the agent profile's provider key is not configured yet, `mail` waits and re-reads `mail.env` and the configuration file instead of exiting. A systemd or Docker `langmeshd` that is already binding the socket is waited on rather than started a second time. Logs go to stderr and `$XDG_STATE_HOME/langmesh/langmesh-mail.log`.
+`mail check` loads `mail.env`, lists anything still missing, and proves IMAP login, `UID SEARCH UNSEEN`, and SMTP auth without IDLEing and without starting the daemon. A refused login includes the server's reason (wrong app password versus IMAP disabled). `mail` starts `langmeshd` when it is not listening, then proves IMAP and SMTP and IDLEs. `mail` starts `langmeshd` when it is not listening, then proves IMAP and SMTP and IDLEs. Both commands load `mail.env` from `LANGMESH_MAIL_ENV`, `./mail.env`, `/srv/langmesh/mail.env`, or `packaging/mail/mail.env` — already-set environment values win, so you do not need `xargs`. The daemon and each mailbox session load that file the same way, so an already-running `langmeshd` still sees a `mail.env` you fill after it started. If the mailbox, allow-list, or the agent profile's provider key is not configured yet, `mail` waits and re-reads `mail.env` and the configuration file instead of exiting. A systemd or Docker `langmeshd` that is already binding the socket is waited on rather than started a second time. Logs go to stderr and `$XDG_STATE_HOME/langmesh/langmesh-mail.log`.
 
 On a VPS, copy `packaging/mail/mail.env.example` to `mail.env`, fill it, run `uv run langmesh mail check`, and point `install.sh` at that file so systemd gets every key (including extra provider keys) rather than a reconstructed subset:
 
@@ -94,7 +94,7 @@ The mail client cannot create a mailbox, a DNS name, or a cloud VM by itself. Af
    ```
 
    Allowlisting `custom@gmail.com` also takes `custom+tag@gmail.com` and `custom@googlemail.com`. Fastmail, Yahoo, and iCloud are the same three keys with that provider's app password; a non-Gmail address still infers hosts when the domain is known.
-4. **Prove it.** `uv run langmesh mail check` must print `ready` (IMAP login and SMTP auth) before you leave this machine or install systemd. Anything it lists is still HITL.
+4. **Prove it.** `uv run langmesh mail check` must print `ready` (IMAP login, UNSEEN search, and SMTP auth) before you leave this machine or install systemd. Anything it lists is still HITL. A Gmail refusal names Authentication failed versus IMAP not enabled.
 5. **A host that stays up**, with `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) persisted across replace. Choose one:
    - This machine: `uv run langmesh mail`, then send mail to `LANGMESH_MAIL_ADDRESS` from the allowlisted From.
    - You already have a Linux VPS: copy this checkout there, fill `mail.env`, run the `install.sh` command above.

@@ -622,14 +622,24 @@ def validate_ready(configuration: EmailConfiguration) -> str:
     return problems[0] if problems else ""
 
 
-async def prove_mailbox(configuration: EmailConfiguration) -> list[str]:
-    """IMAP login and SMTP auth, or the failures. Does not IDLE or start the daemon."""
+async def prove_mailbox(configuration: EmailConfiguration) -> tuple[list[str], int | None]:
+    """IMAP login, UNSEEN search, and SMTP auth. Does not IDLE or start the daemon.
+
+    Returns problems and the UNSEEN count when IMAP search succeeded.
+    """
     problems = readiness_problems(configuration)
     if problems:
-        return problems
+        return problems, None
     inbox = Inbox(configuration)
+    unseen: int | None = None
     try:
         await inbox.connect()
+        try:
+            unseen = len(await inbox.unseen())
+        except Exception as error:  # noqa: BLE001
+            problems.append(
+                f"IMAP {configuration.effective_imap_host} SEARCH UNSEEN failed ({error})."
+            )
     except Exception as error:  # noqa: BLE001 — check must report the provider error, not crash
         problems.append(f"IMAP {configuration.effective_imap_host} refused login ({error}).")
     finally:
@@ -639,7 +649,7 @@ async def prove_mailbox(configuration: EmailConfiguration) -> list[str]:
         await probe_smtp(configuration)
     except Exception as error:  # noqa: BLE001
         problems.append(f"SMTP {configuration.effective_smtp_host} refused auth ({error}).")
-    return problems
+    return problems, unseen
 
 
 async def check(configuration: Optional[EmailConfiguration] = None) -> int:
@@ -649,7 +659,7 @@ async def check(configuration: Optional[EmailConfiguration] = None) -> int:
 
     note = logging.getLogger("langmesh")
     current = configuration or load_email_configuration()
-    problems = await prove_mailbox(current)
+    problems, unseen = await prove_mailbox(current)
     explicit = mail_env_problem()
     if explicit:
         problems.insert(0, explicit)
@@ -669,7 +679,7 @@ async def check(configuration: Optional[EmailConfiguration] = None) -> int:
         for problem in problems:
             note.error("- %s", problem)
         return 1
-    note.info("imap %s login ok", current.effective_imap_host)
+    note.info("imap %s login ok (%s unseen)", current.effective_imap_host, unseen or 0)
     note.info("smtp %s auth ok", current.effective_smtp_host)
     if daemon_is_up():
         note.info("daemon listening")

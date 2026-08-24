@@ -55,6 +55,28 @@ _FETCH_LITERAL = re.compile(
 )
 
 
+def _as_text(line: object) -> str:
+    if isinstance(line, (bytes, bytearray)):
+        return bytes(line).decode("utf-8", errors="replace")
+    return str(line)
+
+
+def imap_reason(response: object, secret: str = "") -> str:
+    """The server's reason for a failed IMAP command, with any copied secret removed."""
+    lines = getattr(response, "lines", None) or []
+    parts: list[str] = []
+    for line in lines:
+        text = " ".join(_as_text(line).split())
+        if secret and secret in text:
+            text = text.replace(secret, "********")
+        if text and text.upper() not in {"OK", "NO", "BAD", "SEARCH"}:
+            parts.append(text)
+    if parts:
+        return "; ".join(parts)
+    result = str(getattr(response, "result", "") or "").strip()
+    return result or "refused"
+
+
 def _as_bytes(line: object) -> bytes:
     if isinstance(line, (bytes, bytearray)):
         return bytes(line)
@@ -126,10 +148,12 @@ class Inbox:
             self.configuration.effective_imap_password,
         )
         if login.result != "OK":
-            raise RuntimeError("IMAP login was refused.")
+            raise RuntimeError(
+                imap_reason(login, self.configuration.effective_imap_password)
+            )
         selected = await self.imap.select(self.configuration.effective_imap_mailbox)
         if selected.result != "OK":
-            raise RuntimeError("IMAP SELECT was refused.")
+            raise RuntimeError(imap_reason(selected, self.configuration.effective_imap_password))
         self.uidvalidity = _uidvalidity(list(selected.lines))
         self._enable_keepalive()
         logger.info(
@@ -193,7 +217,7 @@ class Inbox:
         assert self.imap is not None
         response = await self.imap.uid_search("UNSEEN")
         if response.result != "OK":
-            return []
+            raise RuntimeError(imap_reason(response, self.configuration.effective_imap_password))
         return _uids(list(response.lines))
 
     async def fetch(self, uid: int) -> Optional[Message]:
