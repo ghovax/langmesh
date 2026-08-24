@@ -8,18 +8,18 @@ import sys
 
 from langmeshd.cli.client import ensure_daemon
 from langmeshd.commons.paths import log_file_path
-from langmeshd.mail.envfile import apply_mail_env
+from langmeshd.commons.secret_import import import_into_files
 
 
 def check_mailbox() -> int:
-    """Prove IMAP and SMTP from mail.env / configuration, without starting IDLE or the daemon."""
+    """Prove IMAP and SMTP from configuration and secret files, without starting IDLE or the daemon."""
     from langmeshd.mail.service import check as check_mail
 
     return asyncio.run(check_mail())
 
 
 def run(arguments) -> int:  # noqa: ANN001 — argparse namespace, matching serve.run
-    apply_mail_env()
+    import_into_files()
     if getattr(arguments, "mail_command", None) == "check":
         return check_mailbox()
     logging.basicConfig(

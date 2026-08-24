@@ -77,7 +77,7 @@ langmesh mail
 langmesh mail check
 ```
 
-`mail check` proves `mail.env` / configuration, IMAP login, and SMTP auth without IDLEing or starting the daemon. See [Email](email.md).
+`mail check` proves configuration and secret files, IMAP login, and SMTP auth without IDLEing or starting the daemon. See [Email](email.md).
 
 | Flag | What it does |
 |---|---|
@@ -165,8 +165,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now langmeshd
 ```
 
-On first boot the daemon seeds `~/.config/langmesh/configuration.yaml`. Add a provider key there
-(or set it as an environment variable, which wins over the file), and give the server's user the
+On first boot the daemon seeds `~/.config/langmesh/configuration.yaml`. Add a provider key as a secret file under `$XDG_DATA_HOME/langmesh/secrets/`, and give the server's user the
 `.agents/` tree your agents and skills live in.
 
 ### Reach it
@@ -186,26 +185,25 @@ its approvals, and it is reachable from anywhere you can reach the daemon.
 
 Mail is a second long-running client, not a second daemon. `langmesh mail` IDLEs an allowlisted
 mailbox, strips quoted reply history, and drives `session.create` / `session.send` on loopback.
-Replies go out over SMTP in the same thread. See [Email](email.md). Fill `mail.env`, run
+Replies go out over SMTP in the same thread. See [Email](email.md). Fill `configuration.yaml` and the secret files, run
 `uv run langmesh mail check` until it prints `ready`, then either `uv run langmesh mail` on this
 machine or, on a VPS, install both systemd units so the mail client comes back with the daemon.
-Copy `packaging/mail/mail.env.example` to `mail.env`, fill it, and point `install.sh` at that file
-rather than a multiline `sudo VAR=...` invocation:
 
 ```sh
-sudo env LANGMESH_MAIL_ENV="$PWD/mail.env" packaging/mail/install.sh
+sudo packaging/mail/install.sh
 ```
 
 The script writes `/etc/systemd/system/langmeshd.service` and `langmesh-mail.service`, copies
-`mail.env` to `/srv/langmesh/mail.env`, then enables them. The same command refreshes that file.
+policy and secrets onto `/srv/langmesh/xdg`, then enables them. Pass `--prefix DIR` to install
+somewhere other than `/srv/langmesh`.
 
 ### Keep it small
 
 - The daemon owns one `sqlite` database and the conversation history; a low-end VPS has room for
   thousands of sessions.
-- Set the `LANGMESH` XDG state directories if you want them under `/srv` rather than `/root`.
+- Set the XDG directories if you want them under `/srv` rather than `/root`.
 - The daemon is the process sessions live in; the app and `serve` are clients you can close and reopen. `langmesh mail` must stay up for IDLE, but unfinished jobs are on disk and resume when it comes back.
 
 ## `@langmesh[bot]` on GitHub
 
-An issue or pull-request comment that mentions `@langmesh[bot]`, or a reply to the bot, can run the library in a GitHub Action. Cite `@langmesh[bot]`, not `@langmesh`: the [`@langmesh`](https://github.com/langmesh) user already exists and would be notified. On an issue it can open a draft pull request; on a pull request it updates that branch. Set `LANGMESH_MODEL` to `provider/model` and `LANGMESH_API_KEY` to that provider's key. To have GitHub suggest a bot, install a GitHub App under an available name — `LangMesh` is reserved — and set `LANGMESH_MENTION` to `@<slug>[bot]`. See [GitHub mentions](github.md).
+An issue or pull-request comment that mentions `@langmesh[bot]`, or a reply to the bot, can run the library in a GitHub Action. Cite `@langmesh[bot]`, not `@langmesh`: the [`@langmesh`](https://github.com/langmesh) user already exists and would be notified. On an issue it can open a draft pull request; on a pull request it updates that branch. The model is the GitHub agent profile; the key is the secret file `github.api_key`. To have GitHub suggest a bot, install a GitHub App under an available name — `LangMesh` is reserved — put `app_id` in `.github/langmesh.yaml`, and the PEM in `.github/secrets/github.app.private_key`. See [GitHub mentions](github.md).

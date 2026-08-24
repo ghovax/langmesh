@@ -1,0 +1,9 @@
+# Policy for the @langmesh[bot] Action. Secrets are files, not this document:
+#   .github/secrets/github.api_key
+#   .github/secrets/github.app.private_key   # optional App PEM; app_id below
+#
+# agent: profile under .agents/agents/<name>/AGENT.md (provider and model live there)
+# mention: optional extra handle when the App slug is not @langmesh-…[bot]
+# app_id: optional GitHub App id
+
+agent: github

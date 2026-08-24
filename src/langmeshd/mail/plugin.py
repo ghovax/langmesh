@@ -119,11 +119,8 @@ class EmailReply(Feature):
         from langmeshd.commons.configuration_file import load as load_document
         from langmeshd.commons.configuration import EmailConfiguration
         from langmeshd.mail.body import reference_chain
-        from langmeshd.mail.envfile import apply_mail_env
         from langmeshd.mail.smtp import outbound_message_id, reply_message, send_reply
         from langmeshd.mail.threads import POSTED, SEEN, ThreadStore
-
-        apply_mail_env()
 
         session_id = self._context.session_id
         store = ThreadStore()
