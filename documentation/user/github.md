@@ -27,10 +27,10 @@ Until your App is installed and has posted on a thread, GitHub has no bot to sug
 ## Turn it on
 
 1. Enable Actions on the repository. Under **Settings → Actions → General → Workflow permissions**, allow GitHub Actions to create and approve pull requests. The workflow asks for write access to contents, issues, and pull requests.
-2. Put the API key for the provider named in `.agents/agents/github/AGENT.md` in the secret file `github.api_key`. On a laptop that file lives under `$XDG_DATA_HOME/langmesh/secrets` (directory `0700`, file `0600`). On a GitHub-hosted runner the public checkout cannot hold the key: store the same bytes as the repository Actions secret `github_api_key` (underscores, because GitHub names cannot contain dots). The job writes that value onto `github.api_key` and copies it onto XDG. A self-hosted runner can keep the files only under XDG. The App id belongs in `.github/langmesh.yaml`.
+2. Put the API key for the provider named in `.agents/agents/github/AGENT.md` in the secret file `github.api_key`. On a laptop that file lives under `$XDG_DATA_HOME/langmesh/secrets` (directory `0700`, file `0600`). On a GitHub-hosted runner the public checkout cannot hold the key: store the same bytes as the repository Actions secret `mention_api_key` (GitHub forbids dots and names that start with `GITHUB_`, any case). The job writes that value onto `github.api_key` and copies it onto XDG. A self-hosted runner can keep the files only under XDG. The App id belongs in `.github/langmesh.yaml`.
 3. The model is `provider` and `model` in that agent profile. Change the profile in git to pick a different one. `.github/langmesh.yaml` names the profile (`agent: github`).
 4. Keep the workflow file on the default branch. GitHub runs comment workflows from that copy.
-5. Optionally install a GitHub App so comments come from your bot and GitHub recommends that handle. Put the App id in `.github/langmesh.yaml` as `app_id`, and the PEM as the secret file `github.app.private_key` (Actions secret `github_app_private_key` on a hosted runner). See [Install a GitHub App so GitHub can suggest the bot](#install-a-github-app-so-github-can-suggest-the-bot).
+5. Optionally install a GitHub App so comments come from your bot and GitHub recommends that handle. Put the App id in `.github/langmesh.yaml` as `app_id`, and the PEM as the secret file `github.app.private_key` (Actions secret `mention_app_private_key` on a hosted runner). See [Install a GitHub App so GitHub can suggest the bot](#install-a-github-app-so-github-can-suggest-the-bot).
 
 The left-hand side of the profile's `provider` is a LangMesh provider name (`opencode`, `anthropic`, `openai`, `openrouter`, and the rest of the catalogue). `github.api_key` is the one file for that key (or `providers.<id>.api_key`). GitHub never returns Actions secret values; keep the files on disk as the copy you can reuse locally. Do not commit them on a public repository.
 
@@ -77,7 +77,7 @@ You should then see an installation at a URL like `https://github.com/settings/i
 
 ### 4. Give the Action the App PEM
 
-- File `$XDG_DATA_HOME/langmesh/secrets/github.app.private_key` on a laptop or self-hosted runner (mode `0600`), or the repository Actions secret `github_app_private_key` on a hosted runner — the PEM contents, including the `BEGIN` and `END` lines
+- File `$XDG_DATA_HOME/langmesh/secrets/github.app.private_key` on a laptop or self-hosted runner (mode `0600`), or the repository Actions secret `mention_app_private_key` on a hosted runner — the PEM contents, including the `BEGIN` and `END` lines
 - In `.github/langmesh.yaml`, `app_id` — the numeric App ID (not a secret)
 - In `.github/langmesh.yaml`, `mention` — `@<slug>[bot]`, only if the slug is not `@langmesh-…[bot]`
 
