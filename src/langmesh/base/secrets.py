@@ -7,10 +7,7 @@ reads ``github.api_key`` and ``github.app.private_key`` from this directory
 (copied from ``.github/secrets`` in the checkout when those files are present).
 
 Reads never create the directory. Writes create it at mode 0700 and replace the
-file atomically at mode 0600. Environment variables are not configuration: a
-platform that only injects vendor env (Fly leftover ``OPENCODE_API_KEY``) may
-copy those values into empty files before anything here is read. ``LANGMESH_*``
-is not imported.
+file atomically at mode 0600.
 """
 
 from __future__ import annotations
@@ -19,8 +16,6 @@ import os
 import re
 import uuid
 from pathlib import Path
-
-from langmesh.base.identity.providers import PROVIDERS, provider_env_vars
 
 APPLICATION = "langmesh"
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -122,40 +117,6 @@ def provider_keys_from_files() -> dict[str, str]:
     return keys
 
 
-def import_environment(environ: dict[str, str] | None = None) -> int:
-    """Copy conventional environment values into empty secret files. Returns how many wrote."""
-    env = os.environ if environ is None else environ
-    written = 0
-    mapping = (
-        ("EXA_API_KEY", EXA_API_KEY),
-        ("JINA_API_KEY", JINA_API_KEY),
-        ("FIRECRAWL_API_KEY", FIRECRAWL_API_KEY),
-        ("COMPOSIO_API_KEY", COMPOSIO_API_KEY),
-    )
-    for variable, name in mapping:
-        if import_if_empty(name, env.get(variable) or ""):
-            written += 1
-    seen: set[str] = set()
-    for identifier, definition in PROVIDERS.items():
-        if definition.native:
-            continue
-        names = provider_env_vars(identifier)
-        value = ""
-        for variable in names:
-            value = (env.get(variable) or "").strip()
-            if value:
-                break
-        if not value:
-            continue
-        key_name = provider_api_key_name(definition.credential_identifier or identifier)
-        if key_name in seen:
-            continue
-        seen.add(key_name)
-        if import_if_empty(key_name, value):
-            written += 1
-    return written
-
-
 __all__ = [
     "COMPOSIO_API_KEY",
     "EMAIL_IMAP_PASSWORD",
@@ -165,7 +126,6 @@ __all__ = [
     "GITHUB_API_KEY",
     "GITHUB_APP_PRIVATE_KEY",
     "JINA_API_KEY",
-    "import_environment",
     "import_if_empty",
     "provider_api_key_name",
     "provider_keys_from_files",

@@ -132,21 +132,6 @@ install_policy() {
   fi
 }
 
-install_leftover_mail_env() {
-  local dest="${prefix}/mail.env"
-  local source=""
-  for candidate in "${root}/mail.env" "${PWD}/mail.env"; do
-    if [[ -f "${candidate}" ]]; then
-      source="${candidate}"
-      break
-    fi
-  done
-  if [[ -n "${source}" && ! -f "${dest}" ]]; then
-    install -m 600 "${source}" "${dest}"
-    log "imported leftover mail.env from ${source}"
-  fi
-}
-
 write_configuration() {
   export XDG_CONFIG_HOME="${prefix}/xdg/config"
   export XDG_DATA_HOME="${prefix}/xdg/data"
@@ -203,7 +188,6 @@ install_uv
 sync_checkout
 install_policy
 install_secrets
-install_leftover_mail_env
 write_configuration
 install_units
 log "langmeshd and langmesh-mail are enabled. Send mail to email.address from an allowlisted From."

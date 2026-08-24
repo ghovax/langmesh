@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Mapping
 
 POLICY_FILENAME = "langmesh.yaml"
 DEFAULT_AGENT = "github"
@@ -40,13 +39,8 @@ def parse_scalar_yaml(text: str) -> dict[str, str]:
     return values
 
 
-def load_github_policy(
-    workspace: str | Path | None = None,
-    *,
-    environ: Mapping[str, str] | None = None,
-) -> dict[str, str]:
+def load_github_policy(workspace: str | Path | None = None) -> dict[str, str]:
     """Agent name, optional mention handle, optional App id. Missing file yields defaults."""
-    del environ  # reserved so callers can pass os.environ without a second code path
     path = policy_path(workspace)
     values: dict[str, str] = {"agent": DEFAULT_AGENT}
     try:
@@ -70,11 +64,5 @@ if __name__ == "__main__":
     import json
     import sys
 
-    policy = load_github_policy()
-    output = os.environ.get("GITHUB_OUTPUT")
-    if output:
-        with Path(output).open("a", encoding="utf-8") as handle:
-            for key, value in policy.items():
-                print(f"{key}={value}", file=handle)
-    json.dump(policy, sys.stdout)
+    json.dump(load_github_policy(), sys.stdout)
     sys.stdout.write("\n")

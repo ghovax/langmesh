@@ -51,14 +51,6 @@ secrets_dir() {
   return 1
 }
 
-leftover_mail_env() {
-  if [[ -f "${root}/mail.env" ]]; then
-    printf '%s\n' "${root}/mail.env"
-    return 0
-  fi
-  return 1
-}
-
 remote_install() {
   local host="$1"
   log "waiting for SSH on ${host}"
@@ -76,7 +68,7 @@ remote_install() {
   tar -C "${root}" --exclude '.venv' --exclude '.git' --exclude 'xdg' --exclude 'mail.env' \
     --exclude 'secrets' --exclude 'web/node_modules' --exclude 'web/.next' -cf - . \
     | ssh "${host}" "sudo tar -C /srv/langmesh -xf -"
-  local config secrets envf
+  local config secrets
   if config="$(policy_file)"; then
     scp -o StrictHostKeyChecking=accept-new "${config}" "${host}:/tmp/langmesh-configuration.yaml"
     ssh "${host}" "sudo mkdir -p /srv/langmesh/xdg/config/langmesh && sudo mv /tmp/langmesh-configuration.yaml /srv/langmesh/xdg/config/langmesh/configuration.yaml && sudo chmod 600 /srv/langmesh/xdg/config/langmesh/configuration.yaml"
@@ -87,10 +79,6 @@ remote_install() {
     ssh "${host}" "sudo mkdir -p /tmp/langmesh-secrets; true"
     scp -o StrictHostKeyChecking=accept-new -r "${secrets}/." "${host}:/tmp/langmesh-secrets/"
     ssh "${host}" "sudo find /tmp/langmesh-secrets -maxdepth 1 -type f ! -name 'README' ! -name 'README.md' -exec install -m 600 {} /srv/langmesh/xdg/data/langmesh/secrets/ \\; && sudo rm -rf /tmp/langmesh-secrets"
-  fi
-  if envf="$(leftover_mail_env)"; then
-    scp -o StrictHostKeyChecking=accept-new "${envf}" "${host}:/tmp/langmesh-mail.env"
-    ssh "${host}" "sudo mv /tmp/langmesh-mail.env /srv/langmesh/mail.env && sudo chmod 600 /srv/langmesh/mail.env"
   fi
   ssh "${host}" "sudo bash /srv/langmesh/packaging/mail/install.sh"
 }
