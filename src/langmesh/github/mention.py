@@ -12,13 +12,16 @@ the default branch. Thread replies stay user-facing; failures go to the logger.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import base64
 import json
 import logging
 import os
+import signal
 import sqlite3
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, replace
@@ -52,6 +55,7 @@ from langmesh.runtime.plugins.compaction import (
 from langmesh.runtime.plugins.continuation import Continuation
 from langmesh.runtime.plugins.permissions import PermissionReview
 from langmesh.runtime.plugins.web import Web
+from langmesh.runtime.turn_events import Done, Suspended, Usage
 
 ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 STATE_DIRECTORY = ".github/langmesh"
@@ -59,16 +63,14 @@ BRANCH_RECORD = "branch"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 GITHUB_ACTIONS_BOT = "github-actions[bot]"
 GITHUB_ACTIONS_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
-TURN_FAILED = (
-    "Something went wrong while I was working on this. "
-    "The details are in the Action log."
-)
+TURN_FAILED = "Something went wrong while I was working on this. The details are in the Action log."
 INVALID_MODEL = (
     "I couldn't start this turn because the GitHub agent profile has no provider/model. "
     "Set those in `.agents/agents/<name>/AGENT.md`. The Action log has the details."
 )
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
+
 
 class Run(Protocol):
     def __call__(
@@ -116,15 +118,38 @@ class Mention:
         return self.association in ALLOWED_ASSOCIATIONS and not self.is_fork
 
 
+class _FlushingStreamHandler(logging.StreamHandler):
+    """Actions is not a TTY; without a flush each record the job log looks truncated."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        super().emit(record)
+        self.flush()
+
+
 def configure_logging() -> None:
     """The same stderr logger the daemon uses: timestamp, level, logger name, message."""
+    try:
+        sys.stderr.reconfigure(line_buffering=True)
+    except (AttributeError, OSError):
+        pass
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        handlers=[logging.StreamHandler(sys.stderr)],
+        handlers=[_FlushingStreamHandler(sys.stderr)],
         force=True,
     )
     logging.getLogger("langmesh").setLevel(logging.INFO)
+    atexit.register(logging.shutdown)
+
+
+def _install_stop_handlers() -> None:
+    """SIGTERM (Actions cancel/timeout) must unwind so the session checkpoint still lands."""
+
+    def stop(_signum: int, _frame: object) -> None:
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
 
 
 def run_log_url() -> str:
@@ -186,9 +211,7 @@ def mention_from_event(
     """
     comment = event.get("comment") or {}
     body = str(comment.get("body") or "")
-    if not known_turn and not is_mention_turn(
-        event, repository=repository, token=token, api=api
-    ):
+    if not known_turn and not is_mention_turn(event, repository=repository, token=token, api=api):
         return None
     user = str((comment.get("user") or {}).get("login") or "")
     if user.endswith("[bot]"):
@@ -362,6 +385,41 @@ def recalled_branch(workspace: Path) -> str:
 
 def state_path(workspace: Path) -> Path:
     return workspace / STATE_DIRECTORY / "session.sqlite"
+
+
+def durable_session_connection(workspace: Path) -> sqlite3.Connection:
+    """Self-contained sqlite: DELETE journal so the session artifact is the whole checkpoint.
+
+    The table ``mention_trace`` is append-only so a killed ``uv run`` still leaves
+    usage and restore rows for the next job and for anyone inspecting the artifact.
+    """
+    path = state_path(workspace)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
+    connection.execute("PRAGMA journal_mode=DELETE")
+    connection.execute("PRAGMA synchronous=FULL")
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS mention_trace ("
+        " id INTEGER PRIMARY KEY,"
+        " at TEXT NOT NULL,"
+        " kind TEXT NOT NULL,"
+        " detail TEXT NOT NULL"
+        ")"
+    )
+    return connection
+
+
+def record_mention_trace(
+    connection: sqlite3.Connection, kind: str, detail: Mapping[str, Any]
+) -> None:
+    connection.execute(
+        "INSERT INTO mention_trace(at, kind, detail) VALUES (?, ?, ?)",
+        (
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            kind,
+            json.dumps(detail, ensure_ascii=False, separators=(",", ":")),
+        ),
+    )
 
 
 def _run(
@@ -548,11 +606,7 @@ def configure_git_author(workspace: Path, *, run: Run = _run) -> None:
     if slug:
         actor = f"{slug}[bot]"
         app_id = (load_github_policy(workspace).get("app_id") or "").strip()
-        email = (
-            f"{app_id}+{slug}[bot]@users.noreply.github.com"
-            if app_id
-            else GITHUB_ACTIONS_EMAIL
-        )
+        email = f"{app_id}+{slug}[bot]@users.noreply.github.com" if app_id else GITHUB_ACTIONS_EMAIL
     else:
         actor = GITHUB_ACTIONS_BOT
         email = GITHUB_ACTIONS_EMAIL
@@ -720,11 +774,13 @@ def mention_features(reply: GitHubReply, workspace: Path) -> list[Feature]:
     ]
 
 
-def _session(mention: Mention, workspace: Path, reply: GitHubReply, token: str) -> Session:
-    state_path(workspace).parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(
-        state_path(workspace), isolation_level=None, check_same_thread=False
-    )
+def _session(
+    mention: Mention,
+    workspace: Path,
+    reply: GitHubReply,
+    token: str,
+    connection: sqlite3.Connection,
+) -> Session:
     provider, model = model_identifier_from_profile(workspace)
     key = api_key_for(provider)
     agent = AgentConfiguration(
@@ -773,32 +829,101 @@ async def run_turn(
         publish(working_comment(text))
 
     reply = GitHubReply(publish=publish_working if publish is not None else None)
-    async with _session(mention, workspace, reply, token) as session:
-        restored = await session.restore()
-        followup = restored or thread_followup
-        provider, model = model_identifier_from_profile(workspace)
-        key = api_key_for(provider)
-        resolved = resolve_litellm(
-            f"{provider}/{model}", {provider: key} if key else {}, {}
-        )
-        logger.info(
-            "mention model %s/%s wire=%s base=%s restored=%s thread_followup=%s followup=%s",
-            provider,
-            model,
-            resolved["model"],
-            resolved["api_base"],
-            restored,
-            thread_followup,
-            followup,
-        )
-        await session.set_permission_mode("automatic")
-        await session.ask(prompt_for(mention, checkout=checkout, followup=followup))
-        return (reply.comment or "").strip()
+    connection = durable_session_connection(workspace)
+    try:
+        async with _session(mention, workspace, reply, token, connection) as session:
+            restored = await session.restore()
+            followup = restored or thread_followup
+            provider, model = model_identifier_from_profile(workspace)
+            key = api_key_for(provider)
+            resolved = resolve_litellm(f"{provider}/{model}", {provider: key} if key else {}, {})
+            record_mention_trace(
+                connection,
+                "start",
+                {
+                    "session_id": mention.session_id,
+                    "restored": restored,
+                    "thread_followup": thread_followup,
+                    "followup": followup,
+                    "messages": len(session.conversation),
+                    "provider": provider,
+                    "model": model,
+                    "has_key": bool(key),
+                },
+            )
+            if not key:
+                logger.error(
+                    "mention has no secret file github.api_key or providers.%s.api_key",
+                    provider,
+                )
+            logger.info(
+                "mention model %s/%s wire=%s base=%s restored=%s messages=%s "
+                "thread_followup=%s followup=%s session=%s",
+                provider,
+                model,
+                resolved["model"],
+                resolved["api_base"],
+                restored,
+                len(session.conversation),
+                thread_followup,
+                followup,
+                mention.session_id,
+            )
+            await session.set_permission_mode("automatic")
+            answer = ""
+            try:
+                async for event in session.stream(
+                    prompt_for(mention, checkout=checkout, followup=followup)
+                ):
+                    if isinstance(event, Usage):
+                        usage = {
+                            "input_tokens": event.input_tokens,
+                            "output_tokens": event.output_tokens,
+                            "cache_read_tokens": event.cache_read_tokens,
+                            "cache_write_tokens": event.cache_write_tokens,
+                            "cache_prefix_reusable": event.cache_prefix_reusable,
+                            "reusable_prefix_tokens": event.reusable_prefix_tokens,
+                            "shared_segments": event.shared_segments,
+                            "segments": event.segments,
+                            "divergence": event.divergence,
+                        }
+                        record_mention_trace(connection, "usage", usage)
+                        logger.info(
+                            "mention usage input=%s output=%s cache_read=%s cache_write=%s "
+                            "prefix_reusable=%s reusable_prefix=%s shared=%s/%s",
+                            event.input_tokens,
+                            event.output_tokens,
+                            event.cache_read_tokens,
+                            event.cache_write_tokens,
+                            event.cache_prefix_reusable,
+                            event.reusable_prefix_tokens,
+                            event.shared_segments,
+                            event.segments,
+                        )
+                    if isinstance(event, Suspended):
+                        raise PermissionError(
+                            "This turn is suspended. Inspect `session.state.pending`, "
+                            "call `session.respond(...)` for each interaction, then drive "
+                            "`session.resume()`; or supply an approver through SessionComponents."
+                        )
+                    if isinstance(event, Done):
+                        answer = event.text or answer
+            finally:
+                record_mention_trace(
+                    connection,
+                    "end",
+                    {
+                        "answer_chars": len(answer),
+                        "comment_chars": len((reply.comment or "").strip()),
+                        "messages": len(session.conversation),
+                    },
+                )
+            return (reply.comment or "").strip()
+    finally:
+        connection.close()
 
 
-def drop_acknowledgement(
-    repository: str, comment_id: int | None, token: str, api: str
-) -> None:
+def drop_acknowledgement(repository: str, comment_id: int | None, token: str, api: str) -> None:
     """Remove a workflow-posted ack when this process will not answer the mention."""
     if not comment_id:
         return
@@ -810,6 +935,7 @@ def drop_acknowledgement(
 
 def main() -> None:
     configure_logging()
+    _install_stop_handlers()
     event_path = os.environ["GITHUB_EVENT_PATH"]
     repository = os.environ["GITHUB_REPOSITORY"]
     workspace = Path(os.environ.get("GITHUB_WORKSPACE") or os.getcwd()).resolve()
@@ -909,8 +1035,14 @@ def main() -> None:
             api,
             comment_id=comment_id,
         )
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         logger.exception("mention turn failed")
+        try:
+            connection = durable_session_connection(workspace)
+            record_mention_trace(connection, "error", {"exception": "mention turn failed"})
+            connection.close()
+        except Exception:
+            logger.exception("could not record mention error trace")
         try:
             publish_thread_comment(
                 repository,

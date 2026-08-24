@@ -4,8 +4,8 @@ title: GitHub
 description: Does the work asked in a GitHub mention, in the repository that comment is on.
 role: primary
 enabled: true
-model: claude-sonnet-4-5
-provider: anthropic
+model: mimo-v2.5-free
+provider: opencode
 reasoning_effort: high
 permission_mode: automatic
 ---
