@@ -76,7 +76,7 @@ uv run langmesh mail check
 sudo packaging/mail/install.sh
 ```
 
-`install.sh` copies `packaging/mail/configuration.yaml` (if the host has none) and `./secrets` onto `/srv/langmesh/xdg`, then enables `langmeshd` and `langmesh-mail`. A later install does not replace `/srv/langmesh/xdg` (the job queue, daemon history, and secrets already on the host). Then send mail to `email.address` from an allowlisted From. Progress and the reply arrive in that thread; a further reply — including a reply to a progress note — continues the same session with only the new body.
+`install.sh` copies `packaging/mail/configuration.yaml` (if the host has none) and `./secrets` onto `/srv/langmesh/xdg`, then enables `langmeshd` and `langmesh-mail`. Pass `--prefix DIR` to install somewhere else. A later install does not replace that xdg tree (the job queue, daemon history, and secrets already on the host). Then send mail to `email.address` from an allowlisted From. Progress and the reply arrive in that thread; a further reply — including a reply to a progress note — continues the same session with only the new body.
 
 ## What you still have to supply
 

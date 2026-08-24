@@ -3,13 +3,53 @@
 # Policy is packaging/mail/configuration.yaml. Secrets are files under ./secrets
 # (or packaging/mail/secrets), copied onto $XDG_DATA_HOME/langmesh/secrets.
 #   sudo packaging/mail/install.sh
+#   sudo packaging/mail/install.sh --prefix /opt/langmesh
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-prefix="${LANGMESH_PREFIX:-/srv/langmesh}"
-unit_dir="${LANGMESH_SYSTEMD_DIR:-/etc/systemd/system}"
+prefix=/srv/langmesh
+unit_dir=/etc/systemd/system
 
 log() { printf '%s\n' "$*" >&2; }
+
+usage() {
+  log "usage: install.sh [--prefix DIR]"
+  log "  --prefix DIR  install directory (default /srv/langmesh)"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prefix)
+      if [[ $# -lt 2 || -z "${2}" || "${2}" == -* ]]; then
+        log "--prefix needs a directory"
+        exit 2
+      fi
+      prefix="$2"
+      shift 2
+      ;;
+    --prefix=*)
+      prefix="${1#--prefix=}"
+      if [[ -z "${prefix}" ]]; then
+        log "--prefix needs a directory"
+        exit 2
+      fi
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      log "unknown argument: $1"
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+if [[ "${prefix}" != /* ]]; then
+  prefix="${PWD}/${prefix}"
+fi
 
 need_root() {
   if [[ "${EUID}" -ne 0 ]]; then

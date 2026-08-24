@@ -194,7 +194,8 @@ sudo packaging/mail/install.sh
 ```
 
 The script writes `/etc/systemd/system/langmeshd.service` and `langmesh-mail.service`, copies
-policy and secrets onto `/srv/langmesh/xdg`, then enables them.
+policy and secrets onto `/srv/langmesh/xdg`, then enables them. Pass `--prefix DIR` to install
+somewhere other than `/srv/langmesh`.
 
 ### Keep it small
 
