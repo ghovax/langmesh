@@ -8,8 +8,9 @@ reads ``github.api_key`` and ``github.app.private_key`` from this directory
 
 Reads never create the directory. Writes create it at mode 0700 and replace the
 file atomically at mode 0600. Environment variables are not configuration: a
-platform that only injects env (Fly leftover secrets) must copy those values
-into empty files before anything here is read.
+platform that only injects vendor env (Fly leftover ``OPENCODE_API_KEY``) may
+copy those values into empty files before anything here is read. ``LANGMESH_*``
+is not imported.
 """
 
 from __future__ import annotations
@@ -130,9 +131,6 @@ def import_environment(environ: dict[str, str] | None = None) -> int:
         ("JINA_API_KEY", JINA_API_KEY),
         ("FIRECRAWL_API_KEY", FIRECRAWL_API_KEY),
         ("COMPOSIO_API_KEY", COMPOSIO_API_KEY),
-        ("LANGMESH_MAIL_IMAP_PASSWORD", EMAIL_IMAP_PASSWORD),
-        ("LANGMESH_MAIL_PASSWORD", EMAIL_IMAP_PASSWORD),
-        ("LANGMESH_MAIL_SMTP_PASSWORD", EMAIL_SMTP_PASSWORD),
     )
     for variable, name in mapping:
         if import_if_empty(name, env.get(variable) or ""):

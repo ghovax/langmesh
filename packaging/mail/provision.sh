@@ -1,14 +1,43 @@
 #!/usr/bin/env bash
 # Create a small VPS when a cloud token is already in the environment, then install LangMesh mail on it.
+# Target and create fields come from packaging/mail/configuration.yaml (provision.*).
+# Cloud CLIs still read their own tokens: FLY_API_TOKEN, HCLOUD_TOKEN, DIGITALOCEAN_ACCESS_TOKEN.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
+policy="${root}/packaging/mail/configuration.yaml"
 
 log() { printf '%s\n' "$*" >&2; }
 
+provision_get() {
+  local dotted="$1"
+  (cd "${root}" && uv run python - "${policy}" "${dotted}" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+document = yaml.safe_load(Path(sys.argv[1]).read_text()) or {}
+node = document.get("provision") or {}
+for part in sys.argv[2].split("."):
+    if not isinstance(node, dict):
+        print("")
+        raise SystemExit(0)
+    node = node.get(part)
+    if node is None or node is False:
+        print("")
+        raise SystemExit(0)
+if isinstance(node, (dict, list)):
+    print("")
+else:
+    print(node)
+PY
+  )
+}
+
 policy_file() {
-  if [[ -f "${root}/packaging/mail/configuration.yaml" ]]; then
-    printf '%s\n' "${root}/packaging/mail/configuration.yaml"
+  if [[ -f "${policy}" ]]; then
+    printf '%s\n' "${policy}"
     return 0
   fi
   return 1
@@ -72,23 +101,29 @@ provision_fly() {
     curl -L https://fly.io/install.sh | sh
     export PATH="${HOME}/.fly/bin:${PATH}"
   fi
-  local fly envf
+  local fly
   fly="$(command -v flyctl || command -v fly)"
-  local app="${LANGMESH_FLY_APP:-langmesh-mail}"
-  local region="${LANGMESH_FLY_REGION:-iad}"
+  local app region
+  app="$(provision_get fly.app)"
+  app="${app:-langmesh-mail}"
+  region="$(provision_get fly.region)"
+  region="${region:-iad}"
   "${fly}" apps create "${app}" --generate-name=false || true
   "${fly}" volumes create langmesh_xdg --app "${app}" --size 3 --region "${region}" --yes || true
-  if envf="$(leftover_mail_env)"; then
-    grep -vE '^(#|$)' "${envf}" | grep -vE '^[^=]+=[[:space:]]*$' | "${fly}" secrets import --app "${app}"
-  fi
   (cd "${root}" && "${fly}" deploy . --app "${app}" \
     --config packaging/mail/fly.toml \
     --dockerfile packaging/mail/Dockerfile \
     --region "${region}")
 }
 
-if [[ -n "${LANGMESH_VPS_HOST:-}" ]]; then
-  remote_install "${LANGMESH_VPS_HOST}"
+if [[ ! -f "${policy}" ]]; then
+  log "missing ${policy}"
+  exit 2
+fi
+
+host="$(provision_get host)"
+if [[ -n "${host}" ]]; then
+  remote_install "${host}"
   exit 0
 fi
 
@@ -97,17 +132,22 @@ if [[ -n "${FLY_API_TOKEN:-}" ]]; then
   exit 0
 fi
 
+name="$(provision_get name)"
+name="${name:-langmesh-mail}"
+
 if [[ -n "${HCLOUD_TOKEN:-}" ]] && command -v hcloud >/dev/null 2>&1; then
-  name="${LANGMESH_VPS_NAME:-langmesh-mail}"
-  image="${LANGMESH_HCLOUD_IMAGE:-ubuntu-24.04}"
-  type="${LANGMESH_HCLOUD_TYPE:-cpx11}"
-  loc="${LANGMESH_HCLOUD_LOCATION:-fsn1}"
-  ssh_key="${LANGMESH_HCLOUD_SSH_KEY:-}"
+  local_image="$(provision_get hetzner.image)"
+  local_type="$(provision_get hetzner.type)"
+  local_loc="$(provision_get hetzner.location)"
+  ssh_key="$(provision_get hetzner.ssh_key)"
+  local_image="${local_image:-ubuntu-24.04}"
+  local_type="${local_type:-cpx11}"
+  local_loc="${local_loc:-fsn1}"
   if [[ -z "${ssh_key}" ]]; then
-    log "Set LANGMESH_HCLOUD_SSH_KEY to an hcloud SSH key name so the server can be installed over SSH."
+    log "Set provision.hetzner.ssh_key in packaging/mail/configuration.yaml to an hcloud SSH key name so the server can be installed over SSH."
     exit 2
   fi
-  args=(server create --name "${name}" --type "${type}" --image "${image}" --location "${loc}" --ssh-key "${ssh_key}")
+  args=(server create --name "${name}" --type "${local_type}" --image "${local_image}" --location "${local_loc}" --ssh-key "${ssh_key}")
   hcloud "${args[@]}"
   ip="$(hcloud server ip "${name}")"
   remote_install "root@${ip}"
@@ -115,20 +155,22 @@ if [[ -n "${HCLOUD_TOKEN:-}" ]] && command -v hcloud >/dev/null 2>&1; then
 fi
 
 if [[ -n "${DIGITALOCEAN_ACCESS_TOKEN:-}" ]] && command -v doctl >/dev/null 2>&1; then
-  name="${LANGMESH_VPS_NAME:-langmesh-mail}"
-  ssh_key="${LANGMESH_DO_SSH_KEY:-}"
+  ssh_key="$(provision_get digitalocean.ssh_key)"
+  do_region="$(provision_get digitalocean.region)"
+  do_region="${do_region:-nyc1}"
   if [[ -z "${ssh_key}" ]]; then
-    log "Set LANGMESH_DO_SSH_KEY to a DigitalOcean SSH key fingerprint or id so the droplet can be installed over SSH."
+    log "Set provision.digitalocean.ssh_key in packaging/mail/configuration.yaml to a DigitalOcean SSH key fingerprint or id so the droplet can be installed over SSH."
     exit 2
   fi
   doctl compute droplet create "${name}" --size s-1vcpu-1gb --image ubuntu-24-04-x64 \
-    --region "${LANGMESH_DO_REGION:-nyc1}" --ssh-keys "${ssh_key}" --wait
+    --region "${do_region}" --ssh-keys "${ssh_key}" --wait
   ip="$(doctl compute droplet get "${name}" --format PublicIPv4 --no-header)"
   remote_install "root@${ip}"
   exit 0
 fi
 
-log "No cloud token or LANGMESH_VPS_HOST was set, so no VM was created."
+log "No provision.host in packaging/mail/configuration.yaml, and no cloud token was set, so no VM was created."
+log "Fill provision.host (SSH into a machine you already have), or set FLY_API_TOKEN / HCLOUD_TOKEN / DIGITALOCEAN_ACCESS_TOKEN."
 log "Bring any small Linux VPS, copy this checkout there, fill packaging/mail/configuration.yaml"
 log "and a secrets directory, and run:"
 log "  sudo packaging/mail/install.sh"

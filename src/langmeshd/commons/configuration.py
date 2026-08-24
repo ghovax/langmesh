@@ -154,6 +154,47 @@ class EmailSmtpConfiguration(AppConfigurationSection):
     use_tls: bool = Field(default=False)
 
 
+class ProvisionFlyConfiguration(AppConfigurationSection):
+    """Fly.io app name and region for packaging/mail/provision.sh."""
+
+    app: str = Field(default="langmesh-mail")
+    region: str = Field(default="iad")
+
+
+class ProvisionHetznerConfiguration(AppConfigurationSection):
+    """Hetzner Cloud server create fields for packaging/mail/provision.sh."""
+
+    image: str = Field(default="ubuntu-24.04")
+    type: str = Field(default="cpx11")
+    location: str = Field(default="fsn1")
+    ssh_key: str = Field(default="")
+
+
+class ProvisionDigitalOceanConfiguration(AppConfigurationSection):
+    """DigitalOcean droplet create fields for packaging/mail/provision.sh."""
+
+    region: str = Field(default="nyc1")
+    ssh_key: str = Field(default="")
+
+
+class ProvisionConfiguration(AppConfigurationSection):
+    """How packaging/mail/provision.sh finds a host. Not used by the running daemon.
+
+    Fill this in packaging/mail/configuration.yaml. host is an SSH target for a
+    machine you already have. Cloud create still needs that provider's own token
+    (FLY_API_TOKEN, HCLOUD_TOKEN, DIGITALOCEAN_ACCESS_TOKEN) because those CLIs
+    read it.
+    """
+
+    host: str = Field(default="")
+    name: str = Field(default="langmesh-mail")
+    fly: ProvisionFlyConfiguration = Field(default_factory=ProvisionFlyConfiguration)
+    hetzner: ProvisionHetznerConfiguration = Field(default_factory=ProvisionHetznerConfiguration)
+    digitalocean: ProvisionDigitalOceanConfiguration = Field(
+        default_factory=ProvisionDigitalOceanConfiguration
+    )
+
+
 class EmailConfiguration(AppConfigurationSection):
     """IMAP IDLE plus SMTP in front of the daemon: a client, not a second session embedder.
 

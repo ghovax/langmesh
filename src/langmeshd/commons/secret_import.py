@@ -1,8 +1,9 @@
-"""Copy platform-injected secrets into 0600 files, then read those files.
+"""Copy leftover platform secrets into 0600 files, then read those files.
 
 Policy stays in configuration.yaml. A leftover mail.env is imported once into
 YAML (address, allow-list, agent) and into secret files (passwords, provider
-keys). Environment variables are not a second schema: they fill empty files.
+keys). Process environment is not a second schema: vendor leftover env
+(OPENCODE_API_KEY, EXA_API_KEY, …) fills empty files; LANGMESH_* does not.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from langmeshd.commons.paths import configuration_file_path
 from langmeshd.mail.envfile import mail_env_path, parse_mail_env
 
 
-_POLICY_FROM_ENV = (
+_POLICY_FROM_MAIL_ENV = (
     ("LANGMESH_MAIL_ADDRESS", "email.address"),
     ("LANGMESH_MAIL_AGENT", "email.agent"),
     ("LANGMESH_MAIL_WORKING_DIRECTORY", "email.working_directory"),
@@ -37,6 +38,12 @@ _POLICY_FROM_ENV = (
     ("LANGMESH_MAIL_IMAP_MAILBOX", "email.imap.mailbox"),
     ("LANGMESH_MAIL_SMTP_HOST", "email.smtp.host"),
     ("LANGMESH_MAIL_SMTP_USER", "email.smtp.username"),
+)
+
+_SECRET_FROM_MAIL_ENV = (
+    ("LANGMESH_MAIL_IMAP_PASSWORD", EMAIL_IMAP_PASSWORD),
+    ("LANGMESH_MAIL_PASSWORD", EMAIL_IMAP_PASSWORD),
+    ("LANGMESH_MAIL_SMTP_PASSWORD", EMAIL_SMTP_PASSWORD),
 )
 
 _SECRET_FROM_YAML = (
@@ -120,7 +127,7 @@ def _fill_policy_from_pairs(document: dict[str, Any], pairs: dict[str, str]) -> 
     if address and not enabled:
         _set_path(document, "email.enabled", True)
         changed = True
-    for variable, path in _POLICY_FROM_ENV:
+    for variable, path in _POLICY_FROM_MAIL_ENV:
         value = (pairs.get(variable) or "").strip()
         if not value:
             continue
@@ -146,6 +153,10 @@ def import_mail_env_file() -> bool:
     pairs = parse_mail_env(source)
     if not pairs:
         return False
+    for variable, name in _SECRET_FROM_MAIL_ENV:
+        value = compact_mail_secret(pairs.get(variable) or "")
+        if value:
+            import_if_empty(name, value)
     import_environment(pairs)
     document = configuration_file.load() or {}
     changed = _fill_policy_from_pairs(document, pairs)

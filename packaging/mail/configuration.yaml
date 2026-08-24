@@ -11,6 +11,9 @@
 # Gmail, Fastmail, Yahoo, and iCloud fill IMAP/SMTP hosts from the address.
 # install.sh copies this file if the host has none yet, and copies ./secrets
 # onto $XDG_DATA_HOME/langmesh/secrets.
+#
+# provision.* is for packaging/mail/provision.sh on the machine that creates
+# or SSHes into the host. The running mail client does not read it.
 
 email:
   enabled: true
@@ -23,3 +26,18 @@ email:
 sandbox:
   enforce: preferred
   network: true
+
+provision:
+  host: ""
+  name: langmesh-mail
+  fly:
+    app: langmesh-mail
+    region: iad
+  hetzner:
+    image: ubuntu-24.04
+    type: cpx11
+    location: fsn1
+    ssh_key: ""
+  digitalocean:
+    region: nyc1
+    ssh_key: ""
