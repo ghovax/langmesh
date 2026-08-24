@@ -17,8 +17,8 @@ pairing, the keychain, the microphone — is in Expo Go, so no native build is n
 ## Pairing
 
 The app pairs by pasting (or scanning) the `langmesh://pair#…` link the daemon's door produced. The
-link carries the address and a token, and both stay on this machine; pair it the same way you would
-add any machine in the desktop app's connect flow.
+link carries the address and a token, and both stay on this phone; pair it the same way you would
+add a machine under **Settings, then Connection** in the desktop app.
 
 `bun run web` renders the same app in a browser via React Native Web, which is useful for looking
 at layout. The camera does not work there — pair by pasting the `langmesh://pair#…` link.

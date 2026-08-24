@@ -9,6 +9,7 @@ import { LuEllipsis, LuFolderOpen, LuMessagesSquare, LuTrash2 } from "react-icon
 import { DropdownMenu, MenuOption } from "@/components/ui/Menu";
 import { Tooltip } from "@/components/ui/Tooltip";
 import {
+  canonicalDaemonId,
   revealInFinder,
   type AgentSummary,
   type PermissionMode,
@@ -42,6 +43,14 @@ export interface SessionEntry {
   permissionMode: PermissionMode;
   // What this session is working toward, when it has said. Null for a session with no goal.
   goal: SessionGoal | null;
+  // Which daemon hosts this session. Home is `home`; a pairing uses that machine's id.
+  daemonId: string;
+  daemonName: string;
+  paired: boolean;
+}
+
+export function sessionIdentity(entry: { daemonId?: string; sessionId: string }): string {
+  return `${canonicalDaemonId(entry.daemonId)}:${entry.sessionId}`;
 }
 
 // Extra left-shift so a fully-scrolled title comes to rest clear of the row's trailing actions.
@@ -99,6 +108,11 @@ export function SessionHoverCard({
             <Text color="fg.muted">{entry.exitReason}</Text>
           </InlineField>
         ) : null}
+        {entry.paired ? (
+          <InlineField label={translation("fieldMachine")}>
+            <Text>{entry.daemonName || translation("pairedMachine")}</Text>
+          </InlineField>
+        ) : null}
       </Flex>
     </Box>
   );
@@ -115,7 +129,7 @@ export function sessionIndicator(
   if (entry.failed) return "problem";
   if (entry.awaitingInput || entry.activity === "waiting") return "attention";
   if (entry.activity === "working") return "working";
-  if (!isActive && unseenCompletions.has(entry.sessionId)) return "done";
+  if (!isActive && unseenCompletions.has(sessionIdentity(entry))) return "done";
   return null;
 }
 
@@ -243,9 +257,14 @@ export const SessionRow = memo(function SessionRow({
       }
       // The status rides at the trailing edge, where it does not hold a column open on every quiet row.
       badges={
-        badges || indicator ? (
+        badges || indicator || entry.paired ? (
           <>
             {badges}
+            {entry.paired ? (
+              <Text fontSize="2xs" color="fg.subtle" flexShrink={0}>
+                {entry.daemonName || translation("pairedMachine")}
+              </Text>
+            ) : null}
             {indicator ? (
               <Tooltip
                 content={statusTooltip}

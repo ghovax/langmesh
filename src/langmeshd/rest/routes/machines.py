@@ -10,7 +10,7 @@ from langmeshd.commons.services.broadcast import _publish_broadcast
 from langmeshd.commons.services.machines import (
     PairingLinkError,
     forget_machine,
-    machine_address,
+    machine_door,
     machines_payload,
     remember_machine,
     rename_machine,
@@ -22,7 +22,7 @@ router = APIRouter()
 
 @router.get("/machines")
 async def list_machines():
-    """Every machine this one knows how to reach. Without their tokens — see `/machines/{id}/address`."""
+    """Every machine this one knows how to reach. Without their tokens — see `/machines/{id}/door`."""
     return await asyncio.to_thread(machines_payload)
 
 
@@ -36,13 +36,13 @@ async def add_machine(request: MachineRequest):
     return machine
 
 
-@router.get("/machines/{machine_id}/address")
-async def machine_url(machine_id: str):
-    """The URL that opens this machine, token included, separate from the list on purpose."""
-    address = await asyncio.to_thread(machine_address, machine_id)
-    if not address:
+@router.get("/machines/{machine_id}/door")
+async def machine_door_route(machine_id: str):
+    """Endpoint and token for this machine, asked for at the moment somebody chooses to talk to it."""
+    door = await asyncio.to_thread(machine_door, machine_id)
+    if not door:
         raise HTTPException(status_code=404, detail="No such machine.")
-    return {"url": address}
+    return door
 
 
 @router.put("/machines/{machine_id}")

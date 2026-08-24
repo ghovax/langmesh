@@ -101,17 +101,18 @@ def remember_machine(link: str) -> dict[str, Any]:
         database.close()
 
 
-def machine_address(machine_id: str) -> str:
-    """The one URL that opens a machine, token and all, as its own call because it hands out a credential."""
+def machine_door(machine_id: str) -> dict[str, str] | None:
+    """Endpoint and token for in-page calls, asked for at the moment somebody chooses to talk to it."""
     assert state.session_factory is not None
     database = state.session_factory()
     try:
         record = database.get(MachineRecord, machine_id)
         if record is None:
-            return ""
-        from urllib.parse import quote
-
-        return f"{record.endpoint}/?token={quote(record.token, safe='')}"
+            return None
+        return {
+            "endpoint": record.endpoint.rstrip("/"),
+            "token": record.token,
+        }
     finally:
         database.close()
 
@@ -150,7 +151,7 @@ def forget_machine(machine_id: str) -> bool:
 __all__ = [
     "PairingLinkError",
     "forget_machine",
-    "machine_address",
+    "machine_door",
     "machines_payload",
     "read_pairing_link",
     "remember_machine",

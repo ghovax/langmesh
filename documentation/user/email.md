@@ -7,13 +7,22 @@ This is not XMPP and not the GitHub mention Action. GitHub mentions run the libr
 ## What happens
 
 1. `langmesh mail` starts the daemon if it is not up, then proves IMAP login and SMTP auth and IDLEs the mailbox (`aioimaplib`, RFC 2177). It does not poll from inside a running turn.
-2. A new UNSEEN message from an allowlisted sender is fetched. Automatic replies, bounces, and mail the agent sent (From is the mailbox address, or a Message-ID it minted) are ignored. Gmail plus-addresses share one inbox: the allowlisted owner mailing `user+agent@gmail.com` from `user@gmail.com` is not treated as the mailbox talking to itself. Plus-addresses and `googlemail.com` still count as the same account for the allow-list, so listing `user@gmail.com` (or `@gmail.com`) takes those aliases too. Replies go to `Reply-To` when the message has one.
+2. A new UNSEEN message from an allowlisted sender is fetched. Automatic replies, bounces, and mail the agent sent (From is the plus-tagged mailbox, or a Message-ID it minted) are ignored. Gmail plus-addresses share one inbox: the allowlisted owner mailing `user+vps@gmail.com` from `user@gmail.com` is not treated as the mailbox talking to itself. Plus-addresses and `googlemail.com` still count as the same account for the allow-list, so listing `user@gmail.com` (or `@gmail.com`) takes those aliases too. Replies go to `Reply-To` when the message has one.
 3. The HTML part is the body. Quoted replies are the containers the mail client wrapped around the previous message; those nodes are removed and the rest is converted with `markdownify` so the agent sees markdown. `text/plain` is used only when there is no HTML, or when the HTML is only the quoted thread.
 4. The thread is keyed as `email:{mailbox}:{root-message-id}` from `References` / `In-Reply-To` / `Message-ID`. An In-Reply-To of a prior outbound also continues the same session. That key maps to one daemon session, stored under `$XDG_DATA_HOME/langmesh/mail.sqlite`.
 5. The opening turn is one JSON object with `subject` and `message`. Later mail on the same thread is only `message`. `session.create` mints the session on the first mail (`permission_mode: automatic` by default). IDLE keeps running while a turn is in flight: a follow-up on a live session is steered into that turn; a mail that arrives when the session is idle starts a new turn.
 6. The session speaks through `submit_email`, the same idea as `submit_github_comment` on GitHub. `kind` `progress` mails a short status and keeps working. `kind` `reply` mails the answer and ends the turn. The agent writes markdown; it is rendered as HTML and sent as `multipart/alternative` with that HTML as the preferred part. Assistant prose in the transcript is not mailed.
 
 Later mail is discovered by IDLE, not by polling from inside a turn. A different thread can run at the same time; one IMAP connection fetches only between IDLEs.
+
+## Which machine
+
+Several hosts can IDLE the same mailbox. Each sets `email.machine` to a lowercase slug (`vps`, `laptop`). SMTP From is `local+machine@domain`, so you keep a separate email thread per machine — write `agent+vps@…` for the VPS, `agent+laptop@…` for the laptop:
+
+- A **new thread** (not a reply) starts a **new session** on the machine named by the plus-tag. The tag must name this host; a missing tag is left UNSEEN rather than guessed.
+- A **reply** is a steering message into that same conversation (`In-Reply-To` / the thread map), even if the plus-tag is missing. Mail tagged for a different machine is left UNSEEN so that host can take it.
+
+IMAP still logs in as the account without the plus. If `email.address` already has a plus-tag, it must equal `email.machine`.
 
 ## Pause, idle, reboot
 
@@ -41,6 +50,7 @@ On the machine that runs `langmeshd`:
 email:
   enabled: true
   address: "agent@example.com"
+  machine: vps
   allow_from:
     - "you@example.com"
   agent: "reviewer"
@@ -71,6 +81,7 @@ OAuth (Gmail, Microsoft 365 / Outlook, Yahoo, or a custom issuer). Authlib refre
 email:
   enabled: true
   address: "agent@outlook.com"
+  machine: vps
   allow_from:
     - "you@example.com"
   auth: oauth
@@ -130,7 +141,7 @@ The mail client cannot create a mailbox, a DNS name, or a cloud VM by itself. Af
 
 Mail will not IDLE until the mailbox provider key is present — otherwise the first email's turn 401s for half an hour. `email.provider` / `email.model` overlay the agent profile for mailbox sessions only; a desktop session on the same profile is unchanged. The secret file is `providers.<id>.api_key` for that catalogue provider (OpenCode Go bills as `providers.opencode.api_key`). Native ChatGPT and Cursor providers skip the key.
 
-The daemon still binds loopback. Mail never exposes the capability token. Do not publish `langmeshd`'s port on the public internet; SSH or Tailscale if you also want the app. Persist `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) across VM and container replacement, or in-flight mail cannot resume.
+The daemon still binds loopback. Mail never exposes the capability token. Do not publish `langmeshd`'s port on the public internet; an SSH tunnel or Tailscale if you also want the app. Persist `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) across VM and container replacement, or in-flight mail cannot resume.
 
 ## Settings
 

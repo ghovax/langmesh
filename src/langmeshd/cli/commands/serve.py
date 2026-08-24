@@ -2,8 +2,8 @@
 
 With `--reach`, the same door is meant to leave the machine: it holds a durable pairing token,
 prints a `langmesh://pair#…` link a phone can pair with, and refuses every request that does not
-present the token. What carries it off the machine is Tailscale, which the door tells you how to
-set up; the tailnet identity is the outer gate and the pairing token the inner one.
+present the token. Carry it off the machine with a transport you choose (Tailscale serve, an SSH
+tunnel); the outer path is yours and the pairing token is the inner gate.
 """
 
 from __future__ import annotations
@@ -485,10 +485,10 @@ def run(arguments) -> int:
         print_pairing_code(link)
         if not _tailnet_endpoint():
             logger.info(
-                "langmesh: this door is on loopback; a phone needs the tailnet address — run tailscale serve and re-pair with its https://<machine>.ts.net address."
+                "langmesh: this door is on loopback; a phone needs an HTTPS address — expose it with a transport you trust (tailscale serve is one) and re-pair with that address."
             )
         logger.info(
-            "langmesh: expose it to your tailnet only: tailscale serve --bg http://127.0.0.1:%d (needs MagicDNS and HTTPS Certificates enabled)",
+            "langmesh: one way to expose it to your tailnet: tailscale serve --bg http://127.0.0.1:%d (needs MagicDNS and HTTPS Certificates enabled)",
             door_port,
         )
 

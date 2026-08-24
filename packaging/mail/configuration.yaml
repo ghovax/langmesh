@@ -25,6 +25,7 @@
 email:
   enabled: true
   address: ""
+  machine: ""
   allow_from: []
   agent: reviewer
   provider: ""
