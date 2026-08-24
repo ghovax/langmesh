@@ -27,6 +27,7 @@ from typing import Any, Callable, Mapping, Protocol
 
 from langmesh import (
     AgentConfiguration,
+    PackagePromptLoader,
     SandboxConfiguration,
     Session,
     SessionComponents,
@@ -34,7 +35,6 @@ from langmesh import (
 )
 from langmesh.base.confinement import Profile
 from langmesh.base.content.models import resolve_litellm
-from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.identity.providers import get_provider_definition
 from langmesh.base.secrets import GITHUB_API_KEY, provider_api_key_name, read_secret
 from langmesh.github.detect import is_mention_turn, thread_has_prior_bot_comment

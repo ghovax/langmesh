@@ -16,10 +16,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
+from langmesh import PackagePromptLoader
 from langmesh.base.secrets import EMAIL_OAUTH_REFRESH_TOKEN, write_secret
 from langmeshd.commons.configuration import EmailConfiguration
 
 logger = logging.getLogger("langmeshd.mail")
+_CALLBACK = PackagePromptLoader(Path(__file__).resolve().parent, extension="html")
 
 _ISSUERS: dict[str, dict[str, Any]] = {
     "google": {
@@ -177,12 +179,9 @@ async def access_token(configuration: EmailConfiguration) -> str:
         return access
 
 
-_CALLBACK_TEMPLATE = (Path(__file__).resolve().parent / "callback.html").read_text()
-
-
 def _callback_page(message: str) -> str:
     """The page the browser shows after the OAuth provider redirects to this loopback."""
-    return _CALLBACK_TEMPLATE.replace("{{message}}", html.escape(message))
+    return _CALLBACK.load("callback", {"message": html.escape(message)})
 
 
 async def authorize(configuration: EmailConfiguration) -> str:
