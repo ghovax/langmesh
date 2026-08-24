@@ -6,8 +6,8 @@
 #   providers.<id>.api_key       # catalogue id, or its credential_identifier
 #                                # (opencode-go bills as providers.opencode.api_key)
 #
-#   printf '%s' 'the-app-password' > secrets/email.imap.password
-#   printf '%s' 'the-provider-key' > secrets/providers.<id>.api_key
+#   printf '%s' 'abcd efgh ijkl …' > secrets/email.imap.password
+#   printf '%s' 'sk-…' > secrets/providers.<id>.api_key
 #   chmod 600 secrets/*
 #
 # Any providers.<id> key is valid: each entry is an empty api_key placeholder
@@ -15,6 +15,8 @@
 # agent profile; omit both to keep the profile's own provider/model. custom
 # needs a base_url.
 #
+# Fill address, machine, and allow_from. machine is this host's plus-tag
+# (laptop, vps, …). A new thread is taken only at local+machine@domain.
 # Gmail, Fastmail, Yahoo, and iCloud fill IMAP/SMTP hosts from the address.
 # install.sh copies this file if the host has none yet, and copies ./secrets
 # onto $XDG_DATA_HOME/langmesh/secrets.
