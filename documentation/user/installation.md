@@ -185,9 +185,11 @@ its approvals, and it is reachable from anywhere you can reach the daemon.
 
 Mail is a second long-running client, not a second daemon. `langmesh mail` IDLEs an allowlisted
 mailbox, strips quoted reply history, and drives `session.create` / `session.send` on loopback.
-Replies go out over SMTP in the same thread. See [Email](email.md). Fill `configuration.yaml` and the secret files, run
+Replies go out over SMTP in the same thread. See [Email](email.md). Fill `configuration.yaml`
+(`email.address`, `email.machine`, `email.allow_from`) and the secret files, run
 `uv run langmesh mail check` until it prints `ready`, then either `uv run langmesh mail` on this
 machine or, on a VPS, install both systemd units so the mail client comes back with the daemon.
+A new thread is addressed to `local+machine@domain`, not the untagged mailbox.
 
 ```sh
 sudo packaging/mail/install.sh
