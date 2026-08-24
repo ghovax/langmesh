@@ -599,8 +599,11 @@ export async function listWorkspaces(options?: ApiRequestOptions): Promise<Works
   return Array.isArray(data.workspaces) ? (data.workspaces as Workspace[]) : [];
 }
 
-export async function getWorkspace(workspaceId: string): Promise<Workspace | null> {
-  const response = await apiFetch(`/workspaces/${encodeURIComponent(workspaceId)}`);
+export async function getWorkspace(
+  workspaceId: string,
+  options?: ApiRequestOptions,
+): Promise<Workspace | null> {
+  const response = await apiFetch(`/workspaces/${encodeURIComponent(workspaceId)}`, options);
   if (!response.ok) return null;
   return (await response.json()) as Workspace;
 }
