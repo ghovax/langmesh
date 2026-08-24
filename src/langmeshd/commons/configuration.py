@@ -198,6 +198,14 @@ class EmailConfiguration(AppConfigurationSection):
         return os.environ.get("LANGMESH_MAIL_AGENT", "").strip() or self.agent.strip() or "reviewer"
 
     @property
+    def effective_working_directory(self) -> str:
+        """Where mail sessions run. Empty leaves the daemon's current directory."""
+        return (
+            os.environ.get("LANGMESH_MAIL_WORKING_DIRECTORY", "").strip()
+            or self.working_directory.strip()
+        )
+
+    @property
     def effective_allow_from(self) -> list[str]:
         raw = os.environ.get("LANGMESH_MAIL_ALLOW_FROM", "").strip()
         if raw:

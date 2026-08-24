@@ -74,6 +74,7 @@ def reply_message(
     message["To"] = to_address
     message["Date"] = formatdate(localtime=True)
     message["Message-ID"] = message_id or outbound_message_id()
+    message["Auto-Submitted"] = "auto-generated"
     reply_subject = (
         subject
         if subject.lower().startswith("re:")

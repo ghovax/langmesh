@@ -33,7 +33,7 @@ A fake "Done." is never mailed because a wait timed out. Nothing is mailed until
 On the machine that runs `langmeshd`:
 
 1. The bundled `reviewer` profile is the default (`~/.agents/agents/reviewer/AGENT.md` on a laptop, or `.agents/agents/reviewer` in this checkout on a VPS). Set `email.agent` only if you want a different one.
-2. Give the daemon a provider key, in `~/.config/langmesh/configuration.yaml` or that provider's environment variable. `LANGMESH_MAIL_ADDRESS` in the environment is enough to enable the client without setting `email.enabled` in the file.
+2. Give the daemon a provider key, in `~/.config/langmesh/configuration.yaml` or that provider's environment variable. The bundled reviewer needs `OPENCODE_API_KEY`. `LANGMESH_MAIL_ADDRESS` in the environment is enough to enable the client without setting `email.enabled` in the file. Mail waits until that key is present, the same way it waits for the mailbox password.
 3. On a headless Linux host, set `sandbox.enforce` to `preferred` (or `off`) so sessions can start without a confinement backend. Set `sandbox.network: true` if the agent should reach the network. `install.sh` already does this.
 4. Put the mailbox in the same file, or in the environment. Environment variables win over the file. Gmail, Fastmail, Outlook, Yahoo, and iCloud fill IMAP/SMTP hosts from the address; you still need an app password.
 
@@ -63,7 +63,7 @@ Gmail needs an [app password](https://support.google.com/accounts/answer/185833)
 uv run langmesh mail
 ```
 
-`mail` starts `langmeshd` when it is not listening, then proves IMAP and SMTP and IDLEs. If the mailbox is not configured yet, it waits and re-reads the file instead of exiting. Logs go to stderr and `$XDG_STATE_HOME/langmesh/langmesh-mail.log`.
+`mail` starts `langmeshd` when it is not listening, then proves IMAP and SMTP and IDLEs. If the mailbox, allow-list, or the agent profile's provider key is not configured yet, it waits and re-reads the file instead of exiting. A systemd or Docker `langmeshd` that is already binding the socket is waited on rather than started a second time. Logs go to stderr and `$XDG_STATE_HOME/langmesh/langmesh-mail.log`.
 
 On a VPS, copy `packaging/mail/mail.env.example` to `mail.env`, fill it, and point `install.sh` at that file so systemd gets every key (including extra provider keys) rather than a reconstructed subset:
 
@@ -88,7 +88,7 @@ The mail client cannot create a mailbox, a DNS name, or a cloud VM by itself. Af
 
 1. **Mailbox credentials.** An address the daemon can IDLE and SMTP from, plus an app password (not the ordinary login) with IMAP enabled. Put them in `mail.env` as `LANGMESH_MAIL_ADDRESS` and `LANGMESH_MAIL_PASSWORD`.
 2. **Allowlisted From.** Your address in `LANGMESH_MAIL_ALLOW_FROM` (comma-separated, or `@domain`).
-3. **Provider key.** The key the `reviewer` profile (or `LANGMESH_MAIL_AGENT`) can use. The bundled reviewer talks to OpenCode Zen, so that is `OPENCODE_API_KEY` unless you change `email.agent`. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, and so on also work for those providers. The daemon reads the same `mail.env`.
+3. **Provider key.** The key the `reviewer` profile (or `LANGMESH_MAIL_AGENT`) can use. The bundled reviewer talks to OpenCode Go (`opencode-go/deepseek-v4-flash`), so that is `OPENCODE_API_KEY` unless you change `email.agent`. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, and so on also work for those providers. Put the key in the same `mail.env` the daemon reads. Mail will not IDLE until that key is present — otherwise the first email's turn 401s for half an hour. Editing `mail.env` after the units have started still needs `systemctl restart langmeshd langmesh-mail` so both processes see it.
 4. **A host that stays up**, with `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) persisted across replace. Choose one:
    - You already have a Linux VPS: copy this checkout there, fill `mail.env`, run the `install.sh` command above.
    - Fly.io: set `FLY_API_TOKEN` (and `LANGMESH_MAIL_ENV=mail.env`) and run `packaging/mail/provision.sh`. The script creates the app, a persistent `langmesh_xdg` volume, imports secrets (comments and empty lines stripped), and deploys from the checkout root.
@@ -99,4 +99,4 @@ The daemon still binds loopback. Mail never exposes the capability token. Do not
 
 ## Settings
 
-Every field is in the [configuration reference](configuration.md#email). A change to the mail section is picked up on the next reconnect, or within a few seconds if the client is still waiting for a complete config. Editing `mail.env` still needs `systemctl restart langmesh-mail` because systemd only reads that file at start.
+Every field is in the [configuration reference](configuration.md#email). A change to the mail section is picked up on the next reconnect, or within a few seconds if the client is still waiting for a complete config. Editing `mail.env` still needs `systemctl restart langmeshd langmesh-mail` because systemd only reads that file at start, and the worker needs the provider key and SMTP password too.
