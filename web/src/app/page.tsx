@@ -95,9 +95,10 @@ function Workspace() {
   const writeLastWorkspace = (workspaceId: string) =>
     updatePreferences({ last_workspace_id: workspaceId });
   // The app opens straight into a workspace addressed by `?workspace=`, resolving the last used or the first available.
-  const workspaceId = searchParams.get("workspace") ?? "";
+  const requestedWorkspaceId = searchParams.get("workspace") ?? "";
   const requestedSessionId = searchParams.get("session") ?? "";
   const requestedDaemonId = searchParams.get("daemon") || LOCAL_DAEMON_ID;
+  const [workspaceId, setWorkspaceId] = useState(requestedWorkspaceId);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(requestedSessionId || null);
   const [daemonId, setDaemonId] = useState(requestedDaemonId);
   const [daemonTargets, setDaemonTargets] = useState<DaemonTarget[]>([]);
@@ -158,7 +159,7 @@ function Workspace() {
           requestedSessionId ? fetchSession(requestedSessionId, options) : Promise.resolve(null),
         ]);
         if (cancelled) return;
-        const requestedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
+        const requestedWorkspace = workspaces.find((workspace) => workspace.id === requestedWorkspaceId);
         const sessionWorkspace = workspaces.find(
           (workspace) => workspace.id === requestedSession?.workspace_id,
         );
@@ -177,6 +178,7 @@ function Workspace() {
         }
         const keepRequestedSession = requestedSession?.workspace_id === target.id;
         writeLastWorkspace(target.id);
+        setWorkspaceId(target.id);
         setActiveSessionId(keepRequestedSession ? requestedSession.id : null);
         setRememberedSession(target.last_session_id ?? "");
         const params = new URLSearchParams(window.location.search);
@@ -185,7 +187,7 @@ function Workspace() {
         else params.delete("daemon");
         if (requestedSessionId && !keepRequestedSession) params.delete("session");
         if (
-          workspaceId !== target.id ||
+          requestedWorkspaceId !== target.id ||
           (requestedSessionId && !keepRequestedSession) ||
           (daemon && requestedDaemonId !== daemon.id)
         ) {
@@ -203,7 +205,7 @@ function Workspace() {
     };
     // The workspace readers close over preferences, so naming them here would re-run this after writing the selection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, requestedSessionId, requestedDaemonId, router]);
+  }, [requestedWorkspaceId, requestedSessionId, requestedDaemonId, router]);
 
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [agentCards, setAgentCards] = useState<AgentCard[]>([]);
@@ -447,16 +449,17 @@ function Workspace() {
 
   async function applyDaemon(target: DaemonTarget) {
     const same = target.id === daemonId && target.id === activeDaemonId();
-    if (!same) {
-      switchDaemon(target);
-      setDaemonId(target.id);
-      setActiveSessionId(null);
-      setWorkingDirectory("");
-      setRestoredContext(null);
+    if (same) {
+      setChatKey((current) => current + 1);
+      void hydrateActiveDaemon();
+      return;
     }
-    setChatKey((current) => current + 1);
+    switchDaemon(target);
+    setDaemonId(target.id);
+    setActiveSessionId(null);
+    setWorkingDirectory("");
+    setRestoredContext(null);
     void hydrateActiveDaemon();
-    if (same) return;
     try {
       const workspaces = await listWorkspaces({ apiBase: target.endpoint, token: target.token });
       const last = readLastWorkspace();
@@ -467,6 +470,7 @@ function Workspace() {
       params.delete("session");
       if (next) {
         writeLastWorkspace(next.id);
+        setWorkspaceId(next.id);
         params.set("workspace", next.id);
         const detailed = await getWorkspace(next.id, {
           apiBase: target.endpoint,
@@ -475,8 +479,10 @@ function Workspace() {
         const local = (detailed?.locations ?? []).find((location) => location.kind === "local");
         setWorkingDirectory(local?.base_directory || "");
       } else {
+        setWorkspaceId("");
         params.delete("workspace");
       }
+      setChatKey((current) => current + 1);
       router.replace(`?${params.toString()}`, { scroll: false });
     } catch (caught) {
       reportError({ component: "workspace-page", operation: "open a machine" }, caught);
@@ -714,6 +720,7 @@ function Workspace() {
       setDaemonId(nextDaemonId);
     }
     writeLastWorkspace(nextWorkspaceId);
+    setWorkspaceId(nextWorkspaceId);
     setActiveSessionId(null);
     setChatKey((current) => current + 1);
     setWorkingDirectory("");
@@ -737,6 +744,7 @@ function Workspace() {
       void hydrateActiveDaemon();
     }
     writeLastWorkspace(nextWorkspaceId);
+    setWorkspaceId(nextWorkspaceId);
     if (switching) {
       setActiveSessionId(null);
       setChatKey((current) => current + 1);
@@ -795,6 +803,7 @@ function Workspace() {
     const params = new URLSearchParams(window.location.search);
     if (entry.workspaceId && entry.workspaceId !== workspaceId) {
       writeLastWorkspace(entry.workspaceId);
+      setWorkspaceId(entry.workspaceId);
       params.set("workspace", entry.workspaceId);
       setRestoredContext(null);
     }
@@ -827,7 +836,10 @@ function Workspace() {
     setActiveSessionId(entry.sessionId);
     void rememberLastSession(entry.workspaceId || workspaceId, entry.sessionId);
     const params = new URLSearchParams(window.location.search);
-    if (entry.workspaceId) params.set("workspace", entry.workspaceId);
+    if (entry.workspaceId) {
+      setWorkspaceId(entry.workspaceId);
+      params.set("workspace", entry.workspaceId);
+    }
     params.set("session", entry.sessionId);
     if (host === LOCAL_DAEMON_ID) params.delete("daemon");
     else params.set("daemon", host);
