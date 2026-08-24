@@ -1,9 +1,11 @@
 # @langmesh[bot] (also @langmesh), or a reply to the bot, on an issue or pull request
 # runs the library in this job. The ack step decides whether the comment is a turn.
 # A later mention on the same thread continues the saved session.
-# LANGMESH_MODEL is provider/model. LANGMESH_API_KEY is that provider's key.
-# Optional LANGMESH_APP_ID / LANGMESH_APP_PRIVATE_KEY post as langmesh[bot].
-# .github/langmesh holds the checkpoint (conversation and provider cache state).
+# Model and provider come from .agents/agents/<name>/AGENT.md, named in
+# .github/langmesh.yaml. Keys are files: .github/secrets/github.api_key and
+# optional github.app.private_key, copied onto $XDG_DATA_HOME/langmesh/secrets.
+# .github/langmesh holds the checkpoint (conversation and provider cache state),
+# the acknowledgement comment id, and the App slug. Those job files are not env vars.
 # issue_comment cannot write the Actions cache, so the session is an artifact.
 
 name: langmesh
@@ -39,21 +41,14 @@ jobs:
       pull-requests: write
       issues: write
       actions: write
-    # Step `if:` cannot read `secrets`. Copy presence into env so the App token step is optional.
-    env:
-      HAVE_LANGMESH_APP: ${{ secrets.LANGMESH_APP_ID != '' && secrets.LANGMESH_APP_PRIVATE_KEY != '' }}
-      LANGMESH_APP_ID: ${{ secrets.LANGMESH_APP_ID }}
     steps:
-      - uses: actions/create-github-app-token@v2
-        id: app
-        if: env.HAVE_LANGMESH_APP == 'true'
-        with:
-          app-id: ${{ secrets.LANGMESH_APP_ID }}
-          private-key: ${{ secrets.LANGMESH_APP_PRIVATE_KEY }}
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
           fetch-depth: 0
+      - run: python3 src/langmesh/github/materialize.py
+      - id: app
+        run: python3 src/langmesh/github/app_token.py
       - id: ack
         env:
           GH_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
@@ -82,14 +77,8 @@ jobs:
       - if: steps.ack.outputs.start == 'true'
         run: uv run --no-dev --frozen python -m langmesh.github
         env:
-          LANGMESH_MODEL: ${{ vars.LANGMESH_MODEL }}
-          LANGMESH_API_KEY: ${{ secrets.LANGMESH_API_KEY }}
-          LANGMESH_MENTION: ${{ vars.LANGMESH_MENTION }}
-          LANGMESH_ACK_COMMENT_ID: ${{ steps.ack.outputs.comment_id }}
           GITHUB_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
-          LANGMESH_GIT_NAME: ${{ steps.app.outcome == 'success' && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
-          LANGMESH_GIT_EMAIL: ${{ steps.app.outcome == 'success' && format('{0}+{1}[bot]@users.noreply.github.com', env.LANGMESH_APP_ID, steps.app.outputs.app-slug) || '41898282+github-actions[bot]@users.noreply.github.com' }}
       - uses: actions/cache/save@v4
         if: ${{ always() && hashFiles('.venv/pyvenv.cfg') != '' }}
         env:

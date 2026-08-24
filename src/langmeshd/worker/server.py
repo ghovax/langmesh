@@ -45,22 +45,34 @@ async def _send(session, params: dict) -> dict:
         parked = await session.pending_decision()
         if parked and not session.is_running:
             return {"accepted": False, "awaiting_input": True, "waiting_on": parked}
+        message_id = str((params.get("metadata") or {}).get("messageId") or "")
+        if message_id:
+            existing = await session.user_message_turn(message_id)
+            if existing is not None:
+                # A client that died after we accepted this id must not start a second copy of the same mail.
+                return {
+                    "accepted": True,
+                    "injected": bool(session.is_running),
+                    "turn_id": existing["turn_id"],
+                    "duplicate": True,
+                    "state": existing["state"],
+                }
         explicit_parts = params.get("parts")
         has_structured_parts = isinstance(explicit_parts, list) and any(
             isinstance(entry, dict) and entry.get("kind") != "text" for entry in explicit_parts
         )
-        if session.is_running and not has_structured_parts:
+        if session.is_running and not has_structured_parts and not params.get("serialize"):
             text = "".join(
                 str(entry.get("text", ""))
                 for entry in (params.get("parts") or [])
                 if isinstance(entry, dict) and entry.get("kind") == "text"
             ) or str(params.get("text", ""))
             # The sender's own id for this message, so a client can recognise its own copy when the session echoes it.
-            message_id = str((params.get("metadata") or {}).get("messageId") or "")
+            inject_id = str((params.get("metadata") or {}).get("messageId") or "")
             # Who sent it, carried into the running turn, so a peer's report is not shown as the user's own words.
             peer_sender = str((params.get("metadata") or {}).get(Metadata.PEER_SENDER) or "")
-            if await session.inject(text, message_id, peer_sender):
-                return {"accepted": True, "injected": True}
+            if await session.inject(text, inject_id, peer_sender):
+                return {"accepted": True, "injected": True, "turn_id": session.live_turn_id()}
             compaction_error = await session.compaction_failure()
             if compaction_error:
                 return {

@@ -69,11 +69,15 @@ Both artifacts carry the same `CFBundleName` and identifier, so one certificate 
 
 ## The `langmesh` command
 
-`langmesh` has one task: **serve** — make LangMesh available over HTTP, with the daemon behind it. Everything else a person does with the harness happens in the interface (the desktop app, or the browser the serve command exposes) or over the daemon's API.
+`langmesh` has two long-running clients: **serve** makes the interface available over HTTP with the daemon behind it, and **mail** IDLEs a mailbox and drives the same daemon as a client. Everything else a person does with the harness happens in the interface (the desktop app, or the browser the serve command exposes) or over the daemon's API.
 
 ```shell
 langmesh serve
+langmesh mail
+langmesh mail check
 ```
+
+`mail check` proves configuration and secret files, IMAP login, and SMTP auth without IDLEing or starting the daemon. See [Email](email.md).
 
 | Flag | What it does |
 |---|---|
@@ -97,7 +101,7 @@ The daemon itself is `langmeshd` — the same binary as `langmesh`, entered by i
 
 ### What is not here
 
-There are no session, configuration, or account verbs. Creating and messaging sessions, answering permission requests, recurring work, remote agents, configuration, and sign-in all happen in the interface, or programmatically against the daemon's API. A session composes with its peers through [tools](agent-system.md), over the same control plane; it does not shell out to this command.
+There are no session, configuration, or account verbs. Creating and messaging sessions, answering permission requests, recurring work, remote agents, configuration, and sign-in all happen in the interface, or programmatically against the daemon's API — except `mail`, which is the IMAP/SMTP client described in [Email](email.md). A session composes with its peers through [tools](agent-system.md), over the same control plane; it does not shell out to this command.
 
 ### Output and exit codes
 
@@ -106,7 +110,7 @@ Diagnostics go to stderr; the exit code carries the outcome.
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | Served, then exited normally. |
-| `1` | The interface could not be served (not built, port taken, daemon failed to start). |
+| `1` | The interface could not be served (not built, port taken, daemon failed to start), or mail was not configured. |
 | `130` | Interrupted with Ctrl-C. |
 | `141` | A pipe closed under it. |
 
@@ -147,6 +151,10 @@ After=network.target
 ExecStart=/srv/langmesh/.venv/bin/langmeshd
 Restart=on-failure
 WorkingDirectory=/srv/langmesh
+Environment=XDG_CONFIG_HOME=/srv/langmesh/xdg/config
+Environment=XDG_DATA_HOME=/srv/langmesh/xdg/data
+Environment=XDG_STATE_HOME=/srv/langmesh/xdg/state
+Environment=XDG_CACHE_HOME=/srv/langmesh/xdg/cache
 
 [Install]
 WantedBy=multi-user.target
@@ -157,8 +165,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now langmeshd
 ```
 
-On first boot the daemon seeds `~/.config/langmesh/configuration.yaml`. Add a provider key there
-(or set it as an environment variable, which wins over the file), and give the server's user the
+On first boot the daemon seeds `~/.config/langmesh/configuration.yaml`. Add a provider key as a secret file under `$XDG_DATA_HOME/langmesh/secrets/`, and give the server's user the
 `.agents/` tree your agents and skills live in.
 
 ### Reach it
@@ -174,14 +181,29 @@ with a transport you choose:
 A remote agent created on the server is a normal session: it keeps its transcript, its goals, and
 its approvals, and it is reachable from anywhere you can reach the daemon.
 
+### Email in front of the daemon
+
+Mail is a second long-running client, not a second daemon. `langmesh mail` IDLEs an allowlisted
+mailbox, strips quoted reply history, and drives `session.create` / `session.send` on loopback.
+Replies go out over SMTP in the same thread. See [Email](email.md). Fill `configuration.yaml` and the secret files, run
+`uv run langmesh mail check` until it prints `ready`, then either `uv run langmesh mail` on this
+machine or, on a VPS, install both systemd units so the mail client comes back with the daemon.
+
+```sh
+sudo packaging/mail/install.sh
+```
+
+The script writes `/etc/systemd/system/langmeshd.service` and `langmesh-mail.service`, copies
+policy and secrets onto `/srv/langmesh/xdg`, then enables them. Pass `--prefix DIR` to install
+somewhere other than `/srv/langmesh`.
+
 ### Keep it small
 
 - The daemon owns one `sqlite` database and the conversation history; a low-end VPS has room for
   thousands of sessions.
-- Set the `LANGMESH` XDG state directories if you want them under `/srv` rather than `/root`.
-- The daemon is the single process that needs to stay up; everything else (the app, `serve`) is a
-  client you can close and reopen.
+- Set the XDG directories if you want them under `/srv` rather than `/root`.
+- The daemon is the process sessions live in; the app and `serve` are clients you can close and reopen. `langmesh mail` must stay up for IDLE, but unfinished jobs are on disk and resume when it comes back.
 
 ## `@langmesh[bot]` on GitHub
 
-An issue or pull-request comment that mentions `@langmesh[bot]`, or a reply to the bot, can run the library in a GitHub Action. Cite `@langmesh[bot]`, not `@langmesh`: the [`@langmesh`](https://github.com/langmesh) user already exists and would be notified. On an issue it can open a draft pull request; on a pull request it updates that branch. Set `LANGMESH_MODEL` to `provider/model` and `LANGMESH_API_KEY` to that provider's key. To have GitHub suggest a bot, install a GitHub App under an available name — `LangMesh` is reserved — and set `LANGMESH_MENTION` to `@<slug>[bot]`. See [GitHub mentions](github.md).
+An issue or pull-request comment that mentions `@langmesh[bot]`, or a reply to the bot, can run the library in a GitHub Action. Cite `@langmesh[bot]`, not `@langmesh`: the [`@langmesh`](https://github.com/langmesh) user already exists and would be notified. On an issue it can open a draft pull request; on a pull request it updates that branch. The model is the GitHub agent profile; the key is the secret file `github.api_key`. To have GitHub suggest a bot, install a GitHub App under an available name — `LangMesh` is reserved — put `app_id` in `.github/langmesh.yaml`, and the PEM in `.github/secrets/github.app.private_key`. See [GitHub mentions](github.md).

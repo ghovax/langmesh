@@ -100,7 +100,7 @@ class Session:
         permission_mode: str = "",
         sandbox: Profile | SandboxConfiguration | Mapping[str, object] | None = None,
         configuration: Configuration | None = None,
-        # Provider credentials in code, though the environment variables still win.
+        # Provider credentials in code. Secret files fill empty slots at resolve time.
         providers: Mapping[str, str | Mapping[str, str]] | None = None,
         model_identifier: str = "",
         tools: Sequence[ToolLike] = (),

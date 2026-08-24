@@ -12,6 +12,7 @@ import urllib.request
 from pathlib import Path
 
 from detect import is_mention_turn
+from files import ACK_ID_NAME, write_job_file
 from substitute import render_file
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
@@ -58,13 +59,12 @@ def _post(repository: str, number: int, text: str, token: str, api: str) -> int:
     return int(record["id"])
 
 
-def _write_output(*, start: bool, comment_id: int | None = None) -> None:
+def _write_output(*, start: bool) -> None:
     output = os.environ.get("GITHUB_OUTPUT")
     if not output:
         return
     with Path(output).open("a", encoding="utf-8") as handle:
         print(f"start={'true' if start else 'false'}", file=handle)
-        print(f"comment_id={comment_id or ''}", file=handle)
 
 
 def main() -> None:
@@ -87,7 +87,8 @@ def main() -> None:
         token,
         api,
     )
-    _write_output(start=True, comment_id=comment_id)
+    write_job_file(ACK_ID_NAME, str(comment_id))
+    _write_output(start=True)
 
 
 if __name__ == "__main__":

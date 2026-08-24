@@ -20,6 +20,8 @@ APP_SECTION_MODELS = {
     "composio": "ComposioConfiguration",
     "daemon": "DaemonConfiguration",
     "dictation": "DictationConfiguration",
+    "email": "EmailConfiguration",
+    "provision": "ProvisionConfiguration",
 }
 
 

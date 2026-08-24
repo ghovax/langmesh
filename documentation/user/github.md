@@ -11,7 +11,7 @@ GitHub's `@` box only suggests **users**, **teams**, and **installed GitHub Apps
 | What you type | What GitHub does | What LangMesh does |
 |---|---|---|
 | `@langmesh[bot]` | Looks for a bot login that cannot be registered: GitHub reserved `LangMesh` for [`@langmesh`](https://github.com/langmesh). This spelling does **not** notify that user. GitHub will not suggest it. | Starts (or continues) the session. Use this until you have your own App. |
-| `@your-slug[bot]` | Mentions the App you installed (for example `@langmesh-agent[bot]`). After that bot has commented, GitHub recommends this handle. | Starts the session for `@langmesh-…[bot]`, or when `LANGMESH_MENTION` is this handle. Use this once the App is installed. |
+| `@your-slug[bot]` | Mentions the App you installed (for example `@langmesh-agent[bot]`). After that bot has commented, GitHub recommends this handle. | Starts the session for `@langmesh-…[bot]`, or when `.github/langmesh.yaml` sets `mention` to this handle. Use this once the App is installed. |
 | `@langmesh` | Mentions the [`@langmesh`](https://github.com/langmesh) user. They get a notification. | Still starts the session, so old comments keep working. Do not use this. |
 | Quote reply on a bot comment | Inserts a blockquote of the previous comment. | Starts a turn when that previous comment is the bot, even without a handle. |
 | Review reply on a bot comment | Sets `in_reply_to_id` to the bot's review comment. | Starts a turn, even without a handle. |
@@ -20,19 +20,19 @@ GitHub's `@` box only suggests **users**, **teams**, and **installed GitHub Apps
 
 Write the handle in the comment body the same way you would address a teammate. A follow-up on the same issue or pull request can cite that handle again, or reply to the bot without another handle — a quote, a review reply, or the comment immediately after the bot.
 
-The agent's own comments must not contain `@langmesh`, `@langmesh[bot]`, or your `LANGMESH_MENTION` handle. That keeps a reply from looking like a new mention; bot authors are ignored in any case.
+The agent's own comments must not contain `@langmesh`, `@langmesh[bot]`, or your `mention` handle. That keeps a reply from looking like a new mention; bot authors are ignored in any case.
 
 Until your App is installed and has posted on a thread, GitHub has no bot to suggest, so you type `@langmesh[bot]` yourself.
 
 ## Turn it on
 
 1. Enable Actions on the repository. Under **Settings → Actions → General → Workflow permissions**, allow GitHub Actions to create and approve pull requests. The workflow asks for write access to contents, issues, and pull requests.
-2. Set the repository secret `LANGMESH_API_KEY` to the API key for the provider you want.
-3. Optionally set the repository variable `LANGMESH_MODEL` to `provider/model`. The value splits on the **first** slash: `anthropic/claude-sonnet-4-5` is Anthropic's `claude-sonnet-4-5`, and `openrouter/anthropic/claude-sonnet-4-5` is OpenRouter's `anthropic/claude-sonnet-4-5`. When the variable is unset, the Action uses `anthropic/claude-sonnet-4-5`.
+2. Put the API key for the provider named in `.agents/agents/github/AGENT.md` in the secret file `github.api_key`. On a GitHub-hosted runner that file is `.github/secrets/github.api_key` in the checkout (the job copies it onto `$XDG_DATA_HOME/langmesh/secrets`). On a self-hosted runner you can keep it only under XDG. The App id belongs in `.github/langmesh.yaml`.
+3. The model is `provider` and `model` in that agent profile. Change the profile in git to pick a different one. `.github/langmesh.yaml` names the profile (`agent: github`).
 4. Keep the workflow file on the default branch. GitHub runs comment workflows from that copy.
-5. Optionally install a GitHub App so comments come from your bot and GitHub recommends that handle. See [Install a GitHub App so GitHub can suggest the bot](#install-a-github-app-so-github-can-suggest-the-bot).
+5. Optionally install a GitHub App so comments come from your bot and GitHub recommends that handle. Put the App id in `.github/langmesh.yaml` as `app_id`, and the PEM in `.github/secrets/github.app.private_key`. See [Install a GitHub App so GitHub can suggest the bot](#install-a-github-app-so-github-can-suggest-the-bot).
 
-The left-hand side of `LANGMESH_MODEL` is a LangMesh provider name (`anthropic`, `openai`, `openrouter`, and the rest of the catalogue). The Action does not keep a short list of which of those you may pick. `LANGMESH_API_KEY` is tried first, then that provider's catalogue environment variables, then `{PROVIDER}_API_KEY` with hyphens turned into underscores. If you would rather use the provider's usual name (`ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`, `GEMINI_API_KEY`, …), add it to the job `env` in the workflow.
+The left-hand side of the profile's `provider` is a LangMesh provider name (`anthropic`, `openai`, `openrouter`, and the rest of the catalogue). `github.api_key` is the one file for that key (or `providers.<id>.api_key`). GitHub-hosted runners only see files that are in the checkout: on a private repository you can commit them (`git add -f`); on a public repository that publishes the key.
 
 ## Install a GitHub App so GitHub can suggest the bot
 
@@ -44,7 +44,7 @@ On your user account open [Register a new GitHub App](https://github.com/setting
 
 Fill it in as follows:
 
-- **GitHub App name:** an available name that still contains `LangMesh`, for example `LangMesh Agent`. GitHub turns that into a slug (`langmesh-agent`) and a bot login (`langmesh-agent[bot]`). The name `LangMesh` is reserved for the [`@langmesh`](https://github.com/langmesh) user, so GitHub rejects it with *Name is reserved for the account @langmesh*. The name must be unique on GitHub. Keep `langmesh` in the slug so a comment that cites the bot is recognized even when `LANGMESH_MENTION` is unset.
+- **GitHub App name:** an available name that still contains `LangMesh`, for example `LangMesh Agent`. GitHub turns that into a slug (`langmesh-agent`) and a bot login (`langmesh-agent[bot]`). The name `LangMesh` is reserved for the [`@langmesh`](https://github.com/langmesh) user, so GitHub rejects it with *Name is reserved for the account @langmesh*. The name must be unique on GitHub. Keep `langmesh` in the slug so a comment that cites the bot is recognized even when `.github/langmesh.yaml` has no `mention` key.
 - **Homepage URL:** `https://github.com/ghovax/langmesh` (or this repository's URL).
 - **Identifying and authorizing users:** leave the callback and setup URLs empty. This App does not sign people in.
 - **Webhook:** uncheck **Active**. The mention job is a comment workflow, not an App webhook.
@@ -63,11 +63,11 @@ Create the App.
 
 On the App's settings page (the URL looks like `https://github.com/settings/apps/langmesh-agent`):
 
-1. Copy **App ID**. That integer is `LANGMESH_APP_ID`.
-2. Under **Private keys**, click **Generate a private key**. GitHub downloads a `.pem` file. The whole file, including the `BEGIN` and `END` lines, is `LANGMESH_APP_PRIVATE_KEY`.
-3. Note the slug in that URL. The bot login is `@<slug>[bot]`.
+1. Copy **App ID**. That integer is `app_id` in `.github/langmesh.yaml`.
+2. Under **Private keys**, click **Generate a private key**. GitHub downloads a `.pem` file. The whole file, including the `BEGIN` and `END` lines, is `.github/secrets/github.app.private_key` (mode `0600`).
+3. Note the slug in that URL. The bot login is `@<slug>[bot]`. If the slug is not `langmesh-…`, set `mention: "@<slug>[bot]"` in `.github/langmesh.yaml`.
 
-Keep the PEM out of git. Repository secrets are the only place it should live.
+Keep the PEM out of a public git history. On a private repository you can commit it so the hosted runner sees it. On a self-hosted runner, the XDG file `$XDG_DATA_HOME/langmesh/secrets/github.app.private_key` is enough.
 
 ### 3. Install it on this repository
 
@@ -75,17 +75,13 @@ On the same App page, open **Install App**, choose the account, and grant access
 
 You should then see an installation at a URL like `https://github.com/settings/installations/…` with your App listed.
 
-### 4. Give the Action the secrets
+### 4. Give the Action the App PEM
 
-In the repository: **Settings → Secrets and variables → Actions**.
+- File `.github/secrets/github.app.private_key` — the PEM contents (or the same name under `$XDG_DATA_HOME/langmesh/secrets` on a self-hosted runner)
+- In `.github/langmesh.yaml`, `app_id` — the numeric App ID (not a secret)
+- In `.github/langmesh.yaml`, `mention` — `@<slug>[bot]`, only if the slug is not `@langmesh-…[bot]`
 
-- Secret `LANGMESH_APP_ID` — the numeric App ID
-- Secret `LANGMESH_APP_PRIVATE_KEY` — the PEM contents
-- Variable `LANGMESH_MENTION` — `@<slug>[bot]`, for example `@langmesh-agent[bot]`
-
-The slug will not be `langmesh`. Set `LANGMESH_MENTION` to `@<slug>[bot]` so that handle is first-class. A comment that cites `@langmesh-…[bot]` is also recognized without the variable.
-
-The next mention job mints an installation token from those secrets, then posts and pushes as that bot. Commits use that bot as the author. The App secrets are optional. Without them the job still runs as `github-actions[bot]`, and GitHub will not suggest a bot handle.
+The next mention job mints an installation token from the PEM file, then posts and pushes as that bot. Commits use that bot as the author. The App PEM is optional. Without it the job still runs as `github-actions[bot]`, and GitHub will not suggest a bot handle.
 
 ### 5. Check that citing works
 
@@ -106,4 +102,4 @@ On an issue or a same-repo pull request, comment `@<slug>[bot]` (or `@langmesh[b
 - Long threads keep the last 24 turns and drop the rest, with no summarizer call.
 - The job does not paste the GitHub thread into the model context. Each turn is one JSON object. The opening turn has `thread`, `thread_url`, `kind`, `comment_url`, `head`, and `comment`. A later mention on the same thread — whether the session restored or the bot already commented — has only `comment_url` and `comment`, so those stable keys are not repeated. Earlier comments, the issue body, and review notes are read with `gh` and the job token. Reply detection follows the same pointers — the parent comment, or the two most recent comments — and does not load the thread.
 
-A follow-up `@langmesh[bot]`, or a reply to the bot, on the same issue or pull request continues the same library session. The id is stable per thread (`github:{repository}:{issue|pull}:{number}`). After a turn, the conversation and the provider cache state are written to `.github/langmesh/session.sqlite`. That directory is gitignored — it is not committed; the Action also unstages it before pushing file edits, so a workflow change under `.github/workflows/` can still land. GitHub issues a read-only Actions cache token for `issue_comment` on the default branch, so the job cannot save that sqlite through `actions/cache`. The previous turn is uploaded as an artifact named `langmesh-session-{issue|pull}-{number}` and the next job restores it. OpenCode Zen is called over plain HTTP with the same headers a working curl uses; the OpenAI-compatible SDK path has made Zen answer that the model is not supported. That HTTP call also sends the thread session id as `x-opencode-session` so Zen can keep the prompt cache on the same conversation. The job uploads that artifact even when the turn fails, so a later mention still restores the prefix. `session.ask` restores that checkpoint before the new mention. A miss still sends the slim follow-up JSON when the bot already commented on the thread. The mention system prompt is the same on every job so the instructions and tool schema stay a reusable provider-cache prefix; it does not assume a particular host repository. GitHub can expire an artifact; a miss starts a fresh conversation.
+A follow-up `@langmesh[bot]`, or a reply to the bot, on the same issue or pull request continues the same library session. The id is stable per thread (`github:{repository}:{issue|pull}:{number}`). After a turn, the conversation and the provider cache state are written to `.github/langmesh/session.sqlite`. The acknowledgement comment id and App slug for git author are files in that directory too (`acknowledgement.id`, `app-slug`); they are not environment variables. That directory is gitignored — it is not committed; the Action also unstages it before pushing file edits, so a workflow change under `.github/workflows/` can still land. GitHub issues a read-only Actions cache token for `issue_comment` on the default branch, so the job cannot save that sqlite through `actions/cache`. The previous turn is uploaded as an artifact named `langmesh-session-{issue|pull}-{number}` and the next job restores it. OpenCode Zen is called over plain HTTP with the same headers a working curl uses; the OpenAI-compatible SDK path has made Zen answer that the model is not supported. That HTTP call also sends the thread session id as `x-opencode-session` so Zen can keep the prompt cache on the same conversation. The job uploads that artifact even when the turn fails, so a later mention still restores the prefix. `session.ask` restores that checkpoint before the new mention. A miss still sends the slim follow-up JSON when the bot already commented on the thread. The mention system prompt is the same on every job so the instructions and tool schema stay a reusable provider-cache prefix; it does not assume a particular host repository. GitHub can expire an artifact; a miss starts a fresh conversation.
