@@ -16,7 +16,7 @@ LangMesh is four layers, and the first three are two packages that ship as one i
 
 1. **The library** — `import langmesh`. `langmesh.Session` runs an agent in your own process. You give it the agent, the model, an absolute working directory, and the credentials; it performs no implicit user or project discovery, starts no daemon, and forces no plugin. Explicit tools operate only when composed, while shipped prompt assets remain package resources. This is the harness itself, and the three layers above are all built on it. See [As a library](documentation/library/index.md).
 2. **The machine loaders and the daemon** — the `langmeshd` package. The machine loaders (`langmeshd.daemon.machine`) read your configuration file and the agents in your `.agents` directories and turn them into what the library takes. `langmeshd` then hosts every session. This layer knows your home directory exists; the library does not.
-3. **The clients** — the `langmesh` command (whose one verb is `serve`), the macOS app, and a phone. All talk to the daemon and contain no harness of their own; anything one can do, the others can.
+3. **The clients** — the `langmesh` command (`serve` for the interface, `mail` for IMAP/SMTP in front of the daemon), the macOS app, and a phone. All talk to the daemon and contain no harness of their own; anything one can do, the others can.
 
 An agent can use these too. When a session needs help it creates a second session and messages it, over the same API your terminal uses. The helper appears in your session list, you can watch it, and it ends when its parent does. Its answer arrives as a message, in its own words.
 
@@ -141,13 +141,15 @@ A hook narrows and can never widen: `before_tools` runs after the permission bar
 
 ### From the terminal
 
-The command line has one job: **serve** — make LangMesh available over HTTP, with the daemon behind it.
+The command line has two long-running clients: **serve** makes the interface available over HTTP with the daemon behind it, and **mail** IDLEs a mailbox and drives the same daemon.
 
 ```console
 $ langmesh serve
+$ langmesh mail check
+$ langmesh mail
 ```
 
-Everything else — creating and messaging sessions, answering permission requests, watching work, recurring schedules, configuration, sign-in — happens in the interface (the app, or the browser `serve` exposes) or over the daemon's API. A session composes over that API, not by shelling out to this command.
+`mail check` proves IMAP and SMTP without IDLEing. See [Email](documentation/user/email.md). Everything else — creating and messaging sessions, answering permission requests, watching work, recurring schedules, configuration, sign-in — happens in the interface (the app, or the browser `serve` exposes) or over the daemon's API. A session composes over that API, not by shelling out to this command.
 
 ### From the app
 
