@@ -16,7 +16,6 @@ Environment=XDG_DATA_HOME=/srv/langmesh/xdg/data
 Environment=XDG_STATE_HOME=/srv/langmesh/xdg/state
 Environment=XDG_CACHE_HOME=/srv/langmesh/xdg/cache
 Environment=XDG_RUNTIME_DIR=/srv/langmesh/xdg/runtime
-EnvironmentFile=-/srv/langmesh/mail.env
 
 [Install]
 WantedBy=multi-user.target

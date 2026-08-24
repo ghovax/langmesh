@@ -13,6 +13,8 @@ wheels/
 .venv
 .env
 .direnv/
+/mail.env
+/secrets/
 
 # Editor
 .DS_Store

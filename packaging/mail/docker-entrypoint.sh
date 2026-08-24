@@ -8,61 +8,41 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/srv/langmesh/xdg/cache}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/srv/langmesh/xdg/runtime}"
 mkdir -p "${XDG_RUNTIME_DIR}/langmesh" \
   "${XDG_CONFIG_HOME}/langmesh" \
-  "${XDG_DATA_HOME}/langmesh" \
+  "${XDG_DATA_HOME}/langmesh/secrets" \
   "${XDG_STATE_HOME}/langmesh"
-chmod 700 "${XDG_RUNTIME_DIR}" "${XDG_RUNTIME_DIR}/langmesh"
+chmod 700 "${XDG_RUNTIME_DIR}" "${XDG_RUNTIME_DIR}/langmesh" \
+  "${XDG_DATA_HOME}/langmesh/secrets"
 
-load_mail_env() {
-  local file="" line
-  if [[ -n "${LANGMESH_MAIL_ENV:-}" && -f "${LANGMESH_MAIL_ENV}" ]]; then
-    file="${LANGMESH_MAIL_ENV}"
-  elif [[ -f /run/secrets/mail.env ]]; then
-    file=/run/secrets/mail.env
+if [[ -z "${LANGMESH_MAIL_ENV:-}" ]]; then
+  if [[ -f /run/secrets/mail.env ]]; then
+    export LANGMESH_MAIL_ENV=/run/secrets/mail.env
   elif [[ -f /srv/langmesh/mail.env ]]; then
-    file=/srv/langmesh/mail.env
+    export LANGMESH_MAIL_ENV=/srv/langmesh/mail.env
   fi
-  if [[ -z "${file}" ]]; then
-    return 0
-  fi
-  while IFS= read -r line || [[ -n "${line}" ]]; do
-    line="${line%$'\r'}"
-    case "${line}" in
-      ''|'#'*) continue ;;
-    esac
-    [[ "${line}" == *=* ]] || continue
-    export "${line}"
-  done <"${file}"
-}
-load_mail_env
+fi
+
+policy="${XDG_CONFIG_HOME}/langmesh/configuration.yaml"
+if [[ ! -f "${policy}" && -f /srv/langmesh/packaging/mail/configuration.yaml ]]; then
+  install -m 600 /srv/langmesh/packaging/mail/configuration.yaml "${policy}"
+fi
 
 /srv/langmesh/.venv/bin/python - <<'PY'
-import os
 from langmeshd.commons import configuration_file
 from langmeshd.commons.configuration_io import load_configuration
-from langmeshd.mail.envfile import apply_mail_env
+from langmeshd.commons.secret_import import import_into_files
 
-apply_mail_env()
 load_configuration(seed=True)
+import_into_files()
 document = configuration_file.load() or {}
 sandbox = document.setdefault("sandbox", {})
-sandbox["enforce"] = os.environ.get("LANGMESH_SANDBOX_ENFORCE", sandbox.get("enforce") or "preferred")
+sandbox["enforce"] = sandbox.get("enforce") or "preferred"
 sandbox["network"] = True
 email = document.setdefault("email", {})
-email["enabled"] = True
-email.setdefault("address", os.environ.get("LANGMESH_MAIL_ADDRESS", ""))
-allow = os.environ.get("LANGMESH_MAIL_ALLOW_FROM", "").strip()
-if allow:
-    email["allow_from"] = [item.strip() for item in allow.split(",") if item.strip()]
-email.setdefault("agent", os.environ.get("LANGMESH_MAIL_AGENT", "reviewer") or "reviewer")
-email.setdefault(
-    "working_directory",
-    os.environ.get("LANGMESH_MAIL_WORKING_DIRECTORY") or "/srv/langmesh",
-)
+email.setdefault("agent", "reviewer")
+email.setdefault("working_directory", "/srv/langmesh")
 email.setdefault("permission_mode", "automatic")
-imap = email.setdefault("imap", {})
-imap.setdefault("host", os.environ.get("LANGMESH_MAIL_IMAP_HOST", ""))
-smtp = email.setdefault("smtp", {})
-smtp.setdefault("host", os.environ.get("LANGMESH_MAIL_SMTP_HOST", ""))
+if email.get("address"):
+    email["enabled"] = True
 invalid = configuration_file.rejects(document)
 if invalid:
     raise SystemExit(invalid)
