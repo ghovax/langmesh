@@ -23,7 +23,13 @@ from langmeshd.mail import client as daemon_client
 from langmeshd.mail import payload
 from langmeshd.mail.clock import ResumeClock, StaleConnection
 from langmeshd.mail.imap import Inbox
-from langmeshd.mail.smtp import outbound_message_id, probe_smtp, reply_message, send_reply
+from langmeshd.mail.smtp import (
+    MESSAGE_ID_DOMAIN,
+    outbound_message_id,
+    probe_smtp,
+    reply_message,
+    send_reply,
+)
 from langmeshd.mail.threads import (
     COMPLETED,
     DISCOVERED,
@@ -402,11 +408,11 @@ class MailService:
                 return self.store.update(existing.id, uid=uid, uidvalidity=uidvalidity)
             return existing
         sender = body.sender_address(message)
-        mailbox_address = self.configuration.effective_address.lower()
-        if sender == mailbox_address or (
-            sender
-            and mailbox_address
-            and body.canonical_mailbox(sender) == body.canonical_mailbox(mailbox_address)
+        identifier = body.message_id_of(message) or message_id
+        if (
+            body.from_configured_mailbox(sender, self.configuration.effective_address)
+            or body.minted_outbound_id(identifier, domain=MESSAGE_ID_DOMAIN)
+            or (identifier and self.store.item_by_outbound_message_id(identifier) is not None)
         ):
             self.store.mark_skipped(
                 mailbox=mailbox,
