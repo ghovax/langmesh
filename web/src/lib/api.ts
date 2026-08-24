@@ -1,39 +1,78 @@
-// Where the daemon lives, and the capability token that proves we may talk to it.
+// Which langmeshd this page talks to. Address and token are one fact.
+//
+// Home is this machine's daemon. Next-dev learns it from the env that
+// web-development.sh writes; Tauri overwrites it with `daemon_endpoint`; a
+// page `langmesh serve` hosts uses the current origin. Pairing remembers
+// other daemons. Switching stays on this page. Location.kind (`local` /
+// `remote`) is a different question: filesystem here vs an SSH host.
 import { setFaultSender, reportError } from "./faults";
 
-// The development server is pointed straight at the daemon by web-development.sh; a built page
-// is served by the daemon itself (or by Tauri, which reports the endpoint below).
-const DEFAULT_API_BASE =
-  typeof process !== "undefined" ? process.env.NEXT_PUBLIC_API_BASE || "" : "";
-
-// The token a development page presents, and only ever a development page.
-const DEVELOPMENT_TOKEN =
-  typeof process !== "undefined" && process.env.NODE_ENV !== "production"
-    ? process.env.NEXT_PUBLIC_TOKEN || ""
-    : "";
+type Connection = { endpoint: string; token: string };
 
 function runningInTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-let API_BASE = DEFAULT_API_BASE;
+function seedHomeConnection(): Connection {
+  const endpoint =
+    typeof process !== "undefined" ? (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/+$/, "") : "";
+  // Only a next-dev page inlines the token. A production build is same-origin
+  // behind `serve`, or Tauri, which fills the home connection in below.
+  const token =
+    typeof process !== "undefined" && process.env.NODE_ENV !== "production"
+      ? process.env.NEXT_PUBLIC_TOKEN || ""
+      : "";
+  return { endpoint, token };
+}
 
-// The token for the daemon we are talking to. The local one authenticates nothing on a remote host.
-let localDaemonToken = DEVELOPMENT_TOKEN;
+const seededHome = seedHomeConnection();
+let home: Connection = { ...seededHome };
+let active: Connection = { ...seededHome };
+let paired: { id: string; name: string } | null = null;
 let daemonEndpointPromise: Promise<void> | null = null;
+
+/** This page's own daemon. `"local"` still reads as home so an older `?daemon=local` bookmark keeps working. */
+export const HOME_DAEMON_ID = "home";
+
+export type DaemonTarget = {
+  id: string;
+  name: string;
+  home: boolean;
+  endpoint: string;
+  token: string;
+};
+
+/** Home, including a `?daemon=local` bookmark from the first in-page switcher. */
+export function isHomeDaemon(id: string | null | undefined): boolean {
+  return !id || id === HOME_DAEMON_ID || id === "local";
+}
+
+export function canonicalDaemonId(id: string | null | undefined): string {
+  return isHomeDaemon(id) ? HOME_DAEMON_ID : id!;
+}
+
+export function sameDaemon(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  return canonicalDaemonId(left) === canonicalDaemonId(right);
+}
 
 async function resolveDaemonEndpoint(): Promise<void> {
   if (!runningInTauri()) {
-    // The daemon's address comes from the environment in development; nothing to discover on the page.
+    home = seedHomeConnection();
+    if (!paired) active = { ...home };
     return;
   }
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     const endpoint = await invoke<{ url: string; token: string }>("daemon_endpoint");
-    if (endpoint?.url) API_BASE = endpoint.url.replace(/\/+$/, "");
-    localDaemonToken = endpoint?.token ?? "";
+    if (endpoint?.url) {
+      home = { endpoint: endpoint.url.replace(/\/+$/, ""), token: endpoint.token ?? "" };
+    }
+    if (!paired) active = { ...home };
   } catch {
-    // No endpoint reported: leave the defaults, and let the failing request surface it.
+    // No endpoint reported: leave the seeded home connection, and let the failing request surface it.
   }
 }
 
@@ -48,12 +87,61 @@ export function forgetDaemonEndpoint(): void {
   daemonEndpointPromise = null;
 }
 
-/** Resolve the daemon again and prove it is answering, starting the installed local one in Tauri when absent. */
+/** Resolve the home daemon again and prove the active one is answering. */
 export async function reconnectDaemon(): Promise<void> {
-  forgetDaemonEndpoint();
-  invalidateDiscoveryCache();
+  if (!paired) {
+    forgetDaemonEndpoint();
+    invalidateDiscoveryCache();
+  }
   const response = await apiFetch("/health", { cache: "no-store" });
   if (!response.ok) throw new Error(`Daemon health check failed (${response.status})`);
+}
+
+export function activeDaemonId(): string {
+  return paired?.id ?? HOME_DAEMON_ID;
+}
+
+function rememberedHomeBase(): string {
+  if (home.endpoint) return home.endpoint.replace(/\/+$/, "");
+  if (typeof window !== "undefined") return window.location.origin.replace(/\/+$/, "");
+  return "";
+}
+
+export function homeApiOptions(): ApiRequestOptions {
+  // Home credentials only: never the paired daemon a session was switched to.
+  return { apiBase: rememberedHomeBase(), token: home.token };
+}
+
+function homeConnection(): Connection {
+  const endpoint = rememberedHomeBase();
+  return { endpoint, token: home.token };
+}
+
+export function switchDaemon(target: DaemonTarget | "home"): void {
+  const goingHome = target === "home" || (typeof target !== "string" && target.home);
+  if (goingHome) {
+    paired = null;
+    active = homeConnection();
+  } else {
+    if (!home.endpoint && typeof window !== "undefined") {
+      home = { ...home, endpoint: window.location.origin.replace(/\/+$/, "") };
+    }
+    if (!home.token) home = { ...home, token: active.token };
+    paired = { id: target.id, name: target.name };
+    active = { endpoint: target.endpoint.replace(/\/+$/, ""), token: target.token };
+  }
+  restartEventStream();
+}
+
+function restartEventStream(): void {
+  if (sharedEventStream) {
+    sharedEventStream.close();
+    sharedEventStream = null;
+  }
+  lastReportedConnection = null;
+  if (eventListeners.size > 0 || connectionListeners.size > 0) {
+    ensureEventStream();
+  }
 }
 
 export interface ApiRequestOptions {
@@ -63,7 +151,7 @@ export interface ApiRequestOptions {
 }
 
 function apiBase(options?: ApiRequestOptions): string {
-  return (options?.apiBase || API_BASE).replace(/\/+$/, "");
+  return (options?.apiBase || active.endpoint).replace(/\/+$/, "");
 }
 
 function apiUrl(path: string, options?: ApiRequestOptions): string {
@@ -71,7 +159,7 @@ function apiUrl(path: string, options?: ApiRequestOptions): string {
 }
 
 function requestToken(options?: ApiRequestOptions): string {
-  return options?.token ?? localDaemonToken;
+  return options?.token ?? active.token;
 }
 
 // The token as a query parameter, for transports that carry no header: a websocket, an iframe, a download.
@@ -117,6 +205,7 @@ async function rpc<T>(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ method, params }),
     apiBase: options.apiBase,
+    token: options.token,
     signal: options.signal,
   });
   const payload = (await response.json().catch(() => ({}))) as {
@@ -129,8 +218,6 @@ async function rpc<T>(
   }
   return payload.result as T;
 }
-
-// The address the client is currently talking to.
 
 // Async, because the token must be resolved first: a websocket URL without one is refused at the handshake.
 export async function terminalWebSocketUrl(
@@ -259,7 +346,7 @@ export function invalidateDiscoveryCache(): void {
 // The URL serving a local file for display, each segment encoded and the slashes kept.
 export function localFileUrl(path: string): string {
   const encoded = path.split("/").map(encodeURIComponent).join("/");
-  return withDaemonToken(`${API_BASE}/files/${encoded}`);
+  return withDaemonToken(`${active.endpoint}/files/${encoded}`);
 }
 
 // A generic uploaded file: the core knows the stored file and its metadata, and nothing more.
@@ -306,7 +393,7 @@ export interface SshHost {
   identity_files: string[];
 }
 
-// A named place a workspace runs tools in. `name` is derived from the connection, not entered.
+// A named place a workspace runs tools in. `name` is derived from the host and path, not entered.
 export interface Location {
   id: string;
   workspace_id: string;
@@ -349,18 +436,23 @@ export interface Machine {
 }
 
 export async function listMachines(): Promise<Machine[]> {
-  const response = await apiFetch(`/machines`);
-  if (!response.ok) return [];
-  const data = await response.json();
-  return Array.isArray(data.machines) ? (data.machines as Machine[]) : [];
+  try {
+    const response = await apiFetch(`/machines`, homeApiOptions());
+    if (!response.ok) return [];
+    const data = await response.json();
+    return Array.isArray(data.machines) ? (data.machines as Machine[]) : [];
+  } catch {
+    return [];
+  }
 }
 
-/** Remember a machine from the `langmesh://pair#…` link `langmesh reach` prints. */
+/** Remember a machine from the `langmesh://pair#…` link `langmesh serve --reach` prints. */
 export async function addMachine(link: string): Promise<Machine> {
   const response = await apiFetch(`/machines`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ link }),
+    ...homeApiOptions(),
   });
   if (!response.ok) {
     let detail = "";
@@ -374,11 +466,20 @@ export async function addMachine(link: string): Promise<Machine> {
   return (await response.json()) as Machine;
 }
 
-/** The URL that opens a machine, token and all, asked for at the moment somebody chooses to go. */
-export async function machineAddress(machineId: string): Promise<string> {
-  const response = await apiFetch(`/machines/${encodeURIComponent(machineId)}/address`);
+export type MachineDoor = {
+  endpoint: string;
+  token: string;
+};
+
+/** Endpoint and token for a paired machine, asked for at the moment somebody chooses to talk to it. */
+export async function machineDoor(machineId: string): Promise<MachineDoor> {
+  const response = await apiFetch(`/machines/${encodeURIComponent(machineId)}/door`, homeApiOptions());
   if (!response.ok) throw new Error(`Could not open that machine (${response.status}).`);
-  return String((await response.json())?.url ?? "");
+  const data = (await response.json()) as Partial<MachineDoor>;
+  return {
+    endpoint: String(data.endpoint ?? "").replace(/\/+$/, ""),
+    token: String(data.token ?? ""),
+  };
 }
 
 export async function renameMachine(machineId: string, name: string): Promise<void> {
@@ -386,11 +487,135 @@ export async function renameMachine(machineId: string, name: string): Promise<vo
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
+    ...homeApiOptions(),
   });
 }
 
 export async function forgetMachine(machineId: string): Promise<void> {
-  await apiFetch(`/machines/${encodeURIComponent(machineId)}`, { method: "DELETE" });
+  await apiFetch(`/machines/${encodeURIComponent(machineId)}`, {
+    method: "DELETE",
+    ...homeApiOptions(),
+  });
+}
+
+export async function fetchDaemonTargets(): Promise<DaemonTarget[]> {
+  await ensureDaemonEndpoint();
+  const homeTarget: DaemonTarget = {
+    id: HOME_DAEMON_ID,
+    name: "",
+    home: true,
+    endpoint: rememberedHomeBase(),
+    token: home.token,
+  };
+  const machines = await listMachines();
+  const pairedTargets = await Promise.all(
+    machines.map(async (machine) => {
+      try {
+        const door = await machineDoor(machine.id);
+        return {
+          id: machine.id,
+          name: machine.name,
+          home: false,
+          endpoint: door.endpoint || machine.endpoint.replace(/\/+$/, ""),
+          token: door.token,
+        };
+      } catch {
+        return {
+          id: machine.id,
+          name: machine.name,
+          home: false,
+          endpoint: machine.endpoint.replace(/\/+$/, ""),
+          token: "",
+        };
+      }
+    }),
+  );
+  const activePaired = paired;
+  if (activePaired && !pairedTargets.some((target) => target.id === activePaired.id)) {
+    pairedTargets.unshift({
+      id: activePaired.id,
+      name: activePaired.name,
+      home: false,
+      endpoint: active.endpoint.replace(/\/+$/, ""),
+      token: active.token,
+    });
+  }
+  watchDaemons([homeTarget, ...pairedTargets]);
+  return [homeTarget, ...pairedTargets];
+}
+
+export async function probeDaemon(target: Pick<DaemonTarget, "endpoint" | "token">): Promise<boolean> {
+  try {
+    const response = await apiFetch("/health", {
+      apiBase: target.endpoint,
+      token: target.token,
+      cache: "no-store",
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+export interface FederatedSession extends SessionSummary {
+  daemonId: string;
+  daemonName: string;
+  paired: boolean;
+}
+
+export interface FederatedWorkspace extends Workspace {
+  daemonId: string;
+  daemonName: string;
+  paired: boolean;
+}
+
+export async function fetchAllSessions(): Promise<FederatedSession[]> {
+  const targets = await fetchDaemonTargets();
+  const results = await Promise.allSettled(
+    targets.map(async (target) => {
+      if (!target.endpoint || (!target.home && !target.token)) return [];
+      const sessions = await fetchSessions({
+        all: true,
+        apiBase: target.endpoint,
+        token: target.token,
+      });
+      return sessions.map((session) => ({
+        ...session,
+        daemonId: target.id,
+        daemonName: target.name,
+        paired: !target.home,
+      }));
+    }),
+  );
+  const merged: FederatedSession[] = [];
+  for (const result of results) {
+    if (result.status === "fulfilled") merged.push(...result.value);
+  }
+  return merged;
+}
+
+export async function fetchAllWorkspaces(): Promise<FederatedWorkspace[]> {
+  const targets = await fetchDaemonTargets();
+  const results = await Promise.allSettled(
+    targets.map(async (target) => {
+      if (!target.endpoint || (!target.home && !target.token)) return [];
+      const workspaces = await listWorkspaces({
+        apiBase: target.endpoint,
+        token: target.token,
+      });
+      return workspaces.map((workspace) => ({
+        ...workspace,
+        daemonId: target.id,
+        daemonName: target.name,
+        paired: !target.home,
+      }));
+    }),
+  );
+  const merged: FederatedWorkspace[] = [];
+  for (const result of results) {
+    if (result.status === "fulfilled") merged.push(...result.value);
+  }
+  return merged;
 }
 
 export async function listSshHosts(): Promise<SshHost[]> {
@@ -400,15 +625,18 @@ export async function listSshHosts(): Promise<SshHost[]> {
   return Array.isArray(data.hosts) ? (data.hosts as SshHost[]) : [];
 }
 
-export async function listWorkspaces(): Promise<Workspace[]> {
-  const response = await apiFetch(`/workspaces`);
+export async function listWorkspaces(options?: ApiRequestOptions): Promise<Workspace[]> {
+  const response = await apiFetch(`/workspaces`, options);
   if (!response.ok) return [];
   const data = await response.json();
   return Array.isArray(data.workspaces) ? (data.workspaces as Workspace[]) : [];
 }
 
-export async function getWorkspace(workspaceId: string): Promise<Workspace | null> {
-  const response = await apiFetch(`/workspaces/${encodeURIComponent(workspaceId)}`);
+export async function getWorkspace(
+  workspaceId: string,
+  options?: ApiRequestOptions,
+): Promise<Workspace | null> {
+  const response = await apiFetch(`/workspaces/${encodeURIComponent(workspaceId)}`, options);
   if (!response.ok) return null;
   return (await response.json()) as Workspace;
 }
@@ -432,8 +660,14 @@ export async function rememberLastSession(workspaceId: string, sessionId: string
   }).catch(() => undefined);
 }
 
-export async function deleteWorkspace(workspaceId: string): Promise<void> {
-  await apiFetch(`/workspaces/${encodeURIComponent(workspaceId)}`, { method: "DELETE" });
+export async function deleteWorkspace(
+  workspaceId: string,
+  options?: ApiRequestOptions,
+): Promise<void> {
+  await apiFetch(`/workspaces/${encodeURIComponent(workspaceId)}`, {
+    method: "DELETE",
+    ...options,
+  });
 }
 
 export async function createLocation(workspaceId: string, input: LocationInput): Promise<Location> {
@@ -1271,7 +1505,7 @@ export async function fetchMcpTools(workingDirectory?: string): Promise<McpServe
 }
 
 // Subscribe to live server events. One shared stream, since a stream per subscriber exhausts the pool.
-const eventListeners = new Set<(event: { type: string }) => void>();
+const eventListeners = new Set<(event: { type: string; daemonId?: string }) => void>();
 let sharedEventStream: { close: () => void } | null = null;
 
 //: Told whenever the shared stream connects or drops, so the interface can show it.
@@ -1296,7 +1530,7 @@ function ensureEventStream(): void {
       try {
         const event = JSON.parse(raw);
         if (event.type === "agents_changed") invalidateDiscoveryCache();
-        eventListeners.forEach((listener) => listener(event));
+        eventListeners.forEach((listener) => listener({ ...event, daemonId: activeDaemonId() }));
       } catch {
         // ignore malformed
       }
@@ -1305,13 +1539,13 @@ function ensureEventStream(): void {
       if (connected === lastReportedConnection) return;
       lastReportedConnection = connected;
       // What comes back may be a different daemon, so forgetting the endpoint is what reaches it.
-      if (!connected) forgetDaemonEndpoint();
+      if (!connected && !paired) forgetDaemonEndpoint();
       connectionListeners.forEach((listener) => listener(connected));
     },
   );
 }
 
-export function subscribeEvents(onEvent: (event: { type: string }) => void): () => void {
+export function subscribeEvents(onEvent: (event: { type: string; daemonId?: string }) => void): () => void {
   eventListeners.add(onEvent);
   ensureEventStream();
   return () => {
@@ -1322,6 +1556,41 @@ export function subscribeEvents(onEvent: (event: { type: string }) => void): () 
       sharedEventStream = null;
     }
   };
+}
+
+const extraDaemonStreams = new Map<string, { close: () => void }>();
+
+/** Keep a quiet SSE on each paired daemon so their session lists stay live while another is open. */
+export function watchDaemons(targets: DaemonTarget[]): void {
+  const activeId = activeDaemonId();
+  const wanted = new Set(
+    targets.filter((target) => target.id !== activeId && target.endpoint && target.token).map((target) => target.id),
+  );
+  for (const [id, stream] of extraDaemonStreams) {
+    if (!wanted.has(id)) {
+      stream.close();
+      extraDaemonStreams.delete(id);
+    }
+  }
+  for (const target of targets) {
+    if (!wanted.has(target.id) || extraDaemonStreams.has(target.id)) continue;
+    extraDaemonStreams.set(
+      target.id,
+      openEventStream(
+        "/events",
+        (raw) => {
+          try {
+            const event = JSON.parse(raw);
+            eventListeners.forEach((listener) => listener({ ...event, daemonId: target.id }));
+          } catch {
+            // ignore malformed
+          }
+        },
+        undefined,
+        { apiBase: target.endpoint, token: target.token },
+      ),
+    );
+  }
 }
 
 // The default workspace, with its folder name, so the selector never has to derive one.
@@ -1695,9 +1964,12 @@ export async function cancelTurn(sessionId: string): Promise<boolean> {
 }
 
 // Terminate a session and reap its subtree, since children are sessions of their own.
-export async function deleteSession(sessionId: string): Promise<boolean> {
+export async function deleteSession(
+  sessionId: string,
+  options?: ApiRequestOptions,
+): Promise<boolean> {
   try {
-    await rpc("session.end", { id: sessionId });
+    await rpc("session.end", { id: sessionId }, options);
     return true;
   } catch (caught) {
     reportError({ component: "api", operation: "delete a session" }, caught);
@@ -2033,6 +2305,7 @@ function openEventStream(
   path: string,
   onData: (raw: string) => void,
   onHealth?: (connected: boolean) => void,
+  options?: ApiRequestOptions,
 ): { close: () => void } {
   const controller = new AbortController();
   let closed = false;
@@ -2044,6 +2317,8 @@ function openEventStream(
         const response = await apiFetch(path, {
           signal: controller.signal,
           headers: { Accept: "text/event-stream" },
+          apiBase: options?.apiBase,
+          token: options?.token,
         });
         if (response.ok && response.body) {
           onHealth?.(true);

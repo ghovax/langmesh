@@ -8,12 +8,12 @@ import { AppState, Platform } from "react-native";
 
 import { configure, probe } from "./api";
 
-/** What `langmesh reach pair` encodes into its link. */
+/** What `langmesh serve --reach` encodes into its pairing link. */
 export interface Pairing {
   version: number;
   name: string;
   token: string;
-  /** The machine's address on the tailnet, e.g. `https://mac.tailnet.ts.net`. */
+  /** The HTTPS address the door is reached at, e.g. `https://mac.ts.net`. */
   endpoint: string;
 }
 
@@ -24,7 +24,7 @@ export type ConnectionStatus =
   | "connecting"
   /** It answered and the token was accepted. */
   | "online"
-  /** It did not answer. The pairing is still good; the machine is asleep, or off the tailnet. */
+  /** It did not answer. The pairing is still good; the machine is asleep or unreachable. */
   | "offline"
   /** It answered and refused the token — the machine rotated it, or this device was unpaired. */
   | "rejected";

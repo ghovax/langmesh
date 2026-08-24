@@ -293,7 +293,7 @@ fn installed_daemon_executable() -> Result<PathBuf, String> {
 }
 
 #[cfg(not(debug_assertions))]
-fn ensure_local_daemon() -> Result<(), String> {
+fn ensure_home_daemon() -> Result<(), String> {
     use std::process::Stdio;
 
     if daemon_is_listening() {
@@ -318,21 +318,21 @@ fn ensure_local_daemon() -> Result<(), String> {
             return Err(format!("{} exited before the daemon became ready", executable.display()));
         }
         if std::time::Instant::now() >= deadline {
-            return Err("the local daemon did not become ready in time".to_string());
+            return Err("this machine's daemon did not become ready in time".to_string());
         }
         std::thread::sleep(Duration::from_millis(200));
     }
 }
 
 #[cfg(debug_assertions)]
-fn ensure_local_daemon() -> Result<(), String> {
+fn ensure_home_daemon() -> Result<(), String> {
     daemon_is_listening()
         .then_some(())
         .ok_or_else(|| "start the checkout daemon before launching the development app".to_string())
 }
 
 fn read_daemon_endpoint() -> Result<serde_json::Value, String> {
-    ensure_local_daemon()?;
+    ensure_home_daemon()?;
     let (port_path, token_path) = daemon_endpoint_files();
     let port = std::fs::read_to_string(&port_path)
         .map_err(|error| format!("langmeshd has not published a port yet: {error}"))?
@@ -346,12 +346,12 @@ fn read_daemon_endpoint() -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({ "url": format!("http://{LOCAL_HOST}:{port}"), "token": token }))
 }
 
-/// Start the installed local daemon when needed and return its authenticated loopback endpoint.
+/// Start this machine's daemon when needed and return its authenticated loopback endpoint.
 #[tauri::command]
 async fn daemon_endpoint() -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(read_daemon_endpoint)
         .await
-        .map_err(|error| format!("could not resolve the local daemon endpoint: {error}"))?
+        .map_err(|error| format!("could not resolve this machine's daemon endpoint: {error}"))?
 }
 
 // Quit and relaunch the app.

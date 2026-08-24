@@ -95,7 +95,7 @@
     "compactingTooltip": "会話を圧縮中…",
     "dictationCouldNotOpen": "マイクを開けませんでした: {reason}",
     "dictationFailed": "音声入力を処理できませんでした",
-    "dictationInsecureOrigin": "ブラウザーは安全な接続でしかマイクを開きません。このページは安全な接続で読み込まれていません。HTTPS で配信される Tailscale のアドレスからこの Mac に接続してください。",
+    "dictationInsecureOrigin": "ブラウザーは安全な接続でしかマイクを開きません。このページは安全な接続で読み込まれていません。ループバックの扉を HTTPS で開いてください。Tailscale の serve、証明書付きの SSH トンネルなど、TLS で届ける方法ならどれでも構いません。",
     "dictationLoading": "音声入力モデルを読み込み中…",
     "dictationNoDevice": "利用できるマイクがありません。",
     "dictationNoMicrophone": "このブラウザーはマイクを利用できません。",
@@ -216,7 +216,7 @@
     "deleteSession": "セッションを削除",
     "deleteSessionConfirmBody": "会話とそのタスクが完全に削除されます。この操作は取り消せません。",
     "deleteSessionConfirmTitle": "このセッションを削除しますか？",
-    "disconnectedDescription": "デーモンが応答していません。停止または再起動された可能性があります。",
+    "disconnectedDescription": "このデーモンは応答していません。再接続するか、別のマシンを選んでください。",
     "disconnectedTitle": "LangMesh に接続していません",
     "environmentsAvailable": "利用可能な環境",
     "environmentsDescription": "この会話が作業できる場所 — この Mac 上のフォルダ、または SSH ホスト上のフォルダです。",
@@ -268,19 +268,58 @@
     "savingChanges": "変更を保存しています…"
   },
   "ConnectionSettings": {
-    "connect": "開く",
-    "connected": "接続済み",
-    "couldNotConnect": "接続できませんでした",
-    "couldNotReach": "{name} に到達できませんでした",
-    "deleteConnection": "{url} を削除",
-    "noSavedConnections": "保存済みの接続はありません",
-    "noSavedConnectionsHint": "後で接続できるよう、下にサーバーアドレスを追加してください",
+    "couldNotRemember": "そのマシンを記憶できませんでした",
+    "forgetMachine": "{name} を忘れる",
+    "machines": "マシン",
+    "noPairedMachines": "まだマシンはありません",
+    "noPairedMachinesHint": "マシンに届くよう、下にペアリングリンクを貼り付けてください",
     "pairingLink": "ペアリングリンク",
     "pairingLinkHelper": "そのマシンで発行された <code>langmesh://pair#…</code> リンクを貼り付けてください。アドレスとトークンが含まれ、どちらもこのマシンから出ません。",
     "pairingLinkPlaceholder": "langmesh://pair#…",
-    "retry": "再試行",
-    "saveConnection": "接続を保存",
-    "savedConnections": "保存済みの接続"
+    "rememberMachine": "記憶する",
+    "thisMachine": "このマシン",
+    "switchTo": "使う",
+    "using": "使用中",
+    "unreachable": "到達できません"
+  },
+  "InterfaceScreen": {
+    "lookingFor": "{machine} を探しています…",
+    "notAnswering": "{machine} は応答していません。",
+    "openLangMesh": "LangMesh を開く",
+    "otherMachines": "ほかのマシン",
+    "pairedWith": "{machine} とペアしています",
+    "thisMachine": "このマシン",
+    "tried": "{address} を試しました",
+    "tryAgain": "再試行",
+    "wouldNotLoad": "インターフェイスを読み込めませんでした",
+    "wouldNotLoadBody": "{machine} は応答したあと、ページの読み込みに失敗しました。"
+  },
+  "MachinesScreen": {
+    "cancel": "キャンセル",
+    "forget": "忘れる",
+    "forgetBody": "この電話からトークンが消えます。再び届くにはペアし直してください。",
+    "forgetTitle": "{machine} を忘れますか？",
+    "noneBody": "そのドアが発行したリンクをスキャンまたは貼り付けて、マシンとペアしてください。",
+    "noneTitle": "ペアしたマシンはありません",
+    "pairAnother": "マシンとペアする",
+    "title": "マシン"
+  },
+  "PairScreen": {
+    "cameraRefused": "このアプリではカメラがオフです。設定でオンにするか、リンクを貼り付けてください。",
+    "clipboardUnavailable": "クリップボードを読めませんでした。",
+    "instructions": "そのマシンで <command>langmesh serve --reach</command> を実行し、表示されたペアリングリンクをスキャンまたは貼り付けてください。",
+    "linkPlaceholder": "langmesh://pair#…",
+    "missingTokenOrAddress": "そのリンクにはアドレスまたはトークンがありません。",
+    "noCameraHere": "ブラウザには向けるカメラがありません。リンクを貼り付けてください。",
+    "notAPairingCode": "それは LangMesh のペアリングリンクではありません。",
+    "openSettings": "設定を開く",
+    "paste": "貼り付け",
+    "pasteLink": "リンクを貼り付け",
+    "remember": "記憶する",
+    "scan": "スキャン",
+    "title": "マシンとペアする",
+    "tokenWarning": "リンクにはトークンが含まれます。自分のデバイスだけに保ってください。",
+    "waitingForCamera": "カメラを待っています…"
   },
   "CursorAuthControl": {
     "signInError": "サインインを開始できませんでした。",
@@ -532,9 +571,12 @@
     "fieldLocation": "場所",
     "fieldConversations": "会話数",
     "fieldWorkspace": "ワークスペース",
+    "fieldMachine": "マシン",
+    "thisMachine": "このマシン",
     "hideWorkspace": "このワークスペースの会話を非表示",
     "showWorkspace": "このワークスペースの会話を表示",
-    "openFolder": "フォルダを開く"
+    "openFolder": "フォルダを開く",
+    "pairedMachine": "ペアしたマシン"
   },
   "Settings": {
     "agent": {
@@ -574,6 +616,51 @@
         "transcription_timeout_realtime_multiplier": "音声 1 秒あたりの加算",
         "maximum_attempts": "1 録音あたりの試行回数",
         "worker_shutdown_seconds": "ワーカー終了の猶予（秒）"
+      }
+    },
+    "email": {
+      "_": "メール",
+      "enabled": "メールクライアントを動かす",
+      "address": "メールボックスのアドレス",
+      "machine": "このマシンのプラスタグ",
+      "allow_from": "許可する送信者",
+      "agent": "エージェントのプロファイル",
+      "provider": "プロバイダーの上書き",
+      "model": "モデルの上書き",
+      "auth": "認証",
+      "working_directory": "作業ディレクトリ",
+      "permission_mode": "権限モード",
+      "idle_timeout_seconds": "IMAP IDLE のタイムアウト（秒）",
+      "turn_timeout_seconds": "ターンのタイムアウト（秒）",
+      "oauth": {
+        "_": "OAuth",
+        "issuer": "発行者",
+        "client_id": "クライアント ID",
+        "tenant": "Microsoft テナント",
+        "token_url": "トークン URL",
+        "authorize_url": "認可 URL",
+        "scopes": "スコープ",
+        "redirect_uri": "リダイレクト URI",
+        "client_secret": "クライアントシークレット",
+        "refresh_token": "リフレッシュトークン"
+      },
+      "imap": {
+        "_": "IMAP",
+        "host": "ホスト",
+        "port": "ポート",
+        "username": "ユーザー名",
+        "password": "パスワード",
+        "mailbox": "メールボックス",
+        "ssl": "TLS"
+      },
+      "smtp": {
+        "_": "SMTP",
+        "host": "ホスト",
+        "port": "ポート",
+        "username": "ユーザー名",
+        "password": "パスワード",
+        "start_tls": "STARTTLS",
+        "use_tls": "暗黙の TLS"
       }
     },
     "exa": {
@@ -756,6 +843,51 @@
         "transcription_timeout_realtime_multiplier": "音声 1 秒あたりに上記へ加算する時間。Apple Silicon では実時間より十分速く処理されます。",
         "maximum_attempts": "1 回の録音に割り当てるワーカーの数。",
         "worker_shutdown_seconds": "ワーカーを強制終了するまでに自発的な終了を待つ時間。"
+      }
+    },
+    "email": {
+      "_": "このデーモンの手前で動く IMAP IDLE と SMTP。local+machine@domain への新しいスレッドはこのマシンでセッションを始め、返信はその会話への操舵です。",
+      "enabled": "このメールボックスでメールクライアントを動かします。",
+      "address": "メールボックス。IMAP はアカウントでログインし、SMTP の From は local+machine@domain なので返信のタグが残ります。",
+      "machine": "このホストのプラスタグ。新しいスレッドはここに宛てる必要があり、返信はタグが欠けていてもスレッドに従います。",
+      "allow_from": "受け取る送信元（メールボックスまたは @domain）。それ以外は無視します。",
+      "agent": "メールのスレッドセッションが使うエージェントのプロファイル。",
+      "provider": "メールボックスセッション用のカタログプロバイダー上書き。email.model と一緒に設定します。",
+      "model": "メールボックスセッション用のカタログモデル上書き。email.provider と一緒に設定します。",
+      "auth": "IMAP と SMTP の認証方法。password または oauth。",
+      "working_directory": "メールセッションのツールが動く場所。空ならデーモンのカレントディレクトリです。",
+      "permission_mode": "メールセッションのゲートを誰が答えるか。",
+      "idle_timeout_seconds": "1 回の IMAP IDLE が循環するまでの待ち時間。",
+      "turn_timeout_seconds": "このメールのターンを諦めるまでの待ち時間。",
+      "oauth": {
+        "_": "IMAP/SMTP の OAuth2。トークンはシークレットファイルに置きます。",
+        "issuer": "google、microsoft、yahoo、または custom。空ならアドレスから推測します。",
+        "client_id": "OAuth アプリの ID。",
+        "tenant": "Microsoft のテナント。",
+        "token_url": "カスタム発行者のトークンエンドポイント。",
+        "authorize_url": "カスタム発行者の認可エンドポイント。",
+        "scopes": "発行者のスコープを上書きします。",
+        "redirect_uri": "langmesh mail auth が待ち受けるループバック URI。",
+        "client_secret": "YAML では使いません。実体は email.oauth.client_secret ファイルです。",
+        "refresh_token": "YAML では使いません。実体は email.oauth.refresh_token ファイルです。"
+      },
+      "imap": {
+        "_": "メールクライアントが IDLE するメールボックス。",
+        "host": "IMAP サーバー。空ならアドレスから推測します。",
+        "port": "IMAP のポート。",
+        "username": "IMAP のログイン。空ならプラスタグなしのアカウントです。",
+        "password": "YAML では使いません。実体は email.imap.password ファイルです。",
+        "mailbox": "IDLE するフォルダ。",
+        "ssl": "暗黙の TLS。"
+      },
+      "smtp": {
+        "_": "返信の送り先。",
+        "host": "SMTP サーバー。空ならアドレスから推測します。",
+        "port": "SMTP のポート。",
+        "username": "SMTP のログイン。空なら IMAP のユーザー名です。",
+        "password": "YAML では使いません。実体は email.smtp.password ファイルです。",
+        "start_tls": "STARTTLS でアップグレードします。",
+        "use_tls": "暗黙の TLS。ポート 465 ではこれが入ります。"
       }
     },
     "exa": {
