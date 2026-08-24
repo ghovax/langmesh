@@ -82,30 +82,28 @@ def load_configuration(*, seed: bool = True) -> Configuration:
     from langmesh.base.configuration.configuration import ProviderCredential
 
     files = provider_keys_from_files()
-    if files:
-        providers = dict(configuration.providers)
-        for identifier, key in files.items():
-            existing = providers.get(identifier) or ProviderCredential()
-            if not existing.api_key:
-                providers[identifier] = existing.model_copy(update={"api_key": key})
-        configuration = configuration.model_copy(update={"providers": providers})
-    exa = read_secret(EXA_API_KEY)
-    if exa and not configuration.exa.api_key:
-        configuration = configuration.model_copy(
-            update={"exa": configuration.exa.model_copy(update={"api_key": exa})}
+    providers = dict(configuration.providers)
+    for identifier, existing in list(providers.items()):
+        providers[identifier] = existing.model_copy(
+            update={"api_key": files.get(identifier, "")}
         )
-    jina = read_secret(JINA_API_KEY)
-    if jina and not configuration.jina.api_key:
-        configuration = configuration.model_copy(
-            update={"jina": configuration.jina.model_copy(update={"api_key": jina})}
-        )
-    firecrawl = read_secret(FIRECRAWL_API_KEY)
-    if firecrawl and not configuration.firecrawl.api_key:
-        configuration = configuration.model_copy(
-            update={
-                "firecrawl": configuration.firecrawl.model_copy(update={"api_key": firecrawl})
-            }
-        )
+    for identifier, key in files.items():
+        if identifier not in providers:
+            providers[identifier] = ProviderCredential(api_key=key)
+    configuration = configuration.model_copy(update={"providers": providers})
+    configuration = configuration.model_copy(
+        update={"exa": configuration.exa.model_copy(update={"api_key": read_secret(EXA_API_KEY)})}
+    )
+    configuration = configuration.model_copy(
+        update={"jina": configuration.jina.model_copy(update={"api_key": read_secret(JINA_API_KEY)})}
+    )
+    configuration = configuration.model_copy(
+        update={
+            "firecrawl": configuration.firecrawl.model_copy(
+                update={"api_key": read_secret(FIRECRAWL_API_KEY)}
+            )
+        }
+    )
     configuration.mcp = mcp_configuration("")
     configuration.remote_agents = remote_agents_configuration("")
     return configuration

@@ -129,7 +129,7 @@ class ComposioConfiguration(AppConfigurationSection):
 
     @property
     def effective_api_key(self) -> str:
-        return read_secret(COMPOSIO_API_KEY) or self.api_key
+        return read_secret(COMPOSIO_API_KEY)
 
 
 class EmailImapConfiguration(AppConfigurationSection):
@@ -244,7 +244,7 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_imap_password(self) -> str:
-        return compact_mail_secret(read_secret(EMAIL_IMAP_PASSWORD) or self.imap.password)
+        return compact_mail_secret(read_secret(EMAIL_IMAP_PASSWORD))
 
     @property
     def effective_smtp_host(self) -> str:
@@ -256,7 +256,7 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_smtp_password(self) -> str:
-        secret = compact_mail_secret(read_secret(EMAIL_SMTP_PASSWORD) or self.smtp.password)
+        secret = compact_mail_secret(read_secret(EMAIL_SMTP_PASSWORD))
         if secret:
             return secret
         inferred = _hosts_for(self.effective_address)[1]
