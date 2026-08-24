@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
+from typing import Any
 
 import aiosmtplib
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -20,6 +22,24 @@ MESSAGE_ID_DOMAIN = "langmesh.mail"
 def outbound_message_id() -> str:
     """A Message-ID the mailbox provider is unlikely to replace."""
     return make_msgid(domain=MESSAGE_ID_DOMAIN)
+
+
+def _smtp_kwargs(configuration: EmailConfiguration) -> dict[str, Any]:
+    """The aiosmtplib connect options for this mailbox. No password means no AUTH."""
+    password = configuration.effective_smtp_password or None
+    username = configuration.effective_smtp_username or None if password else None
+    return {
+        "hostname": configuration.effective_smtp_host,
+        "port": configuration.effective_smtp_port,
+        "username": username,
+        "password": password,
+        "start_tls": (
+            configuration.effective_smtp_start_tls
+            if not configuration.effective_smtp_use_tls
+            else False
+        ),
+        "use_tls": configuration.effective_smtp_use_tls,
+    }
 
 
 def reply_message(
@@ -65,19 +85,19 @@ def reply_message(
 )
 async def send_reply(configuration: EmailConfiguration, message: EmailMessage) -> None:
     """Hand the message to aiosmtplib. The same Message-ID is reused on retry so a duplicate is the same mail."""
-    password = configuration.effective_smtp_password or None
-    username = configuration.effective_smtp_username or None if password else None
     await aiosmtplib.send(
         message,
-        hostname=configuration.effective_smtp_host,
-        port=configuration.effective_smtp_port,
-        username=username,
-        password=password,
-        start_tls=(
-            configuration.effective_smtp_start_tls
-            if not configuration.effective_smtp_use_tls
-            else False
-        ),
-        use_tls=configuration.effective_smtp_use_tls,
+        **_smtp_kwargs(configuration),
         timeout=60,
     )
+
+
+async def probe_smtp(configuration: EmailConfiguration) -> None:
+    """Prove SMTP will accept this mailbox. Fail now, not after the first turn has already run."""
+    client = aiosmtplib.SMTP(**_smtp_kwargs(configuration), timeout=30)
+    await client.connect()
+    try:
+        await client.noop()
+    finally:
+        with contextlib.suppress(Exception):
+            await client.quit()
