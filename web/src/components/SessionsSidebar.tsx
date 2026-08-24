@@ -148,7 +148,7 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
     update: (current: Record<string, boolean>) => Record<string, boolean>,
   ) => void;
   onSwitchWorkspace: (workspaceId: string, daemonId: string) => void;
-  onOpenWorkspaceSettings: (workspaceId: string) => void;
+  onOpenWorkspaceSettings: (workspaceId: string, daemonId: string) => void;
   onResume: (entry: SessionEntry) => void;
   onRequestDelete: (entry: SessionEntry) => void;
   onRequestWorkspaceDelete: (workspace: FederatedWorkspace) => void;
@@ -281,7 +281,7 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
               <MenuOption
                 value="settings"
                 icon={<LuSettings size={14} />}
-                onClick={() => onOpenWorkspaceSettings(workspace.id)}
+                onClick={() => onOpenWorkspaceSettings(workspace.id, workspace.daemonId)}
               >
                 {translation("workspaceSettings")}
               </MenuOption>
@@ -393,7 +393,7 @@ export function SessionsSidebar({
   currentWorkspaceId: string;
   currentDaemonId: string;
   onSwitchWorkspace: (workspaceId: string, daemonId: string) => void;
-  onOpenWorkspaceSettings: (workspaceId: string) => void;
+  onOpenWorkspaceSettings: (workspaceId: string, daemonId: string) => void;
   onNewChat: () => void;
   onResume: (entry: SessionEntry) => void;
   onDeleteSession: (entry: SessionEntry) => void;
