@@ -52,6 +52,10 @@ allow = os.environ.get("LANGMESH_MAIL_ALLOW_FROM", "").strip()
 if allow:
     email["allow_from"] = [item.strip() for item in allow.split(",") if item.strip()]
 email.setdefault("agent", os.environ.get("LANGMESH_MAIL_AGENT", "reviewer") or "reviewer")
+email.setdefault(
+    "working_directory",
+    os.environ.get("LANGMESH_MAIL_WORKING_DIRECTORY") or "/srv/langmesh",
+)
 email.setdefault("permission_mode", "automatic")
 imap = email.setdefault("imap", {})
 imap.setdefault("host", os.environ.get("LANGMESH_MAIL_IMAP_HOST", ""))
@@ -78,8 +82,13 @@ start_daemon() {
   /srv/langmesh/.venv/bin/langmeshd &
   daemon_pid=$!
   for _ in $(seq 1 300); do
-    if [[ -S "${XDG_RUNTIME_DIR}/langmesh/langmeshd.sock" ]]; then
+    if /srv/langmesh/.venv/bin/python -c \
+      'from langmeshd.cli.client import daemon_is_up; raise SystemExit(0 if daemon_is_up() else 1)'
+    then
       return 0
+    fi
+    if ! kill -0 "${daemon_pid}" 2>/dev/null; then
+      return 1
     fi
     sleep 0.2
   done

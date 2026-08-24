@@ -399,7 +399,7 @@ IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same fil
 | `email.address` | string | — | The From address replies are sent as. LANGMESH_MAIL_ADDRESS wins over this. |
 | `email.allow_from` | list | `[]` | Mailboxes (or `@domain`) whose mail is taken. Everyone else is ignored. LANGMESH_MAIL_ALLOW_FROM is a comma-separated override. |
 | `email.agent` | string | `reviewer` | The agent profile each mail thread session runs. Defaults to the bundled `reviewer`. LANGMESH_MAIL_AGENT wins over this. |
-| `email.working_directory` | string | — | Where that session's tools run. Empty means the mail process's current directory. |
+| `email.working_directory` | string | — | Where that session's tools run. Empty means the daemon's current directory. `LANGMESH_MAIL_WORKING_DIRECTORY` wins. `install.sh` and the Docker entrypoint set this to `/srv/langmesh`. |
 | `email.permission_mode` | string | `automatic` | Who answers gates for a mail session: `ask`, `automatic`, or `allow`. |
 | `email.idle_timeout_seconds` | number | `60.0` | How long one IMAP IDLE waits before cycling, so NAT and server idle limits cannot drop the socket silently. |
 | `email.turn_timeout_seconds` | number | `1800.0` | How long to wait for this mail's turn before giving up and retrying on the next reconnect. A timeout never invents a reply. |
