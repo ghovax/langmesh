@@ -543,52 +543,80 @@ def _agent_credential_problem(configuration: EmailConfiguration) -> str:
     IMAP can IDLE without a model key; the turn then 401s until turn_timeout_seconds.
     Fail here so a missing provider secret file shows up in the mail log, like a missing
     mailbox password, instead of after someone has already emailed.
+
+    ``email.provider`` and ``email.model`` overlay the profile when both are set, so any
+    catalogue provider's YAML block and ``providers.<id>.api_key`` file work the same
+    way they do for a desktop session.
     """
     name = configuration.effective_agent
     try:
         from langmeshd.commons.agent_files import load_agent_configuration
         from langmeshd.commons.configuration_locations import agent_directories
+        from langmeshd.mail.agent import apply_email_model
 
-        agent = load_agent_configuration(
-            name, agent_directories(configuration.effective_working_directory)
+        agent = apply_email_model(
+            load_agent_configuration(
+                name, agent_directories(configuration.effective_working_directory)
+            ),
+            configuration,
         )
     except FileNotFoundError:
         return (
             f"email.agent {name!r} is not an available profile "
             "(set email.agent, or install the bundled reviewer)."
         )
+    except ValueError as error:
+        return str(error)
     provider = (agent.provider or "").strip()
     if not provider:
         return ""
-    identifier = agent.model_identifier
-    if identifier:
-        from langmesh.base.content.models import find_model
-
-        find_model(identifier)
+    from langmesh.base.content.models import find_model, list_models
     from langmesh.base.identity.providers import (
         get_provider_definition,
         resolve_api_key,
+        resolve_base_url,
     )
 
+    identifier = agent.model_identifier
+    if identifier:
+        find_model(identifier)
     definition = get_provider_definition(provider) or get_provider_definition(provider.lower())
     if definition is not None and definition.native:
         return ""
+    if identifier:
+        found = find_model(identifier)
+        if found is None and provider != "custom":
+            siblings = [model for model in list_models() if model.provider == provider]
+            if siblings:
+                return f"unknown model {agent.model!r} for provider {provider!r}."
     configured: dict[str, str] = {}
+    bases: dict[str, str] = {}
     try:
         from langmeshd.commons.configuration_io import load_configuration
 
-        configured = load_configuration(seed=False).configured_provider_keys()
+        loaded = load_configuration(seed=False)
+        configured = loaded.configured_provider_keys()
+        bases = loaded.configured_provider_bases()
     except Exception:  # noqa: BLE001 — an unreadable YAML still allows secret files
         configured = {}
+        bases = {}
     key = resolve_api_key(provider, configured)
-    anonymous = (definition.anonymous_api_key if definition is not None else "") or ""
-    if key.strip() and key.strip() != anonymous:
-        return ""
-    credential = provider
-    if definition is not None:
-        credential = definition.credential_identifier or definition.identifier
-    shown = f"providers.{credential}.api_key"
-    return f"the {name} profile needs the secret file {shown}."
+    billed = definition
+    if definition is not None and definition.credential_identifier:
+        billed = get_provider_definition(definition.credential_identifier) or definition
+    anonymous = (billed.anonymous_api_key if billed is not None else "") or ""
+    if not key.strip() or key.strip() == anonymous:
+        credential = provider
+        if definition is not None:
+            credential = definition.credential_identifier or definition.identifier
+        shown = f"providers.{credential}.api_key"
+        return f"the {name} profile needs the secret file {shown}."
+    if definition is not None and (definition.uses_custom_base_url or definition.openai_compatible):
+        lookup = definition.credential_identifier or definition.identifier
+        base = resolve_base_url(provider, bases) or resolve_base_url(lookup, bases)
+        if not base:
+            return f"missing providers.{lookup}.base_url in configuration.yaml."
+    return ""
 
 
 def readiness_problems(configuration: EmailConfiguration) -> list[str]:
@@ -669,6 +697,8 @@ async def check(configuration: Optional[EmailConfiguration] = None) -> int:
         note.info("allow_from %s", ",".join(current.effective_allow_from))
     if current.effective_agent:
         note.info("agent %s", current.effective_agent)
+    if current.effective_provider:
+        note.info("provider %s model %s", current.effective_provider, current.effective_model)
     if problems:
         note.error("mail not ready:")
         for problem in problems:

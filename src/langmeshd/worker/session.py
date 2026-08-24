@@ -978,6 +978,9 @@ class SessionExecutor(AgentExecutor):
                     },
                 )
             )
+        from langmeshd.features import mailbox_agent, mailbox_tools
+
+        configuration = mailbox_agent(configuration, session_id)
         runtime_directory = working_directory or project_directory or str(Path.cwd())
         # The host composes the session's tools: the agent profile's declared set, mapped onto the shipped built-ins, plus the settings-gated and peer tools it owns. The library forces nothing; this is the host assembling the toolset. Plugin-owned tools come from the plugins' own contribute_tools, keyed by name.
         composed = _compose_session_tools(
@@ -988,7 +991,6 @@ class SessionExecutor(AgentExecutor):
             permission_mode=self._permission_mode,
             plugin_tools=self._host.plugin_tools(),
         )
-        from langmeshd.features import mailbox_tools
         for tool in mailbox_tools(session_id):
             if all(getattr(existing, "name", "") != tool.name for existing in composed):
                 composed.append(tool)
@@ -1523,6 +1525,9 @@ class SessionExecutor(AgentExecutor):
         configuration = catalogue.agent(self._agent_name)
         if configuration is None:
             raise FileNotFoundError(f"Agent configuration not found: {self._agent_name}")
+        from langmeshd.features import mailbox_agent
+
+        configuration = mailbox_agent(configuration, self._session_id)
         skills = skills_for_agent(list(catalogue.skills()), configuration.skills)
         card = build_agent_card(configuration, skills, f"unix:{self._session_id}")
         return card.model_dump(by_alias=True, exclude_none=True, mode="json")
