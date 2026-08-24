@@ -190,4 +190,4 @@ install_policy
 install_secrets
 write_configuration
 install_units
-log "langmeshd and langmesh-mail are enabled. Send mail to email.address from an allowlisted From."
+log "langmeshd and langmesh-mail are enabled. Send mail to local+machine@domain from an allowlisted From."
