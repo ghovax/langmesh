@@ -4,7 +4,8 @@
 # Model and provider come from .agents/agents/<name>/AGENT.md, named in
 # .github/langmesh.yaml. Keys are files: .github/secrets/github.api_key and
 # optional github.app.private_key, copied onto $XDG_DATA_HOME/langmesh/secrets.
-# .github/langmesh holds the checkpoint (conversation and provider cache state).
+# .github/langmesh holds the checkpoint (conversation and provider cache state),
+# the acknowledgement comment id, and the App slug. Those job files are not env vars.
 # issue_comment cannot write the Actions cache, so the session is an artifact.
 
 name: langmesh
@@ -78,11 +79,8 @@ jobs:
       - if: steps.ack.outputs.start == 'true'
         run: uv run --no-dev --frozen python -m langmesh.github
         env:
-          LANGMESH_ACK_COMMENT_ID: ${{ steps.ack.outputs.comment_id }}
           GITHUB_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
-          LANGMESH_GIT_NAME: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
-          LANGMESH_GIT_EMAIL: ${{ steps.app.outputs.app-slug && format('{0}+{1}[bot]@users.noreply.github.com', steps.policy.outputs.app_id, steps.app.outputs.app-slug) || '41898282+github-actions[bot]@users.noreply.github.com' }}
       - uses: actions/cache/save@v4
         if: ${{ always() && hashFiles('.venv/pyvenv.cfg') != '' }}
         env:

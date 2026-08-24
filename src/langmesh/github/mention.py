@@ -38,6 +38,7 @@ from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.identity.providers import get_provider_definition
 from langmesh.base.secrets import GITHUB_API_KEY, provider_api_key_name, read_secret
 from langmesh.github.detect import is_mention_turn, thread_has_prior_bot_comment
+from langmesh.github.files import ACK_ID_NAME, APP_SLUG_NAME, read_job_file
 from langmesh.github.policy import load_github_policy
 from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features import Feature
@@ -56,7 +57,8 @@ ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 STATE_DIRECTORY = ".github/langmesh"
 BRANCH_RECORD = "branch"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
-ACK_COMMENT_ENV = "LANGMESH_ACK_COMMENT_ID"
+GITHUB_ACTIONS_BOT = "github-actions[bot]"
+GITHUB_ACTIONS_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
 TURN_FAILED = (
     "Something went wrong while I was working on this. "
     "The details are in the Action log."
@@ -546,10 +548,18 @@ def commits_to_push(workspace: Path, *, run: Run = _run) -> bool:
 def configure_git_author(workspace: Path, *, run: Run = _run) -> None:
     """So commits the agent makes are authored as the job's bot."""
     cwd = str(workspace)
-    actor = (os.environ.get("LANGMESH_GIT_NAME") or "github-actions[bot]").strip()
-    email = (
-        os.environ.get("LANGMESH_GIT_EMAIL") or "41898282+github-actions[bot]@users.noreply.github.com"
-    ).strip()
+    slug = read_job_file(APP_SLUG_NAME, workspace)
+    if slug:
+        actor = f"{slug}[bot]"
+        app_id = (load_github_policy(workspace).get("app_id") or "").strip()
+        email = (
+            f"{app_id}+{slug}[bot]@users.noreply.github.com"
+            if app_id
+            else GITHUB_ACTIONS_EMAIL
+        )
+    else:
+        actor = GITHUB_ACTIONS_BOT
+        email = GITHUB_ACTIONS_EMAIL
     run(["git", "config", "user.name", actor], cwd=cwd)
     run(["git", "config", "user.email", email], cwd=cwd)
 
@@ -623,9 +633,9 @@ def fetch_pull(repository: str, number: int, token: str, api: str) -> dict[str, 
     return _api_request(f"{api}/repos/{repository}/pulls/{number}", token)
 
 
-def acknowledgement_id(environ: Mapping[str, str] | None = None) -> int | None:
-    """Comment id posted by the workflow before this process started, if any."""
-    raw = ((environ or os.environ).get(ACK_COMMENT_ENV) or "").strip()
+def acknowledgement_id(workspace: Path | None = None) -> int | None:
+    """Comment id posted by ack.py before this process started, if any."""
+    raw = read_job_file(ACK_ID_NAME, workspace)
     return int(raw) if raw.isdigit() else None
 
 
@@ -810,7 +820,7 @@ def main() -> None:
     token = os.environ.get("GITHUB_TOKEN", "")
     api = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
     event = json.loads(Path(event_path).read_text())
-    comment_id = acknowledgement_id()
+    comment_id = acknowledgement_id(workspace)
     mention = mention_from_event(
         event,
         repository=repository,

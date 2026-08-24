@@ -12,6 +12,7 @@ import urllib.request
 from pathlib import Path
 
 from detect import is_mention_turn
+from files import ACK_ID_NAME, write_job_file
 from substitute import render_file
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
@@ -87,6 +88,7 @@ def main() -> None:
         token,
         api,
     )
+    write_job_file(ACK_ID_NAME, str(comment_id))
     _write_output(start=True, comment_id=comment_id)
 
 
