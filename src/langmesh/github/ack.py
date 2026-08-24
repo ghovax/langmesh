@@ -1,10 +1,12 @@
 """Post the mention acknowledgement from ``prompts/*.md``.
 
-The Action runs this after checkout and before the venv, so this file is stdlib only.
+The Action runs this after checkout and before the venv, so this file cannot
+``import langmesh``. It loads ``PackagePromptLoader`` from source instead.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import urllib.error
@@ -13,9 +15,19 @@ from pathlib import Path
 
 from detect import is_mention_turn
 from files import ACK_ID_NAME, write_job_file
-from substitute import render_file
 
-_PROMPTS = Path(__file__).resolve().parent / "prompts"
+
+def _prompt_loader():
+    path = Path(__file__).resolve().parents[1] / "base" / "content" / "prompts.py"
+    spec = importlib.util.spec_from_file_location("langmesh_prompt_loader", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load PackagePromptLoader from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
+
+
+_PROMPTS = _prompt_loader()
 
 
 def run_log_url() -> str:
@@ -28,7 +40,7 @@ def run_log_url() -> str:
 
 
 def acknowledgement() -> str:
-    return render_file(_PROMPTS / "acknowledgement.md", {})
+    return _PROMPTS.load("acknowledgement", {}).strip()
 
 
 def working_comment(text: str) -> str:
@@ -36,7 +48,7 @@ def working_comment(text: str) -> str:
     body = (text or acknowledgement()).strip()
     if not url:
         return body
-    return render_file(_PROMPTS / "working_comment.md", {"body": body, "url": url})
+    return _PROMPTS.load("working_comment", {"body": body, "url": url}).strip()
 
 
 def _post(repository: str, number: int, text: str, token: str, api: str) -> int:

@@ -27,7 +27,7 @@ from langmesh.base.content.observations import (
     RegistryMetadata,
     RegistryTimestamps,
 )
-from langmesh.base.content.prompts import PromptTemplates
+from langmesh.base.content.prompts import PackagePromptLoader, PromptTemplates
 from langmesh.base.content.skills import Skill
 from langmesh.base.contracts.catalogue import Catalogue
 from langmesh.base.contracts.mcp_client import MCPServerManager
@@ -198,6 +198,7 @@ __all__ = [
     "PermissionMode",
     "PermissionPolicy",
     "PermissionReviewing",
+    "PackagePromptLoader",
     "PromptComposer",
     "PromptLayer",
     "PromptTemplates",
