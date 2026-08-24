@@ -1,1 +1,1 @@
-Call `submit_github_comment` with `kind` `progress` and a short status of the direction you are taking now. That call updates the person. Then continue the work. This is not the reply.
+Drop a `progress` update in ordinary words about what's changing now, then keep going. Save the outcome for `reply`.
