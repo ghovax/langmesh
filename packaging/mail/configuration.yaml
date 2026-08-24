@@ -1,9 +1,10 @@
 # Policy for a VPS or container mail host. Copy onto the machine's
 # $XDG_CONFIG_HOME/langmesh/configuration.yaml (mode 0600). Secrets are not
 # in this file: they live as 0600 files under $XDG_DATA_HOME/langmesh/secrets/
-#   email.imap.password
-#   providers.<id>.api_key   # catalogue id, or its credential_identifier
-#                            # (opencode-go bills as providers.opencode.api_key)
+#   email.imap.password          # password auth (Gmail app password, Proton Bridge, …)
+#   email.oauth.refresh_token    # oauth auth (`langmesh mail auth`)
+#   providers.<id>.api_key       # catalogue id, or its credential_identifier
+#                                # (opencode-go bills as providers.opencode.api_key)
 #
 #   printf '%s' 'the-app-password' > secrets/email.imap.password
 #   printf '%s' 'the-provider-key' > secrets/providers.<id>.api_key
@@ -28,6 +29,7 @@ email:
   agent: reviewer
   provider: ""
   model: ""
+  auth: password
   working_directory: /srv/langmesh
   permission_mode: automatic
 
