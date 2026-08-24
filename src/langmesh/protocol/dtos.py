@@ -143,7 +143,7 @@ class MCPResourceReadRequest(BaseModel):
 
 
 class LocationInput(BaseModel):
-    # `name` is not accepted — it is derived from the connection (see _derive_location_name).
+    # `name` is not accepted — it is derived from the host and path (see _derive_location_name).
     kind: Literal["local", "remote"]
     base_directory: str
     host_alias: str = ""
