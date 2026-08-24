@@ -219,8 +219,6 @@ async function rpc<T>(
   return payload.result as T;
 }
 
-// The address the client is currently talking to.
-
 // Async, because the token must be resolved first: a websocket URL without one is refused at the handshake.
 export async function terminalWebSocketUrl(
   options: {
@@ -395,7 +393,7 @@ export interface SshHost {
   identity_files: string[];
 }
 
-// A named place a workspace runs tools in. `name` is derived from the connection, not entered.
+// A named place a workspace runs tools in. `name` is derived from the host and path, not entered.
 export interface Location {
   id: string;
   workspace_id: string;
@@ -448,7 +446,7 @@ export async function listMachines(): Promise<Machine[]> {
   }
 }
 
-/** Remember a machine from the `langmesh://pair#…` link `langmesh reach` prints. */
+/** Remember a machine from the `langmesh://pair#…` link `langmesh serve --reach` prints. */
 export async function addMachine(link: string): Promise<Machine> {
   const response = await apiFetch(`/machines`, {
     method: "POST",
@@ -469,20 +467,19 @@ export async function addMachine(link: string): Promise<Machine> {
 }
 
 export type MachineDoor = {
-  url: string;
   endpoint: string;
   token: string;
 };
 
 /** Endpoint and token for a paired machine, asked for at the moment somebody chooses to talk to it. */
 export async function machineDoor(machineId: string): Promise<MachineDoor> {
-  const response = await apiFetch(`/machines/${encodeURIComponent(machineId)}/address`, homeApiOptions());
+  const response = await apiFetch(`/machines/${encodeURIComponent(machineId)}/door`, homeApiOptions());
   if (!response.ok) throw new Error(`Could not open that machine (${response.status}).`);
   const data = (await response.json()) as Partial<MachineDoor>;
-  const endpoint = String(data.endpoint ?? "").replace(/\/+$/, "");
-  const token = String(data.token ?? "");
-  const url = String(data.url ?? (token ? `${endpoint}/?token=${encodeURIComponent(token)}` : endpoint));
-  return { url, endpoint, token };
+  return {
+    endpoint: String(data.endpoint ?? "").replace(/\/+$/, ""),
+    token: String(data.token ?? ""),
+  };
 }
 
 export async function renameMachine(machineId: string, name: string): Promise<void> {

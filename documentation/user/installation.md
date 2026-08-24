@@ -57,7 +57,7 @@ You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv`
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| The app opens but only ever shows the connection picker | The separately installed daemon bundle is missing or could not start | Install `LangMesh Computer Use.app`, then reopen LangMesh; the daemon's failure is in its log under the state directory |
+| The app opens but this machine's daemon never answers | The separately installed daemon bundle is missing or could not start | Install `LangMesh Computer Use.app`, then reopen LangMesh; the daemon's failure is in its log under the state directory |
 | Computer control keeps asking for Accessibility after every rebuild | The daemon serving you is the checkout's (`uv run langmesh`), whose code identity is the Python interpreter, not the signed image | The daemon's status reports `image.frozen`. If it is `false`, stop that daemon and start the installed one |
 | Two `langmesh` on your `PATH` behave differently | The checkout's and the installed one share `~/.config/langmesh/` and the runtime directory, so whichever daemon started first owns it | `which -a langmesh`, and check `image.executable` in the daemon's status |
 | `ln -sf … /usr/local/bin/langmesh` is denied | `/usr/local/bin` is root-owned | `sudo ln -sf …`, or symlink into `~/.local/bin` and put that on `PATH` |

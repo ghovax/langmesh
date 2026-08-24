@@ -70,7 +70,7 @@ export function MachinesPanel({
     } catch (caught) {
       toaster.create({
         type: "error",
-        title: translation("couldNotConnect"),
+        title: translation("couldNotRemember"),
         description: errorMessage(caught),
         closable: true,
       });
@@ -92,7 +92,7 @@ export function MachinesPanel({
     <Flex direction="column" gap={4} w="100%">
       <Flex direction="column" gap={2}>
         <Text textStyle="sectionLabel" color="fg.muted">
-          {translation("savedConnections")}
+          {translation("machines")}
         </Text>
         <Flex direction="column" gap={2}>
           {homeTarget ? (
@@ -106,10 +106,10 @@ export function MachinesPanel({
           {pairedTargets.length === 0 && !homeTarget ? (
             <Box borderWidth="1px" borderColor="border" borderRadius="md" px={3} py={4}>
               <Text fontSize="sm" color="fg.muted">
-                {translation("noSavedConnections")}
+                {translation("noPairedMachines")}
               </Text>
               <Text fontSize="xs" color="fg.subtle" mt={1}>
-                {translation("noSavedConnectionsHint")}
+                {translation("noPairedMachinesHint")}
               </Text>
             </Box>
           ) : null}
@@ -171,7 +171,7 @@ export function MachinesPanel({
             disabled={!link.trim()}
             onClick={() => void save()}
           >
-            {translation("saveConnection")}
+            {translation("rememberMachine")}
           </Button>
         </Flex>
         <Text fontSize="xs" color="fg.subtle">
@@ -236,7 +236,7 @@ function MachineRow({
           variant="ghost"
           colorPalette="red"
           disabled={active}
-          aria-label={translation("deleteConnection", { url: target.endpoint })}
+          aria-label={translation("forgetMachine", { name: target.name || translation("thisMachine") })}
           onClick={onForget}
         >
           <LuTrash2 />
