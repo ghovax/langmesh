@@ -14,6 +14,7 @@ Everything beyond a plain model turn — the tools, goal review, compaction, per
 | Keep sessions durable and remotely addressable | `langmeshd` | [Architecture](internal/architecture.md) |
 | Operate sessions | CLI or desktop app | [Command line](user/installation.md) or [desktop app](user/app.md) |
 | Answer `@langmesh[bot]` on GitHub | `langmesh.github.mention` | [GitHub mentions](user/github.md) |
+| Send the daemon mail | `langmesh mail` | [Email](user/email.md) |
 
 ## Core guarantees
 

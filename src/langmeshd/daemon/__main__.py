@@ -581,6 +581,9 @@ def main() -> int:
             logging.FileHandler(daemon_log_path()),
         ],
     )
+    from langmeshd.commons.secret_import import import_into_files
+
+    import_into_files()
     try:
         return asyncio.run(_serve())
     except KeyboardInterrupt:

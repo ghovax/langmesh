@@ -988,6 +988,10 @@ class SessionExecutor(AgentExecutor):
             permission_mode=self._permission_mode,
             plugin_tools=self._host.plugin_tools(),
         )
+        from langmeshd.features import mailbox_tools
+        for tool in mailbox_tools(session_id):
+            if all(getattr(existing, "name", "") != tool.name for existing in composed):
+                composed.append(tool)
         # The permission evaluator refuses what the profile did not declare, so the declared set is exactly the composed set.
         configuration = configuration.model_copy(
             update={"tools_enabled": sorted({tool.name for tool in composed})}
@@ -1241,6 +1245,10 @@ class SessionExecutor(AgentExecutor):
         state = self._contexts.get(self._session_id)
         return bool(state is not None and state.running)
 
+    def live_turn_id(self) -> str:
+        """The in-flight A2A task, empty when the session is idle."""
+        return next(iter(self._aborts), "")
+
     def serialized_send(self):
         """The session-wide acceptance lock used by every external message send."""
         return self._send_lock
@@ -1272,6 +1280,40 @@ class SessionExecutor(AgentExecutor):
 
         self._context(self._session_id)
         await self.resume_pending_jobs()
+
+    async def user_message_turn(self, message_id: str) -> dict | None:
+        """The turn that already accepted this client message id, so a retry after a crash is not a second copy."""
+        if not message_id:
+            return None
+        turns = await self._turn_store.turns_for_session(self._session_id)
+        for turn in turns:
+            for message in turn.history or []:
+                role = getattr(message, "role", None)
+                role_value = str(getattr(role, "value", role) or "")
+                stored_id = str(getattr(message, "message_id", "") or "")
+                metadata = getattr(message, "metadata", None)
+                if not stored_id and isinstance(metadata, dict):
+                    stored_id = str(metadata.get("messageId") or metadata.get("message_id") or "")
+                if role_value == "user" and stored_id == message_id:
+                    status = getattr(turn, "status", None)
+                    state = getattr(getattr(status, "state", None), "value", None) or str(
+                        getattr(status, "state", "") or ""
+                    )
+                    return {"turn_id": turn.id, "state": state}
+                for part in getattr(message, "parts", None) or []:
+                    root = getattr(part, "root", part)
+                    data = getattr(root, "data", None)
+                    if not isinstance(data, dict):
+                        continue
+                    kind = str(data.get("kind") or data.get("type") or "")
+                    inbound_id = str(data.get("message_id") or data.get("messageId") or "")
+                    if kind in {"inbound_message", "InboundMessageEvent"} and inbound_id == message_id:
+                        status = getattr(turn, "status", None)
+                        state = getattr(getattr(status, "state", None), "value", None) or str(
+                            getattr(status, "state", "") or ""
+                        )
+                        return {"turn_id": turn.id, "state": state}
+        return None
 
     async def start_turn(self, parts: list, metadata: dict) -> str:
         """Start a turn and answer with its task id as soon as it has one, rather than when the turn is over."""

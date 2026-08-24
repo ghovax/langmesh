@@ -121,6 +121,15 @@ wheels = [
 ]
 
 [[package]]
+name = "aioimaplib"
+version = "2.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/da/a454c47fb8522e607425e15bf1f49ccfdb3d75f4071f40b63ebd49573495/aioimaplib-2.0.1.tar.gz", hash = "sha256:5a494c3b75f220977048f5eb2c7ba9c0570a3148aaf38bee844e37e4d7af8648", size = 35555, upload-time = "2025-01-16T10:38:23.14Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/52/48aaa287fb3c4c995edcb602370b10d182dc5c48371df7cb3a404356733f/aioimaplib-2.0.1-py3-none-any.whl", hash = "sha256:727e00c35cf25106bd34611dddd6e2ddf91a5f1a7e72d9269f3ce62486b31e14", size = 34729, upload-time = "2025-01-16T10:38:20.427Z" },
+]
+
+[[package]]
 name = "aiosignal"
 version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -130,6 +139,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/61/62/06741b579156360248d1ec624842ad0edf697050bbaf7c3e46394e106ad1/aiosignal-1.4.0.tar.gz", hash = "sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7", size = 25007, upload-time = "2025-07-03T22:54:43.528Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fb/76/641ae371508676492379f16e2fa48f4e2c11741bd63c48be4b12a6b09cba/aiosignal-1.4.0-py3-none-any.whl", hash = "sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e", size = 7490, upload-time = "2025-07-03T22:54:42.156Z" },
+]
+
+[[package]]
+name = "aiosmtplib"
+version = "5.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/25/d36d056e62a1dc3dd51ce76e7647c62966702193dc91eafa7fd4e1006a91/aiosmtplib-5.1.2.tar.gz", hash = "sha256:04a0ea3c678f5b719f998f290dce010ca512e1385836d3944206299df03b060f", size = 71031, upload-time = "2026-06-20T15:00:48.269Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/ec/c5a415cd1309eaac28ad3c599458194d25ba07189bb07a1bac2c6713c17e/aiosmtplib-5.1.2-py3-none-any.whl", hash = "sha256:070d467cc329dafd0af59108ba5d217d973cba10309910fed359a2a7bfb52d7a", size = 28394, upload-time = "2026-06-20T15:00:47.299Z" },
 ]
 
 [[package]]
@@ -1218,6 +1236,8 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk" },
+    { name = "aioimaplib" },
+    { name = "aiosmtplib" },
     { name = "aiosqlite" },
     { name = "beautifulsoup4" },
     { name = "charset-normalizer" },
@@ -1230,6 +1250,7 @@ dependencies = [
     { name = "httpx" },
     { name = "langchain" },
     { name = "litellm" },
+    { name = "markdown" },
     { name = "markdownify" },
     { name = "mcp", extra = ["cli"] },
     { name = "minify-html" },
@@ -1290,6 +1311,8 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "a2a-sdk", specifier = "==0.3.7" },
+    { name = "aioimaplib", specifier = ">=2.0.1" },
+    { name = "aiosmtplib", specifier = ">=4.0.0" },
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "beautifulsoup4", specifier = ">=4.13" },
     { name = "charset-normalizer", specifier = ">=3.4" },
@@ -1302,6 +1325,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "langchain", specifier = ">=0.3.0" },
     { name = "litellm", specifier = ">=1.60.0" },
+    { name = "markdown", specifier = ">=3.7" },
     { name = "markdownify", specifier = ">=1.2.2" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.27,<2" },
     { name = "minify-html", specifier = ">=0.15" },

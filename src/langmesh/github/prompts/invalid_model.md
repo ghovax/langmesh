@@ -1,1 +1,1 @@
-`LANGMESH_MODEL` must be `provider/model`, with a slash, for example `anthropic/claude-sonnet-4-5`. It was {{ value }}.
+`The GitHub agent profile must set provider and model` in `.agents/agents/<name>/AGENT.md`. It was {{ value }}.

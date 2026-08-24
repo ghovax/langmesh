@@ -1,0 +1,20 @@
+## /etc/systemd/system/langmeshd.service
+[Unit]
+Description=LangMesh agent daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/srv/langmesh/.venv/bin/langmeshd
+Restart=always
+RestartSec=2
+TimeoutStopSec=60
+WorkingDirectory=/srv/langmesh
+Environment=XDG_CONFIG_HOME=/srv/langmesh/xdg/config
+Environment=XDG_DATA_HOME=/srv/langmesh/xdg/data
+Environment=XDG_STATE_HOME=/srv/langmesh/xdg/state
+Environment=XDG_CACHE_HOME=/srv/langmesh/xdg/cache
+Environment=XDG_RUNTIME_DIR=/srv/langmesh/xdg/runtime
+
+[Install]
+WantedBy=multi-user.target
