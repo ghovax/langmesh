@@ -1,8 +1,12 @@
-"""Where mention secret files live. Stdlib only: ack and the App token run before the venv.
+"""Where mention secret files and job files live. Stdlib only: ack and the App token run before the venv.
 
 Runtime secrets are ``$XDG_DATA_HOME/langmesh/secrets``. The checkout copy is
 ``.github/secrets``, next to ``langmesh.yaml``. The job copies checkout files onto
 the XDG directory; a self-hosted runner can keep the files only under XDG.
+
+Job-local values (the acknowledgement comment id, the App slug) are files under
+``.github/langmesh/``, same directory as the session artifact. That directory is
+gitignored. They are not environment variables and not committed policy.
 """
 
 from __future__ import annotations
@@ -13,6 +17,9 @@ from pathlib import Path
 APPLICATION = "langmesh"
 SECRETS_DIRNAME = "secrets"
 WORKSPACE_SECRETS = "secrets"
+STATE_DIRECTORY = ".github/langmesh"
+ACK_ID_NAME = "acknowledgement.id"
+APP_SLUG_NAME = "app-slug"
 
 
 def workspace_root() -> Path:
@@ -40,3 +47,29 @@ def secret_file(name: str) -> Path | None:
         except OSError:
             continue
     return None
+
+
+def job_directory(workspace: Path | None = None) -> Path:
+    root = Path(workspace).resolve() if workspace is not None else workspace_root()
+    return root / STATE_DIRECTORY
+
+
+def write_job_file(name: str, value: str, workspace: Path | None = None) -> Path:
+    """Replace one job-local file. Empty value removes it."""
+    directory = job_directory(workspace)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    text = value.strip()
+    if not text:
+        path.unlink(missing_ok=True)
+        return path
+    path.write_text(f"{text}\n", encoding="utf-8")
+    return path
+
+
+def read_job_file(name: str, workspace: Path | None = None) -> str:
+    path = job_directory(workspace) / name
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
