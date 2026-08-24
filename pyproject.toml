@@ -67,6 +67,7 @@ dependencies = [
     "croniter>=6.2.4",
     # Segno renders pairing links as terminal QR codes without image dependencies.
     "segno>=1.6,<2",
+    "authlib>=1.7.2",
 ]
 
 [project.scripts]

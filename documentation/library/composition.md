@@ -250,6 +250,17 @@ class ApplicationPrompt:
 components = SessionComponents(prompt_composer=ApplicationPrompt("{{ instructions }}\n\n{{ agent_prompt }}"))
 ```
 
+Shipped files use the same renderer through `PackagePromptLoader`: a directory of `{{ name }}` templates beside the code, not strings in Python.
+
+```python
+from pathlib import Path
+
+from langmesh import PackagePromptLoader
+
+prompts = PackagePromptLoader(Path(__file__).parent / "prompts")
+text = prompts.load("system_prompt", {"instructions": "Be brief."})
+```
+
 The default composer renders the catalogue's `system_prompt` template over the same layers. Session identity, directories, confinement, machine details, user context, feature state, and background events are deliberately absent from these layers: the runtime appends them as one marked conversation message and appends a new version only when its digest changes. A custom composer changes the static prompt construction and therefore its revision; the resulting bytes are persisted and restored exactly until an explicit refresh or a construction input changes.
 
 ### Attachments
@@ -428,4 +439,4 @@ The library's own plugins additionally receive the internal `PluginHost` — gro
 
 ### Prompts are configurable
 
-Each shipped plugin deliberately keeps its package-owned prompt templates in a `prompts/` directory beside its code. These are shipped assets and remain filesystem package resources rather than embedded Python strings. A template resolves from the catalogue's caller-supplied override first, then the plugin's package directory, then the shared package set. Supply a `Catalogue(prompts={...})`, or any catalogue whose `prompt_override` answers a name, to override a template from code.
+Each shipped plugin deliberately keeps its package-owned prompt templates in a `prompts/` directory beside its code. Load them with `PackagePromptLoader` (`from langmesh import PackagePromptLoader`). These are shipped assets and remain filesystem package resources rather than embedded Python strings. A template resolves from the catalogue's caller-supplied override first, then the plugin's package directory, then the shared package set. Supply a `Catalogue(prompts={...})`, or any catalogue whose `prompt_override` answers a name, to override a template from code.

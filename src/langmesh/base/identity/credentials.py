@@ -12,10 +12,12 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Optional
 
 import httpx
 
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.contracts.ports import CredentialStore
 from langmesh.base.identity.credential_store import credential_store
 from langmesh.base.primitives.limits import current_limits
@@ -182,12 +184,12 @@ class ChatGPTAuthError(RuntimeError):
     """Raised when a ChatGPT-subscription call cannot be authenticated."""
 
 
-_CALLBACK_TEMPLATE = """<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LangMesh sign-in</title><body><main><h1>{{message}}</h1></main></body></html>"""
+_CALLBACK = PackagePromptLoader(Path(__file__).resolve().parents[1] / "assets", extension="html")
 
 
 def _callback_page(message: str) -> str:
     """The little HTML page shown in the browser tab after the OAuth redirect."""
-    return _CALLBACK_TEMPLATE.replace("{{message}}", html.escape(message))
+    return _CALLBACK.load("chatgpt_callback", {"message": html.escape(message)})
 
 
 class ChatGPTLoginFlow:

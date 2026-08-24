@@ -145,15 +145,28 @@ class Inbox:
     async def connect(self) -> None:
         self.imap = _client(self.configuration)
         await self.imap.wait_hello_from_server()
-        login = await self.imap.login(
-            self.configuration.effective_imap_username,
-            self.configuration.effective_imap_password,
-        )
+        if self.configuration.uses_oauth:
+            from langmeshd.mail.oauth import MailOAuthError, access_token
+
+            try:
+                token = await access_token(self.configuration)
+            except MailOAuthError as error:
+                raise RuntimeError(str(error)) from error
+            login = await self.imap.xoauth2(
+                self.configuration.effective_imap_username, token
+            )
+            secret = token
+        else:
+            login = await self.imap.login(
+                self.configuration.effective_imap_username,
+                self.configuration.effective_imap_password,
+            )
+            secret = self.configuration.effective_imap_password
         if login.result != "OK":
-            raise RuntimeError(imap_reason(login, self.configuration.effective_imap_password))
+            raise RuntimeError(imap_reason(login, secret))
         selected = await self.imap.select(self.configuration.effective_imap_mailbox)
         if selected.result != "OK":
-            raise RuntimeError(imap_reason(selected, self.configuration.effective_imap_password))
+            raise RuntimeError(imap_reason(selected, secret))
         self.uidvalidity = _uidvalidity(list(selected.lines))
         self._enable_keepalive()
         logger.info(
