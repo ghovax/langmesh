@@ -34,11 +34,7 @@ class GitHubComment(BaseModel):
     """The comment `submit_github_comment` writes onto the acknowledgement."""
 
     comment: str = Field(
-        description=(
-            "The text that replaces the acknowledgement. Everyday English, "
-            "kept compact. A short list or URL is welcome when it carries "
-            "the answer; don't omit what they asked."
-        )
+        description=_PROMPTS.load("github_comment", {}).strip(),
     )
     kind: CommentKind = Field(
         default="progress",
