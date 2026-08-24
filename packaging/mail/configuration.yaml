@@ -1,0 +1,43 @@
+# Policy for a VPS or container mail host. Copy onto the machine's
+# $XDG_CONFIG_HOME/langmesh/configuration.yaml (mode 0600). Secrets are not
+# in this file: they live as 0600 files under $XDG_DATA_HOME/langmesh/secrets/
+#   email.imap.password
+#   providers.opencode.api_key   # reviewer talks to OpenCode Go
+#
+#   printf '%s' 'the-app-password' > secrets/email.imap.password
+#   printf '%s' 'the-provider-key' > secrets/providers.opencode.api_key
+#   chmod 600 secrets/*
+#
+# Gmail, Fastmail, Yahoo, and iCloud fill IMAP/SMTP hosts from the address.
+# install.sh copies this file if the host has none yet, and copies ./secrets
+# onto $XDG_DATA_HOME/langmesh/secrets.
+#
+# provision.* is for packaging/mail/provision.sh on the machine that creates
+# or SSHes into the host. The running mail client does not read it.
+
+email:
+  enabled: true
+  address: ""
+  allow_from: []
+  agent: reviewer
+  working_directory: /srv/langmesh
+  permission_mode: automatic
+
+sandbox:
+  enforce: preferred
+  network: true
+
+provision:
+  host: ""
+  name: langmesh-mail
+  fly:
+    app: langmesh-mail
+    region: iad
+  hetzner:
+    image: ubuntu-24.04
+    type: cpx11
+    location: fsn1
+    ssh_key: ""
+  digitalocean:
+    region: nyc1
+    ssh_key: ""

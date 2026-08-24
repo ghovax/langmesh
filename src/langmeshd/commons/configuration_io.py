@@ -72,6 +72,38 @@ def load_configuration(*, seed: bool = True) -> Configuration:
     if invalid:
         raise ValueError(f"invalid configuration: {invalid}")
     configuration = Configuration.model_validate(configuration_file.library_document(data or {}))
+    from langmesh.base.secrets import (
+        EXA_API_KEY,
+        FIRECRAWL_API_KEY,
+        JINA_API_KEY,
+        provider_keys_from_files,
+        read_secret,
+    )
+    from langmesh.base.configuration.configuration import ProviderCredential
+
+    files = provider_keys_from_files()
+    providers = dict(configuration.providers)
+    for identifier, existing in list(providers.items()):
+        providers[identifier] = existing.model_copy(
+            update={"api_key": files.get(identifier, "")}
+        )
+    for identifier, key in files.items():
+        if identifier not in providers:
+            providers[identifier] = ProviderCredential(api_key=key)
+    configuration = configuration.model_copy(update={"providers": providers})
+    configuration = configuration.model_copy(
+        update={"exa": configuration.exa.model_copy(update={"api_key": read_secret(EXA_API_KEY)})}
+    )
+    configuration = configuration.model_copy(
+        update={"jina": configuration.jina.model_copy(update={"api_key": read_secret(JINA_API_KEY)})}
+    )
+    configuration = configuration.model_copy(
+        update={
+            "firecrawl": configuration.firecrawl.model_copy(
+                update={"api_key": read_secret(FIRECRAWL_API_KEY)}
+            )
+        }
+    )
     configuration.mcp = mcp_configuration("")
     configuration.remote_agents = remote_agents_configuration("")
     return configuration
@@ -99,11 +131,20 @@ def save_configuration_changes(
     path = configuration_file_path()
     data = configuration_file.load() if path.exists() else {}
     if exa_api_key is not None:
-        data.setdefault("exa", {})["api_key"] = exa_api_key
+        from langmesh.base.secrets import EXA_API_KEY, write_secret
+
+        write_secret(EXA_API_KEY, exa_api_key)
+        data.setdefault("exa", {})["api_key"] = ""
     if jina_api_key is not None:
-        data.setdefault("jina", {})["api_key"] = jina_api_key
+        from langmesh.base.secrets import JINA_API_KEY, write_secret
+
+        write_secret(JINA_API_KEY, jina_api_key)
+        data.setdefault("jina", {})["api_key"] = ""
     if firecrawl_api_key is not None:
-        data.setdefault("firecrawl", {})["api_key"] = firecrawl_api_key
+        from langmesh.base.secrets import FIRECRAWL_API_KEY, write_secret
+
+        write_secret(FIRECRAWL_API_KEY, firecrawl_api_key)
+        data.setdefault("firecrawl", {})["api_key"] = ""
     if web_fetch_proxy_url is not None:
         data.setdefault("web_fetch", {})["proxy_url"] = web_fetch_proxy_url
     if sandbox is not None:
@@ -128,7 +169,10 @@ def save_configuration_changes(
         for provider_id in all_provider_ids:
             entry = dict(providers_section.get(provider_id) or {})
             if provider_keys is not None and provider_id in provider_keys:
-                entry["api_key"] = provider_keys[provider_id]
+                from langmesh.base.secrets import provider_api_key_name, write_secret
+
+                write_secret(provider_api_key_name(provider_id), provider_keys[provider_id])
+                entry["api_key"] = ""
             if provider_base_urls is not None and provider_id in provider_base_urls:
                 entry["base_url"] = provider_base_urls[provider_id]
             providers_section[provider_id] = entry

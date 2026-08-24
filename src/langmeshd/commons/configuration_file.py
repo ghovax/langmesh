@@ -21,6 +21,7 @@ APP_SECTION_MODELS = {
     "daemon": "DaemonConfiguration",
     "dictation": "DictationConfiguration",
     "email": "EmailConfiguration",
+    "provision": "ProvisionConfiguration",
 }
 
 

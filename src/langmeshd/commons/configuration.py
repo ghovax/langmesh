@@ -7,11 +7,14 @@ shared configuration file.
 
 from __future__ import annotations
 
-import os
-
 from pydantic import BaseModel, Field
 
-from langmesh.base.confinement import environment_variables
+from langmesh.base.secrets import (
+    COMPOSIO_API_KEY,
+    EMAIL_IMAP_PASSWORD,
+    EMAIL_SMTP_PASSWORD,
+    read_secret,
+)
 from langmesh.protocol.dtos import SettingsUpdateRequest
 from langmeshd.commons import timing
 
@@ -34,20 +37,6 @@ _MAIL_HOSTS: dict[str, tuple[str, str]] = {
 }
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return default
-    return raw.strip().lower() not in {"0", "false", "no", "off"}
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return default
-    return int(raw)
-
-
 def _hosts_for(address: str) -> tuple[str, str]:
     if "@" not in address:
         return "", ""
@@ -68,8 +57,8 @@ def compact_mail_secret(value: str | None) -> str:
     """IMAP/SMTP secrets as the provider expects them.
 
     Gmail copies app passwords as four groups of four; those spaces are display-only.
-    Surrounding whitespace from an env file is never part of the secret. systemd
-    EnvironmentFile cannot parse unquoted spaces, so install.sh writes this compacted form.
+    Surrounding whitespace is never part of the secret. Files under the secrets
+    directory store the compacted form.
     """
     if not value:
         return ""
@@ -140,11 +129,11 @@ class ComposioConfiguration(AppConfigurationSection):
 
     @property
     def effective_api_key(self) -> str:
-        return os.environ.get(environment_variables.COMPOSIO_API_KEY) or self.api_key
+        return read_secret(COMPOSIO_API_KEY)
 
 
 class EmailImapConfiguration(AppConfigurationSection):
-    """The mailbox the mail client IDLEs on. Passwords also resolve from LANGMESH_MAIL_IMAP_PASSWORD."""
+    """The mailbox the mail client IDLEs on. The password is the secret file email.imap.password."""
 
     host: str = Field(default="")
     port: int = Field(default=993, ge=1, le=65535)
@@ -155,7 +144,7 @@ class EmailImapConfiguration(AppConfigurationSection):
 
 
 class EmailSmtpConfiguration(AppConfigurationSection):
-    """Where replies are sent. Passwords also resolve from LANGMESH_MAIL_SMTP_PASSWORD."""
+    """Where replies are sent. The password is the secret file email.smtp.password."""
 
     host: str = Field(default="")
     port: int = Field(default=587, ge=1, le=65535)
@@ -165,11 +154,52 @@ class EmailSmtpConfiguration(AppConfigurationSection):
     use_tls: bool = Field(default=False)
 
 
+class ProvisionFlyConfiguration(AppConfigurationSection):
+    """Fly.io app name and region for packaging/mail/provision.sh."""
+
+    app: str = Field(default="langmesh-mail")
+    region: str = Field(default="iad")
+
+
+class ProvisionHetznerConfiguration(AppConfigurationSection):
+    """Hetzner Cloud server create fields for packaging/mail/provision.sh."""
+
+    image: str = Field(default="ubuntu-24.04")
+    type: str = Field(default="cpx11")
+    location: str = Field(default="fsn1")
+    ssh_key: str = Field(default="")
+
+
+class ProvisionDigitalOceanConfiguration(AppConfigurationSection):
+    """DigitalOcean droplet create fields for packaging/mail/provision.sh."""
+
+    region: str = Field(default="nyc1")
+    ssh_key: str = Field(default="")
+
+
+class ProvisionConfiguration(AppConfigurationSection):
+    """How packaging/mail/provision.sh finds a host. Not used by the running daemon.
+
+    Fill this in packaging/mail/configuration.yaml. host is an SSH target for a
+    machine you already have. Cloud create still needs that provider's own token
+    (FLY_API_TOKEN, HCLOUD_TOKEN, DIGITALOCEAN_ACCESS_TOKEN) because those CLIs
+    read it.
+    """
+
+    host: str = Field(default="")
+    name: str = Field(default="langmesh-mail")
+    fly: ProvisionFlyConfiguration = Field(default_factory=ProvisionFlyConfiguration)
+    hetzner: ProvisionHetznerConfiguration = Field(default_factory=ProvisionHetznerConfiguration)
+    digitalocean: ProvisionDigitalOceanConfiguration = Field(
+        default_factory=ProvisionDigitalOceanConfiguration
+    )
+
+
 class EmailConfiguration(AppConfigurationSection):
     """IMAP IDLE plus SMTP in front of the daemon: a client, not a second session embedder.
 
-    Off by default. Environment variables win over file secrets. The mail process reads this
-    section; the library never does.
+    Off by default. Passwords live as secret files, not in this document. The mail
+    process reads this section; the library never does.
     """
 
     enabled: bool = Field(default=False)
@@ -185,90 +215,50 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_enabled(self) -> bool:
-        """A filled LANGMESH_MAIL_ADDRESS is enough to turn the client on without editing yaml."""
-        if os.environ.get("LANGMESH_MAIL_ADDRESS", "").strip():
-            return True
-        return self.enabled
+        return self.enabled or bool(self.address.strip())
 
     @property
     def effective_address(self) -> str:
-        return os.environ.get("LANGMESH_MAIL_ADDRESS", "").strip() or self.address.strip()
+        return self.address.strip()
 
     @property
     def effective_agent(self) -> str:
-        return os.environ.get("LANGMESH_MAIL_AGENT", "").strip() or self.agent.strip() or "reviewer"
+        return self.agent.strip() or "reviewer"
 
     @property
     def effective_working_directory(self) -> str:
         """Where mail sessions run. Empty leaves the daemon's current directory."""
-        return (
-            os.environ.get("LANGMESH_MAIL_WORKING_DIRECTORY", "").strip()
-            or self.working_directory.strip()
-        )
+        return self.working_directory.strip()
 
     @property
     def effective_allow_from(self) -> list[str]:
-        raw = os.environ.get("LANGMESH_MAIL_ALLOW_FROM", "").strip()
-        if raw:
-            return [item.strip() for item in raw.split(",") if item.strip()]
         return [item.strip() for item in self.allow_from if item.strip()]
 
     @property
     def effective_imap_host(self) -> str:
-        return (
-            os.environ.get("LANGMESH_MAIL_IMAP_HOST", "").strip()
-            or self.imap.host.strip()
-            or _hosts_for(self.effective_address)[0]
-        )
+        return self.imap.host.strip() or _hosts_for(self.effective_address)[0]
 
     @property
     def effective_imap_username(self) -> str:
-        return (
-            os.environ.get("LANGMESH_MAIL_IMAP_USER", "").strip()
-            or self.imap.username.strip()
-            or _account_login(self.effective_address)
-        )
+        return self.imap.username.strip() or _account_login(self.effective_address)
 
     @property
     def effective_imap_password(self) -> str:
-        for candidate in (
-            os.environ.get("LANGMESH_MAIL_IMAP_PASSWORD"),
-            os.environ.get("LANGMESH_MAIL_PASSWORD"),
-            self.imap.password,
-        ):
-            secret = compact_mail_secret(candidate)
-            if secret:
-                return secret
-        return ""
+        return compact_mail_secret(read_secret(EMAIL_IMAP_PASSWORD))
 
     @property
     def effective_smtp_host(self) -> str:
-        return (
-            os.environ.get("LANGMESH_MAIL_SMTP_HOST", "").strip()
-            or self.smtp.host.strip()
-            or _hosts_for(self.effective_address)[1]
-        )
+        return self.smtp.host.strip() or _hosts_for(self.effective_address)[1]
 
     @property
     def effective_smtp_username(self) -> str:
-        return (
-            os.environ.get("LANGMESH_MAIL_SMTP_USER", "").strip()
-            or self.smtp.username.strip()
-            or self.effective_imap_username
-        )
+        return self.smtp.username.strip() or self.effective_imap_username
 
     @property
     def effective_smtp_password(self) -> str:
-        for candidate in (
-            os.environ.get("LANGMESH_MAIL_SMTP_PASSWORD"),
-            os.environ.get("LANGMESH_MAIL_PASSWORD"),
-            self.smtp.password,
-        ):
-            secret = compact_mail_secret(candidate)
-            if secret:
-                return secret
-        # Same-provider inferred SMTP shares the IMAP app password. A custom
-        # relay host is not authenticated with that secret.
+        secret = compact_mail_secret(read_secret(EMAIL_SMTP_PASSWORD))
+        if secret:
+            return secret
         inferred = _hosts_for(self.effective_address)[1]
         if inferred and self.effective_smtp_host == inferred:
             return self.effective_imap_password
@@ -276,35 +266,28 @@ class EmailConfiguration(AppConfigurationSection):
 
     @property
     def effective_imap_port(self) -> int:
-        return _env_int("LANGMESH_MAIL_IMAP_PORT", self.imap.port)
+        return self.imap.port
 
     @property
     def effective_imap_ssl(self) -> bool:
-        return _env_bool("LANGMESH_MAIL_IMAP_SSL", self.imap.ssl)
+        return self.imap.ssl
 
     @property
     def effective_imap_mailbox(self) -> str:
-        return os.environ.get("LANGMESH_MAIL_IMAP_MAILBOX", "").strip() or self.imap.mailbox
+        return self.imap.mailbox
 
     @property
     def effective_smtp_port(self) -> int:
-        return _env_int("LANGMESH_MAIL_SMTP_PORT", self.smtp.port)
+        return self.smtp.port
 
     @property
     def effective_smtp_use_tls(self) -> bool:
-        raw = os.environ.get("LANGMESH_MAIL_SMTP_USE_TLS")
-        if raw is not None and raw.strip():
-            return raw.strip().lower() not in {"0", "false", "no", "off"}
         if self.smtp.use_tls:
             return True
-        # 465 is implicit TLS; the yaml defaults are the 587/STARTTLS pair.
         return self.effective_smtp_port == 465
 
     @property
     def effective_smtp_start_tls(self) -> bool:
-        raw = os.environ.get("LANGMESH_MAIL_SMTP_STARTTLS")
-        if raw is not None and raw.strip():
-            return raw.strip().lower() not in {"0", "false", "no", "off"}
         if self.effective_smtp_use_tls:
             return False
         return self.smtp.start_tls

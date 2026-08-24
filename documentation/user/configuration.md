@@ -1,18 +1,18 @@
 # Configuration
 
-Runtime configuration lives in **`$XDG_CONFIG_HOME/langmesh/configuration.yaml`** (`~/.config/langmesh/configuration.yaml` unless you set `XDG_CONFIG_HOME`). The daemon creates it on first run from a built-in template (`langmeshd/commons/configuration.yaml`) and owns the file thereafter; the library never writes it. Every daemon write is validated, synced, and atomically replaced at mode `0600`, so a stopped process cannot leave a partial YAML document. It is the source of truth for credentials, permissions, and feature toggles. The repository never contains a filled-in copy.
+Runtime configuration lives in **`$XDG_CONFIG_HOME/langmesh/configuration.yaml`** (`~/.config/langmesh/configuration.yaml` unless you set `XDG_CONFIG_HOME`). The daemon creates it on first run from a built-in template (`langmeshd/commons/configuration.yaml`) and owns the file thereafter; the library never writes it. Every daemon write is validated, synced, and atomically replaced at mode `0600`, so a stopped process cannot leave a partial YAML document. It is the source of truth for policy: permissions, feature toggles, addresses, and hosts. Credentials are separate `0600` files. The repository never contains a filled-in copy.
 
-Two ways to change it, both writing the same file:
+Two ways to change policy, both writing the same YAML file. Settings also writes secret files when you paste a key.
 
 - **Settings** in the desktop app.
 - **Editing the file directly**, which the daemon watches and the next session build reads.
 
 > [!IMPORTANT]
-> Every credential can also be set through an environment variable, which takes precedence over the file. That lets you run a daemon without writing secrets to disk. Never commit a filled-in configuration or `.env`; see the [security policy](https://github.com/ghovax/langmesh/blob/main/SECURITY.md).
+> Credentials live as `0600` files under `$XDG_DATA_HOME/langmesh/secrets/`, one file per value (`providers.anthropic.api_key`, `email.imap.password`). Policy — address, allow-lists, agent names, ports — lives in this YAML document. Never commit a filled secret file on a public repository; see the [security policy](https://github.com/ghovax/langmesh/blob/main/SECURITY.md). Environment variables are not configuration. The mention Action reads `.github/secrets/` in the checkout, or the XDG directory on a self-hosted runner.
 
 A change applies to whatever starts **next**. A running session keeps the configuration it was built with, with a few exceptions the daemon pushes out: configuration, sandbox, computer control, and the user-context snapshot each ask live sessions to rebuild.
 
-Three places say something about a setting, and each says a different thing. **This document** is the narrative, for the settings worth explaining at length. The **settings panel** reads the running schema, so it can tell you what _this machine_ is set to. A name the schema does not define is **refused**, not ignored. The daemon validates its `daemon`, `dictation`, `composio`, and `email` sections separately and passes only library-owned sections to `langmesh.Configuration`.
+Three places say something about a setting, and each says a different thing. **This document** is the narrative, for the settings worth explaining at length. The **settings panel** reads the running schema, so it can tell you what _this machine_ is set to. A name the schema does not define is **refused**, not ignored. The daemon validates its `daemon`, `dictation`, `composio`, `email`, and `provision` sections separately and passes only library-owned sections to `langmesh.Configuration`.
 
 ## Where everything lives
 
@@ -21,16 +21,16 @@ LangMesh follows the XDG Base Directory convention rather than one dot-directory
 | Path                         | What is there                                                               |
 | ---------------------------- | --------------------------------------------------------------------------- |
 | `$XDG_CONFIG_HOME/langmesh/` | `configuration.yaml`                                                        |
-| `$XDG_DATA_HOME/langmesh/`   | `history.sqlite`, `background.sqlite`, `mail.sqlite`, uploads, `oauths/`, the file-URL signing secret, the reach pairing token |
+| `$XDG_DATA_HOME/langmesh/`   | `history.sqlite`, `background.sqlite`, `mail.sqlite`, uploads, `oauths/`, `secrets/`, the file-URL signing secret, the reach pairing token |
 | `$XDG_STATE_HOME/langmesh/`  | logs (`langmeshd.log`)                                                      |
 | `$XDG_CACHE_HOME/langmesh/`  | caches                                                                      |
 | `$XDG_RUNTIME_DIR/langmesh/` | the daemon's socket, port, pid, lock, and token                             |
 
-The runtime directory is `0700`, and its daemon handshake files are `0600`. When `XDG_RUNTIME_DIR` is unset, as on macOS, the fallback is a per-user directory under the system temporary directory. The OS clears the runtime directory when you log out, so a crashed daemon leaves nothing behind. Private values that must survive logout, including the session-token master key and Reach pairing token, live in the XDG data directory and are created atomically with mode `0600`.
+The runtime directory is `0700`, and its daemon handshake files are `0600`. When `XDG_RUNTIME_DIR` is unset, as on macOS, the fallback is a per-user directory under the system temporary directory. The OS clears the runtime directory when you log out, so a crashed daemon leaves nothing behind. Private values that must survive logout, including the session-token master key, Reach pairing token, and secret files, live in the XDG data directory and are created atomically with mode `0600`. A container or GitHub Action that needs another disk sets `XDG_DATA_HOME`; there is no separate secrets-directory variable.
 
 ## Model providers
 
-Set an `api_key` for the providers you use. Most resolve through LiteLLM's built-in endpoints; any OpenAI-compatible provider may also set `base_url`.
+Set an `api_key` for the providers you use, as a secret file named `providers.<id>.api_key`. Most resolve through LiteLLM's built-in endpoints; any OpenAI-compatible provider may also set `base_url` in this YAML file.
 
 ```yaml
 providers:
@@ -47,9 +47,7 @@ providers:
   custom: { api_key: "", base_url: "" }
 ```
 
-Each non-native provider also reads environment variables when no key is in the file. The names are the catalogue entry's `env_vars`, then `{IDENTIFIER}_API_KEY` with hyphens turned into underscores (`openrouter` → `OPENROUTER_API_KEY`, `meta_llama` → `META_LLAMA_API_KEY`). Catalogue names exist when the provider's usual variable is not that spelling: `alibaba` reads `DASHSCOPE_API_KEY`, `google` reads `GOOGLE_GENERATIVE_AI_API_KEY`, `GEMINI_API_KEY`, and `GOOGLE_API_KEY`. ChatGPT and Cursor subscriptions have no key: they sign in.
-
-`custom` takes any OpenAI-compatible endpoint, which is why it needs a `base_url` as well; it still reads `CUSTOM_API_KEY`. Around fifty providers are registered (Azure, Alibaba, Vercel, Cerebras, Cohere, DeepInfra, Hyperbolic, Hetzner, and more); the registry in `langmesh.base.identity.providers` is the full list.
+`custom` takes any OpenAI-compatible endpoint, which is why it needs a `base_url` as well. Around fifty providers are registered (Azure, Alibaba, Vercel, Cerebras, Cohere, DeepInfra, Hyperbolic, Hetzner, and more); the registry in `langmesh.base.identity.providers` is the full list.
 
 You can also **sign in with a ChatGPT or a Cursor subscription** instead of pasting a key, in Settings, under Providers. Neither has a key to store: both live as OAuth tokens in the data directory's `oauths/` folder, one file per provider, written `0600` inside a `0700` directory. They stay out of `configuration.yaml` deliberately, because that file is digest-synced and would thrash on every silent token refresh. Which models each plan serves is discovered live from the account.
 
@@ -68,12 +66,12 @@ web_fetch:
   minimum_useful_characters: 64
 ```
 
-| Setting                       | What it serves                | Environment variable                     |
-| ----------------------------- | ----------------------------- | ---------------------------------------- |
-| `exa`                         | `search_web`                  | `EXA_API_KEY`                            |
-| `jina`                        | `fetch_url`, on the free tier | `JINA_API_KEY`                           |
-| `firecrawl`                   | `fetch_url`                   | `FIRECRAWL_API_KEY`, `FIRECRAWL_API_URL` |
-| `web_fetch.proxy_url`         | An outbound proxy             | `FETCH_PROXY`                            |
+| Setting                       | What it serves                | Secret file                                  |
+| ----------------------------- | ----------------------------- | -------------------------------------------- |
+| `exa`                         | `search_web`                  | `exa.api_key`                                |
+| `jina`                        | `fetch_url`, on the free tier | `jina.api_key`                               |
+| `firecrawl`                   | `fetch_url`                   | `firecrawl.api_key`                          |
+| `web_fetch.proxy_url`         | An outbound proxy             | — (YAML `web_fetch.proxy_url`)       |
 | `web_fetch.timeout_seconds`   | How long one engine is given  | —                                        |
 | `web_fetch.download_timeout_seconds` | How long a download is given | —                                        |
 | `web_fetch.minimum_useful_characters` | Below this a page is a wall or stub, so the next engine is tried | — |
@@ -82,7 +80,7 @@ web_fetch:
 
 ## Hosted integrations
 
-Composio's hosted gateway joins the ordinary set of MCP servers when enabled; it is not a second path, and tool gating sees it as another server. `composio` is an app-owned section in the same file. `composio.api_key` also reads `COMPOSIO_API_KEY`.
+Composio's hosted gateway joins the ordinary set of MCP servers when enabled; it is not a second path, and tool gating sees it as another server. `composio` is an app-owned section in the same file. The key is the secret file `composio.api_key`.
 
 ## Execution and permissions
 
@@ -391,44 +389,61 @@ Process-level timings owned by the daemon and read only from the configuration f
 
 ### Email
 
-IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same file. Off until you enable it. The mail process (`langmesh mail`) is a **client** of `langmeshd`. `langmesh mail check` proves IMAP and SMTP without IDLEing. Mail sessions speak through `submit_email` (`progress` or `reply`); markdown is rendered as HTML in the outbound message. See [Email](email.md).
+IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same file. Off until you enable it. The mail process (`langmesh mail`) is a **client** of `langmeshd`. `langmesh mail check` proves IMAP and SMTP without IDLEing. Mail sessions speak through `submit_email` (`progress` or `reply`); markdown is rendered as HTML in the outbound message. See [Email](email.md). Passwords are the secret files `email.imap.password` and `email.smtp.password`.
 
 | Setting | Type | Default | What it is for |
 | ------- | ---- | ------- | -------------- |
-| `email.enabled` | boolean | `false` | Run the mail client against this mailbox. `LANGMESH_MAIL_ADDRESS` in the environment also enables it. |
-| `email.address` | string | — | The From address replies are sent as. LANGMESH_MAIL_ADDRESS wins over this. |
-| `email.allow_from` | list | `[]` | Mailboxes (or `@domain`) whose mail is taken. Everyone else is ignored. LANGMESH_MAIL_ALLOW_FROM is a comma-separated override. A Gmail plus-address or `googlemail.com` alias matches `user@gmail.com` and `@gmail.com`. |
-| `email.agent` | string | `reviewer` | The agent profile each mail thread session runs. Defaults to the bundled `reviewer`. LANGMESH_MAIL_AGENT wins over this. |
-| `email.working_directory` | string | — | Where that session's tools run. Empty means the daemon's current directory. `LANGMESH_MAIL_WORKING_DIRECTORY` wins. `install.sh` and the Docker entrypoint set this to `/srv/langmesh`. |
+| `email.enabled` | boolean | `false` | Run the mail client against this mailbox. |
+| `email.address` | string | — | The From address replies are sent as. |
+| `email.allow_from` | list | `[]` | Mailboxes (or `@domain`) whose mail is taken. Everyone else is ignored. A Gmail plus-address or `googlemail.com` alias matches `user@gmail.com` and `@gmail.com`. |
+| `email.agent` | string | `reviewer` | The agent profile each mail thread session runs. Defaults to the bundled `reviewer`. |
+| `email.working_directory` | string | — | Where that session's tools run. Empty means the daemon's current directory. `install.sh` and the Docker entrypoint set this to `/srv/langmesh`. |
 | `email.permission_mode` | string | `automatic` | Who answers gates for a mail session: `ask`, `automatic`, or `allow`. |
 | `email.idle_timeout_seconds` | number | `60.0` | How long one IMAP IDLE waits before cycling, so NAT and server idle limits cannot drop the socket silently. |
 | `email.turn_timeout_seconds` | number | `1800.0` | How long to wait for this mail's turn before giving up and retrying on the next reconnect. A timeout never invents a reply. |
-| `email.imap.host` | string | — | IMAP server. Inferred for Gmail, Fastmail, Outlook, Yahoo, and iCloud from `email.address` when empty. LANGMESH_MAIL_IMAP_HOST wins over this. |
-| `email.imap.port` | integer | `993` | IMAP port. LANGMESH_MAIL_IMAP_PORT wins over this. |
-| `email.imap.username` | string | — | IMAP login. LANGMESH_MAIL_IMAP_USER wins; otherwise `email.address`. A Gmail plus-address authenticates as the account without the `+tag`. |
-| `email.imap.password` | string | — | IMAP password. LANGMESH_MAIL_IMAP_PASSWORD or LANGMESH_MAIL_PASSWORD wins. |
-| `email.imap.mailbox` | string | `INBOX` | Which folder to IDLE. LANGMESH_MAIL_IMAP_MAILBOX wins over this. |
-| `email.imap.ssl` | boolean | `true` | Implicit TLS (typical for 993). LANGMESH_MAIL_IMAP_SSL wins (`false`/`0`/`off` to disable). |
-| `email.smtp.host` | string | — | SMTP server. Inferred from `email.address` the same way as IMAP when empty. LANGMESH_MAIL_SMTP_HOST wins over this. |
-| `email.smtp.port` | integer | `587` | SMTP port. LANGMESH_MAIL_SMTP_PORT wins over this. When this is 587 and implicit TLS is off, a failed connect is retried on 465. |
-| `email.smtp.username` | string | — | SMTP login. LANGMESH_MAIL_SMTP_USER wins; otherwise the IMAP username. |
-| `email.smtp.password` | string | — | SMTP password. LANGMESH_MAIL_SMTP_PASSWORD or LANGMESH_MAIL_PASSWORD wins. The IMAP password is used only when SMTP is the inferred provider host (Gmail and the rest). A custom relay is not authenticated with the IMAP secret. |
-| `email.smtp.start_tls` | boolean | `true` | Upgrade with STARTTLS (typical for 587). LANGMESH_MAIL_SMTP_STARTTLS wins. |
-| `email.smtp.use_tls` | boolean | `false` | Implicit TLS (typical for 465). Mutually exclusive with STARTTLS. Port 465 implies this unless LANGMESH_MAIL_SMTP_USE_TLS says otherwise. LANGMESH_MAIL_SMTP_USE_TLS wins. |
+| `email.imap.host` | string | — | IMAP server. Inferred for Gmail, Fastmail, Outlook, Yahoo, and iCloud from `email.address` when empty. |
+| `email.imap.port` | integer | `993` | IMAP port. |
+| `email.imap.username` | string | — | IMAP login. Empty means `email.address`. A Gmail plus-address authenticates as the account without the `+tag`. |
+| `email.imap.password` | string | — | Unused in YAML. The live secret is the file `email.imap.password`. |
+| `email.imap.mailbox` | string | `INBOX` | Which folder to IDLE. |
+| `email.imap.ssl` | boolean | `true` | Implicit TLS (typical for 993). |
+| `email.smtp.host` | string | — | SMTP server. Inferred from `email.address` the same way as IMAP when empty. |
+| `email.smtp.port` | integer | `587` | SMTP port. When this is 587 and implicit TLS is off, a failed connect is retried on 465. |
+| `email.smtp.username` | string | — | SMTP login. Empty means the IMAP username. |
+| `email.smtp.password` | string | — | Unused in YAML. The live secret is the file `email.smtp.password`. The IMAP password is used when SMTP is the inferred provider host. A custom relay is not authenticated with the IMAP secret. |
+| `email.smtp.start_tls` | boolean | `true` | Upgrade with STARTTLS (typical for 587). |
+| `email.smtp.use_tls` | boolean | `false` | Implicit TLS (typical for 465). Mutually exclusive with STARTTLS. Port 465 implies this. |
+
+### Provision
+
+`packaging/mail/provision.sh` reads this section from `packaging/mail/configuration.yaml`. The running daemon and mail client do not. Cloud CLIs still take their own tokens (`FLY_API_TOKEN`, `HCLOUD_TOKEN`, `DIGITALOCEAN_ACCESS_TOKEN`).
+
+| Setting | Type | Default | What it is for |
+| ------- | ---- | ------- | -------------- |
+| `provision.host` | string | — | SSH target for a machine you already have (`root@203.0.113.10`). When set, no VM is created. |
+| `provision.name` | string | `langmesh-mail` | Hetzner server or DigitalOcean droplet name. |
+| `provision.fly.app` | string | `langmesh-mail` | Fly.io app name. |
+| `provision.fly.region` | string | `iad` | Fly.io region. |
+| `provision.hetzner.image` | string | `ubuntu-24.04` | Hetzner image. |
+| `provision.hetzner.type` | string | `cpx11` | Hetzner type. |
+| `provision.hetzner.location` | string | `fsn1` | Hetzner location. |
+| `provision.hetzner.ssh_key` | string | — | hcloud SSH key name. Required to create a Hetzner server. |
+| `provision.digitalocean.region` | string | `nyc1` | DigitalOcean region. |
+| `provision.digitalocean.ssh_key` | string | — | DigitalOcean SSH key fingerprint or id. Required to create a droplet. |
 
 ### Model providers
 
 | Setting     | Type | Default | What it is for |
 | ----------- | ---- | ------- | -------------- |
-| `providers` | map  | — | Credentials for each model provider. The provider's own environment variable wins over anything stored here. |
+| `providers` | map  | — | Policy for each model provider (`base_url`). API keys are secret files `providers.<id>.api_key`. |
 
 ### Web search and fetching
 
 | Setting       | Type   | Default | What it is for |
 | ------------- | ------ | ------- | -------------- |
-| `exa.api_key` | string | — | Exa API key. The EXA_API_KEY environment variable wins over this. |
-| `jina.api_key` | string | — | Jina API key, which raises the rate limit. JINA_API_KEY wins over this. |
-| `firecrawl.api_key` | string | — | Firecrawl API key. FIRECRAWL_API_KEY wins over this. |
+| `exa.api_key` | string | — | Unused in YAML. The live secret is the file `exa.api_key`. |
+| `jina.api_key` | string | — | Unused in YAML. The live secret is the file `jina.api_key`. |
+| `firecrawl.api_key` | string | — | Unused in YAML. The live secret is the file `firecrawl.api_key`. |
 | `firecrawl.api_url` | string | — | A self-hosted Firecrawl instance to use instead of the hosted API. |
 | `web_fetch.proxy_url` | string | — | Route direct fetches and file downloads through an HTTP or SOCKS proxy. |
 | `web_fetch.timeout_seconds` | number | `30` | How long one engine is given before the cascade moves on. |
@@ -441,7 +456,7 @@ IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same fil
 | -------------------------- | ------- | ------- | -------------- |
 | `composio.enabled`         | boolean | `false` | Expose Composio's hosted gateway as one MCP server. |
 | `composio.url`             | string  | `https://connect.composio.dev/mcp` | The hosted MCP URL from the Composio dashboard's "connect" page. |
-| `composio.api_key`         | string  | — | The API key shown beside that URL. COMPOSIO_API_KEY wins over this. |
+| `composio.api_key`         | string  | — | Unused in YAML. The live secret is the file `composio.api_key`. |
 | `composio.server_name`     | string  | `composio` | The MCP server name its tools appear under. |
 | `composio.timeout_seconds` | number  | `60` | How long one call to that gateway waits. |
 
