@@ -68,8 +68,8 @@ Password (Gmail app password, Fastmail, Yahoo, iCloud, Proton Bridge):
 ```sh
 mkdir -p "$XDG_DATA_HOME/langmesh/secrets"
 chmod 700 "$XDG_DATA_HOME/langmesh/secrets"
-printf '%s' 'the-app-password' > "$XDG_DATA_HOME/langmesh/secrets/email.imap.password"
-printf '%s' 'the-provider-key' > "$XDG_DATA_HOME/langmesh/secrets/providers.anthropic.api_key"
+printf '%s' 'abcd efgh ijkl …' > "$XDG_DATA_HOME/langmesh/secrets/email.imap.password"
+printf '%s' 'sk-ant-…' > "$XDG_DATA_HOME/langmesh/secrets/providers.anthropic.api_key"
 chmod 600 "$XDG_DATA_HOME/langmesh/secrets"/*
 ```
 
@@ -87,12 +87,12 @@ email:
   auth: oauth
   oauth:
     issuer: microsoft   # google | microsoft | yahoo | custom
-    client_id: "your-app-id"
+    client_id: "0a1b2c3d-4e5f-…"
 ```
 
 ```sh
 # optional, if the OAuth app is a confidential client
-printf '%s' 'the-client-secret' > "$XDG_DATA_HOME/langmesh/secrets/email.oauth.client_secret"
+printf '%s' '8Q~abc…' > "$XDG_DATA_HOME/langmesh/secrets/email.oauth.client_secret"
 uv run langmesh mail auth    # browser sign-in; writes email.oauth.refresh_token
 chmod 600 "$XDG_DATA_HOME/langmesh/secrets"/*
 ```
@@ -115,8 +115,8 @@ On a VPS, fill `packaging/mail/configuration.yaml` and a checkout-root `secrets/
 ```sh
 # edit packaging/mail/configuration.yaml (address, machine, allow_from)
 mkdir -p secrets
-printf '%s' 'the-app-password' > secrets/email.imap.password
-printf '%s' 'the-provider-key' > secrets/providers.opencode.api_key
+printf '%s' 'abcd efgh ijkl …' > secrets/email.imap.password
+printf '%s' 'sk-…' > secrets/providers.opencode.api_key
 chmod 600 secrets/*
 uv run langmesh mail check
 sudo packaging/mail/install.sh
@@ -162,8 +162,8 @@ Yahoo, Fastmail, Gmail, and iCloud fill IMAP/SMTP hosts from the address; you do
 ```sh
 mkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}/langmesh/secrets"
 chmod 700 "${XDG_DATA_HOME:-$HOME/.local/share}/langmesh/secrets"
-printf '%s' 'the-app-password' > "${XDG_DATA_HOME:-$HOME/.local/share}/langmesh/secrets/email.imap.password"
-printf '%s' 'the-opencode-key' > "${XDG_DATA_HOME:-$HOME/.local/share}/langmesh/secrets/providers.opencode.api_key"
+printf '%s' 'abcd efgh ijkl …' > "${XDG_DATA_HOME:-$HOME/.local/share}/langmesh/secrets/email.imap.password"
+printf '%s' 'sk-…' > "${XDG_DATA_HOME:-$HOME/.local/share}/langmesh/secrets/providers.opencode.api_key"
 chmod 600 "${XDG_DATA_HOME:-$HOME/.local/share}/langmesh/secrets"/*
 ```
 

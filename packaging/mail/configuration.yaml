@@ -6,8 +6,8 @@
 #   providers.<id>.api_key       # catalogue id, or its credential_identifier
 #                                # (opencode-go bills as providers.opencode.api_key)
 #
-#   printf '%s' 'the-app-password' > secrets/email.imap.password
-#   printf '%s' 'the-provider-key' > secrets/providers.<id>.api_key
+#   printf '%s' 'abcd efgh ijkl …' > secrets/email.imap.password
+#   printf '%s' 'sk-…' > secrets/providers.<id>.api_key
 #   chmod 600 secrets/*
 #
 # Any providers.<id> key is valid: each entry is an empty api_key placeholder
