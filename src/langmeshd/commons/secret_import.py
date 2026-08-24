@@ -1,9 +1,7 @@
-"""Copy leftover platform secrets into 0600 files, then read those files.
+"""Lift secret values out of YAML into 0600 files, then compact mail passwords.
 
-Policy stays in configuration.yaml. A leftover mail.env is imported once into
-YAML (address, allow-list, agent) and into secret files (passwords, provider
-keys). Process environment is not a second schema: vendor leftover env
-(OPENCODE_API_KEY, EXA_API_KEY, …) fills empty files; LANGMESH_* does not.
+Policy stays in configuration.yaml. Credentials are files under
+``$XDG_DATA_HOME/langmesh/secrets``. Environment variables are not configuration.
 """
 
 from __future__ import annotations
@@ -17,7 +15,6 @@ from langmesh.base.secrets import (
     EXA_API_KEY,
     FIRECRAWL_API_KEY,
     JINA_API_KEY,
-    import_environment,
     import_if_empty,
     provider_api_key_name,
     read_secret,
@@ -26,25 +23,7 @@ from langmesh.base.secrets import (
 from langmeshd.commons import configuration_file
 from langmeshd.commons.configuration import compact_mail_secret
 from langmeshd.commons.paths import configuration_file_path
-from langmeshd.mail.envfile import mail_env_path, parse_mail_env
 
-
-_POLICY_FROM_MAIL_ENV = (
-    ("LANGMESH_MAIL_ADDRESS", "email.address"),
-    ("LANGMESH_MAIL_AGENT", "email.agent"),
-    ("LANGMESH_MAIL_WORKING_DIRECTORY", "email.working_directory"),
-    ("LANGMESH_MAIL_IMAP_HOST", "email.imap.host"),
-    ("LANGMESH_MAIL_IMAP_USER", "email.imap.username"),
-    ("LANGMESH_MAIL_IMAP_MAILBOX", "email.imap.mailbox"),
-    ("LANGMESH_MAIL_SMTP_HOST", "email.smtp.host"),
-    ("LANGMESH_MAIL_SMTP_USER", "email.smtp.username"),
-)
-
-_SECRET_FROM_MAIL_ENV = (
-    ("LANGMESH_MAIL_IMAP_PASSWORD", EMAIL_IMAP_PASSWORD),
-    ("LANGMESH_MAIL_PASSWORD", EMAIL_IMAP_PASSWORD),
-    ("LANGMESH_MAIL_SMTP_PASSWORD", EMAIL_SMTP_PASSWORD),
-)
 
 _SECRET_FROM_YAML = (
     ("exa.api_key", EXA_API_KEY),
@@ -77,16 +56,6 @@ def _set_path(document: dict[str, Any], path: str, value: Any) -> None:
     node[parts[-1]] = value
 
 
-def _empty_policy(value: Any) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, str):
-        return not value.strip()
-    if isinstance(value, list):
-        return not value
-    return False
-
-
 def lift_yaml_secrets(document: dict[str, Any]) -> bool:
     """Copy YAML secret fields into empty files and clear them from the document."""
     changed = False
@@ -112,73 +81,14 @@ def lift_yaml_secrets(document: dict[str, Any]) -> bool:
     return changed
 
 
-def _fill_policy_from_pairs(document: dict[str, Any], pairs: dict[str, str]) -> bool:
-    changed = False
-    allow = (pairs.get("LANGMESH_MAIL_ALLOW_FROM") or "").strip()
-    if allow and _empty_policy(_read_path(document, "email.allow_from")):
-        _set_path(
-            document,
-            "email.allow_from",
-            [item.strip() for item in allow.split(",") if item.strip()],
-        )
-        changed = True
-    enabled = _read_path(document, "email.enabled")
-    address = (pairs.get("LANGMESH_MAIL_ADDRESS") or "").strip()
-    if address and not enabled:
-        _set_path(document, "email.enabled", True)
-        changed = True
-    for variable, path in _POLICY_FROM_MAIL_ENV:
-        value = (pairs.get(variable) or "").strip()
-        if not value:
-            continue
-        if _empty_policy(_read_path(document, path)):
-            _set_path(document, path, value)
-            changed = True
-    imap_port = (pairs.get("LANGMESH_MAIL_IMAP_PORT") or "").strip()
-    if imap_port and _empty_policy(_read_path(document, "email.imap.port")):
-        _set_path(document, "email.imap.port", int(imap_port))
-        changed = True
-    smtp_port = (pairs.get("LANGMESH_MAIL_SMTP_PORT") or "").strip()
-    if smtp_port and _empty_policy(_read_path(document, "email.smtp.port")):
-        _set_path(document, "email.smtp.port", int(smtp_port))
-        changed = True
-    return changed
-
-
-def import_mail_env_file() -> bool:
-    """Lift a leftover mail.env into YAML policy and secret files. Returns whether YAML changed."""
-    source = mail_env_path()
-    if source is None:
-        return False
-    pairs = parse_mail_env(source)
-    if not pairs:
-        return False
-    for variable, name in _SECRET_FROM_MAIL_ENV:
-        value = compact_mail_secret(pairs.get(variable) or "")
-        if value:
-            import_if_empty(name, value)
-    import_environment(pairs)
-    document = configuration_file.load() or {}
-    changed = _fill_policy_from_pairs(document, pairs)
-    if changed:
-        invalid = configuration_file.rejects(document)
-        if invalid:
-            raise ValueError(f"invalid configuration: {invalid}")
-        configuration_file.save(document)
-    return changed
-
-
 def import_into_files() -> None:
-    """Fill empty secret files from env, YAML, and a leftover mail.env, then strip YAML secrets."""
-    import_environment()
+    """Strip YAML secrets into files and compact Gmail app-password spaces."""
     if configuration_file_path().exists():
         document = configuration_file.load() or {}
         if lift_yaml_secrets(document):
             invalid = configuration_file.rejects(document)
             if not invalid:
                 configuration_file.save(document)
-    import_mail_env_file()
-    import_environment()
     imap = compact_mail_secret(read_secret(EMAIL_IMAP_PASSWORD))
     if imap and read_secret(EMAIL_IMAP_PASSWORD) != imap:
         write_secret(EMAIL_IMAP_PASSWORD, imap)
@@ -187,4 +97,4 @@ def import_into_files() -> None:
         write_secret(EMAIL_SMTP_PASSWORD, smtp)
 
 
-__all__ = ["import_into_files", "import_mail_env_file", "lift_yaml_secrets"]
+__all__ = ["import_into_files", "lift_yaml_secrets"]

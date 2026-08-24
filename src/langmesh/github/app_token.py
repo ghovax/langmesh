@@ -3,8 +3,8 @@
 The PEM is ``github.app.private_key`` under the XDG secrets directory or
 ``.github/secrets``. ``app_id`` comes from ``.github/langmesh.yaml``. No
 repository secret is read. Writes the App slug to ``.github/langmesh/app-slug``
-and ``token`` (and ``app-slug``) to GITHUB_OUTPUT when minting succeeds; writes
-nothing when the PEM or App id is missing.
+and ``token`` to GITHUB_OUTPUT when minting succeeds; writes nothing when the
+PEM or App id is missing.
 """
 
 from __future__ import annotations
@@ -111,8 +111,6 @@ def main() -> None:
     if output:
         with Path(output).open("a", encoding="utf-8") as handle:
             print(f"token={token}", file=handle)
-            if slug:
-                print(f"app-slug={slug}", file=handle)
 
 
 if __name__ == "__main__":

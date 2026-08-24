@@ -46,8 +46,6 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - id: policy
-        run: python3 src/langmesh/github/policy.py
       - run: python3 src/langmesh/github/materialize.py
       - id: app
         run: python3 src/langmesh/github/app_token.py

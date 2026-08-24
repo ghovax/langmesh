@@ -89,7 +89,7 @@ The mail client cannot create a mailbox, a DNS name, or a cloud VM by itself. Af
 5. **A host that stays up**, with `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) persisted across replace. Choose one:
    - This machine: `uv run langmesh mail`, then send mail to `email.address` from the allowlisted From.
    - You already have a Linux VPS: copy this checkout there, fill the YAML and `secrets/`, run the `install.sh` command above.
-   - Fly.io: put policy in `packaging/mail/configuration.yaml` (`provision.fly` for app and region). Fly leftover vendor env (`OPENCODE_API_KEY`) is imported into secret files at start. Set `FLY_API_TOKEN` and run `packaging/mail/provision.sh`. The script creates the app, a persistent `langmesh_xdg` volume, and deploys from the checkout root.
+   - Fly.io: put policy in `packaging/mail/configuration.yaml` (`provision.fly` for app and region) and secret files on the `langmesh_xdg` volume. Set `FLY_API_TOKEN` and run `packaging/mail/provision.sh`. The script creates the app, a persistent `langmesh_xdg` volume, and deploys from the checkout root.
    - Hetzner or DigitalOcean: set `HCLOUD_TOKEN` (with `hcloud` on PATH) and `provision.hetzner.ssh_key`, or `DIGITALOCEAN_ACCESS_TOKEN` (with `doctl` on PATH) and `provision.digitalocean.ssh_key`. Or set `provision.host` to SSH into a machine you already have.
 6. **DNS**, only if the mailbox should live on a domain you own. A Gmail/Fastmail/iCloud address does not need this.
 
