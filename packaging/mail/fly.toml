@@ -2,8 +2,9 @@
 # Deploy from the checkout root so the Docker context is the repository (the
 # Dockerfile copies pyproject.toml, src, and .agents from there):
 #   fly volumes create langmesh_xdg --size 3 --region iad --yes
-#   # Policy lives on the volume as configuration.yaml. Fly secrets are an import
-#   # into $XDG_DATA_HOME/langmesh/secrets (OPENCODE_API_KEY, and a leftover mail.env).
+#   # Policy lives on the volume as configuration.yaml. Secret files live under
+#   # $XDG_DATA_HOME/langmesh/secrets. A leftover vendor env (OPENCODE_API_KEY)
+#   # is copied into an empty file at start.
 #   fly deploy . --config packaging/mail/fly.toml --dockerfile packaging/mail/Dockerfile
 #
 # No http_service: Fly Proxy will not autostop a worker with no services.
