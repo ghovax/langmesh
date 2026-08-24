@@ -57,7 +57,7 @@ email:
     password: ""
 ```
 
-Gmail needs an [app password](https://support.google.com/accounts/answer/185833) and IMAP enabled. The client fills `imap.gmail.com` / `smtp.gmail.com` from a `gmail.com` address. Fastmail, Outlook, Yahoo, and iCloud (`icloud.com` / `me.com`) are the same. A Gmail plus-address (`agent+mail@gmail.com`) still authenticates as the account without `+mail`. Gmail copies the 16-character app password with spaces; those spaces are display-only and are stripped. SMTP port `465` uses implicit TLS. Do not commit the password.
+Gmail needs an [app password](https://support.google.com/accounts/answer/185833) and IMAP enabled. The client fills `imap.gmail.com` / `smtp.gmail.com` from a `gmail.com` address. Fastmail, Yahoo, and iCloud (`icloud.com` / `me.com`) are the same. Outlook and Hotmail still get inferred hosts, but many of those accounts no longer accept an app password (they want OAuth, which this client does not speak). A Gmail plus-address (`agent+mail@gmail.com`) still authenticates as the account without `+mail`. Gmail copies the 16-character app password with spaces; those spaces are display-only and are stripped. SMTP port `465` uses implicit TLS. If a VPS blocks outbound `587`, the client retries `465` on the same host. Do not commit the password.
 
 ```sh
 uv run langmesh mail

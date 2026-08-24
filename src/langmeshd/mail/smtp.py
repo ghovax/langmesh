@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import logging
+from collections.abc import Awaitable, Callable
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 from typing import Any
@@ -17,6 +19,8 @@ from langmeshd.mail.html import html_from_markdown
 # Do not mint Message-IDs at gmail.com / outlook / etc: those providers rewrite ids that
 # impersonate their domain, and a later In-Reply-To would miss the thread.
 MESSAGE_ID_DOMAIN = "langmesh.mail"
+
+logger = logging.getLogger(__name__)
 
 
 def outbound_message_id() -> str:
@@ -40,6 +44,17 @@ def _smtp_kwargs(configuration: EmailConfiguration) -> dict[str, Any]:
         ),
         "use_tls": configuration.effective_smtp_use_tls,
     }
+
+
+def _implicit_tls_kwargs(configuration: EmailConfiguration) -> dict[str, Any] | None:
+    """Port 465 when 587/STARTTLS is blocked, which some VPS providers do."""
+    if configuration.effective_smtp_use_tls or configuration.effective_smtp_port != 587:
+        return None
+    kwargs = _smtp_kwargs(configuration)
+    kwargs["port"] = 465
+    kwargs["use_tls"] = True
+    kwargs["start_tls"] = False
+    return kwargs
 
 
 def reply_message(
@@ -85,19 +100,43 @@ def reply_message(
 )
 async def send_reply(configuration: EmailConfiguration, message: EmailMessage) -> None:
     """Hand the message to aiosmtplib. The same Message-ID is reused on retry so a duplicate is the same mail."""
-    await aiosmtplib.send(
-        message,
-        **_smtp_kwargs(configuration),
-        timeout=60,
-    )
+
+    async def once(kwargs: dict[str, Any]) -> None:
+        await aiosmtplib.send(message, **kwargs, timeout=60)
+
+    await _smtp_call(configuration, once)
 
 
 async def probe_smtp(configuration: EmailConfiguration) -> None:
     """Prove SMTP will accept this mailbox. Fail now, not after the first turn has already run."""
-    client = aiosmtplib.SMTP(**_smtp_kwargs(configuration), timeout=30)
-    await client.connect()
+
+    async def once(kwargs: dict[str, Any]) -> None:
+        client = aiosmtplib.SMTP(**kwargs, timeout=30)
+        await client.connect()
+        try:
+            await client.noop()
+        finally:
+            with contextlib.suppress(Exception):
+                await client.quit()
+
+    await _smtp_call(configuration, once)
+
+
+async def _smtp_call(
+    configuration: EmailConfiguration,
+    operation: Callable[[dict[str, Any]], Awaitable[None]],
+) -> None:
+    kwargs = _smtp_kwargs(configuration)
     try:
-        await client.noop()
-    finally:
-        with contextlib.suppress(Exception):
-            await client.quit()
+        await operation(kwargs)
+        return
+    except (OSError, aiosmtplib.SMTPException):
+        fallback = _implicit_tls_kwargs(configuration)
+        if fallback is None:
+            raise
+        logger.info(
+            "smtp %s:%s failed; trying implicit TLS on 465",
+            kwargs["hostname"],
+            kwargs["port"],
+        )
+    await operation(fallback)
