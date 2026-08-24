@@ -39,7 +39,9 @@ load_mail_env
 import os
 from langmeshd.commons import configuration_file
 from langmeshd.commons.configuration_io import load_configuration
+from langmeshd.mail.envfile import apply_mail_env
 
+apply_mail_env()
 load_configuration(seed=True)
 document = configuration_file.load() or {}
 sandbox = document.setdefault("sandbox", {})
