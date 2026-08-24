@@ -14,7 +14,7 @@ import contextlib
 import logging
 import os
 from email.message import Message
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from langmesh.base.primitives.errors import log_fields
 from langmeshd.commons.configuration import EmailConfiguration
@@ -171,10 +171,21 @@ class MailService:
         return [turn for turn in turns if isinstance(turn, dict)] if isinstance(turns, list) else []
 
     async def _wait_until_idle(self, http, item: MailItem) -> None:
-        """Attach until the session is idle. Re-attach if the stream dies. Does not harvest prose."""
+        """Attach until the session is idle or this mail is already posted.
+
+        `submit_email` with `kind` `reply` posts the job from the worker. The model may
+        still be wrapping up; the inbound is finished as soon as that SMTP lands.
+        """
         deadline = asyncio.get_running_loop().time() + self.configuration.turn_timeout_seconds
+
+        def _posted() -> bool:
+            current = self.store.get(item.id)
+            return current is not None and current.state in {POSTED, SEEN, SKIPPED}
+
         while asyncio.get_running_loop().time() < deadline:
             self._guard()
+            if _posted():
+                return
             working = await self._session_working(http, item.session_id)
             turns = await self._history(http, item.session_id)
             matched = turn_for_client_message(turns, item.client_message_id)
@@ -193,7 +204,7 @@ class MailService:
             if remaining <= 0:
                 break
             try:
-                await self._attach_until_idle(http, item.session_id, remaining)
+                await self._attach_until_idle(http, item.session_id, remaining, done=_posted)
             except StaleConnection:
                 raise
             except Exception:  # noqa: BLE001 — a dead attach is resumed, not a lost turn
@@ -203,11 +214,19 @@ class MailService:
                     exc_info=True,
                 )
                 await asyncio.sleep(1)
+        if _posted():
+            return
         raise daemon_client.MailDaemonError(
             "The session did not finish before the mail wait elapsed."
         )
 
-    async def _attach_until_idle(self, http, session_id: str, timeout: float) -> None:
+    async def _attach_until_idle(
+        self,
+        http,
+        session_id: str,
+        timeout: float,
+        done: Callable[[], bool] | None = None,
+    ) -> None:
         response = await self.clock.await_fresh(daemon_client.attach(http, session_id))
         incoming: asyncio.Queue[dict | None] = asyncio.Queue()
 
@@ -226,6 +245,8 @@ class MailService:
             while True:
                 remaining = end - asyncio.get_running_loop().time()
                 if remaining <= 0:
+                    return
+                if done is not None and done():
                     return
                 try:
                     frame = await asyncio.wait_for(incoming.get(), timeout=min(2.0, remaining))
