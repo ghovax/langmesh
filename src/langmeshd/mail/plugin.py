@@ -45,7 +45,9 @@ class MailUpdate(BaseModel):
 
 @runtime_checkable
 class EmailReplyCapability(Protocol):
-    async def submit(self, body: str, *, kind: MailKind = "progress") -> None: ...
+    """SMTP for a mailbox session. The method is not `submit`: GoalReviewFeature also has that name."""
+
+    async def submit_mailbox(self, body: str, *, kind: MailKind = "progress") -> None: ...
 
 
 async def _submit_email(**arguments: Any) -> str:
@@ -53,7 +55,7 @@ async def _submit_email(**arguments: Any) -> str:
     await (
         current_tool_services()
         .features.require(EmailReplyCapability)
-        .submit(payload.body, kind=payload.kind)
+        .submit_mailbox(payload.body, kind=payload.kind)
     )
     return compact(
         {
@@ -113,12 +115,12 @@ class EmailReply(Feature):
         declared = getattr(context.agent_configuration, "tools_enabled", None) or []
         return [submit_email] if "submit_email" in declared else []
 
-    async def submit(self, body: str, *, kind: MailKind = "progress") -> None:
+    async def submit_mailbox(self, body: str, *, kind: MailKind = "progress") -> None:
         from langmeshd.commons.configuration_file import load as load_document
         from langmeshd.commons.configuration import EmailConfiguration
         from langmeshd.mail.body import reference_chain
         from langmeshd.mail.smtp import outbound_message_id, reply_message, send_reply
-        from langmeshd.mail.threads import ThreadStore
+        from langmeshd.mail.threads import POSTED, SEEN, ThreadStore
 
         session_id = self._context.session_id
         store = ThreadStore()
@@ -127,6 +129,8 @@ class EmailReply(Feature):
             item = store.latest_item_for_session(session_id)
             if binding is None or item is None:
                 raise RuntimeError("This session is not a mailbox thread.")
+            if kind == "reply" and (self._replied or item.state in {POSTED, SEEN}):
+                return
             configuration = EmailConfiguration.model_validate(
                 (load_document() or {}).get("email") or {}
             )
