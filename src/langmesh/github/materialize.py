@@ -6,9 +6,9 @@ self-hosted runner can keep keys only under XDG.
 
 On a GitHub-hosted runner the checkout cannot hold keys (this repository is public).
 The job passes the Actions-store values into this process for the write only, under
-``mention_api_key`` and ``mention_app_private_key`` — GitHub forbids dots and names
-that start with ``GITHUB_`` in any case — and this file writes ``github.api_key``
-and ``github.app.private_key``. LangMesh does not read those store names, and they
+``API_KEY`` and ``APP_PRIVATE_KEY`` — GitHub forbids dots and names that start
+with ``GITHUB_`` in any case — and this file writes ``github.api_key`` and
+``github.app.private_key``. LangMesh does not read those store names, and they
 are not ``LANGMESH_`` variables.
 """
 
@@ -28,8 +28,8 @@ _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 # GitHub secret names cannot contain dots or start with GITHUB_ (any case).
 _ACTIONS_FILES = (
-    ("mention_api_key", "github.api_key"),
-    ("mention_app_private_key", "github.app.private_key"),
+    ("API_KEY", "github.api_key"),
+    ("APP_PRIVATE_KEY", "github.app.private_key"),
 )
 
 
