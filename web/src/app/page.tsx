@@ -2,7 +2,6 @@
 
 import { Box, Flex } from "@chakra-ui/react";
 import { SessionsSidebar, type SessionSort } from "@/components/SessionsSidebar";
-import type { SessionActivity, SessionEntry } from "@/components/SessionRow";
 import { AnimatePresence, motion } from "motion/react";
 import {
   Suspense,
@@ -18,7 +17,11 @@ import {
 const MotionFlex = motion.create(Flex);
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  LOCAL_DAEMON_ID,
+  activeDaemonId,
   deleteSession,
+  fetchAllSessions,
+  fetchDaemonTargets,
   fetchSystemPermissions,
   fetchAgents,
   fetchAgentCards,
@@ -27,7 +30,6 @@ import {
   fetchRecentModels,
   fetchSession,
   fetchSessionDraft,
-  fetchSessions,
   fetchSettings,
   getWorkspace,
   listWorkspaces,
@@ -38,15 +40,18 @@ import {
   setSandboxEnforce,
   subscribeConnection,
   subscribeEvents,
+  switchDaemon,
   updateComputerControlSetting,
   type AgentCard,
   type AgentSummary,
+  type DaemonTarget,
   type ModelOption,
   type PermissionMode,
   type ProviderOption,
   type SandboxEnforce,
 } from "@/lib/api";
 import { ChatPanel, type SidePanelKey } from "@/components/ChatPanel";
+import { sessionIdentity, type SessionActivity, type SessionEntry } from "@/components/SessionRow";
 import { useTray } from "@/lib/use-tray";
 import { playAttentionSound, playTurnEndSound, primeSounds } from "@/lib/sounds";
 import { reportError } from "@/lib/faults";
@@ -58,9 +63,13 @@ import { isCompactViewport, useCompactViewport } from "@/lib/viewport";
 // The last workspace the user was in and the last conversation within it, both kept by the daemon so a fresh launch reopens them.
 
 // The conversation a session belongs to: itself, or the one at the top of the chain that created it.
-function rootSessionOf(sessions: SessionEntry[], sessionId: string | null): string | null {
+function rootSessionOf(sessions: SessionEntry[], sessionId: string | null, daemonId: string): string | null {
   if (!sessionId) return null;
-  const byId = new Map(sessions.map((session) => [session.sessionId, session]));
+  const byId = new Map(
+    sessions
+      .filter((session) => (session.daemonId || LOCAL_DAEMON_ID) === daemonId)
+      .map((session) => [session.sessionId, session]),
+  );
   const seen = new Set<string>();
   let current = byId.get(sessionId);
   while (current?.parentSessionId && !seen.has(current.sessionId)) {
@@ -88,7 +97,10 @@ function Workspace() {
   // The app opens straight into a workspace addressed by `?workspace=`, resolving the last used or the first available.
   const workspaceId = searchParams.get("workspace") ?? "";
   const requestedSessionId = searchParams.get("session") ?? "";
+  const requestedDaemonId = searchParams.get("daemon") || LOCAL_DAEMON_ID;
   const [activeSessionId, setActiveSessionId] = useState<string | null>(requestedSessionId || null);
+  const [daemonId, setDaemonId] = useState(requestedDaemonId);
+  const [daemonTargets, setDaemonTargets] = useState<DaemonTarget[]>([]);
 
   // After the user grants Accessibility and the app relaunches, turn computer control on once, since macOS only tells the fresh server.
   useEffect(() => {
@@ -112,9 +124,38 @@ function Workspace() {
     let cancelled = false;
     const resolveWorkspace = async () => {
       try {
+        const targets = await fetchDaemonTargets();
+        if (cancelled) return;
+        setDaemonTargets(targets);
+        let daemon =
+          targets.find((candidate) => candidate.id === requestedDaemonId) ??
+          targets.find((candidate) => candidate.kind === "local");
+        if (requestedSessionId && requestedDaemonId === LOCAL_DAEMON_ID) {
+          const localHit = await fetchSession(requestedSessionId);
+          if (!localHit) {
+            for (const candidate of targets) {
+              if (candidate.kind === "local") continue;
+              const found = await fetchSession(requestedSessionId, {
+                apiBase: candidate.endpoint,
+                token: candidate.token,
+              });
+              if (found) {
+                daemon = candidate;
+                break;
+              }
+            }
+          }
+        }
+        if (daemon && daemon.id !== activeDaemonId()) {
+          switchDaemon(daemon);
+        }
+        if (daemon) setDaemonId(daemon.id);
+        const options = daemon
+          ? { apiBase: daemon.endpoint, token: daemon.token }
+          : undefined;
         const [workspaces, requestedSession] = await Promise.all([
-          listWorkspaces(),
-          requestedSessionId ? fetchSession(requestedSessionId) : Promise.resolve(null),
+          listWorkspaces(options),
+          requestedSessionId ? fetchSession(requestedSessionId, options) : Promise.resolve(null),
         ]);
         if (cancelled) return;
         const requestedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
@@ -140,8 +181,14 @@ function Workspace() {
         setRememberedSession(target.last_session_id ?? "");
         const params = new URLSearchParams(window.location.search);
         params.set("workspace", target.id);
+        if (daemon && daemon.id !== LOCAL_DAEMON_ID) params.set("daemon", daemon.id);
+        else params.delete("daemon");
         if (requestedSessionId && !keepRequestedSession) params.delete("session");
-        if (workspaceId !== target.id || (requestedSessionId && !keepRequestedSession)) {
+        if (
+          workspaceId !== target.id ||
+          (requestedSessionId && !keepRequestedSession) ||
+          (daemon && requestedDaemonId !== daemon.id)
+        ) {
           router.replace(`?${params.toString()}`, { scroll: false });
         }
       } catch (caught) {
@@ -156,7 +203,7 @@ function Workspace() {
     };
     // The workspace readers close over preferences, so naming them here would re-run this after writing the selection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, requestedSessionId, router]);
+  }, [workspaceId, requestedSessionId, requestedDaemonId, router]);
 
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [agentCards, setAgentCards] = useState<AgentCard[]>([]);
@@ -247,7 +294,7 @@ function Workspace() {
   }, []);
 
   const mapSessions = useCallback(
-    (serverSessions: Awaited<ReturnType<typeof fetchSessions>>): SessionEntry[] => {
+    (serverSessions: Awaited<ReturnType<typeof fetchAllSessions>>): SessionEntry[] => {
       return serverSessions.map((session) => ({
         sessionId: session.id,
         parentSessionId: session.parent,
@@ -263,6 +310,9 @@ function Workspace() {
         exitReason: session.exit_reason,
         permissionMode: session.permission_mode,
         goal: session.goal ?? null,
+        daemonId: session.daemonId,
+        daemonName: session.daemonName,
+        remote: session.remote,
       }));
     },
     [],
@@ -270,41 +320,37 @@ function Workspace() {
 
   const loadSessions = useCallback(async () => {
     const previousList = sessionsRef.current;
-    // One daemon, one fetch, since a folder now says where its work runs.
     let merged: SessionEntry[];
     try {
-      // History means every durable session, including ones whose process has already ended.
-      merged = mapSessions(await fetchSessions({ all: true }));
+      merged = mapSessions(await fetchAllSessions());
     } catch (caught) {
-      // A transient failure keeps what we already have rather than blanking the list.
       reportError({ component: "workspace-page", operation: "list the sessions" }, caught);
       return;
     }
-    // Reuse the previous object for any unchanged session, so an equal refetch does not re-render the list.
-    const previousById = new Map(previousList.map((session) => [session.sessionId, session]));
+    const previousById = new Map(previousList.map((session) => [sessionIdentity(session), session]));
     const mapped = merged
       .map((session) => {
-        const previous = previousById.get(session.sessionId);
+        const previous = previousById.get(sessionIdentity(session));
         return previous && JSON.stringify(previous) === JSON.stringify(session)
           ? previous
           : session;
       })
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-    // Flag any non-active session that just went from busy to idle, computed outside the state updater so the chime plays once.
     const activeId = activeSessionIdRef.current;
+    const activeKey = `${daemonId}:${activeId ?? ""}`;
     const finishedUnviewed = mapped
       .filter((session) => {
-        const previous = previousById.get(session.sessionId);
+        const previous = previousById.get(sessionIdentity(session));
         const wasBusy = !!previous && isSessionBusy(previous);
         return (
           wasBusy &&
           !isSessionBusy(session) &&
-          session.sessionId !== activeId &&
+          sessionIdentity(session) !== activeKey &&
           !session.awaitingInput &&
           !session.failed
         );
       })
-      .map((session) => session.sessionId);
+      .map((session) => sessionIdentity(session));
     if (finishedUnviewed.length > 0) {
       playTurnEndSound();
       setUnseenCompletions((current) => {
@@ -318,16 +364,17 @@ function Workspace() {
     // A background session newly waiting on a decision gets the same attention cue the active session's overlay plays.
     let shouldPlayAttentionSound = false;
     for (const session of mapped) {
-      const previous = previousById.get(session.sessionId);
-      if (!isSessionBusy(session)) attentionPlayedForRunRef.current.delete(session.sessionId);
+      const key = sessionIdentity(session);
+      const previous = previousById.get(key);
+      if (!isSessionBusy(session)) attentionPlayedForRunRef.current.delete(key);
       if (
         session.awaitingInput &&
         !!previous &&
         !previous.awaitingInput &&
-        session.sessionId !== activeId &&
-        !attentionPlayedForRunRef.current.has(session.sessionId)
+        key !== activeKey &&
+        !attentionPlayedForRunRef.current.has(key)
       ) {
-        attentionPlayedForRunRef.current.add(session.sessionId);
+        attentionPlayedForRunRef.current.add(key);
         shouldPlayAttentionSound = true;
       }
     }
@@ -335,7 +382,7 @@ function Workspace() {
     sessionsRef.current = mapped;
     setSessions(mapped);
     setSessionsLoaded(true);
-  }, [mapSessions]);
+  }, [mapSessions, daemonId]);
 
   // Everything a lost connection took away, asked for again, so the daemon going away is recoverable without a relaunch.
   useEffect(
@@ -364,6 +411,32 @@ function Workspace() {
     }
   }, [loadAgents, loadAgentCards, loadModelCatalog, loadSessions]);
   reconnectRef.current = reconnect;
+
+  function applyDaemon(target: DaemonTarget) {
+    if (target.id === daemonId && target.id === activeDaemonId()) {
+      setChatKey((current) => current + 1);
+      void loadAgents();
+      void loadAgentCards();
+      void loadModelCatalog();
+      void loadSessions();
+      return;
+    }
+    switchDaemon(target);
+    setDaemonId(target.id);
+    setActiveSessionId(null);
+    setChatKey((current) => current + 1);
+    setWorkingDirectory("");
+    setRestoredContext(null);
+    const params = new URLSearchParams(window.location.search);
+    if (target.id === LOCAL_DAEMON_ID) params.delete("daemon");
+    else params.set("daemon", target.id);
+    params.delete("session");
+    router.replace(`?${params.toString()}`, { scroll: false });
+    void loadAgents();
+    void loadAgentCards();
+    void loadModelCatalog();
+    void loadSessions();
+  }
 
   // Coalesce the burst of events a single turn emits into one trailing refetch, so the list settles once.
   const sessionsReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -435,10 +508,13 @@ function Workspace() {
 
   // The working directory is bound to the active context once, without clobbering a deliberate change.
   const [restoredContext, setRestoredContext] = useState<string | null>(null);
-  const contextKey = activeSessionId ?? "__new__";
+  const contextKey = `${daemonId}:${activeSessionId ?? "__new__"}`;
   if (restoredContext !== contextKey) {
     if (activeSessionId) {
-      const session = sessions.find((entry) => entry.sessionId === activeSessionId);
+      const session = sessions.find(
+        (entry) =>
+          entry.sessionId === activeSessionId && (entry.daemonId || LOCAL_DAEMON_ID) === daemonId,
+      );
       if (session) {
         setRestoredContext(contextKey);
         setWorkingDirectory(session.workingDirectory || homeWorkspace?.path || "");
@@ -455,7 +531,10 @@ function Workspace() {
 
   const selectedCard =
     agentCards.find((card) => card.url.endsWith(`/agents/${selectedAgent}`)) ?? null;
-  const activeSession = sessions.find((entry) => entry.sessionId === activeSessionId);
+  const activeSession = sessions.find(
+    (entry) =>
+      entry.sessionId === activeSessionId && (entry.daemonId || LOCAL_DAEMON_ID) === daemonId,
+  );
   // There is one backend now, so a session is openable as soon as it is known.
   const activeSessionKnown = !activeSessionId || sessionsLoaded || !!activeSession;
   const activeSessionRunning = activeSession ? isSessionBusy(activeSession) : false;
@@ -493,7 +572,9 @@ function Workspace() {
     restoredInitialSession.current = true;
     if (activeSessionId) return;
     const candidates = sessions.filter(
-      (entry) => !workspaceId || entry.workspaceId === workspaceId,
+      (entry) =>
+        (!workspaceId || entry.workspaceId === workspaceId) &&
+        (entry.daemonId || LOCAL_DAEMON_ID) === daemonId,
     );
     if (candidates.length === 0) return;
     const target =
@@ -514,14 +595,19 @@ function Workspace() {
     );
   }, [sessions, sessionSort]);
   const workspaceSessions = useMemo(
-    () => sortedSessions.filter((session) => session.workspaceId === workspaceId),
-    [sortedSessions, workspaceId],
+    () =>
+      sortedSessions.filter(
+        (session) =>
+          session.workspaceId === workspaceId &&
+          (session.daemonId || LOCAL_DAEMON_ID) === daemonId,
+      ),
+    [sortedSessions, workspaceId, daemonId],
   );
 
   // Which sidebar row is lit, and what the delegated-work panel is about.
   const rootSessionId = useMemo(
-    () => rootSessionOf(sessions, activeSessionId),
-    [sessions, activeSessionId],
+    () => rootSessionOf(sessions, activeSessionId, daemonId),
+    [sessions, activeSessionId, daemonId],
   );
 
   const refreshSessions = useCallback(() => {
@@ -537,12 +623,13 @@ function Workspace() {
       void rememberLastSession(workspaceId, sessionId);
       const params = new URLSearchParams(window.location.search);
       params.set("session", sessionId);
+      if (daemonId !== LOCAL_DAEMON_ID) params.set("daemon", daemonId);
       router.replace(`?${params.toString()}`, { scroll: false });
       if (isCompactViewport()) setMobileHistoryOpen(false);
       refreshSessions();
       setTimeout(refreshSessions, 5000);
     },
-    [refreshSessions, router, workspaceId],
+    [refreshSessions, router, workspaceId, daemonId],
   );
 
   const handleStreamingChange = useCallback(
@@ -564,8 +651,19 @@ function Workspace() {
   }
 
   // Switch the active workspace from its sidebar row, starting a fresh chat and swapping the `?workspace=` param.
-  function handleSwitchWorkspace(nextWorkspaceId: string) {
-    if (!nextWorkspaceId || nextWorkspaceId === workspaceId) return;
+  function handleSwitchWorkspace(nextWorkspaceId: string, nextDaemonId: string = daemonId) {
+    if (!nextWorkspaceId) return;
+    if (nextWorkspaceId === workspaceId && nextDaemonId === daemonId) return;
+    const target = daemonTargets.find((candidate) => candidate.id === nextDaemonId);
+    if (target && nextDaemonId !== activeDaemonId()) {
+      switchDaemon(target);
+      setDaemonId(target.id);
+      void loadAgents();
+      void loadAgentCards();
+      void loadModelCatalog();
+    } else {
+      setDaemonId(nextDaemonId);
+    }
     writeLastWorkspace(nextWorkspaceId);
     setActiveSessionId(null);
     setChatKey((current) => current + 1);
@@ -573,6 +671,8 @@ function Workspace() {
     setRestoredContext(null);
     const params = new URLSearchParams(window.location.search);
     params.set("workspace", nextWorkspaceId);
+    if (nextDaemonId === LOCAL_DAEMON_ID) params.delete("daemon");
+    else params.set("daemon", nextDaemonId);
     params.delete("session");
     router.replace(`?${params.toString()}`, { scroll: false });
     if (isCompactViewport()) setMobileHistoryOpen(false);
@@ -596,20 +696,38 @@ function Workspace() {
     if (isCompactViewport()) setMobileHistoryOpen(false);
   }
 
-  async function handleDeleteSession(sessionId: string) {
-    const ok = await deleteSession(sessionId);
+  async function handleDeleteSession(sessionId: string, entry?: SessionEntry) {
+    const host = entry?.daemonId || daemonId;
+    const target = daemonTargets.find((candidate) => candidate.id === host);
+    const ok = await deleteSession(
+      sessionId,
+      target ? { apiBase: target.endpoint, token: target.token } : undefined,
+    );
     if (ok) {
       refreshSessions();
-      // Only reset the open conversation when it is the one being deleted.
-      if (sessionId === activeSessionId) handleNewChat();
+      if (sessionId === activeSessionId && host === daemonId) handleNewChat();
     }
   }
 
   function handleResumeSession(entry: SessionEntry) {
-    // Opening a session acknowledges its notification.
+    const host = entry.daemonId || LOCAL_DAEMON_ID;
+    const identity = sessionIdentity(entry);
+    if (host !== activeDaemonId()) {
+      const target = daemonTargets.find((candidate) => candidate.id === host);
+      if (target) {
+        switchDaemon(target);
+        setDaemonId(target.id);
+        void loadAgents();
+        void loadAgentCards();
+        void loadModelCatalog();
+      }
+    } else {
+      setDaemonId(host);
+    }
     setUnseenCompletions((current) => {
-      if (!current.has(entry.sessionId)) return current;
+      if (!current.has(identity) && !current.has(entry.sessionId)) return current;
       const next = new Set(current);
+      next.delete(identity);
       next.delete(entry.sessionId);
       return next;
     });
@@ -626,15 +744,18 @@ function Workspace() {
       setRestoredContext(null);
     }
     params.set("session", entry.sessionId);
+    if (host === LOCAL_DAEMON_ID) params.delete("daemon");
+    else params.set("daemon", host);
     router.replace(`?${params.toString()}`, { scroll: false });
     if (isCompactViewport()) setMobileHistoryOpen(false);
   }
 
-  // Opening a session from the delegated-work panel, deliberately without the remount `handleResumeSession` does.
   function handleOpenDelegatedSession(entry: SessionEntry) {
+    const identity = sessionIdentity(entry);
     setUnseenCompletions((current) => {
-      if (!current.has(entry.sessionId)) return current;
+      if (!current.has(identity) && !current.has(entry.sessionId)) return current;
       const next = new Set(current);
+      next.delete(identity);
       next.delete(entry.sessionId);
       return next;
     });
@@ -844,11 +965,12 @@ function Workspace() {
               onSessionSortChange={setSessionSort}
               unseenCompletions={unseenCompletions}
               currentWorkspaceId={workspaceId}
+              currentDaemonId={daemonId}
               onSwitchWorkspace={handleSwitchWorkspace}
               onOpenWorkspaceSettings={openWorkspaceSettings}
               onNewChat={handleNewChat}
               onResume={(entry) => void handleResumeSession(entry)}
-              onDeleteSession={(entry) => void handleDeleteSession(entry.sessionId)}
+              onDeleteSession={(entry) => void handleDeleteSession(entry.sessionId, entry)}
               agents={agents}
             />
           </MotionFlex>
@@ -874,7 +996,9 @@ function Workspace() {
           sessionTitle={activeSession?.title}
           initialInputDraft={activeSessionDraft}
           onDeleteSession={activeSessionId ? handleDeleteSession : undefined}
-          sessions={sessions}
+          sessions={sessions.filter(
+            (entry) => (entry.daemonId || LOCAL_DAEMON_ID) === daemonId,
+          )}
           unseenCompletions={unseenCompletions}
           rootSessionId={rootSessionId}
           onResumeSession={handleOpenDelegatedSession}
@@ -897,6 +1021,7 @@ function Workspace() {
           isConnected={isConnected}
           connectionLost={!isConnected}
           onReconnect={reconnect}
+          onSelectDaemon={applyDaemon}
           reconnecting={isReconnecting}
           onStreamingChange={handleStreamingChange}
           historyOpen={visibleHistoryOpen}

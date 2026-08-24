@@ -45,6 +45,7 @@ import {
   updateUserContextSetting,
   type AgentConfiguration,
   type AgentSummary,
+  type DaemonTarget,
   type ModelOption,
   type PermissionMode,
   type ProviderOption,
@@ -171,6 +172,7 @@ export function SettingsDialog({
   onSandboxEnforceChange,
   onWorktreeStrategyChange,
   onRetryModels,
+  onSelectDaemon,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -193,6 +195,7 @@ export function SettingsDialog({
   onWorktreeStrategyChange?: (strategy: WorktreeStrategyValue) => void | Promise<void>;
   // Re-fetches the model catalog through the daemon, the retry path for a failed initial load.
   onRetryModels?: () => void | Promise<void>;
+  onSelectDaemon?: (target: DaemonTarget) => void;
 }) {
   const translation = useTranslations("SettingsDialog");
   const tc = useTranslations("Common");
@@ -981,7 +984,7 @@ export function SettingsDialog({
       id: "connection" as SettingsSection,
       label: translation("tabConnection"),
       icon: <LuMonitor size={14} />,
-      sections: [{ title: translation("tabConnection"), rows: [], block: <MachinesPanel /> }],
+      sections: [{ title: translation("tabConnection"), rows: [], block: <MachinesPanel onSelect={onSelectDaemon} /> }],
     },
     ...(workspaceId
       ? [

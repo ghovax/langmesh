@@ -42,6 +42,14 @@ export interface SessionEntry {
   permissionMode: PermissionMode;
   // What this session is working toward, when it has said. Null for a session with no goal.
   goal: SessionGoal | null;
+  // Which daemon hosts this session. Local is `local`; a pairing uses that machine's id.
+  daemonId: string;
+  daemonName: string;
+  remote: boolean;
+}
+
+export function sessionIdentity(entry: { daemonId?: string; sessionId: string }): string {
+  return `${entry.daemonId || "local"}:${entry.sessionId}`;
 }
 
 // Extra left-shift so a fully-scrolled title comes to rest clear of the row's trailing actions.
@@ -99,6 +107,11 @@ export function SessionHoverCard({
             <Text color="fg.muted">{entry.exitReason}</Text>
           </InlineField>
         ) : null}
+        {entry.remote ? (
+          <InlineField label={translation("fieldMachine")}>
+            <Text>{entry.daemonName || translation("remote")}</Text>
+          </InlineField>
+        ) : null}
       </Flex>
     </Box>
   );
@@ -115,7 +128,7 @@ export function sessionIndicator(
   if (entry.failed) return "problem";
   if (entry.awaitingInput || entry.activity === "waiting") return "attention";
   if (entry.activity === "working") return "working";
-  if (!isActive && unseenCompletions.has(entry.sessionId)) return "done";
+  if (!isActive && unseenCompletions.has(sessionIdentity(entry))) return "done";
   return null;
 }
 
@@ -243,9 +256,14 @@ export const SessionRow = memo(function SessionRow({
       }
       // The status rides at the trailing edge, where it does not hold a column open on every quiet row.
       badges={
-        badges || indicator ? (
+        badges || indicator || entry.remote ? (
           <>
             {badges}
+            {entry.remote ? (
+              <Text fontSize="2xs" color="fg.subtle" flexShrink={0}>
+                {entry.daemonName || translation("remote")}
+              </Text>
+            ) : null}
             {indicator ? (
               <Tooltip
                 content={statusTooltip}

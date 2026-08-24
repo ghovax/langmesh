@@ -20,6 +20,7 @@ from langmeshd.commons.configuration import EmailConfiguration
 from langmeshd.mail import body
 from langmeshd.mail import client as daemon_client
 from langmeshd.mail import payload
+from langmeshd.mail.routing import UNSEEN_SKIP_REASONS, route
 from langmeshd.mail.clock import ResumeClock, StaleConnection
 from langmeshd.mail.imap import Inbox
 from langmeshd.mail.smtp import (
@@ -408,47 +409,39 @@ class MailService:
             return existing
         sender = body.sender_address(message)
         identifier = body.message_id_of(message) or message_id
+        own_from = self.configuration.effective_from_address or self.configuration.effective_address
         if (
-            body.from_configured_mailbox(sender, self.configuration.effective_address)
+            body.from_configured_mailbox(sender, own_from)
+            or (
+                own_from != self.configuration.effective_address
+                and body.from_configured_mailbox(sender, self.configuration.effective_address)
+            )
             or body.minted_outbound_id(identifier, domain=MESSAGE_ID_DOMAIN)
             or (identifier and self.store.item_by_outbound_message_id(identifier) is not None)
         ):
-            self.store.mark_skipped(
+            return self.store.mark_skipped(
                 mailbox=mailbox,
                 uidvalidity=uidvalidity,
                 uid=uid,
                 message_id=message_id,
                 reason="own",
             )
-            return None
         if body.is_automatic(message):
-            self.store.mark_skipped(
+            return self.store.mark_skipped(
                 mailbox=mailbox,
                 uidvalidity=uidvalidity,
                 uid=uid,
                 message_id=message_id,
                 reason="automatic",
             )
-            return None
         if not body.sender_allowed(sender, self.configuration.effective_allow_from):
-            self.store.mark_skipped(
+            return self.store.mark_skipped(
                 mailbox=mailbox,
                 uidvalidity=uidvalidity,
                 uid=uid,
                 message_id=message_id,
                 reason="not-allowlisted",
             )
-            return None
-        prose = body.turn_body(message)
-        if not prose:
-            self.store.mark_skipped(
-                mailbox=mailbox,
-                uidvalidity=uidvalidity,
-                uid=uid,
-                message_id=message_id,
-                reason="empty",
-            )
-            return None
         computed = _thread_key(mailbox, message)
         in_reply = body.in_reply_to_ids(message)
         known = set(in_reply)
@@ -457,6 +450,32 @@ class MailService:
         ]
         thread_key = self.store.resolve_thread_key(identifiers, computed)
         first = not bool(self.store.session_id(thread_key))
+        # A reply names a conversation this host already mapped (In-Reply-To /
+        # the thread map). Everything else is a new thread: the plus-tag must
+        # name this machine, and taking it starts a new session here.
+        skip = route(
+            message,
+            mailbox_address=self.configuration.effective_address,
+            machine=self.configuration.effective_machine,
+            owned_thread=(not first) or (thread_key != computed),
+        )
+        if skip:
+            return self.store.mark_skipped(
+                mailbox=mailbox,
+                uidvalidity=uidvalidity,
+                uid=uid,
+                message_id=message_id,
+                reason=skip,
+            )
+        prose = body.turn_body(message)
+        if not prose:
+            return self.store.mark_skipped(
+                mailbox=mailbox,
+                uidvalidity=uidvalidity,
+                uid=uid,
+                message_id=message_id,
+                reason="empty",
+            )
         subject = body.subject_of(message) or "LangMesh"
         return self.store.put_discovered(
             mailbox=mailbox,
@@ -484,7 +503,7 @@ class MailService:
             if existing is not None and existing.state in {POSTED, SEEN, SKIPPED}:
                 if existing.state == POSTED:
                     self._spawn_item(http, existing, inbox)
-                elif existing.state == SKIPPED:
+                elif existing.state == SKIPPED and existing.skip_reason not in UNSEEN_SKIP_REASONS:
                     with contextlib.suppress(Exception):
                         await self._imap(inbox, inbox.mark_seen(uid))
                 continue
@@ -494,8 +513,9 @@ class MailService:
             try:
                 item = await self.ingest(inbox.uidvalidity, uid, message)
                 if item is None or item.state == SKIPPED:
-                    with contextlib.suppress(Exception):
-                        await self._imap(inbox, inbox.mark_seen(uid))
+                    if item is None or item.skip_reason not in UNSEEN_SKIP_REASONS:
+                        with contextlib.suppress(Exception):
+                            await self._imap(inbox, inbox.mark_seen(uid))
                     continue
                 if item.state in {DISCOVERED, SUBMITTED, COMPLETED, POSTED}:
                     self._spawn_item(http, item, inbox)
@@ -626,6 +646,15 @@ def readiness_problems(configuration: EmailConfiguration) -> list[str]:
         problems.append("email.enabled is false (set email.enabled in configuration.yaml).")
     if not configuration.effective_address:
         problems.append("email.address is required.")
+    slug = configuration.effective_machine
+    if not slug:
+        problems.append("email.machine is required.")
+    elif configuration.effective_address:
+        from langmeshd.mail.body import plus_tag
+
+        tag = plus_tag(configuration.effective_address)
+        if tag and tag != slug:
+            problems.append("email.address plus-tag must equal email.machine.")
     if not configuration.effective_allow_from:
         problems.append("email.allow_from is required.")
     if not configuration.effective_agent:
@@ -698,6 +727,10 @@ async def check(configuration: Optional[EmailConfiguration] = None) -> int:
     note.info("secrets %s", secrets_directory())
     if current.effective_address:
         note.info("address %s", current.effective_address)
+    if current.effective_machine:
+        note.info("machine %s", current.effective_machine)
+        if current.effective_from_address:
+            note.info("from %s", current.effective_from_address)
     if current.effective_allow_from:
         note.info("allow_from %s", ",".join(current.effective_allow_from))
     if current.effective_agent:
@@ -757,7 +790,8 @@ async def run(configuration: Optional[EmailConfiguration] = None) -> int:
                         logger.info(
                             "mail ready",
                             extra=log_fields(
-                                address=current.effective_address,
+                                address=current.effective_from_address or current.effective_address,
+                                machine=current.effective_machine,
                                 allow_from=",".join(current.effective_allow_from),
                                 agent=current.effective_agent,
                                 imap=current.effective_imap_host,
