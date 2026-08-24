@@ -30,6 +30,25 @@ def canonical_mailbox(address: str) -> str:
     return f"{local}@{domain}"
 
 
+def from_configured_mailbox(address: str, mailbox_address: str) -> bool:
+    """Whether From is this mailbox as written, not a Gmail alias of it.
+
+    Plus-addresses share one inbox with the account. Canonical matching would treat
+    `user@gmail.com` mailing `user+agent@gmail.com` as the mailbox talking to itself.
+    """
+    sender = address.strip().lower()
+    mailbox = mailbox_address.strip().lower()
+    return bool(sender and mailbox and sender == mailbox)
+
+
+def minted_outbound_id(message_id: str, *, domain: str) -> bool:
+    """Whether this Message-ID is one the mail client minted for SMTP."""
+    token = canonical_message_id(message_id)
+    if not token or not domain.strip():
+        return False
+    return token.lower().endswith(f"@{domain.strip().lower()}>")
+
+
 def sender_address(message: Message) -> str:
     """The mailbox the message claims to be from, lowercased, or empty."""
     _, address = parseaddr(str(message.get("From") or ""))
