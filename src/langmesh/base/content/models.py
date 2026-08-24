@@ -109,6 +109,8 @@ def _catalog() -> list[ModelDefinition]:
                 openai_compatible=litellm_prefix == "openai",
                 # The base URL is resolved from the catalogue or configuration and passed through the gateway suffix logic, since a model can override the provider's own protocol.
                 uses_custom_base_url=True,
+                # OpenCode Go bills through the same key as OpenCode Zen.
+                credential_identifier="opencode" if local_id == "opencode-go" else "",
             )
         else:
             # The curated key names stay authoritative; models.dev's own names join as aliases.

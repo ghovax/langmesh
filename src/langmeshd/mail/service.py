@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 from email.message import Message
 from typing import Any, Callable, Optional
 
@@ -531,9 +530,9 @@ class MailService:
 
 def load_email_configuration() -> EmailConfiguration:
     from langmeshd.commons.configuration_file import load as load_document
-    from langmeshd.mail.envfile import apply_mail_env
+    from langmeshd.commons.secret_import import import_into_files
 
-    apply_mail_env()
+    import_into_files()
     document = load_document() or {}
     return EmailConfiguration.model_validate(document.get("email") or {})
 
@@ -542,7 +541,7 @@ def _agent_credential_problem(configuration: EmailConfiguration) -> str:
     """Why this agent cannot take a turn, or empty when the profile and its key are present.
 
     IMAP can IDLE without a model key; the turn then 401s until turn_timeout_seconds.
-    Fail here so a missing OPENCODE_API_KEY shows up in the mail log, like a missing
+    Fail here so a missing provider secret file shows up in the mail log, like a missing
     mailbox password, instead of after someone has already emailed.
     """
     name = configuration.effective_agent
@@ -556,7 +555,7 @@ def _agent_credential_problem(configuration: EmailConfiguration) -> str:
     except FileNotFoundError:
         return (
             f"email.agent {name!r} is not an available profile "
-            "(set LANGMESH_MAIL_AGENT, or install the bundled reviewer)."
+            "(set email.agent, or install the bundled reviewer)."
         )
     provider = (agent.provider or "").strip()
     if not provider:
@@ -568,54 +567,49 @@ def _agent_credential_problem(configuration: EmailConfiguration) -> str:
         find_model(identifier)
     from langmesh.base.identity.providers import (
         get_provider_definition,
-        provider_env_vars,
         resolve_api_key,
     )
 
     definition = get_provider_definition(provider) or get_provider_definition(provider.lower())
     if definition is not None and definition.native:
         return ""
-    if (os.environ.get("LANGMESH_API_KEY") or "").strip():
-        return ""
     configured: dict[str, str] = {}
     try:
         from langmeshd.commons.configuration_io import load_configuration
 
         configured = load_configuration(seed=False).configured_provider_keys()
-    except Exception:  # noqa: BLE001 — an unreadable file still allows env-only keys
+    except Exception:  # noqa: BLE001 — an unreadable YAML still allows secret files
         configured = {}
     key = resolve_api_key(provider, configured)
     anonymous = (definition.anonymous_api_key if definition is not None else "") or ""
     if key.strip() and key.strip() != anonymous:
         return ""
-    names = list(provider_env_vars(provider))
-    if provider.lower().startswith("opencode") and "OPENCODE_API_KEY" not in names:
-        names.insert(0, "OPENCODE_API_KEY")
-    if any((os.environ.get(name) or "").strip() for name in names):
-        return ""
-    shown = ", ".join(names) if names else "a provider API key"
-    return f"the {name} profile needs {shown} (or LANGMESH_API_KEY / providers.{provider}.api_key)."
+    credential = provider
+    if definition is not None:
+        credential = definition.credential_identifier or definition.identifier
+    shown = f"providers.{credential}.api_key"
+    return f"the {name} profile needs the secret file {shown}."
 
 
 def readiness_problems(configuration: EmailConfiguration) -> list[str]:
     """Every reason this configuration cannot IDLE, so `langmesh mail check` can list them all."""
     problems: list[str] = []
     if not configuration.effective_enabled:
-        problems.append("email.enabled is false (set email.enabled or LANGMESH_MAIL_ADDRESS).")
+        problems.append("email.enabled is false (set email.enabled in configuration.yaml).")
     if not configuration.effective_address:
-        problems.append("email.address (or LANGMESH_MAIL_ADDRESS) is required.")
+        problems.append("email.address is required.")
     if not configuration.effective_allow_from:
-        problems.append("email.allow_from (or LANGMESH_MAIL_ALLOW_FROM) is required.")
+        problems.append("email.allow_from is required.")
     if not configuration.effective_agent:
-        problems.append("email.agent (or LANGMESH_MAIL_AGENT) is required.")
+        problems.append("email.agent is required.")
     if not configuration.effective_imap_host:
-        problems.append("email.imap.host (or LANGMESH_MAIL_IMAP_HOST) is required.")
+        problems.append("email.imap.host is required.")
     if not configuration.effective_imap_username:
-        problems.append("email.imap.username (or LANGMESH_MAIL_IMAP_USER) is required.")
+        problems.append("email.imap.username is required.")
     if not configuration.effective_imap_password:
-        problems.append("email.imap.password (or LANGMESH_MAIL_IMAP_PASSWORD) is required.")
+        problems.append("the secret file email.imap.password is required.")
     if not configuration.effective_smtp_host:
-        problems.append("email.smtp.host (or LANGMESH_MAIL_SMTP_HOST) is required.")
+        problems.append("email.smtp.host is required.")
     agent = _agent_credential_problem(configuration)
     if agent:
         problems.append(agent)
@@ -660,22 +654,15 @@ async def prove_mailbox(configuration: EmailConfiguration) -> tuple[list[str], i
 
 async def check(configuration: Optional[EmailConfiguration] = None) -> int:
     """Prove the mailbox is ready to IDLE. Exit 0 when IMAP and SMTP succeed."""
+    from langmesh.base.secrets import secrets_directory
     from langmeshd.cli.client import daemon_is_up
-    from langmeshd.mail.envfile import mail_env_path, mail_env_problem
+    from langmeshd.commons.paths import configuration_file_path
 
     note = logging.getLogger("langmesh")
     current = configuration or load_email_configuration()
     problems, unseen = await prove_mailbox(current)
-    explicit = mail_env_problem()
-    if explicit:
-        problems.insert(0, explicit)
-    env_path = mail_env_path()
-    if env_path is not None:
-        note.info("mail.env %s", env_path)
-    else:
-        note.info(
-            "mail.env not found (LANGMESH_MAIL_ENV, ./mail.env, /run/secrets/mail.env, or /srv/langmesh/mail.env)"
-        )
+    note.info("configuration %s", configuration_file_path())
+    note.info("secrets %s", secrets_directory())
     if current.effective_address:
         note.info("address %s", current.effective_address)
     if current.effective_allow_from:
@@ -700,8 +687,9 @@ async def check(configuration: Optional[EmailConfiguration] = None) -> int:
 async def run(configuration: Optional[EmailConfiguration] = None) -> int:
     """Connect to the daemon, resume unfinished mail, then IDLE until cancelled.
 
-    A missing mailbox config is waited out rather than exiting, so a systemd unit
-    that started before mail.env was filled comes up on its own.
+    A missing mailbox config is waited out rather than exiting, so a host that
+    started before configuration.yaml and the secret files were filled comes up
+    on its own.
     """
     store = ThreadStore()
     clock = ResumeClock()

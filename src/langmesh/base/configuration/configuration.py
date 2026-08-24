@@ -3,7 +3,12 @@ from __future__ import annotations
 from collections.abc import Iterable
 import logging
 import os
-from langmesh.base.confinement import environment_variables
+from langmesh.base.secrets import (
+    EXA_API_KEY,
+    FIRECRAWL_API_KEY,
+    JINA_API_KEY,
+    read_secret,
+)
 import re
 from fnmatch import fnmatch
 from typing import ClassVar, Literal, Optional
@@ -28,7 +33,7 @@ class ExaConfiguration(Section):
 
     @property
     def effective_api_key(self) -> str:
-        return os.environ.get(environment_variables.EXA_API_KEY) or self.api_key
+        return read_secret(EXA_API_KEY) or self.api_key
 
 
 class JinaConfiguration(Section):
@@ -38,7 +43,7 @@ class JinaConfiguration(Section):
 
     @property
     def effective_api_key(self) -> str:
-        return os.environ.get(environment_variables.JINA_API_KEY) or self.api_key
+        return read_secret(JINA_API_KEY) or self.api_key
 
 
 class FirecrawlConfiguration(Section):
@@ -49,11 +54,11 @@ class FirecrawlConfiguration(Section):
 
     @property
     def effective_api_key(self) -> str:
-        return os.environ.get(environment_variables.FIRECRAWL_API_KEY) or self.api_key
+        return read_secret(FIRECRAWL_API_KEY) or self.api_key
 
     @property
     def effective_api_url(self) -> str:
-        return os.environ.get(environment_variables.FIRECRAWL_API_URL) or self.api_url
+        return self.api_url
 
 
 class WebFetchConfiguration(Section):
@@ -68,7 +73,7 @@ class WebFetchConfiguration(Section):
 
     @property
     def effective_proxy_url(self) -> str:
-        return os.environ.get(environment_variables.FETCH_PROXY) or self.proxy_url
+        return self.proxy_url
 
 
 class FilesystemConfiguration(Section):
@@ -354,11 +359,13 @@ class Configuration(Section):
 
     def configured_provider_keys(self) -> dict[str, str]:
         """The non-empty API keys per provider, for credential resolution and for filtering the model picker."""
-        return {
-            identifier: credential.api_key
-            for identifier, credential in self.providers.items()
-            if credential.api_key
-        }
+        from langmesh.base.secrets import provider_keys_from_files
+
+        keys = provider_keys_from_files()
+        for identifier, credential in self.providers.items():
+            if credential.api_key and identifier not in keys:
+                keys[identifier] = credential.api_key
+        return keys
 
     def configured_provider_bases(self) -> dict[str, str]:
         """Configured non-empty base URLs per provider."""

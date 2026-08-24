@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field, replace
 
 
@@ -22,7 +21,7 @@ class ProviderDefinition:
     native: bool = False
     # Headers sent on every request to the provider, for the gateway's own client gate.
     default_headers: dict[str, str] = field(default_factory=dict)
-    # The credential to present when none is configured or in env. Anonymous gateways use a
+    # The credential to present when none is configured. Anonymous gateways use a
     # sentinel key (OpenCode Zen reads `public`) to let free-tier calls through without billing.
     anonymous_api_key: str = ""
 
@@ -313,6 +312,7 @@ def register_models_dev_provider(
     default_base_url: str = "",
     openai_compatible: bool = False,
     uses_custom_base_url: bool = False,
+    credential_identifier: str = "",
 ) -> ProviderDefinition:
     """Register a provider discovered from models.dev that has no curated definition. Idempotent."""
     existing = PROVIDERS.get(identifier)
@@ -326,6 +326,7 @@ def register_models_dev_provider(
         default_base_url=default_base_url,
         openai_compatible=openai_compatible,
         uses_custom_base_url=uses_custom_base_url,
+        credential_identifier=credential_identifier,
     )
     PROVIDERS[identifier] = definition
     return definition
@@ -368,18 +369,29 @@ def resolve_api_key(
     provider_identifier: str,
     configured_keys: dict[str, str],
 ) -> str:
-    """Resolve a provider key from its shared credential, then its environment, else the anonymous sentinel."""
+    """Resolve a provider key from secret files, then an in-memory map, else the anonymous sentinel."""
+    from langmesh.base.secrets import GITHUB_API_KEY, provider_api_key_name, read_secret
+
     identifier = provider_identifier.strip()
     definition = PROVIDERS.get(identifier) or PROVIDERS.get(identifier.lower())
+    credential_identifier = identifier
     if definition is not None:
         credential_identifier = definition.credential_identifier or definition.identifier
-        configured = configured_keys.get(credential_identifier, "")
-        if configured:
-            return configured
-    for environment_variable in provider_env_vars(identifier):
-        value = os.environ.get(environment_variable, "")
-        if value:
-            return value
+    configured = configured_keys.get(credential_identifier, "") or configured_keys.get(
+        identifier, ""
+    )
+    if configured:
+        return configured
+    file_key = read_secret(provider_api_key_name(credential_identifier))
+    if file_key:
+        return file_key
+    if identifier != credential_identifier:
+        file_key = read_secret(provider_api_key_name(identifier))
+        if file_key:
+            return file_key
+    github = read_secret(GITHUB_API_KEY)
+    if github:
+        return github
     return definition.anonymous_api_key if definition is not None else ""
 
 
