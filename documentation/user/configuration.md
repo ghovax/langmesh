@@ -410,7 +410,7 @@ IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same fil
 | `email.imap.mailbox` | string | `INBOX` | Which folder to IDLE. LANGMESH_MAIL_IMAP_MAILBOX wins over this. |
 | `email.imap.ssl` | boolean | `true` | Implicit TLS (typical for 993). LANGMESH_MAIL_IMAP_SSL wins (`false`/`0`/`off` to disable). |
 | `email.smtp.host` | string | — | SMTP server. Inferred from `email.address` the same way as IMAP when empty. LANGMESH_MAIL_SMTP_HOST wins over this. |
-| `email.smtp.port` | integer | `587` | SMTP port. LANGMESH_MAIL_SMTP_PORT wins over this. |
+| `email.smtp.port` | integer | `587` | SMTP port. LANGMESH_MAIL_SMTP_PORT wins over this. When this is 587 and implicit TLS is off, a failed connect is retried on 465. |
 | `email.smtp.username` | string | — | SMTP login. LANGMESH_MAIL_SMTP_USER wins; otherwise the IMAP username. |
 | `email.smtp.password` | string | — | SMTP password. LANGMESH_MAIL_SMTP_PASSWORD or LANGMESH_MAIL_PASSWORD wins. The IMAP password is used only when SMTP is the inferred provider host (Gmail and the rest). A custom relay is not authenticated with the IMAP secret. |
 | `email.smtp.start_tls` | boolean | `true` | Upgrade with STARTTLS (typical for 587). LANGMESH_MAIL_SMTP_STARTTLS wins. |
