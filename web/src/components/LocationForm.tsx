@@ -24,7 +24,7 @@ import {
 import { SimpleSelect, type SelectOption } from "./ui/SimpleSelect";
 import { reportError } from "@/lib/faults";
 
-// A fresh, empty location for the editor, whose name the server derives from the connection.
+// A fresh, empty location for the editor, whose name the server derives from the host and path.
 export function emptyLocation(): LocationInput {
   return {
     kind: "local",

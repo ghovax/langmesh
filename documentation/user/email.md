@@ -141,7 +141,7 @@ The mail client cannot create a mailbox, a DNS name, or a cloud VM by itself. Af
 
 Mail will not IDLE until the mailbox provider key is present — otherwise the first email's turn 401s for half an hour. `email.provider` / `email.model` overlay the agent profile for mailbox sessions only; a desktop session on the same profile is unchanged. The secret file is `providers.<id>.api_key` for that catalogue provider (OpenCode Go bills as `providers.opencode.api_key`). Native ChatGPT and Cursor providers skip the key.
 
-The daemon still binds loopback. Mail never exposes the capability token. Do not publish `langmeshd`'s port on the public internet; SSH or Tailscale if you also want the app. Persist `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) across VM and container replacement, or in-flight mail cannot resume.
+The daemon still binds loopback. Mail never exposes the capability token. Do not publish `langmeshd`'s port on the public internet; an SSH tunnel or Tailscale if you also want the app. Persist `$XDG_DATA_HOME` (or the `/srv/langmesh/xdg` volume) across VM and container replacement, or in-flight mail cannot resume.
 
 ## Settings
 

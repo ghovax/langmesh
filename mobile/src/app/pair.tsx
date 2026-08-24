@@ -172,7 +172,7 @@ export default function PairScreen() {
             <View style={{ flexDirection: "row", gap: theme.space[2] }}>
               <Button label={translation("paste")} icon={ClipboardPaste} onPress={() => void paste()} style={{ flex: 1 }} />
               <Button
-                label={translation("connect")} variant="solid" tone="accent" busy={busy}
+                label={translation("remember")} variant="solid" tone="accent" busy={busy}
                 disabled={!typed.trim()} onPress={() => void accept(typed)} style={{ flex: 1 }}
               />
             </View>
