@@ -34,7 +34,10 @@ class GitHubComment(BaseModel):
     """The comment `submit_github_comment` writes onto the acknowledgement."""
 
     comment: str = Field(
-        description="The entire GitHub comment to write onto this issue or pull request."
+        description=(
+            "The text that replaces the acknowledgement. Say it in one breath, "
+            "in everyday English. A URL is ok if they need it."
+        )
     )
     kind: CommentKind = Field(
         default="progress",
