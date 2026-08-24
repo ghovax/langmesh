@@ -26,7 +26,7 @@ LangMesh follows the XDG Base Directory convention rather than one dot-directory
 | `$XDG_CACHE_HOME/langmesh/`  | caches                                                                      |
 | `$XDG_RUNTIME_DIR/langmesh/` | the daemon's socket, port, pid, lock, and token                             |
 
-The runtime directory is `0700`, and its daemon handshake files are `0600`. When `XDG_RUNTIME_DIR` is unset, as on macOS, the fallback is a per-user directory under the system temporary directory. The OS clears the runtime directory when you log out, so a crashed daemon leaves nothing behind. Private values that must survive logout, including the session-token master key, Reach pairing token, and secret files, live in the XDG data directory and are created atomically with mode `0600`. Override the secrets directory with `LANGMESH_SECRETS_DIR` when you need it somewhere else (a container volume, a GitHub Actions temp dir).
+The runtime directory is `0700`, and its daemon handshake files are `0600`. When `XDG_RUNTIME_DIR` is unset, as on macOS, the fallback is a per-user directory under the system temporary directory. The OS clears the runtime directory when you log out, so a crashed daemon leaves nothing behind. Private values that must survive logout, including the session-token master key, Reach pairing token, and secret files, live in the XDG data directory and are created atomically with mode `0600`. A container or GitHub Action that needs another disk sets `XDG_DATA_HOME`; there is no separate secrets-directory variable.
 
 ## Model providers
 

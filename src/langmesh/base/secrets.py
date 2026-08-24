@@ -1,6 +1,6 @@
 """Private values as one 0600 file each, never mixed with policy configuration.
 
-The directory is ``$XDG_DATA_HOME/langmesh/secrets`` (or ``LANGMESH_SECRETS_DIR``).
+The directory is ``$XDG_DATA_HOME/langmesh/secrets``.
 Each file is named by the dotted path of the value it holds, for example
 ``providers.anthropic.api_key`` or ``email.imap.password``. GitHub Actions writes
 ``github.api_key`` from the repository secret; that file is the key for whichever
@@ -37,9 +37,6 @@ COMPOSIO_API_KEY = "composio.api_key"
 
 def secrets_directory() -> Path:
     """Where secret files live. Does not create the directory."""
-    explicit = os.environ.get("LANGMESH_SECRETS_DIR", "").strip()
-    if explicit:
-        return Path(explicit).expanduser()
     xdg = os.environ.get("XDG_DATA_HOME", "").strip()
     if xdg.startswith("/"):
         return Path(xdg) / APPLICATION / SECRETS_DIRNAME

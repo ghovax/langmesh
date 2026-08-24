@@ -190,8 +190,7 @@ Replies go out over SMTP in the same thread. See [Email](email.md). Fill `config
 machine or, on a VPS, install both systemd units so the mail client comes back with the daemon.
 
 ```sh
-sudo env LANGMESH_CONFIG="$PWD/packaging/mail/configuration.yaml" \
-         LANGMESH_SECRETS="$PWD/secrets" packaging/mail/install.sh
+sudo packaging/mail/install.sh
 ```
 
 The script writes `/etc/systemd/system/langmeshd.service` and `langmesh-mail.service`, copies

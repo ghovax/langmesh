@@ -73,11 +73,10 @@ printf '%s' 'the-app-password' > secrets/email.imap.password
 printf '%s' 'the-provider-key' > secrets/providers.opencode.api_key
 chmod 600 secrets/*
 uv run langmesh mail check
-sudo env LANGMESH_CONFIG="$PWD/packaging/mail/configuration.yaml" \
-         LANGMESH_SECRETS="$PWD/secrets" packaging/mail/install.sh
+sudo packaging/mail/install.sh
 ```
 
-`install.sh` copies the YAML and secret files onto `/srv/langmesh/xdg` and enables `langmeshd` and `langmesh-mail`. A later install does not replace `/srv/langmesh/xdg` (the job queue, daemon history, and secrets) unless you pass new `LANGMESH_CONFIG` / `LANGMESH_SECRETS`. Then send mail to `email.address` from an allowlisted From. Progress and the reply arrive in that thread; a further reply — including a reply to a progress note — continues the same session with only the new body.
+`install.sh` copies `packaging/mail/configuration.yaml` (if the host has none) and `./secrets` onto `/srv/langmesh/xdg`, then enables `langmeshd` and `langmesh-mail`. A later install does not replace `/srv/langmesh/xdg` (the job queue, daemon history, and secrets already on the host). Then send mail to `email.address` from an allowlisted From. Progress and the reply arrive in that thread; a further reply — including a reply to a progress note — continues the same session with only the new body.
 
 ## What you still have to supply
 
