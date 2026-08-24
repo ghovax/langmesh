@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -43,9 +44,7 @@ def _gh(*arguments: str, output: Path | None = None) -> str:
 
 
 def latest_artifact(repository: str, name: str) -> dict | None:
-    payload = json.loads(
-        _gh(f"/repos/{repository}/actions/artifacts?name={name}&per_page=5")
-    )
+    payload = json.loads(_gh(f"/repos/{repository}/actions/artifacts?name={name}&per_page=5"))
     for artifact in payload.get("artifacts") or ():
         if artifact.get("expired"):
             continue
@@ -74,12 +73,44 @@ def restore(workspace: Path, event: dict, repository: str) -> bool:
             return False
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(matches[0], target)
+    _describe_session(target)
     print(
         f"restored session artifact {name} id={artifact['id']} "
         f"from run {artifact.get('workflow_run', {}).get('id') or artifact.get('workflow_run_id')}",
         flush=True,
     )
     return True
+
+
+def _describe_session(path: Path) -> None:
+    """What the restored sqlite holds, so a miss is visible before the venv exists."""
+    try:
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            tables = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                )
+            ]
+            checkpoints = 0
+            if "langmesh_checkpoints" in tables:
+                checkpoints = int(
+                    connection.execute("SELECT COUNT(*) FROM langmesh_checkpoints").fetchone()[0]
+                )
+            traces = 0
+            if "mention_trace" in tables:
+                traces = int(connection.execute("SELECT COUNT(*) FROM mention_trace").fetchone()[0])
+            size = path.stat().st_size
+            print(
+                f"session sqlite bytes={size} tables={','.join(tables) or '-'} "
+                f"checkpoints={checkpoints} traces={traces}",
+                flush=True,
+            )
+        finally:
+            connection.close()
+    except Exception as error:
+        print(f"session sqlite could not be read: {error}", flush=True)
 
 
 def main() -> None:
