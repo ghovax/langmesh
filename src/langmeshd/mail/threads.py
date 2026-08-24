@@ -555,15 +555,14 @@ class ThreadStore:
 
     def mark_skipped(
         self, *, mailbox: str, uidvalidity: int, uid: int, message_id: str, reason: str
-    ) -> None:
+    ) -> MailItem:
         existing = (
             self.item_by_message_id(message_id)
             if message_id
             else self.item_by_uid(mailbox, uidvalidity, uid)
         )
         if existing is not None:
-            self.update(existing.id, state=SKIPPED, skip_reason=reason)
-            return
+            return self.update(existing.id, state=SKIPPED, skip_reason=reason)
         item_id = uuid.uuid4().hex
         try:
             with self._txn() as connection:
@@ -585,9 +584,13 @@ class ThreadStore:
                 else self.item_by_uid(mailbox, uidvalidity, uid)
             )
             if raced is not None:
-                self.update(raced.id, state=SKIPPED, skip_reason=reason)
-                return
+                return self.update(raced.id, state=SKIPPED, skip_reason=reason)
             raise
+        created = self._connection.execute(
+            "SELECT * FROM items WHERE id = ?", (item_id,)
+        ).fetchone()
+        assert created is not None
+        return _row(created)
 
     def update(self, item_id: str, **fields: object) -> MailItem:
         allowed = {

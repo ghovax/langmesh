@@ -71,6 +71,7 @@ import { AgentNamesProvider } from "@/lib/agent-names";
 import { DropdownMenu } from "@/components/ui/Menu";
 import { PermissionOverlay } from "./PermissionOverlay";
 import { AgentSkills } from "./AgentSkills";
+import { MachinesPanel } from "./MachinesPanel";
 import { getToolCallDisplay } from "@/lib/glyphs";
 import {
   permissionReasonPaths,
@@ -92,6 +93,7 @@ import {
   subscribeEvents,
   type AgentCard,
   type AgentSummary,
+  type DaemonTarget,
   type Location,
   type PermissionMode,
   type SandboxEnforce,
@@ -173,6 +175,7 @@ interface ChatPanelProps {
   connectionLost?: boolean;
   // Asks the page to fetch everything a lost daemon took away.
   onReconnect?: () => void | Promise<void>;
+  onSelectDaemon?: (target: DaemonTarget) => void;
   reconnecting?: boolean;
   onStreamingChange?: (isStreaming: boolean) => void;
   historyOpen?: boolean;
@@ -230,6 +233,7 @@ export function ChatPanel({
   isConnected = true,
   connectionLost = false,
   onReconnect,
+  onSelectDaemon,
   reconnecting = false,
   onStreamingChange,
   historyOpen = false,
@@ -1147,6 +1151,9 @@ export function ChatPanel({
                       </Button>
                     </EmptyState.Content>
                   </EmptyState.Root>
+                  <Box w="100%" maxW="md">
+                    <MachinesPanel onSelect={onSelectDaemon} />
+                  </Box>
                 </Flex>
                 </motion.div>
               ) : !sessionTranscriptReady ? (
@@ -1571,6 +1578,7 @@ export function ChatPanel({
           liveWorktreeStrategy={worktreeStrategy}
           onWorktreeStrategyChange={onWorktreeStrategyChange}
           onRetryModels={onRetryModels}
+          onSelectDaemon={onSelectDaemon}
         />
 
         <ConfirmDialog

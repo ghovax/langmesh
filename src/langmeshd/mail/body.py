@@ -18,6 +18,17 @@ from markdownify import markdownify
 _GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
 
 
+def plus_tag(address: str) -> str:
+    """The plus-tag of a mailbox's local part, or empty when there is none."""
+    mailbox = address.strip().lower()
+    if "@" not in mailbox:
+        return ""
+    local = mailbox.rsplit("@", 1)[0]
+    if "+" not in local:
+        return ""
+    return local.split("+", 1)[1]
+
+
 def canonical_mailbox(address: str) -> str:
     """Gmail plus-addresses and googlemail.com are the same account as user@gmail.com."""
     mailbox = address.strip().lower()

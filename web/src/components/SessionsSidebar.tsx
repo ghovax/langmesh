@@ -38,17 +38,18 @@ import { FadeSwitch } from "@/components/ui/FadeIn";
 import { Tooltip } from "@/components/ui/Tooltip";
 import {
   deleteWorkspace,
-  listWorkspaces,
+  fetchAllWorkspaces,
+  fetchDaemonTargets,
   listSshHosts,
   subscribeEvents,
   type AgentSummary,
-  type Workspace,
+  type FederatedWorkspace,
   type SshHost,
 } from "@/lib/api";
 import { locationTargetAddress, workspaceLabel } from "./LocationStatus";
 import { NewScheduleDialog } from "./NewScheduleDialog";
 import { NewWorkspaceDialog } from "./NewWorkspaceDialog";
-import { SessionRow, type SessionEntry } from "./SessionRow";
+import { SessionRow, sessionIdentity, type SessionEntry } from "./SessionRow";
 import { InlineField } from "./ui/Display";
 import { TreeRow } from "./ui/TreeRow";
 import { toaster } from "./ui/Toaster";
@@ -64,7 +65,7 @@ function WorkspaceHoverCard({
   sessionCount,
 }: {
   label: string;
-  workspace: Workspace;
+  workspace: FederatedWorkspace;
   sessionCount: number;
 }) {
   const translation = useTranslations("SessionsSidebar");
@@ -107,7 +108,7 @@ const ROW_MINIMUM_H = "30px";
 const LEADING_SLOT = "14px";
 
 function workspaceTitle(
-  workspace: Workspace,
+  workspace: FederatedWorkspace,
   locale: string,
   untitled: string,
 ): string {
@@ -123,6 +124,7 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
   activeSessionId,
   unseenCompletions,
   currentWorkspaceId,
+  currentDaemonId,
   agents,
   workspaceOpenOverrides,
   onWorkspaceOpenOverridesChange,
@@ -135,20 +137,21 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
   search: string;
   sessions: SessionEntry[];
   sessionsLoaded: boolean;
-  workspaces: Workspace[];
+  workspaces: FederatedWorkspace[];
   activeSessionId: string | null;
   unseenCompletions: Set<string>;
   currentWorkspaceId: string;
+  currentDaemonId: string;
   agents: AgentSummary[];
   workspaceOpenOverrides: Record<string, boolean>;
   onWorkspaceOpenOverridesChange: (
     update: (current: Record<string, boolean>) => Record<string, boolean>,
   ) => void;
-  onSwitchWorkspace: (workspaceId: string) => void;
+  onSwitchWorkspace: (workspaceId: string, daemonId: string) => void;
   onOpenWorkspaceSettings: (workspaceId: string) => void;
   onResume: (entry: SessionEntry) => void;
   onRequestDelete: (entry: SessionEntry) => void;
-  onRequestWorkspaceDelete: (workspace: Workspace) => void;
+  onRequestWorkspaceDelete: (workspace: FederatedWorkspace) => void;
 }) {
   const translation = useTranslations("SessionsSidebar");
   const { locale } = useLocale();
@@ -168,14 +171,48 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
     for (const session of shownSessions) {
       // Only the conversations you started; a session a session created is listed in the delegated panel.
       if (session.parentSessionId) continue;
-      const held = byWorkspace.get(session.workspaceId ?? "");
+      const key = `${session.daemonId || "local"}:${session.workspaceId ?? ""}`;
+      const held = byWorkspace.get(key);
       if (held) held.push(session);
-      else byWorkspace.set(session.workspaceId ?? "", [session]);
+      else byWorkspace.set(key, [session]);
     }
     return workspaces
-      .map((workspace) => ({ workspace, sessions: byWorkspace.get(workspace.id) ?? [] }))
+      .map((workspace) => ({
+        workspace,
+        sessions: byWorkspace.get(`${workspace.daemonId}:${workspace.id}`) ?? [],
+      }))
       .filter(({ sessions: workspaceSessions }) => !searchQuery || workspaceSessions.length > 0);
   }, [workspaces, shownSessions, searchQuery]);
+
+  const daemonGroups = useMemo(() => {
+    const groups: {
+      id: string;
+      name: string;
+      remote: boolean;
+      items: typeof visibleWorkspaces;
+    }[] = [];
+    const index = new Map<string, number>();
+    for (const item of visibleWorkspaces) {
+      const id = item.workspace.daemonId;
+      const existing = index.get(id);
+      if (existing === undefined) {
+        index.set(id, groups.length);
+        groups.push({
+          id,
+          name: item.workspace.remote
+            ? item.workspace.daemonName || translation("remote")
+            : translation("thisMachine"),
+          remote: item.workspace.remote,
+          items: [item],
+        });
+      } else {
+        groups[existing].items.push(item);
+      }
+    }
+    return groups;
+  }, [visibleWorkspaces, translation]);
+
+  const showDaemonHeaders = daemonGroups.length > 1 || daemonGroups.some((group) => group.remote);
 
   if (!sessionsLoaded || workspaces.length === 0) return null;
   if (visibleWorkspaces.length === 0) {
@@ -194,12 +231,21 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
 
   return (
     <VStack gap={1} align="stretch">
-      {visibleWorkspaces.map(({ workspace, sessions: workspaceSessions }) => {
+      {daemonGroups.map((group) => (
+        <Box key={group.id}>
+          {showDaemonHeaders ? (
+            <Text textStyle="sectionLabel" color="fg.muted" px={2} pt={2} pb={1}>
+              {group.name}
+            </Text>
+          ) : null}
+          {group.items.map(({ workspace, sessions: workspaceSessions }) => {
+        const workspaceKey = `${workspace.daemonId}:${workspace.id}`;
+        const currentKey = `${currentDaemonId}:${currentWorkspaceId}`;
         const label = workspaceTitle(workspace, locale, translation("untitledWorkspace"));
         // Keyed by the workspace alone: including the search text made every keystroke discard the choice.
         const workspaceOpen =
-          workspaceOpenOverrides[workspace.id] ??
-          (searchQuery ? workspaceSessions.length > 0 : workspace.id === currentWorkspaceId);
+          workspaceOpenOverrides[workspaceKey] ??
+          (searchQuery ? workspaceSessions.length > 0 : workspaceKey === currentKey);
         const tooltipContent = (
           <WorkspaceHoverCard
             label={label}
@@ -254,7 +300,7 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
 
         return (
           <TreeRow
-            key={workspace.id}
+            key={workspaceKey}
             disclosure={workspaceOpen ? "open" : "closed"}
             disclosureLabel={
               workspaceOpen ? translation("hideWorkspace") : translation("showWorkspace")
@@ -264,19 +310,19 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
             onDisclosureChange={(nextOpen) => {
               onWorkspaceOpenOverridesChange((current) => ({
                 ...current,
-                [workspace.id]: nextOpen,
+                [workspaceKey]: nextOpen,
               }));
             }}
             onActivate={() => {
               // Switching must not collapse the workspace that was open: keep it unless the person closed it by hand.
-              if (workspace.id !== currentWorkspaceId && currentWorkspaceId) {
+              if (workspaceKey !== currentKey && currentWorkspaceId) {
                 onWorkspaceOpenOverridesChange((current) =>
-                  current[currentWorkspaceId] === false
+                  current[currentKey] === false
                     ? current
-                    : { ...current, [currentWorkspaceId]: true },
+                    : { ...current, [currentKey]: true },
                 );
               }
-              onSwitchWorkspace(workspace.id);
+              onSwitchWorkspace(workspace.id, workspace.daemonId);
             }}
             glyph={<LuFolderOpen size={13} />}
             label={
@@ -300,10 +346,12 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
               <VStack gap={1} align="stretch">
                 {workspaceSessions.map((entry) => (
                   <SessionRow
-                    key={entry.sessionId}
+                    key={sessionIdentity(entry)}
                     entry={entry}
                     agents={agents}
-                    isActive={entry.sessionId === activeSessionId}
+                    isActive={
+                      sessionIdentity(entry) === `${currentDaemonId}:${activeSessionId ?? ""}`
+                    }
                     unseenCompletions={unseenCompletions}
                     onResume={onResume}
                     onRequestDelete={onRequestDelete}
@@ -313,7 +361,9 @@ const WorkspaceSessionTree = memo(function WorkspaceSessionTree({
             ) : null}
           </TreeRow>
         );
-      })}
+          })}
+        </Box>
+      ))}
     </VStack>
   );
 });
@@ -326,6 +376,7 @@ export function SessionsSidebar({
   onSessionSortChange,
   unseenCompletions,
   currentWorkspaceId,
+  currentDaemonId,
   onSwitchWorkspace,
   onOpenWorkspaceSettings,
   onNewChat,
@@ -340,7 +391,8 @@ export function SessionsSidebar({
   onSessionSortChange: (sort: SessionSort) => void;
   unseenCompletions: Set<string>;
   currentWorkspaceId: string;
-  onSwitchWorkspace: (workspaceId: string) => void;
+  currentDaemonId: string;
+  onSwitchWorkspace: (workspaceId: string, daemonId: string) => void;
   onOpenWorkspaceSettings: (workspaceId: string) => void;
   onNewChat: () => void;
   onResume: (entry: SessionEntry) => void;
@@ -351,8 +403,10 @@ export function SessionsSidebar({
   const translation = useTranslations("SessionsSidebar");
   const { locale } = useLocale();
   const [pendingDelete, setPendingDelete] = useState<SessionEntry | null>(null);
-  const [pendingWorkspaceDelete, setPendingWorkspaceDelete] = useState<Workspace | null>(null);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [pendingWorkspaceDelete, setPendingWorkspaceDelete] = useState<FederatedWorkspace | null>(
+    null,
+  );
+  const [workspaces, setWorkspaces] = useState<FederatedWorkspace[]>([]);
   const [sshHosts, setSshHosts] = useState<SshHost[]>([]);
   const [sshHostsLoaded, setSshHostsLoaded] = useState(false);
   const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false);
@@ -363,10 +417,10 @@ export function SessionsSidebar({
   const deferredSearch = useDeferredValue(search);
 
   const refreshWorkspaces = useCallback(() => {
-    listWorkspaces()
+    fetchAllWorkspaces()
       .then(setWorkspaces)
       .catch((caught) =>
-        reportError({ component: "sessions-sidebar", operation: "list the SSH hosts" }, caught),
+        reportError({ component: "sessions-sidebar", operation: "list the workspaces" }, caught),
       );
   }, []);
 
@@ -398,14 +452,25 @@ export function SessionsSidebar({
   async function confirmWorkspaceDelete() {
     if (!pendingWorkspaceDelete) return;
     const deletedWorkspaceId = pendingWorkspaceDelete.id;
+    const deletedDaemonId = pendingWorkspaceDelete.daemonId;
     try {
-      await deleteWorkspace(deletedWorkspaceId);
+      const targets = await fetchDaemonTargets();
+      const target = targets.find((candidate) => candidate.id === deletedDaemonId);
+      await deleteWorkspace(
+        deletedWorkspaceId,
+        target ? { apiBase: target.endpoint, token: target.token } : undefined,
+      );
       const remainingWorkspaces = workspaces.filter(
-        (workspace) => workspace.id !== deletedWorkspaceId,
+        (workspace) =>
+          !(workspace.id === deletedWorkspaceId && workspace.daemonId === deletedDaemonId),
       );
       setWorkspaces(remainingWorkspaces);
-      if (deletedWorkspaceId === currentWorkspaceId && remainingWorkspaces[0]) {
-        onSwitchWorkspace(remainingWorkspaces[0].id);
+      if (
+        deletedWorkspaceId === currentWorkspaceId &&
+        deletedDaemonId === currentDaemonId &&
+        remainingWorkspaces[0]
+      ) {
+        onSwitchWorkspace(remainingWorkspaces[0].id, remainingWorkspaces[0].daemonId);
       }
     } catch (error) {
       toaster.create({
@@ -417,7 +482,7 @@ export function SessionsSidebar({
     }
   }
 
-  function workspaceName(workspace: Workspace): string {
+  function workspaceName(workspace: FederatedWorkspace): string {
     return workspaceTitle(workspace, locale, translation("untitledWorkspace"));
   }
 
@@ -605,6 +670,7 @@ export function SessionsSidebar({
           activeSessionId={activeSessionId}
           unseenCompletions={unseenCompletions}
           currentWorkspaceId={currentWorkspaceId}
+          currentDaemonId={currentDaemonId}
           agents={agents}
           workspaceOpenOverrides={workspaceOpenOverrides}
           onWorkspaceOpenOverridesChange={setWorkspaceOpenOverrides}
@@ -641,11 +707,19 @@ export function SessionsSidebar({
           hostsLoaded={sshHostsLoaded}
           onOpenChange={setNewWorkspaceOpen}
           onCreated={(workspace) => {
+            const located = {
+              ...workspace,
+              daemonId: currentDaemonId,
+              daemonName: "",
+              remote: currentDaemonId !== "local",
+            };
             setWorkspaces((current) => [
-              workspace,
-              ...current.filter((entry) => entry.id !== workspace.id),
+              located,
+              ...current.filter(
+                (entry) => !(entry.id === workspace.id && entry.daemonId === currentDaemonId),
+              ),
             ]);
-            onSwitchWorkspace(workspace.id);
+            onSwitchWorkspace(workspace.id, currentDaemonId);
           }}
         />
       ) : null}
