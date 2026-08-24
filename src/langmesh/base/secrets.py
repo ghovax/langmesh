@@ -2,13 +2,13 @@
 
 The directory is ``$XDG_DATA_HOME/langmesh/secrets``.
 Each file is named by the dotted path of the value it holds, for example
-``providers.anthropic.api_key`` or ``email.imap.password``. GitHub Actions writes
-``github.api_key`` from the repository secret; that file is the key for whichever
-provider the mention agent profile names.
+``providers.anthropic.api_key`` or ``email.imap.password``. The mention Action
+reads ``github.api_key`` and ``github.app.private_key`` from this directory
+(copied from ``.github/secrets`` in the checkout when those files are present).
 
 Reads never create the directory. Writes create it at mode 0700 and replace the
 file atomically at mode 0600. Environment variables are not configuration: a
-platform that only injects env (Fly, systemd, GitHub) must copy those values
+platform that only injects env (Fly leftover secrets) must copy those values
 into empty files before anything here is read.
 """
 
@@ -125,12 +125,6 @@ def import_environment(environ: dict[str, str] | None = None) -> int:
     """Copy conventional environment values into empty secret files. Returns how many wrote."""
     env = os.environ if environ is None else environ
     written = 0
-    generic = (env.get("LANGMESH_API_KEY") or "").strip()
-    if import_if_empty(GITHUB_API_KEY, generic):
-        written += 1
-    pem = (env.get("LANGMESH_APP_PRIVATE_KEY") or "").strip()
-    if import_if_empty(GITHUB_APP_PRIVATE_KEY, pem):
-        written += 1
     mapping = (
         ("EXA_API_KEY", EXA_API_KEY),
         ("JINA_API_KEY", JINA_API_KEY),

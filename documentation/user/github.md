@@ -27,12 +27,12 @@ Until your App is installed and has posted on a thread, GitHub has no bot to sug
 ## Turn it on
 
 1. Enable Actions on the repository. Under **Settings → Actions → General → Workflow permissions**, allow GitHub Actions to create and approve pull requests. The workflow asks for write access to contents, issues, and pull requests.
-2. Set the repository secret `LANGMESH_API_KEY` to the API key for the provider named in `.agents/agents/github/AGENT.md`. The job writes that secret to a file and never treats environment variables as configuration. Do not set repository variables `LANGMESH_MODEL` or `LANGMESH_MENTION`, and do not store the App id as a secret: those are not read.
+2. Put the API key for the provider named in `.agents/agents/github/AGENT.md` in the secret file `github.api_key`. On a GitHub-hosted runner that file is `.github/secrets/github.api_key` in the checkout (the job copies it onto `$XDG_DATA_HOME/langmesh/secrets`). On a self-hosted runner you can keep it only under XDG. Do not set repository variables `LANGMESH_MODEL` or `LANGMESH_MENTION`, and do not store the App id as a secret: those are not read. There is no `LANGMESH_API_KEY` repository secret.
 3. The model is `provider` and `model` in that agent profile. Change the profile in git to pick a different one. `.github/langmesh.yaml` names the profile (`agent: github`).
 4. Keep the workflow file on the default branch. GitHub runs comment workflows from that copy.
-5. Optionally install a GitHub App so comments come from your bot and GitHub recommends that handle. Put the App id in `.github/langmesh.yaml` as `app_id`, and set the repository secret `LANGMESH_APP_PRIVATE_KEY` to the PEM. See [Install a GitHub App so GitHub can suggest the bot](#install-a-github-app-so-github-can-suggest-the-bot).
+5. Optionally install a GitHub App so comments come from your bot and GitHub recommends that handle. Put the App id in `.github/langmesh.yaml` as `app_id`, and the PEM in `.github/secrets/github.app.private_key`. See [Install a GitHub App so GitHub can suggest the bot](#install-a-github-app-so-github-can-suggest-the-bot).
 
-The left-hand side of the profile's `provider` is a LangMesh provider name (`anthropic`, `openai`, `openrouter`, and the rest of the catalogue). `LANGMESH_API_KEY` is the one repository secret for that key.
+The left-hand side of the profile's `provider` is a LangMesh provider name (`anthropic`, `openai`, `openrouter`, and the rest of the catalogue). `github.api_key` is the one file for that key (or `providers.<id>.api_key`). GitHub-hosted runners only see files that are in the checkout: on a private repository you can commit them (`git add -f`); on a public repository that publishes the key.
 
 ## Install a GitHub App so GitHub can suggest the bot
 
@@ -64,10 +64,10 @@ Create the App.
 On the App's settings page (the URL looks like `https://github.com/settings/apps/langmesh-agent`):
 
 1. Copy **App ID**. That integer is `app_id` in `.github/langmesh.yaml`.
-2. Under **Private keys**, click **Generate a private key**. GitHub downloads a `.pem` file. The whole file, including the `BEGIN` and `END` lines, is the repository secret `LANGMESH_APP_PRIVATE_KEY`.
+2. Under **Private keys**, click **Generate a private key**. GitHub downloads a `.pem` file. The whole file, including the `BEGIN` and `END` lines, is `.github/secrets/github.app.private_key` (mode `0600`).
 3. Note the slug in that URL. The bot login is `@<slug>[bot]`. If the slug is not `langmesh-…`, set `mention: "@<slug>[bot]"` in `.github/langmesh.yaml`.
 
-Keep the PEM out of git. Repository secrets are the only place it should live.
+Keep the PEM out of a public git history. On a private repository you can commit it so the hosted runner sees it. On a self-hosted runner, the XDG file `$XDG_DATA_HOME/langmesh/secrets/github.app.private_key` is enough.
 
 ### 3. Install it on this repository
 
@@ -77,13 +77,11 @@ You should then see an installation at a URL like `https://github.com/settings/i
 
 ### 4. Give the Action the App PEM
 
-In the repository: **Settings → Secrets and variables → Actions**.
-
-- Secret `LANGMESH_APP_PRIVATE_KEY` — the PEM contents
+- File `.github/secrets/github.app.private_key` — the PEM contents (or the same name under `$XDG_DATA_HOME/langmesh/secrets` on a self-hosted runner)
 - In `.github/langmesh.yaml`, `app_id` — the numeric App ID (not a secret)
 - In `.github/langmesh.yaml`, `mention` — `@<slug>[bot]`, only if the slug is not `@langmesh-…[bot]`
 
-The next mention job mints an installation token from the PEM, then posts and pushes as that bot. Commits use that bot as the author. The App PEM is optional. Without it the job still runs as `github-actions[bot]`, and GitHub will not suggest a bot handle.
+The next mention job mints an installation token from the PEM file, then posts and pushes as that bot. Commits use that bot as the author. The App PEM is optional. Without it the job still runs as `github-actions[bot]`, and GitHub will not suggest a bot handle.
 
 ### 5. Check that citing works
 

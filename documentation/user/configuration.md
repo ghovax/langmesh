@@ -8,7 +8,7 @@ Two ways to change policy, both writing the same YAML file. Settings also writes
 - **Editing the file directly**, which the daemon watches and the next session build reads.
 
 > [!IMPORTANT]
-> Credentials live as `0600` files under `$XDG_DATA_HOME/langmesh/secrets/`, one file per value (`providers.anthropic.api_key`, `email.imap.password`). Policy — address, allow-lists, agent names, ports — lives in this YAML document. Never commit a filled secret file; see the [security policy](https://github.com/ghovax/langmesh/blob/main/SECURITY.md). A platform that only injects environment variables (Fly, GitHub Actions) is copied into empty secret files at start, then ignored.
+> Credentials live as `0600` files under `$XDG_DATA_HOME/langmesh/secrets/`, one file per value (`providers.anthropic.api_key`, `email.imap.password`). Policy — address, allow-lists, agent names, ports — lives in this YAML document. Never commit a filled secret file on a public repository; see the [security policy](https://github.com/ghovax/langmesh/blob/main/SECURITY.md). A platform that only injects environment variables (Fly leftover secrets) is copied into empty secret files at start, then ignored. The mention Action reads `.github/secrets/` in the checkout, or the XDG directory on a self-hosted runner.
 
 A change applies to whatever starts **next**. A running session keeps the configuration it was built with, with a few exceptions the daemon pushes out: configuration, sandbox, computer control, and the user-context snapshot each ask live sessions to rebuild.
 
