@@ -22,7 +22,7 @@ from langmeshd.mail import client as daemon_client
 from langmeshd.mail import payload
 from langmeshd.mail.clock import ResumeClock, StaleConnection
 from langmeshd.mail.imap import Inbox
-from langmeshd.mail.smtp import outbound_message_id, reply_message, send_reply
+from langmeshd.mail.smtp import outbound_message_id, probe_smtp, reply_message, send_reply
 from langmeshd.mail.threads import (
     COMPLETED,
     DISCOVERED,
@@ -554,6 +554,17 @@ async def run(configuration: Optional[EmailConfiguration] = None) -> int:
                     try:
                         await clock.await_fresh(inbox.connect())
                         clock.note()
+                        await clock.await_fresh(probe_smtp(current))
+                        logger.info(
+                            "mail ready",
+                            extra=log_fields(
+                                address=current.effective_address,
+                                allow_from=",".join(current.effective_allow_from),
+                                agent=current.effective_agent,
+                                imap=current.effective_imap_host,
+                                smtp=current.effective_smtp_host,
+                            ),
+                        )
                         await service.drain(http, inbox)
                         while True:
                             if service._stale.is_set():
