@@ -389,7 +389,7 @@ Process-level timings owned by the daemon and read only from the configuration f
 
 ### Email
 
-IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same file. Off until you enable it. The mail process (`langmesh mail`) is a **client** of `langmeshd`. `langmesh mail check` proves IMAP and SMTP without IDLEing. Mail sessions speak through `submit_email` (`progress` or `reply`); markdown is rendered as HTML in the outbound message. See [Email](email.md). Passwords are the secret files `email.imap.password` and `email.smtp.password`. The model key is `providers.<id>.api_key` for whatever catalogue provider mailbox sessions call.
+IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same file. Off until you enable it. The mail process (`langmesh mail`) is a **client** of `langmeshd`. `langmesh mail check` proves IMAP and SMTP without IDLEing. `langmesh mail auth` writes the OAuth refresh token. Mail sessions speak through `submit_email` (`progress` or `reply`); markdown is rendered as HTML in the outbound message. See [Email](email.md). Password auth uses `email.imap.password` / `email.smtp.password`. OAuth uses `email.oauth.refresh_token` (and optional `email.oauth.client_secret`). The model key is `providers.<id>.api_key` for whatever catalogue provider mailbox sessions call.
 
 | Setting | Type | Default | What it is for |
 | ------- | ---- | ------- | -------------- |
@@ -399,18 +399,28 @@ IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same fil
 | `email.agent` | string | `reviewer` | The agent profile each mail thread session runs. Defaults to the bundled `reviewer`. Tools and the prompt come from this profile. |
 | `email.provider` | string | — | Optional catalogue provider overlay for mailbox sessions. Must be set together with `email.model`. Omit both to keep the profile's provider. |
 | `email.model` | string | — | Optional catalogue model overlay for mailbox sessions. Must be set together with `email.provider`. |
+| `email.auth` | string | `password` | How IMAP and SMTP authenticate: `password` or `oauth` (XOAUTH2 via Authlib, aioimaplib, and aiosmtplib). |
+| `email.oauth.issuer` | string | — | `google`, `microsoft`, `yahoo`, or `custom`. Empty infers google/microsoft/yahoo from `email.address`. Proton is not an issuer. |
+| `email.oauth.client_id` | string | — | OAuth app id. Required when `email.auth` is `oauth`. |
+| `email.oauth.tenant` | string | `common` | Microsoft tenant (`common`, `consumers`, or a directory id). |
+| `email.oauth.token_url` | string | — | Token endpoint. Filled from the issuer unless `custom`. |
+| `email.oauth.authorize_url` | string | — | Authorize endpoint. Filled from the issuer unless `custom`. |
+| `email.oauth.scopes` | list | — | Override the issuer's scopes. |
+| `email.oauth.redirect_uri` | string | `http://127.0.0.1:8765/callback` | Loopback URI `langmesh mail auth` registers and listens on. |
+| `email.oauth.client_secret` | string | — | Unused in YAML. The live secret is the file `email.oauth.client_secret`. Optional for public clients. |
+| `email.oauth.refresh_token` | string | — | Unused in YAML. The live secret is the file `email.oauth.refresh_token`, written by `langmesh mail auth`. |
 | `email.working_directory` | string | — | Where that session's tools run. Empty means the daemon's current directory. `install.sh` and the Docker entrypoint set this to `/srv/langmesh`. |
 | `email.permission_mode` | string | `automatic` | Who answers gates for a mail session: `ask`, `automatic`, or `allow`. |
 | `email.idle_timeout_seconds` | number | `60.0` | How long one IMAP IDLE waits before cycling, so NAT and server idle limits cannot drop the socket silently. |
 | `email.turn_timeout_seconds` | number | `1800.0` | How long to wait for this mail's turn before giving up and retrying on the next reconnect. A timeout never invents a reply. |
-| `email.imap.host` | string | — | IMAP server. Inferred for Gmail, Fastmail, Outlook, Yahoo, and iCloud from `email.address` when empty. |
-| `email.imap.port` | integer | `993` | IMAP port. |
+| `email.imap.host` | string | — | IMAP server. Inferred for Gmail, Fastmail, Outlook, Yahoo, iCloud, and Proton Bridge (`127.0.0.1`) from `email.address` when empty. |
+| `email.imap.port` | integer | `993` | IMAP port. A Proton address defaults to Bridge's 1143. |
 | `email.imap.username` | string | — | IMAP login. Empty means `email.address`. A Gmail plus-address authenticates as the account without the `+tag`. |
 | `email.imap.password` | string | — | Unused in YAML. The live secret is the file `email.imap.password`. |
 | `email.imap.mailbox` | string | `INBOX` | Which folder to IDLE. |
 | `email.imap.ssl` | boolean | `true` | Implicit TLS (typical for 993). |
 | `email.smtp.host` | string | — | SMTP server. Inferred from `email.address` the same way as IMAP when empty. |
-| `email.smtp.port` | integer | `587` | SMTP port. When this is 587 and implicit TLS is off, a failed connect is retried on 465. |
+| `email.smtp.port` | integer | `587` | SMTP port. When this is 587 and implicit TLS is off, a failed connect is retried on 465. A Proton address defaults to Bridge's 1025. |
 | `email.smtp.username` | string | — | SMTP login. Empty means the IMAP username. |
 | `email.smtp.password` | string | — | Unused in YAML. The live secret is the file `email.smtp.password`. The IMAP password is used when SMTP is the inferred provider host. A custom relay is not authenticated with the IMAP secret. |
 | `email.smtp.start_tls` | boolean | `true` | Upgrade with STARTTLS (typical for 587). |

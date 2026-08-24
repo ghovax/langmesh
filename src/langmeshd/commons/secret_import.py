@@ -11,6 +11,8 @@ from typing import Any
 from langmesh.base.secrets import (
     COMPOSIO_API_KEY,
     EMAIL_IMAP_PASSWORD,
+    EMAIL_OAUTH_CLIENT_SECRET,
+    EMAIL_OAUTH_REFRESH_TOKEN,
     EMAIL_SMTP_PASSWORD,
     EXA_API_KEY,
     FIRECRAWL_API_KEY,
@@ -32,6 +34,8 @@ _SECRET_FROM_YAML = (
     ("composio.api_key", COMPOSIO_API_KEY),
     ("email.imap.password", EMAIL_IMAP_PASSWORD),
     ("email.smtp.password", EMAIL_SMTP_PASSWORD),
+    ("email.oauth.client_secret", EMAIL_OAUTH_CLIENT_SECRET),
+    ("email.oauth.refresh_token", EMAIL_OAUTH_REFRESH_TOKEN),
 )
 
 
@@ -63,7 +67,11 @@ def lift_yaml_secrets(document: dict[str, Any]) -> bool:
         raw = _read_path(document, path)
         if not isinstance(raw, str) or not raw.strip():
             continue
-        value = compact_mail_secret(raw) if name.startswith("email.") else raw.strip()
+        value = (
+            compact_mail_secret(raw)
+            if name in {EMAIL_IMAP_PASSWORD, EMAIL_SMTP_PASSWORD}
+            else raw.strip()
+        )
         import_if_empty(name, value)
         _set_path(document, path, "")
         changed = True

@@ -1,14 +1,48 @@
-"""Prompt templates supplied as values or immutable package resources."""
+"""Prompt templates supplied as values or immutable package resources.
+
+This module is stdlib-only so the GitHub ack step can load ``PackagePromptLoader``
+from source before the venv exists.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from hashlib import sha256
 from pathlib import Path
+import json
 import re
 from typing import Any, Callable, Optional
 
-from langmesh.base.persistence.file_cache import parsed_file
-from langmesh.base.primitives.serialization import content_address
+#: path -> (stamp, text). The stamp is mtime and size, so an edit is picked up without a watcher.
+_cache: dict[str, tuple[tuple[int, int], str]] = {}
+
+
+def _stamp(path: Path) -> Optional[tuple[int, int]]:
+    try:
+        status = path.stat()
+    except OSError:
+        return None
+    return (status.st_mtime_ns, status.st_size)
+
+
+def _read(path: Path) -> Optional[str]:
+    """The file's text, from memory unless it changed on disk; ``None`` when it is not there."""
+    key = str(path)
+    stamp = _stamp(path)
+    if stamp is None:
+        _cache.pop(key, None)
+        return None
+    held = _cache.get(key)
+    if held is not None and held[0] == stamp:
+        return held[1]
+    text = path.read_text()
+    _cache[key] = (stamp, text)
+    return text
+
+
+def _content_address(payload: Any) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return sha256(encoded.encode("utf-8")).hexdigest()
 
 
 class PromptTemplates:
@@ -38,7 +72,7 @@ class PromptTemplates:
     def revision(self) -> str:
         """Return a content identity for the templates and fallback this loader owns."""
         fallback_revision = getattr(self._fallback, "revision", None)
-        return content_address(
+        return _content_address(
             {
                 "templates": self._templates,
                 "fallback": fallback_revision() if callable(fallback_revision) else "",
@@ -84,7 +118,7 @@ class PromptTemplates:
 
 
 class PackagePromptLoader(PromptTemplates):
-    """Loads immutable prompt files shipped inside the LangMesh package."""
+    """Loads immutable template files shipped inside LangMesh packages."""
 
     def __init__(
         self,
@@ -95,12 +129,12 @@ class PackagePromptLoader(PromptTemplates):
         fallback: Optional[Any] = None,
     ) -> None:
         self._directory = Path(prompts_directory)
-        package_root = Path(__file__).resolve().parents[2]
+        shipped_root = Path(__file__).resolve().parents[3]
         try:
-            self._directory.resolve().relative_to(package_root)
+            self._directory.resolve().relative_to(shipped_root)
         except ValueError as error:
             raise ValueError(
-                "PackagePromptLoader accepts only shipped LangMesh resources."
+                "PackagePromptLoader accepts only shipped LangMesh package resources."
             ) from error
         self._extension = extension
         super().__init__({}, overrides=overrides, fallback=fallback)
@@ -111,7 +145,7 @@ class PackagePromptLoader(PromptTemplates):
             if override is not None:
                 return self.render(override, variables, template_name)
         path = self._directory / f"{template_name}.{self._extension}"
-        template = parsed_file(path, lambda each: each.read_text())
+        template = _read(path)
         if template is None:
             return self._fallback.load(template_name, variables) if self._fallback else ""
         return self.render(template, variables, template_name)
@@ -119,12 +153,12 @@ class PackagePromptLoader(PromptTemplates):
     def revision(self) -> str:
         """Return a content identity for shipped templates without depending on their paths."""
         templates = {
-            path.stem: parsed_file(path, lambda each: each.read_text()) or ""
+            path.stem: _read(path) or ""
             for path in sorted(self._directory.glob(f"*.{self._extension}"))
             if path.is_file()
         }
         fallback_revision = getattr(self._fallback, "revision", None)
-        return content_address(
+        return _content_address(
             {
                 "templates": templates,
                 "fallback": fallback_revision() if callable(fallback_revision) else "",
