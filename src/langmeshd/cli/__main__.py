@@ -2,7 +2,7 @@
 
 The command line has two long-running clients: `serve` makes the interface available, and
 `mail` IDLEs a mailbox and drives the daemon over its API. `mail check` proves that mailbox
-without IDLEing. Creating and messaging sessions, answering permission requests, recurring
+without IDLEing. `mail auth` signs the mailbox in with OAuth. Creating and messaging sessions, answering permission requests, recurring
 work, remote agents, configuration, and sign-in otherwise happen in the interface, or
 programmatically against the daemon's API. A session
 composes with its peers through [tools](agent-system.md), over the same control plane; it
@@ -80,6 +80,10 @@ def build_parser() -> argparse.ArgumentParser:
     mail_sub.add_parser(
         "check",
         help="prove mailbox config, IMAP login, and SMTP auth without IDLEing",
+    )
+    mail_sub.add_parser(
+        "auth",
+        help="sign in with OAuth and write the mailbox refresh token",
     )
     mail.set_defaults(handler=_command_mail)
 

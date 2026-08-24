@@ -25,6 +25,8 @@ GITHUB_API_KEY = "github.api_key"
 GITHUB_APP_PRIVATE_KEY = "github.app.private_key"
 EMAIL_IMAP_PASSWORD = "email.imap.password"
 EMAIL_SMTP_PASSWORD = "email.smtp.password"
+EMAIL_OAUTH_CLIENT_SECRET = "email.oauth.client_secret"
+EMAIL_OAUTH_REFRESH_TOKEN = "email.oauth.refresh_token"
 EXA_API_KEY = "exa.api_key"
 JINA_API_KEY = "jina.api_key"
 FIRECRAWL_API_KEY = "firecrawl.api_key"
@@ -120,6 +122,8 @@ def provider_keys_from_files() -> dict[str, str]:
 __all__ = [
     "COMPOSIO_API_KEY",
     "EMAIL_IMAP_PASSWORD",
+    "EMAIL_OAUTH_CLIENT_SECRET",
+    "EMAIL_OAUTH_REFRESH_TOKEN",
     "EMAIL_SMTP_PASSWORD",
     "EXA_API_KEY",
     "FIRECRAWL_API_KEY",

@@ -12,9 +12,9 @@
 # A name that is not in the schema is refused rather than written and ignored.
 #
 # Email (IMAP IDLE + SMTP) is an app-owned section. It is off until you enable it;
-# see documentation/user/email.md. Passwords live as 0600 files under
-# $XDG_DATA_HOME/langmesh/secrets/, not in this document. Mailbox sessions may
-# overlay email.provider and email.model onto the agent profile.
+# see documentation/user/email.md. Passwords and OAuth refresh tokens live as 0600
+# files under $XDG_DATA_HOME/langmesh/secrets/, not in this document. Mailbox
+# sessions may overlay email.provider and email.model onto the agent profile.
 
 # Model provider credentials. API keys live as secret files
 # (providers.<id>.api_key). Which model a session runs is chosen by its
