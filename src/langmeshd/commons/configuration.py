@@ -7,9 +7,10 @@ shared configuration file.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from langmesh.base.secrets import (
     COMPOSIO_API_KEY,
@@ -46,6 +47,7 @@ _MAIL_HOSTS: dict[str, tuple[str, str]] = {
 }
 
 _PROTON_DOMAINS = frozenset({"proton.me", "protonmail.com", "protonmail.ch", "pm.me"})
+_MACHINE_SLUG = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _OAUTH_DOMAINS = {
     "gmail.com": "google",
     "googlemail.com": "google",
@@ -81,6 +83,24 @@ def _account_login(address: str) -> str:
     if domain.lower() in {"gmail.com", "googlemail.com"} and "+" in local:
         return f"{local.split('+', 1)[0]}@{domain}"
     return address
+
+
+def _address_plus_tag(address: str) -> str:
+    """The plus-tag in a mailbox address, or empty when the local part has none."""
+    if "@" not in address:
+        return ""
+    local = address.rsplit("@", 1)[0]
+    if "+" not in local:
+        return ""
+    return local.split("+", 1)[1].lower()
+
+
+def _untagged_local(address: str) -> tuple[str, str]:
+    """Local part without a plus-tag, and domain. Empty domain when the address has no @."""
+    if "@" not in address:
+        return address, ""
+    local, domain = address.rsplit("@", 1)
+    return local.split("+", 1)[0], domain
 
 
 def compact_mail_secret(value: str | None) -> str:
@@ -248,10 +268,15 @@ class EmailConfiguration(AppConfigurationSection):
     Off by default. Passwords and OAuth refresh tokens live as secret files, not
     in this document. The mail process reads this section; the library never does.
     ``provider`` and ``model`` overlay the agent profile for mailbox sessions only.
+
+    ``machine`` is this host's plus-tag. A new thread addressed to
+    ``local+machine@domain`` starts a session here; a reply steers the same
+    conversation. IMAP still logs in as the account without the plus.
     """
 
     enabled: bool = Field(default=False)
     address: str = Field(default="")
+    machine: str = Field(default="")
     allow_from: list[str] = Field(default_factory=list)
     agent: str = Field(default="reviewer")
     provider: str = Field(default="")
@@ -272,6 +297,47 @@ class EmailConfiguration(AppConfigurationSection):
     @property
     def effective_address(self) -> str:
         return self.address.strip()
+
+    @property
+    def effective_machine(self) -> str:
+        return self.machine.strip().lower()
+
+    @property
+    def effective_from_address(self) -> str:
+        """SMTP From: the account's local part plus this host's machine slug.
+
+        Replies stay tagged, so the next inbound mail still names this machine.
+        """
+        address = self.effective_address
+        if not address:
+            return ""
+        local, domain = _untagged_local(address)
+        slug = self.effective_machine
+        if not domain:
+            return f"{local}+{slug}" if slug else local
+        if not slug:
+            return f"{local}@{domain}"
+        return f"{local}+{slug}@{domain}"
+
+    @field_validator("machine")
+    @classmethod
+    def _machine_slug(cls, value: str) -> str:
+        slug = value.strip().lower()
+        if not slug:
+            return ""
+        if not _MACHINE_SLUG.fullmatch(slug):
+            raise ValueError(
+                "must be a lowercase slug: a letter, then letters, digits, or hyphens, at most 32 characters"
+            )
+        return slug
+
+    @model_validator(mode="after")
+    def _plus_tag_matches_machine(self) -> EmailConfiguration:
+        tag = _address_plus_tag(self.effective_address)
+        slug = self.effective_machine
+        if tag and slug and tag != slug:
+            raise ValueError("email.address plus-tag must equal email.machine")
+        return self
 
     @property
     def effective_agent(self) -> str:

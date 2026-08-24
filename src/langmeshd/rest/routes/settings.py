@@ -41,6 +41,26 @@ from langmeshd.commons.services.settings import (
 router = APIRouter()
 
 
+def _email_settings():
+    from langmesh.base.configuration.configuration_schema import walk
+    from langmeshd.commons.configuration import EmailConfiguration
+
+    return walk(EmailConfiguration, "email")
+
+
+def _setting_for(path: str):
+    """Library settings, then app-owned email.* so the file's mail section is editable here."""
+    from langmesh.base.configuration.configuration_schema import setting_for
+
+    found = setting_for(path)
+    if found is not None:
+        return found
+    for setting in _email_settings():
+        if setting.path == path:
+            return setting
+    return None
+
+
 def _live_additions(
     provider_identifier: str,
     live: dict[str, dict],
@@ -287,7 +307,7 @@ async def settings_schema():
 
     document = await asyncio.to_thread(configuration_file.load)
     sections: dict[str, dict] = {}
-    for setting in all_settings():
+    for setting in [*all_settings(), *_email_settings()]:
         section = setting.path.split(".")[0]
         if setting.kind == KIND_SECTION and "." not in setting.path:
             sections.setdefault(section, {"path": section, "settings": []})
@@ -321,13 +341,12 @@ async def settings_schema():
 async def update_setting(request: SettingValueRequest):
     """Set one setting by its path, validated first, because the daemon reads this file at every start."""
     from langmeshd.commons import configuration_file
-    from langmesh.base.configuration.configuration_schema import setting_for
 
-    if setting_for(request.path) is None:
+    if _setting_for(request.path) is None:
         raise HTTPException(status_code=404, detail=f"No setting named {request.path!r}.")
     async with state.configuration_lock:
         document = await asyncio.to_thread(configuration_file.load)
-        entry = setting_for(request.path)
+        entry = _setting_for(request.path)
         if request.value is None and entry is not None and not entry.optional:
             # Nothing, for a setting that cannot hold nothing, means put it back rather than write a null.
             configuration_file.remove(document, request.path)
@@ -347,9 +366,8 @@ async def update_setting(request: SettingValueRequest):
 async def reset_setting(path: str):
     """Put one setting back to what the code ships by removing it, so it follows the default from here on."""
     from langmeshd.commons import configuration_file
-    from langmesh.base.configuration.configuration_schema import setting_for
 
-    if setting_for(path) is None:
+    if _setting_for(path) is None:
         raise HTTPException(status_code=404, detail=f"No setting named {path!r}.")
     async with state.configuration_lock:
         document = await asyncio.to_thread(configuration_file.load)

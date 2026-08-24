@@ -87,7 +87,7 @@ def reply_message(
 ) -> EmailMessage:
     """A reply whose preferred body is HTML rendered from the agent's markdown."""
     message = EmailMessage()
-    mailbox = configuration.effective_address
+    mailbox = configuration.effective_from_address or configuration.effective_address
     message["From"] = mailbox
     message["To"] = to_address
     message["Date"] = formatdate(localtime=True)

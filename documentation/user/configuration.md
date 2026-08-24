@@ -394,7 +394,8 @@ IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same fil
 | Setting | Type | Default | What it is for |
 | ------- | ---- | ------- | -------------- |
 | `email.enabled` | boolean | `false` | Run the mail client against this mailbox. |
-| `email.address` | string | — | The From address replies are sent as. |
+| `email.address` | string | — | The mailbox. IMAP logs in as the account (Gmail strips a plus-tag). SMTP From is `local+machine@domain`. |
+| `email.machine` | string | — | This host's plus-tag (`vps`, `laptop`). Required when mail is enabled. A new thread to `local+machine@domain` starts a session here; a reply steers that conversation. If `email.address` already has a plus-tag, it must equal this slug. |
 | `email.allow_from` | list | `[]` | Mailboxes (or `@domain`) whose mail is taken. Everyone else is ignored. A Gmail plus-address or `googlemail.com` alias matches `user@gmail.com` and `@gmail.com`. |
 | `email.agent` | string | `reviewer` | The agent profile each mail thread session runs. Defaults to the bundled `reviewer`. Tools and the prompt come from this profile. |
 | `email.provider` | string | — | Optional catalogue provider overlay for mailbox sessions. Must be set together with `email.model`. Omit both to keep the profile's provider. |

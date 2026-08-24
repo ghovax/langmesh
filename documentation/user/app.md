@@ -54,7 +54,7 @@ The tool reads the accessibility tree and the page's structure, not screenshots.
 The app is a client, so the daemon it talks to need not be on this machine. There are two ways to point it elsewhere:
 
 - **Over SSH.** An SSH environment forwards a local port through `ssh -L`, so the harness can live on a machine you reach only over SSH, with nothing exposed.
-- **A saved connection.** Run `langmeshd` on another host, expose its loopback port behind your own transport, add the machine's address and token under **Settings, then Connection**, and the app becomes a native front end to a remote backend. The desktop app also remembers paired machines (see [`langmesh serve --reach`](installation.md#the-langmesh-command)) and offers to open them.
+- **A saved connection.** Run `langmeshd` on another host, expose its loopback port behind your own transport, add the machine's pairing link under **Settings, then Connection**, and switch to it in the same window. Sessions from that host appear in the sidebar tagged remote. The desktop app remembers paired machines (see [`langmesh serve --reach`](installation.md#the-langmesh-command)).
 
 Either way, the agent's shell, files, and network all live on that host; the interface stays local and native.
 
