@@ -4,8 +4,8 @@
 # Model and provider come from .agents/agents/<name>/AGENT.md, named in
 # .github/langmesh.yaml. Keys are files: github.api_key and optional
 # github.app.private_key, copied onto $XDG_DATA_HOME/langmesh/secrets.
-# On a hosted runner those files are written from Actions secrets github_api_key
-# and github_app_private_key (GitHub names cannot contain dots).
+# On a hosted runner those files are written from Actions secrets mention_api_key
+# and mention_app_private_key (GitHub forbids dots and names starting with GITHUB_).
 # .github/langmesh holds the checkpoint (conversation and provider cache state),
 # the acknowledgement comment id, the App slug, and mention_trace rows.
 # Those job files are not env vars. issue_comment cannot write the Actions cache
@@ -52,8 +52,8 @@ jobs:
           fetch-depth: 0
       - run: python3 src/langmesh/github/materialize.py
         env:
-          github_api_key: ${{ secrets.github_api_key }}
-          github_app_private_key: ${{ secrets.github_app_private_key }}
+          mention_api_key: ${{ secrets.mention_api_key }}
+          mention_app_private_key: ${{ secrets.mention_app_private_key }}
       - id: app
         run: python3 src/langmesh/github/app_token.py
       - id: ack

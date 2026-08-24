@@ -1,6 +1,6 @@
 # Policy for the @langmesh[bot] Action. Secrets are files, not this document:
-#   github.api_key              # from Actions secret github_api_key, or XDG
-#   github.app.private_key      # from Actions secret github_app_private_key
+#   github.api_key              # from Actions secret mention_api_key, or XDG
+#   github.app.private_key      # from Actions secret mention_app_private_key
 #
 # agent: profile under .agents/agents/<name>/AGENT.md (provider and model live there)
 # mention: optional extra handle when the App slug is not @langmesh-…[bot]
