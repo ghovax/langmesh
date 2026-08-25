@@ -2,9 +2,9 @@
 
 The directory is ``$XDG_DATA_HOME/langmesh/secrets``.
 Each file is named by the dotted path of the value it holds, for example
-``providers.anthropic.api_key`` or ``email.imap.password``. The mention Action
-reads ``github.api_key`` and ``github.app.private_key`` from this directory
-(copied from ``.github/secrets`` in the checkout when those files are present).
+``providers.anthropic.api_key`` or ``email.imap.password``. The hosted GitHub App
+does not read GitHub credentials from repositories; installation provider keys
+are stored in its encrypted service database.
 
 Reads never create the directory. Writes create it at mode 0700 and replace the
 file atomically at mode 0600.
