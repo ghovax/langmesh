@@ -68,6 +68,7 @@ dependencies = [
     # Segno renders pairing links as terminal QR codes without image dependencies.
     "segno>=1.6,<2",
     "authlib>=1.7.2",
+    "cryptography>=44.0",
 ]
 
 [project.scripts]
