@@ -2,7 +2,7 @@
 
 You write to the agent's mailbox with a subject and a body. It replies in that thread and can mail you progress while it works. The mail process is a **client** of `langmeshd`, the same way the desktop app is: it talks over the daemon's unix socket with the capability token, and it never embeds a library `Session`. Quoted reply history is stripped, so each inbound message is that email's own content.
 
-This is not XMPP and not the GitHub mention Action. GitHub mentions run the library in a short-lived job. Mail sits in front of a long-running daemon on a machine that stays up — typically a small Linux VPS.
+This is not XMPP and not the GitHub App service. GitHub mentions run the library from a signed installation webhook. Mail sits in front of a long-running daemon on a machine that stays up — typically a small Linux VPS.
 
 ## What happens
 

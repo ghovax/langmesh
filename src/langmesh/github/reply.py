@@ -1,6 +1,6 @@
 """The GitHub mention plugin: the comment that lands on the thread is a tool call.
 
-The Action posts whatever this feature collected, not the model's prose. The working session
+The App service posts whatever this feature collected, not the model's prose. The working session
 sees `submit_github_comment` because the embedder both composed this feature and named the
 tool in `tools_enabled`. Each call writes the acknowledgement in place. A later mention must
 submit its own reply; earlier submissions are not the next turn's comment.
