@@ -1025,13 +1025,15 @@ export function ChatPanel({
                 indicator={delegatedSessionCount > 0}
                 onClick={() => setSidePanelOpen("delegated", !delegatedPanelOpen)}
               />
-              <ToolbarAction
-                label={translation("goalReviews")}
-                icon={<LuClipboardCheck size={14} />}
-                active={reviewPanelOpen}
-                colorPalette="purple"
-                onClick={() => setSidePanelOpen("reviews", !reviewPanelOpen)}
-              />
+              {activeGoal?.settlement !== "agent" || activeGoal?.review_phase || reviewPanelOpen ? (
+                <ToolbarAction
+                  label={translation("goalReviews")}
+                  icon={<LuClipboardCheck size={14} />}
+                  active={reviewPanelOpen}
+                  colorPalette="purple"
+                  onClick={() => setSidePanelOpen("reviews", !reviewPanelOpen)}
+                />
+              ) : null}
               {/* What this conversation remembers of the turns that have left its window. */}
               <ToolbarAction
                 label={translation("memory")}
