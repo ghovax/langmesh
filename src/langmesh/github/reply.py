@@ -23,11 +23,6 @@ from langmesh.runtime.values import ToolStatus
 
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
-# Model openings of this mention job between progress reminders. Opening 1
-# asks the model to choose between a direct reply and a progress update; then
-# 25, 49, … asks for another update during sustained work.
-PROGRESS_TURNS_INTERVAL = 24
-
 CommentKind = Literal["progress", "reply"]
 
 
