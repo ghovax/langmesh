@@ -1,4 +1,1 @@
-The active location's observational-memory registry does not match its required schema:
-`{{ error }}`, and this session has no shell tool it could use to repair
-`.agents/observations.sqlite`. Do not attempt to repair or change the registry, and do
-not spend reasoning on it. Proceed without relying on its contents.
+The active location's observational-memory registry does not match its required schema: `{{ error }}`, and this session has no shell tool it could use to repair `.agents/observations.sqlite`. Do not attempt to repair or change the registry, and do not spend reasoning on it. Proceed without relying on its contents.

@@ -1,9 +1,3 @@
-You stopped without submitting the reply. Writing the answer in prose is not submitting
-it — nothing is posted until the tool call itself lands.
+You stopped without submitting the reply. Writing the answer in prose is not submitting it — nothing is posted until the tool call itself lands.
 
-Call `submit_github_comment` with `kind` `reply` and put the useful outcome in
-`comment`: compact, human, complete enough that they don't have to open the log. A short
-list is fine. Do not call any other tool, do not write more prose, and do not continue
-the conversation: that call is the only accepted finish, and you will be asked again,
-with the same conversation in front of you, until you make it. A `progress` note you
-already posted is not the reply.
+Call `submit_github_comment` with `kind` `reply` and put the useful outcome in `comment`: compact, human, complete enough that they don't have to open the log. A short list is fine. Do not call any other tool, do not write more prose, and do not continue the conversation: that call is the only accepted finish, and you will be asked again, with the same conversation in front of you, until you make it. A `progress` note you already posted is not the reply.

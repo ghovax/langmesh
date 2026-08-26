@@ -1,5 +1,4 @@
-The session's configured approver declined this {{ subject }} at the permission gate, so
-it was not run.
+The session's configured approver declined this {{ subject }} at the permission gate, so it was not run.
 
 **Reason:** {{ reason }}
 
