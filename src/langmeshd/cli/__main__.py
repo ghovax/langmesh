@@ -37,7 +37,7 @@ def _command_mail(arguments: argparse.Namespace) -> int:
     return mail.run(arguments)
 
 
-def _command_github_app(arguments: argparse.Namespace) -> int:
+def _command_github(arguments: argparse.Namespace) -> int:
     """Serve the installation-level GitHub App webhook and setup UI."""
     from langmesh.github.hosted import create_app
     import uvicorn
@@ -96,17 +96,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mail.set_defaults(handler=_command_mail)
 
-    github_app = subparsers.add_parser(
-        "github-app", help="serve the universal installation-level GitHub App"
+    github = subparsers.add_parser(
+        "github", help="serve the universal installation-level GitHub App"
     )
-    github_app.add_argument(
+    github.add_argument(
         "--configuration",
-        default="~/.config/langmesh/github-app.yaml",
-        help="service configuration outside any repository (default: ~/.config/langmesh/github-app.yaml)",
+        default="~/.config/langmesh/github.yaml",
+        help="service configuration outside any repository (default: ~/.config/langmesh/github.yaml)",
     )
-    github_app.add_argument("--host", default="127.0.0.1", help="address to bind")
-    github_app.add_argument("--port", type=int, default=8826, help="port to listen on")
-    github_app.set_defaults(handler=_command_github_app)
+    github.add_argument("--host", default="127.0.0.1", help="address to bind")
+    github.add_argument("--port", type=int, default=8826, help="port to listen on")
+    github.set_defaults(handler=_command_github)
 
     return parser
 
