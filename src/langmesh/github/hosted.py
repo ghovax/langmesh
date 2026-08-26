@@ -17,7 +17,6 @@ import os
 import secrets
 import subprocess
 import tempfile
-import threading
 import time
 import urllib.parse
 import urllib.error
