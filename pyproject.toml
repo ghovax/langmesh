@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "langchain>=0.3.0",
-    "models-provider @ git+https://github.com/ghovax/models-provider.git@8776ada6dedfd11b66100acaebfe83bca984e622",
+    "models-provider @ git+https://github.com/ghovax/models-provider.git@24c3340f2d54fc143618073dba7efd99cfa57e6b",
     "litellm>=1.60.0",
     "sqlalchemy>=2.0",
     "asyncpg>=0.30",
