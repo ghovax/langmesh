@@ -7,8 +7,7 @@ from functools import lru_cache
 import json
 from typing import Any, cast
 
-from langmesh.base.identity.credentials import ChatGPTTokens
-from langmesh.base.identity.cursor_credentials import CursorTokens
+from models_provider import ChatGPTTokens, CursorTokens
 from langmeshd.commons.paths import oauth_token_path
 from langmeshd.commons.atomic_file import write_text
 
