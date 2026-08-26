@@ -1626,6 +1626,8 @@ export interface SessionGoal {
   evidence: string | null;
   // A transient phase before the next goal turn, absent while the working session itself is active.
   review_phase?: "waiting_for_background" | "checking";
+  // Who settles a satisfied or blocked mark: an independent reviewer, or the working agent.
+  settlement?: "reviewer" | "agent";
 }
 
 export interface SessionSummary {
