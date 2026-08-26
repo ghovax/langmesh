@@ -37,7 +37,6 @@ from langmesh.runtime.plugins.bash import Bash
 from langmesh.runtime.plugins.compaction import (
     Compaction,
     DirectCompactionPreparation,
-    KeepRecentTurns,
 )
 from langmesh.runtime.plugins.continuation import Continuation
 from langmesh.runtime.plugins.permissions import PermissionReview
@@ -519,11 +518,7 @@ def mention_features(reply: GitHubReply, workspace: Path) -> list[Feature]:
     service has already supplied network access and the installation token.
     """
     return [
-        Compaction(
-            strategy=KeepRecentTurns(24),
-            preparation=DirectCompactionPreparation(),
-            summarizer=None,
-        ),
+        Compaction(preparation=DirectCompactionPreparation()),
         PermissionReview(),
         Continuation(),
         BackgroundJobs(),
@@ -639,7 +634,8 @@ async def run_turn(
                 logger.info(
                     "mention usage session=%s call=%s input=%s output=%s "
                     "cache_read=%s cache_write=%s prefix_reusable=%s "
-                    "reusable_prefix=%s shared=%s/%s divergence=%s",
+                    "reusable_prefix=%s shared=%s/%s divergence=%s "
+                    "request_reusable=%s cache_fraction=%s",
                     mention.session_id,
                     model_call,
                     event.input_tokens,
@@ -651,6 +647,8 @@ async def run_turn(
                     event.shared_segments,
                     event.segments,
                     event.divergence,
+                    event.cache_request_reusable,
+                    event.cache_read_fraction,
                 )
             if isinstance(event, CompactionStarted):
                 logger.info(
