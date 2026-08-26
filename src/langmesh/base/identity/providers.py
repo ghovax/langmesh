@@ -369,8 +369,9 @@ def resolve_api_key(
     provider_identifier: str,
     configured_keys: dict[str, str],
 ) -> str:
-    """Resolve a provider key from an in-memory map, then secret files, else the anonymous sentinel."""
+    """Resolve a provider key through Models Provider's authentication boundary."""
     from langmesh.base.secrets import provider_api_key_name, read_secret
+    from models_provider import ProviderAuthentication, ProviderAuthProfile
 
     identifier = provider_identifier.strip()
     definition = PROVIDERS.get(identifier) or PROVIDERS.get(identifier.lower())
@@ -389,7 +390,17 @@ def resolve_api_key(
         file_key = read_secret(provider_api_key_name(identifier))
         if file_key:
             return file_key
-    return definition.anonymous_api_key if definition is not None else ""
+    profile = ProviderAuthProfile(
+        identifier=identifier,
+        environment_variables=provider_env_vars(identifier),
+        default_base_url=definition.default_base_url if definition is not None else "",
+        headers=definition.default_headers if definition is not None else {},
+        anonymous_api_key=definition.anonymous_api_key if definition is not None else "",
+    )
+    return ProviderAuthentication({identifier: profile}, api_keys={identifier: configured or file_key}).resolve_key(
+        identifier,
+        environment_variables=profile.environment_variables,
+    ).api_key
 
 
 def resolve_base_url(
