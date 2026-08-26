@@ -12,9 +12,7 @@ import base64
 import json
 import logging
 import os
-import sqlite3
 import subprocess
-import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, replace
@@ -27,10 +25,10 @@ from langmesh import (
     SandboxConfiguration,
     Session,
     SessionComponents,
-    SQLiteCheckpoints,
 )
 from langmesh.base.confinement import Profile
 from langmesh.base.content.models import resolve_litellm
+from langmesh.base.contracts.ports import Checkpoints
 from langmesh.github.detect import is_mention_turn
 from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features import Feature
@@ -47,8 +45,6 @@ from langmesh.runtime.plugins.web import Web
 from langmesh.runtime.turn_events import Done, Suspended, Usage
 
 ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
-STATE_DIRECTORY = ".github/langmesh"
-BRANCH_RECORD = "branch"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
@@ -242,65 +238,6 @@ def prompt_for(
     )
 
 
-def branch_record(workspace: Path) -> Path:
-    return workspace / STATE_DIRECTORY / BRANCH_RECORD
-
-
-def remember_branch(workspace: Path, name: str) -> None:
-    path = branch_record(workspace)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"{name}\n")
-
-
-def recalled_branch(workspace: Path) -> str:
-    path = branch_record(workspace)
-    if not path.is_file():
-        return ""
-    name = path.read_text().strip()
-    if not name or name in PROTECTED_BRANCHES:
-        return ""
-    return name
-
-
-def state_path(workspace: Path) -> Path:
-    return workspace / STATE_DIRECTORY / "session.sqlite"
-
-
-def durable_session_connection(workspace: Path) -> sqlite3.Connection:
-    """Self-contained sqlite: DELETE journal so the session artifact is the whole checkpoint.
-
-    The table ``mention_trace`` is append-only so a killed ``uv run`` still leaves
-    usage and restore rows for the next job and for anyone inspecting the artifact.
-    """
-    path = state_path(workspace)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
-    connection.execute("PRAGMA journal_mode=DELETE")
-    connection.execute("PRAGMA synchronous=FULL")
-    connection.execute(
-        "CREATE TABLE IF NOT EXISTS mention_trace ("
-        " id INTEGER PRIMARY KEY,"
-        " at TEXT NOT NULL,"
-        " kind TEXT NOT NULL,"
-        " detail TEXT NOT NULL"
-        ")"
-    )
-    return connection
-
-
-def record_mention_trace(
-    connection: sqlite3.Connection, kind: str, detail: Mapping[str, Any]
-) -> None:
-    connection.execute(
-        "INSERT INTO mention_trace(at, kind, detail) VALUES (?, ?, ?)",
-        (
-            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            kind,
-            json.dumps(detail, ensure_ascii=False, separators=(",", ":")),
-        ),
-    )
-
-
 def _run(
     arguments: list[str],
     *,
@@ -420,10 +357,10 @@ def prepare_tree(
 ) -> Checkout:
     """Check out an existing thread branch, or the default branch so the agent can choose."""
     cwd = str(workspace)
-    # The checkout action writes safe.directory under a temporary HOME, but later git
-    # commands use the runner HOME, so we add it explicitly for the workspace.
+    # The worker uses a temporary HOME, but later git commands still need this checkout
+    # marked safe explicitly.
     run(["git", "config", "--global", "--add", "safe.directory", cwd], cwd=cwd)
-    configure_git_author(workspace, app_slug=app_slug, app_id=app_id, run=run)
+    set_git_author(workspace, app_slug=app_slug, app_id=app_id, run=run)
     header = _git_header(token)
     run(["git", "fetch", "origin", "--prune"], cwd=cwd, extraheader=header)
     if mention.kind == "pull" and mention.head_ref and not mention.is_fork:
@@ -434,7 +371,7 @@ def prepare_tree(
         )
         run(["git", "checkout", "-B", mention.head_ref, "FETCH_HEAD"], cwd=cwd)
         return Checkout(branch=mention.head_ref, resumed=True)
-    name = recalled_branch(workspace) or open_issue_head(mention, run=run, cwd=cwd)
+    name = open_issue_head(mention, run=run, cwd=cwd)
     if name:
         _checkout_named(
             name,
@@ -444,7 +381,6 @@ def prepare_tree(
             run=run,
             remote_exists=_remote_has(name, cwd=cwd, header=header, run=run),
         )
-        remember_branch(workspace, name)
         return Checkout(branch=name, resumed=True)
     run(
         ["git", "fetch", "origin", mention.default_branch],
@@ -463,10 +399,9 @@ def current_branch(workspace: Path, *, run: Run = _run) -> str:
 
 
 def tree_is_dirty(workspace: Path, *, run: Run = _run) -> bool:
-    """Whether the checkout has work besides the session's own state directory."""
+    """Whether the temporary checkout has uncommitted work."""
     cwd = str(workspace)
     run(["git", "add", "-A"], cwd=cwd)
-    run(["git", "reset", "-q", "--", STATE_DIRECTORY], cwd=cwd)
     staged = run(["git", "diff", "--cached", "--name-only"], cwd=cwd).strip()
     run(["git", "reset", "-q"], cwd=cwd)
     return bool(staged)
@@ -486,7 +421,7 @@ def commits_to_push(workspace: Path, *, run: Run = _run) -> bool:
     return int(count or 0) > 0
 
 
-def configure_git_author(
+def set_git_author(
     workspace: Path,
     *,
     app_slug: str,
@@ -604,14 +539,14 @@ def _session(
     workspace: Path,
     reply: GitHubReply,
     token: str,
-    connection: sqlite3.Connection,
+    checkpoints: Checkpoints,
     provider: str,
     model: str,
     api_key: str,
 ) -> Session:
     provider, model, key = provider.strip(), model.strip(), api_key.strip()
-    if not provider or not model:
-        raise ValueError("provider and model are required")
+    if not provider or not model or not key:
+        raise ValueError("provider, model, and API key are required")
     agent = AgentConfiguration(
         name="langmesh",
         description="Does the work asked in a GitHub mention, in the repository that comment is on.",
@@ -637,7 +572,7 @@ def _session(
         sandbox=mention_sandbox(token),
         providers={provider: key} if key else None,
         components=SessionComponents(
-            checkpoints=SQLiteCheckpoints(connection),
+            checkpoints=checkpoints,
             features=mention_features(reply, workspace),
         ),
     )
@@ -654,6 +589,7 @@ async def run_turn(
     provider: str,
     model: str,
     api_key: str,
+    checkpoints: Checkpoints,
 ) -> str:
     def publish_working(text: str) -> None:
         if publish is None:
@@ -661,109 +597,61 @@ async def run_turn(
         publish(working_comment(text))
 
     reply = GitHubReply(publish=publish_working if publish is not None else None)
-    connection = durable_session_connection(workspace)
-    try:
-        async with _session(
-            mention,
-            workspace,
-            reply,
-            token,
-            connection,
-            provider=provider,
-            model=model,
-            api_key=api_key,
-        ) as session:
-            restored = await session.restore()
-            followup = restored or thread_followup
-            resolved_provider = provider.strip()
-            resolved_model = model.strip()
-            key = api_key.strip()
-            resolved = resolve_litellm(
-                f"{resolved_provider}/{resolved_model}",
-                {resolved_provider: key} if key else {},
-                {},
-            )
-            record_mention_trace(
-                connection,
-                "start",
-                {
-                    "session_id": mention.session_id,
-                    "restored": restored,
-                    "thread_followup": thread_followup,
-                    "followup": followup,
-                    "messages": len(session.conversation),
-                    "provider": resolved_provider,
-                    "model": resolved_model,
-                    "has_key": bool(key),
-                },
-            )
-            if not key:
-                logger.error(
-                    "mention has no provider API key for %s",
-                    resolved_provider,
+    async with _session(
+        mention,
+        workspace,
+        reply,
+        token,
+        checkpoints,
+        provider=provider,
+        model=model,
+        api_key=api_key,
+    ) as session:
+        restored = await session.restore()
+        followup = restored or thread_followup
+        resolved_provider = provider.strip()
+        resolved_model = model.strip()
+        key = api_key.strip()
+        resolved = resolve_litellm(
+            f"{resolved_provider}/{resolved_model}",
+            {resolved_provider: key} if key else {},
+            {},
+        )
+        logger.info(
+            "mention model %s/%s wire=%s base=%s restored=%s messages=%s "
+            "thread_followup=%s followup=%s session=%s",
+            resolved_provider,
+            resolved_model,
+            resolved["model"],
+            resolved["api_base"],
+            restored,
+            len(session.conversation),
+            thread_followup,
+            followup,
+            mention.session_id,
+        )
+        await session.set_permission_mode("automatic")
+        answer = ""
+        async for event in session.stream(prompt_for(mention, checkout=checkout, followup=followup)):
+            if isinstance(event, Usage):
+                logger.info(
+                    "mention usage input=%s output=%s cache_read=%s cache_write=%s "
+                    "prefix_reusable=%s reusable_prefix=%s shared=%s/%s",
+                    event.input_tokens,
+                    event.output_tokens,
+                    event.cache_read_tokens,
+                    event.cache_write_tokens,
+                    event.cache_prefix_reusable,
+                    event.reusable_prefix_tokens,
+                    event.shared_segments,
+                    event.segments,
                 )
-            logger.info(
-                "mention model %s/%s wire=%s base=%s restored=%s messages=%s "
-                "thread_followup=%s followup=%s session=%s",
-                resolved_provider,
-                resolved_model,
-                resolved["model"],
-                resolved["api_base"],
-                restored,
-                len(session.conversation),
-                thread_followup,
-                followup,
-                mention.session_id,
-            )
-            await session.set_permission_mode("automatic")
-            answer = ""
-            try:
-                async for event in session.stream(
-                    prompt_for(mention, checkout=checkout, followup=followup)
-                ):
-                    if isinstance(event, Usage):
-                        usage = {
-                            "input_tokens": event.input_tokens,
-                            "output_tokens": event.output_tokens,
-                            "cache_read_tokens": event.cache_read_tokens,
-                            "cache_write_tokens": event.cache_write_tokens,
-                            "cache_prefix_reusable": event.cache_prefix_reusable,
-                            "reusable_prefix_tokens": event.reusable_prefix_tokens,
-                            "shared_segments": event.shared_segments,
-                            "segments": event.segments,
-                            "divergence": event.divergence,
-                        }
-                        record_mention_trace(connection, "usage", usage)
-                        logger.info(
-                            "mention usage input=%s output=%s cache_read=%s cache_write=%s "
-                            "prefix_reusable=%s reusable_prefix=%s shared=%s/%s",
-                            event.input_tokens,
-                            event.output_tokens,
-                            event.cache_read_tokens,
-                            event.cache_write_tokens,
-                            event.cache_prefix_reusable,
-                            event.reusable_prefix_tokens,
-                            event.shared_segments,
-                            event.segments,
-                        )
-                    if isinstance(event, Suspended):
-                        raise PermissionError(
-                            "This turn is suspended. Inspect `session.state.pending`, "
-                            "call `session.respond(...)` for each interaction, then drive "
-                            "`session.resume()`; or supply an approver through SessionComponents."
-                        )
-                    if isinstance(event, Done):
-                        answer = event.text or answer
-            finally:
-                record_mention_trace(
-                    connection,
-                    "end",
-                    {
-                        "answer_chars": len(answer),
-                        "comment_chars": len((reply.comment or "").strip()),
-                        "messages": len(session.conversation),
-                    },
+            if isinstance(event, Suspended):
+                raise PermissionError(
+                    "This turn is suspended. Inspect `session.state.pending`, "
+                    "call `session.respond(...)` for each interaction, then drive "
+                    "`session.resume()`; or supply an approver through SessionComponents."
                 )
-            return (reply.comment or "").strip()
-    finally:
-        connection.close()
+            if isinstance(event, Done):
+                answer = event.text or answer
+        return (reply.comment or "").strip()
