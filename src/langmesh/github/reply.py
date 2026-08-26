@@ -80,15 +80,15 @@ class GitHubReply(Feature):
         self,
         publish: Callable[[str], None] | None = None,
         *,
-        progress_turns_interval: int = 8,
+        progress_turns: int = 8,
     ) -> None:
-        if progress_turns_interval < 1:
-            raise ValueError("progress_turns_interval must be at least 1")
+        if progress_turns < 1:
+            raise ValueError("progress_turns must be at least 1")
         self._comment: str | None = None
         self._replied = False
         self._publish = publish
         self._openings = 0
-        self._progress_turns_interval = progress_turns_interval
+        self._progress_turns = progress_turns
         self._host: PluginHost | None = None
 
     def attach(self, context: PluginContext, host: PluginHost | None = None) -> None:
@@ -120,7 +120,7 @@ class GitHubReply(Feature):
         if host is None or host.turn.maintenance_active():
             return
         self._openings += 1
-        if self._openings % self._progress_turns_interval != 1:
+        if self._openings % self._progress_turns != 1:
             return
         name = (
             "github_comment_progress_start"
