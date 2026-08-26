@@ -11,7 +11,6 @@ import asyncio
 from contextlib import asynccontextmanager
 import hashlib
 import hmac
-import html
 import json
 import logging
 import os
@@ -31,11 +30,12 @@ import jwt
 import yaml
 from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from langmesh import PackagePromptLoader, SQLAlchemyCheckpoints
+from langmesh import SQLAlchemyCheckpoints
 from langmesh.base.contracts.ports import Checkpoints
 from langmesh.github.detect import is_mention_turn, thread_has_prior_bot_comment
 from langmesh.github.mention import (
@@ -57,7 +57,12 @@ from langmesh.github.mention import (
 )
 logger = logging.getLogger("langmesh.github.hosted")
 DEFAULT_CONFIGURATION_PATH = Path.home() / ".config" / "langmesh" / "github.yaml"
-_HTML = PackagePromptLoader(Path(__file__).resolve().parent / "assets", extension="html")
+
+
+class ConfigurationUpdate(BaseModel):
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    api_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -415,10 +420,6 @@ class GitHub:
         )
 
 
-def _html_page(title: str, body: str) -> HTMLResponse:
-    return HTMLResponse(_HTML.load("page", {"title": html.escape(title), "body": body}))
-
-
 class Processor:
     def __init__(self, settings: Settings, store: Store, github: GitHub) -> None:
         self.settings, self.store, self.github = settings, store, github
@@ -569,7 +570,7 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
 
     app = FastAPI(title="LangMesh GitHub App", lifespan=lifespan)
 
-    @app.get("/github/setup", response_class=HTMLResponse)
+    @app.get("/github/setup")
     async def setup(installation_id: int) -> Response:
         if installation_id <= 0:
             raise HTTPException(400, "invalid installation_id")
@@ -577,8 +578,8 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         query = urllib.parse.urlencode({"client_id": settings.oauth_client_id, "redirect_uri": f"{settings.public_url}/github/setup/callback", "state": token})
         return RedirectResponse(f"https://github.com/login/oauth/authorize?{query}")
 
-    @app.get("/github/setup/callback", response_class=HTMLResponse)
-    async def setup_callback(code: str, state: str) -> Response:
+    @app.get("/github/setup/callback")
+    async def setup_callback(code: str, state: str) -> dict[str, Any]:
         try:
             oauth = github.oauth_token(code)
             user = github.user(oauth)
@@ -589,44 +590,57 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             if not record.get("repositories") and record.get("total_count") == 0:
                 raise RuntimeError("your GitHub account cannot access this installation")
         except Exception as error:
-            return _html_page(
-                "LangMesh setup failed",
-                _HTML.load("setup_failed", {"message": html.escape(str(error))}),
-            )
-        response = RedirectResponse("/github/configuration", status_code=303)
-        response.set_cookie("langmesh_setup", state, httponly=True, secure=True, samesite="lax", max_age=600)
-        return response
+            raise HTTPException(400, detail=str(error)) from error
+        return {
+            "installation_id": installation_id[0],
+            "setup_token": state,
+            "expires_in": 600,
+            "configuration_url": f"{settings.public_url}/github/configuration",
+        }
 
-    @app.get("/github/configuration", response_class=HTMLResponse)
-    async def configuration_page(request: Request) -> HTMLResponse:
-        setup_token = request.cookies.get("langmesh_setup", "")
-        setup = await store.setup(setup_token)
-        if setup is None:
-            return _html_page("LangMesh setup", _HTML.load("setup_expired", {}))
-        current = await store.configuration(setup[0])
-        provider, model = (current[0], current[1]) if current else ("", "")
-        body = _HTML.load(
-            "configuration",
-            {"provider": html.escape(provider), "model": html.escape(model)},
-        )
-        return _html_page("LangMesh configuration", body)
+    def setup_token(request: Request) -> str:
+        authorization = request.headers.get("authorization", "")
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not token.strip():
+            raise HTTPException(401, detail="use Authorization: Bearer SETUP_TOKEN")
+        return token.strip()
 
-    @app.post("/github/configuration", response_class=HTMLResponse)
-    async def save_configuration(request: Request) -> HTMLResponse:
-        setup_token = request.cookies.get("langmesh_setup", "")
-        setup = await store.setup(setup_token)
+    @app.get("/github/configuration")
+    async def configuration_page(request: Request) -> dict[str, Any]:
+        setup = await store.setup(setup_token(request))
         if setup is None:
-            return _html_page("LangMesh setup", _HTML.load("setup_expired", {}))
-        form = await request.form()
-        provider, model = str(form.get("provider") or "").strip(), str(form.get("model") or "").strip()
+            raise HTTPException(401, detail="setup token is missing or expired")
         current = await store.configuration(setup[0])
-        api_key = str(form.get("api_key") or "")
+        return {
+            "installation_id": setup[0],
+            "account": setup[1],
+            "configured": current is not None,
+            "provider": current[0] if current else "",
+            "model": current[1] if current else "",
+            "api_key_configured": bool(current and current[2]),
+        }
+
+    @app.put("/github/configuration")
+    async def save_configuration(payload: ConfigurationUpdate, request: Request) -> dict[str, Any]:
+        token = setup_token(request)
+        setup = await store.setup(token)
+        if setup is None:
+            raise HTTPException(401, detail="setup token is missing or expired")
+        provider, model = payload.provider.strip(), payload.model.strip()
+        api_key = (payload.api_key or "").strip()
+        current = await store.configuration(setup[0])
         if not api_key and current:
             api_key = current[2]
         if not provider or not model or not api_key:
-            return _html_page("LangMesh setup", _HTML.load("configuration_missing", {}))
+            raise HTTPException(422, detail="provider, model, and api_key are required")
         await store.save_installation(setup[0], setup[1], "unknown", provider, model, api_key)
-        return _html_page("LangMesh configuration saved", _HTML.load("configured", {}))
+        return {
+            "installation_id": setup[0],
+            "configured": True,
+            "provider": provider,
+            "model": model,
+            "api_key_configured": True,
+        }
 
     @app.post("/github/webhook")
     async def webhook(request: Request) -> Response:
