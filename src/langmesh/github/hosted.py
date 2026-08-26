@@ -8,6 +8,7 @@ provider/model settings. Nothing in a customer repository is used as configurati
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import hashlib
 import hmac
 import html
@@ -15,8 +16,8 @@ import json
 import logging
 import os
 import secrets
-import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -29,9 +30,13 @@ from typing import Any, Mapping
 import jwt
 import yaml
 from cryptography.fernet import Fernet
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from langmesh import PackagePromptLoader, SQLAlchemyCheckpoints
+from langmesh.base.contracts.ports import Checkpoints
 from langmesh.github.detect import is_mention_turn, thread_has_prior_bot_comment
 from langmesh.github.mention import (
     Mention,
@@ -50,8 +55,6 @@ from langmesh.github.mention import (
     user_failure,
     working_comment,
 )
-from langmesh import PackagePromptLoader
-
 logger = logging.getLogger("langmesh.github.hosted")
 DEFAULT_CONFIGURATION_PATH = Path.home() / ".config" / "langmesh" / "github.yaml"
 _HTML = PackagePromptLoader(Path(__file__).resolve().parent / "assets", extension="html")
@@ -65,8 +68,8 @@ class Settings:
     oauth_client_id: str
     oauth_client_secret: str
     encryption_key_path: Path
-    database_path: Path
-    workspaces_path: Path
+    database_url: str
+    queue_poll_seconds: float
     public_url: str
     github_api_url: str = "https://api.github.com"
 
@@ -106,109 +109,226 @@ class Settings:
         oauth = section_from(github, "oauth", configuration_path)
         server = section("server")
         storage = section("storage")
+        database = section_from(storage, "database", configuration_path)
+        encryption = section_from(storage, "encryption", configuration_path)
+        queue = section_from(storage, "queue", configuration_path)
         return cls(
             app_id=required(app, "id", "github.app"),
             private_key_path=Path(required(app, "private_key_path", "github.app")).expanduser(),
             webhook_secret=required(webhook, "secret", "github.webhook"),
             oauth_client_id=required(oauth, "client_id", "github.oauth"),
             oauth_client_secret=required(oauth, "client_secret", "github.oauth"),
-            encryption_key_path=Path(required(storage, "encryption_key_path", "storage")).expanduser(),
-            database_path=Path(required(storage, "database_path", "storage")).expanduser(),
-            workspaces_path=Path(required(storage, "workspaces_path", "storage")).expanduser(),
+            encryption_key_path=Path(required(encryption, "key_path", "storage.encryption")).expanduser(),
+            database_url=required(database, "url", "storage.database"),
+            queue_poll_seconds=max(0.5, float(queue.get("poll_seconds") or 5)),
             public_url=required(server, "public_url", "server").rstrip("/"),
             github_api_url=str(github.get("api_url") or "https://api.github.com").rstrip("/"),
         )
 
 
 class Store:
-    """Small durable store; provider API keys are encrypted before SQLite sees them."""
+    """Durable GitHub service state in a caller-owned external SQL database."""
 
     def __init__(self, settings: Settings) -> None:
-        settings.database_path.parent.mkdir(parents=True, exist_ok=True)
-        key = settings.encryption_key_path.read_bytes().strip()
-        self._cipher = Fernet(key)
-        self._db = sqlite3.connect(settings.database_path, check_same_thread=False)
-        self._db.execute(
-            "CREATE TABLE IF NOT EXISTS installations ("
-            " installation_id INTEGER PRIMARY KEY, account_login TEXT NOT NULL,"
-            " account_type TEXT NOT NULL, provider TEXT NOT NULL DEFAULT '',"
-            " model TEXT NOT NULL DEFAULT '', api_key BLOB NOT NULL DEFAULT '', updated_at INTEGER NOT NULL)"
-        )
-        self._db.execute(
-            "CREATE TABLE IF NOT EXISTS deliveries (delivery_id TEXT PRIMARY KEY, received_at INTEGER NOT NULL)"
-        )
-        self._db.execute(
-            "CREATE TABLE IF NOT EXISTS setup_sessions (token TEXT PRIMARY KEY, installation_id INTEGER NOT NULL,"
-            " user_login TEXT NOT NULL DEFAULT '', expires_at INTEGER NOT NULL)"
-        )
-        self._db.commit()
+        self._cipher = Fernet(settings.encryption_key_path.read_bytes().strip())
+        self.engine: AsyncEngine = create_async_engine(settings.database_url, pool_pre_ping=True)
 
-    def seen_delivery(self, delivery_id: str) -> bool:
+    async def initialize(self) -> None:
+        statements = (
+            """
+            CREATE TABLE IF NOT EXISTS langmesh_github_installations (
+                installation_id BIGINT PRIMARY KEY,
+                account_login TEXT NOT NULL,
+                account_type TEXT NOT NULL,
+                provider TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                api_key TEXT NOT NULL DEFAULT '',
+                updated_at BIGINT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS langmesh_github_deliveries (
+                delivery_id TEXT PRIMARY KEY,
+                event_name TEXT NOT NULL,
+                installation_id BIGINT NOT NULL,
+                payload TEXT NOT NULL,
+                status TEXT NOT NULL,
+                received_at BIGINT NOT NULL,
+                claimed_at BIGINT,
+                attempts BIGINT NOT NULL DEFAULT 0,
+                last_error TEXT NOT NULL DEFAULT ''
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS langmesh_github_setup_sessions (
+                token TEXT PRIMARY KEY,
+                installation_id BIGINT NOT NULL,
+                user_login TEXT NOT NULL DEFAULT '',
+                expires_at BIGINT NOT NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS langmesh_github_deliveries_ready ON langmesh_github_deliveries (status, received_at)",
+            "CREATE INDEX IF NOT EXISTS langmesh_github_setup_sessions_expiry ON langmesh_github_setup_sessions (expires_at)",
+        )
+        async with self.engine.begin() as connection:
+            for statement in statements:
+                await connection.execute(text(statement))
+
+    async def close(self) -> None:
+        await self.engine.dispose()
+
+    async def enqueue(self, delivery_id: str, event_name: str, installation_id: int, payload: str) -> bool:
         if not delivery_id:
             return False
-        try:
-            self._db.execute(
-                "INSERT INTO deliveries(delivery_id, received_at) VALUES (?, ?)",
-                (delivery_id, int(time.time())),
+        async with self.engine.begin() as connection:
+            result = await connection.execute(
+                text(
+                    "INSERT INTO langmesh_github_deliveries "
+                    "(delivery_id, event_name, installation_id, payload, status, received_at) "
+                    "VALUES (:delivery_id, :event_name, :installation_id, :payload, 'queued', :received_at) "
+                    "ON CONFLICT (delivery_id) DO NOTHING RETURNING delivery_id"
+                ),
+                {
+                    "delivery_id": delivery_id,
+                    "event_name": event_name,
+                    "installation_id": installation_id,
+                    "payload": payload,
+                    "received_at": int(time.time()),
+                },
             )
-            self._db.commit()
-            return False
-        except sqlite3.IntegrityError:
-            return True
+        return result.scalar_one_or_none() is not None
 
-    def configuration(self, installation_id: int) -> tuple[str, str, str] | None:
-        row = self._db.execute(
-            "SELECT provider, model, api_key FROM installations WHERE installation_id = ?",
-            (installation_id,),
-        ).fetchone()
+    async def claim(self, stale_after: int = 900) -> dict[str, Any] | None:
+        now = int(time.time())
+        async with self.engine.begin() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT delivery_id, event_name, installation_id, payload FROM langmesh_github_deliveries "
+                    "WHERE status = 'queued' OR (status = 'processing' AND claimed_at < :stale_at) "
+                    "ORDER BY received_at LIMIT 1 FOR UPDATE SKIP LOCKED"
+                ),
+                {"stale_at": now - stale_after},
+            )
+            row = result.mappings().first()
+            if row is None:
+                return None
+            await connection.execute(
+                text(
+                    "UPDATE langmesh_github_deliveries SET status = 'processing', claimed_at = :claimed_at, "
+                    "attempts = attempts + 1 WHERE delivery_id = :delivery_id"
+                ),
+                {"claimed_at": now, "delivery_id": row["delivery_id"]},
+            )
+        return dict(row)
+
+    async def complete(self, delivery_id: str) -> None:
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text("UPDATE langmesh_github_deliveries SET status = 'completed' WHERE delivery_id = :delivery_id"),
+                {"delivery_id": delivery_id},
+            )
+
+    async def retry(self, delivery_id: str, error: str) -> None:
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "UPDATE langmesh_github_deliveries SET status = 'queued', claimed_at = NULL, last_error = :error "
+                    "WHERE delivery_id = :delivery_id"
+                ),
+                {"delivery_id": delivery_id, "error": error[:4000]},
+            )
+
+    async def configuration(self, installation_id: int) -> tuple[str, str, str] | None:
+        async with self.engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT provider, model, api_key FROM langmesh_github_installations "
+                    "WHERE installation_id = :installation_id"
+                ),
+                {"installation_id": installation_id},
+            )
+            row = result.first()
         if not row or not row[0] or not row[1]:
             return None
-        key = self._cipher.decrypt(bytes(row[2])).decode() if row[2] else ""
+        key = self._cipher.decrypt(str(row[2]).encode()).decode() if row[2] else ""
         return str(row[0]), str(row[1]), key
 
-    def save_installation(
+    async def save_installation(
         self, installation_id: int, account_login: str, account_type: str, provider: str, model: str, api_key: str
     ) -> None:
-        old = self._db.execute(
-            "SELECT api_key FROM installations WHERE installation_id = ?", (installation_id,)
-        ).fetchone()
-        encrypted = self._cipher.encrypt(api_key.encode()) if api_key else (old[0] if old else b"")
-        self._db.execute(
-            "INSERT INTO installations(installation_id, account_login, account_type, provider, model, api_key, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(installation_id) DO UPDATE SET"
-            " account_login=excluded.account_login, account_type=excluded.account_type, provider=excluded.provider,"
-            " model=excluded.model, api_key=excluded.api_key, updated_at=excluded.updated_at",
-            (installation_id, account_login, account_type, provider, model, encrypted, int(time.time())),
-        )
-        self._db.commit()
+        encrypted = self._cipher.encrypt(api_key.encode()).decode() if api_key else ""
+        if not api_key:
+            async with self.engine.connect() as connection:
+                result = await connection.execute(
+                    text(
+                        "SELECT api_key FROM langmesh_github_installations "
+                        "WHERE installation_id = :installation_id"
+                    ),
+                    {"installation_id": installation_id},
+                )
+                row = result.first()
+            encrypted = str(row[0]) if row and row[0] else ""
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO langmesh_github_installations "
+                    "(installation_id, account_login, account_type, provider, model, api_key, updated_at) "
+                    "VALUES (:installation_id, :account_login, :account_type, :provider, :model, :api_key, :updated_at) "
+                    "ON CONFLICT (installation_id) DO UPDATE SET account_login = EXCLUDED.account_login, "
+                    "account_type = EXCLUDED.account_type, provider = EXCLUDED.provider, model = EXCLUDED.model, "
+                    "api_key = EXCLUDED.api_key, updated_at = EXCLUDED.updated_at"
+                ),
+                {
+                    "installation_id": installation_id,
+                    "account_login": account_login,
+                    "account_type": account_type,
+                    "provider": provider,
+                    "model": model,
+                    "api_key": encrypted,
+                    "updated_at": int(time.time()),
+                },
+            )
 
-    def begin_setup(self, installation_id: int) -> str:
+    async def begin_setup(self, installation_id: int) -> str:
         token = secrets.token_urlsafe(32)
-        self._db.execute(
-            "INSERT INTO setup_sessions(token, installation_id, expires_at) VALUES (?, ?, ?)",
-            (token, installation_id, int(time.time()) + 600),
-        )
-        self._db.commit()
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO langmesh_github_setup_sessions "
+                    "(token, installation_id, expires_at) VALUES (:token, :installation_id, :expires_at)"
+                ),
+                {"token": token, "installation_id": installation_id, "expires_at": int(time.time()) + 600},
+            )
         return token
 
-    def authenticate_setup(self, token: str, user_login: str) -> tuple[int, str] | None:
-        row = self._db.execute(
-            "SELECT installation_id FROM setup_sessions WHERE token = ? AND expires_at >= ?",
-            (token, int(time.time())),
-        ).fetchone()
-        if not row:
-            return None
-        self._db.execute(
-            "UPDATE setup_sessions SET user_login = ? WHERE token = ?", (user_login, token)
-        )
-        self._db.commit()
+    async def authenticate_setup(self, token: str, user_login: str) -> tuple[int, str] | None:
+        async with self.engine.begin() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT installation_id FROM langmesh_github_setup_sessions "
+                    "WHERE token = :token AND expires_at >= :now"
+                ),
+                {"token": token, "now": int(time.time())},
+            )
+            row = result.first()
+            if row is None:
+                return None
+            await connection.execute(
+                text("UPDATE langmesh_github_setup_sessions SET user_login = :user_login WHERE token = :token"),
+                {"user_login": user_login, "token": token},
+            )
         return int(row[0]), user_login
 
-    def setup(self, token: str) -> tuple[int, str] | None:
-        row = self._db.execute(
-            "SELECT installation_id, user_login FROM setup_sessions WHERE token = ? AND expires_at >= ? AND user_login != ''",
-            (token, int(time.time())),
-        ).fetchone()
+    async def setup(self, token: str) -> tuple[int, str] | None:
+        async with self.engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT installation_id, user_login FROM langmesh_github_setup_sessions "
+                    "WHERE token = :token AND expires_at >= :now AND user_login != ''"
+                ),
+                {"token": token, "now": int(time.time())},
+            )
+            row = result.first()
         return (int(row[0]), str(row[1])) if row else None
 
 
@@ -302,7 +422,32 @@ def _html_page(title: str, body: str) -> HTMLResponse:
 class Processor:
     def __init__(self, settings: Settings, store: Store, github: GitHub) -> None:
         self.settings, self.store, self.github = settings, store, github
+        self._checkpoints: Checkpoints = SQLAlchemyCheckpoints(store.engine)
         self._locks: dict[str, threading.Lock] = {}
+
+    async def initialize(self) -> None:
+        initialize = getattr(self._checkpoints, "initialize", None)
+        if initialize is not None:
+            await initialize()
+
+    async def run_forever(self) -> None:
+        while True:
+            delivery = await self.store.claim()
+            if delivery is None:
+                await asyncio.sleep(self.settings.queue_poll_seconds)
+                continue
+            delivery_id = str(delivery["delivery_id"])
+            try:
+                await self.process(
+                    str(delivery["event_name"]),
+                    json.loads(str(delivery["payload"])),
+                    int(delivery["installation_id"]),
+                )
+            except Exception as error:
+                logger.exception("GitHub delivery %s failed", delivery_id)
+                await self.store.retry(delivery_id, str(error))
+            else:
+                await self.store.complete(delivery_id)
 
     def _runner(self, token: str):
         def run(arguments: list[str], *, cwd: str, env: Mapping[str, str] | None = None, extraheader: str = "") -> str:
@@ -327,7 +472,6 @@ class Processor:
         if branch in {"main", "master", mention.default_branch}:
             raise RuntimeError(f"refusing to push protected branch {branch!r}")
         run(["git", "add", "-A"], cwd=str(workspace))
-        run(["git", "reset", "-q", "--", ".github/langmesh"], cwd=str(workspace))
         if not commits_to_push(workspace, run=run):
             return ""
         run(["git", "push", "-u", "origin", f"HEAD:{branch}"], cwd=str(workspace), extraheader=_git_header(token))
@@ -345,8 +489,8 @@ class Processor:
         )
         return str(record.get("html_url") or "")
 
-    def process(self, event_name: str, event: dict[str, Any], installation_id: int) -> None:
-        configuration = self.store.configuration(installation_id)
+    async def process(self, event_name: str, event: dict[str, Any], installation_id: int) -> None:
+        configuration = await self.store.configuration(installation_id)
         if configuration is None:
             logger.info("installation %s has no provider configuration", installation_id)
             return
@@ -369,11 +513,12 @@ class Processor:
         )
         if mention is None or not mention.allowed:
             return
-        workspace = self.settings.workspaces_path / str(installation_id) / repository.replace("/", "__")
-        lock_key = str(workspace)
+        lock_key = f"{installation_id}:{repository}"
         lock = self._locks.setdefault(lock_key, threading.Lock())
         with lock:
-            asyncio.run(self._process_locked(mention, event, workspace, token, slug, provider, model, api_key))
+            with tempfile.TemporaryDirectory(prefix="langmesh-github-") as temporary_directory:
+                workspace = Path(temporary_directory) / repository.replace("/", "__")
+                await self._process_locked(mention, event, workspace, token, slug, provider, model, api_key)
 
     async def _process_locked(self, mention: Mention, event: dict[str, Any], workspace: Path, token: str, slug: str, provider: str, model: str, api_key: str) -> None:
         self._checkout(mention.repository, workspace, token)
@@ -392,6 +537,7 @@ class Processor:
             answer = await run_turn(
                 mention, workspace, checkout=checkout, publish=publish, token=token,
                 thread_followup=followup, provider=provider, model=model, api_key=api_key,
+                checkpoints=self._checkpoints,
             )
             pull_url = self._publish(mention, workspace, token, runner) if tree_is_dirty(workspace, run=runner) or commits_to_push(workspace, run=runner) else ""
             publish_thread_comment(mention.repository, mention.number, posted_reply(answer, pull_url), token, self.settings.github_api_url, comment_id=ack)
@@ -405,22 +551,38 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
     store = Store(settings)
     github = GitHub(settings)
     processor = Processor(settings, store, github)
-    app = FastAPI(title="LangMesh GitHub App")
+    worker: asyncio.Task[None] | None = None
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        nonlocal worker
+        await store.initialize()
+        await processor.initialize()
+        worker = asyncio.create_task(processor.run_forever())
+        try:
+            yield
+        finally:
+            if worker is not None:
+                worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
+            await store.close()
+
+    app = FastAPI(title="LangMesh GitHub App", lifespan=lifespan)
 
     @app.get("/github/setup", response_class=HTMLResponse)
-    def setup(installation_id: int) -> Response:
+    async def setup(installation_id: int) -> Response:
         if installation_id <= 0:
             raise HTTPException(400, "invalid installation_id")
-        token = store.begin_setup(installation_id)
+        token = await store.begin_setup(installation_id)
         query = urllib.parse.urlencode({"client_id": settings.oauth_client_id, "redirect_uri": f"{settings.public_url}/github/setup/callback", "state": token})
         return RedirectResponse(f"https://github.com/login/oauth/authorize?{query}")
 
     @app.get("/github/setup/callback", response_class=HTMLResponse)
-    def setup_callback(code: str, state: str) -> Response:
+    async def setup_callback(code: str, state: str) -> Response:
         try:
             oauth = github.oauth_token(code)
             user = github.user(oauth)
-            installation_id = store.authenticate_setup(state, str(user.get("login") or ""))
+            installation_id = await store.authenticate_setup(state, str(user.get("login") or ""))
             if installation_id is None:
                 raise RuntimeError("setup session expired")
             record = github.verify_installation(installation_id[0], oauth)
@@ -431,43 +593,43 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
                 "LangMesh setup failed",
                 _HTML.load("setup_failed", {"message": html.escape(str(error))}),
             )
-        response = RedirectResponse("/github/configure", status_code=303)
+        response = RedirectResponse("/github/configuration", status_code=303)
         response.set_cookie("langmesh_setup", state, httponly=True, secure=True, samesite="lax", max_age=600)
         return response
 
-    @app.get("/github/configure", response_class=HTMLResponse)
-    def configure_page(request: Request) -> HTMLResponse:
+    @app.get("/github/configuration", response_class=HTMLResponse)
+    async def configuration_page(request: Request) -> HTMLResponse:
         setup_token = request.cookies.get("langmesh_setup", "")
-        setup = store.setup(setup_token)
+        setup = await store.setup(setup_token)
         if setup is None:
             return _html_page("LangMesh setup", _HTML.load("setup_expired", {}))
-        current = store.configuration(setup[0])
+        current = await store.configuration(setup[0])
         provider, model = (current[0], current[1]) if current else ("", "")
         body = _HTML.load(
             "configuration",
             {"provider": html.escape(provider), "model": html.escape(model)},
         )
-        return _html_page("Configure LangMesh", body)
+        return _html_page("LangMesh configuration", body)
 
-    @app.post("/github/configure", response_class=HTMLResponse)
-    async def configure(request: Request) -> HTMLResponse:
+    @app.post("/github/configuration", response_class=HTMLResponse)
+    async def save_configuration(request: Request) -> HTMLResponse:
         setup_token = request.cookies.get("langmesh_setup", "")
-        setup = store.setup(setup_token)
+        setup = await store.setup(setup_token)
         if setup is None:
             return _html_page("LangMesh setup", _HTML.load("setup_expired", {}))
         form = await request.form()
         provider, model = str(form.get("provider") or "").strip(), str(form.get("model") or "").strip()
-        if not provider or not model:
-            return _html_page("LangMesh setup", _HTML.load("configuration_missing", {}))
-        current = store.configuration(setup[0])
+        current = await store.configuration(setup[0])
         api_key = str(form.get("api_key") or "")
         if not api_key and current:
             api_key = current[2]
-        store.save_installation(setup[0], setup[1], "unknown", provider, model, api_key)
-        return _html_page("LangMesh configured", _HTML.load("configured", {}))
+        if not provider or not model or not api_key:
+            return _html_page("LangMesh setup", _HTML.load("configuration_missing", {}))
+        await store.save_installation(setup[0], setup[1], "unknown", provider, model, api_key)
+        return _html_page("LangMesh configuration saved", _HTML.load("configured", {}))
 
     @app.post("/github/webhook")
-    async def webhook(request: Request, background_tasks: BackgroundTasks) -> Response:
+    async def webhook(request: Request) -> Response:
         raw = await request.body()
         signature = request.headers.get("x-hub-signature-256", "")
         expected = "sha256=" + hmac.new(settings.webhook_secret.encode(), raw, hashlib.sha256).hexdigest()
@@ -477,12 +639,15 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             event = json.loads(raw)
         except json.JSONDecodeError as error:
             raise HTTPException(400, "invalid JSON") from error
-        if store.seen_delivery(request.headers.get("x-github-delivery", "")):
-            return Response(status_code=202)
         installation_id = int(((event.get("installation") or {}).get("id") or 0))
         if not installation_id:
             return Response(status_code=202)
-        background_tasks.add_task(processor.process, request.headers.get("x-github-event", ""), event, installation_id)
+        await store.enqueue(
+            request.headers.get("x-github-delivery", ""),
+            request.headers.get("x-github-event", ""),
+            installation_id,
+            raw.decode("utf-8"),
+        )
         return Response(status_code=202)
 
     return app
