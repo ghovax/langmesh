@@ -6,4 +6,5 @@ Keep `comment` compact, like a note a person would leave on a thread. Everyday w
 - When substantial work will continue, post a brief heads-up with `kind` `progress` and keep going.
 - Skip a call after every command. A long turn can take a couple of these; a short one can skip them.
 - At the end, post the outcome with `kind` `reply`. That call is what the thread shows and it ends the turn. Prose in this turn is not posted.
+- Use only concise prose, lists, or tables. Never use emoji, ASCII art, diagrams, or unnecessary technical jargon.
 - Do not mention @langmesh or @langmesh[bot] in the comment.

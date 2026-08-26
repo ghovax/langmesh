@@ -23,8 +23,9 @@ from langmesh.runtime.values import ToolStatus
 
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
-# Model openings of this mention job between progress reminders. The initial
-# acknowledgement already exists, so reminders begin only after sustained work.
+# Model openings of this mention job between progress reminders. Opening 1
+# asks the model to choose between a direct reply and a progress update; then
+# 25, 49, … asks for another update during sustained work.
 PROGRESS_TURNS_INTERVAL = 24
 
 CommentKind = Literal["progress", "reply"]
@@ -102,7 +103,7 @@ class GitHubReply(Feature):
             logger.exception("could not write submit_github_comment onto the thread")
 
     def prepare_request(self) -> None:
-        """Append a progress reminder after sustained work, then periodically.
+        """Append a conditional opening reminder, then periodic work reminders.
 
         The note is a harness reminder on the conversation tail. The system prompt and
         tool schema are not rewritten, so the provider-cache prefix stays intact.
@@ -111,12 +112,15 @@ class GitHubReply(Feature):
         if host is None or host.turn.maintenance_active():
             return
         self._openings += 1
-        if self._openings <= 1 or (self._openings - 1) % PROGRESS_TURNS_INTERVAL != 0:
+        if self._openings % PROGRESS_TURNS_INTERVAL != 1:
             return
+        name = (
+            "github_comment_progress_start"
+            if self._openings == 1
+            else "github_comment_progress_interval"
+        )
         host.conversation.messages.append(
-            host.turn.reminder_message(
-                _PROMPTS.load("github_comment_progress_interval", {}).strip()
-            )
+            host.turn.reminder_message(_PROMPTS.load(name, {}).strip())
         )
         host.bookkeeping.note_state_changed()
 
