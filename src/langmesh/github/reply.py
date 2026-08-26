@@ -104,6 +104,8 @@ class GitHubReply(Feature):
             self._publish(comment)
         except Exception:
             logger.exception("could not write submit_github_comment onto the thread")
+        else:
+            logger.info("GitHub comment submitted kind=%s chars=%s", kind, len(comment))
 
     def prepare_request(self) -> None:
         """Append a conditional opening reminder, then periodic work reminders.
