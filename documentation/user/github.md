@@ -44,7 +44,7 @@ python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 chmod 600 /srv/langmesh/secrets/provider-keys.fernet
 ```
 
-The service stores provider API keys encrypted in the external database, keyed by GitHub installation. The GitHub worker uses the compaction plugin's configured threshold with a direct preparation port. Compaction intentionally invalidates the conversation portion of the provider cache; the stable instructions and tool definitions remain reusable. The delivery queue and session checkpoints use that same database, so another worker can continue after the original worker disappears. Different installations can choose different providers and models. For example, an installation may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like `sk-or-v1-...`.
+The service stores provider API keys and native provider refresh tokens encrypted in the external database, keyed by GitHub installation. Native providers such as `chatgpt` and `cursor` use their own sign-in flow and do not need an API key. The GitHub worker uses the compaction plugin's configured threshold with a direct preparation port. Compaction intentionally invalidates the conversation portion of the provider cache; the stable instructions and tool definitions remain reusable. The delivery queue and session checkpoints use that same database, so another worker can continue after the original worker disappears. Different installations can choose different providers and models. For example, an installation may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like `sk-or-v1-...`.
 
 ## GitHub App settings
 
@@ -94,6 +94,26 @@ curl --fail-with-body \
 ```
 
 The response never includes the API key.
+
+For a native provider, authenticate it before saving the model configuration. Start ChatGPT device authentication with the setup token:
+
+```sh
+curl --fail-with-body --request POST \
+  --url https://langmesh-agent.onrender.com/github/provider-auth/start \
+  --header 'Authorization: Bearer 7kQ2mN...vR8pL4' \
+  --header 'Content-Type: application/json' \
+  --data '{"provider":"chatgpt"}'
+```
+
+Open the returned `verification_url`, enter the returned `user_code`, and poll the returned `poll_url` with `{"state":"..."}` until `authenticated` is `true`. Then save the provider and model without an API key:
+
+```sh
+curl --fail-with-body --request PUT \
+  --url https://langmesh-agent.onrender.com/github/configuration \
+  --header 'Authorization: Bearer 7kQ2mN...vR8pL4' \
+  --header 'Content-Type: application/json' \
+  --data '{"provider":"chatgpt","model":"gpt-5.4"}'
+```
 
 After that, mention the installed bot in an issue or same-repository pull request. The bot identity is the actual App login, such as `@langmesh-agent[bot]`, and its commits use that identity. A webhook is ignored until its installation has a provider/model configuration.
 

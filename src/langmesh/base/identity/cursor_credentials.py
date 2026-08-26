@@ -199,6 +199,17 @@ async def valid_tokens() -> CursorTokens:
         return refreshed
 
 
+async def poll_login(verifier: str, login_id: str) -> CursorTokens | None:
+    """Poll a hosted login and return tokens when the browser has completed it."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(POLL_URL, params={"uuid": login_id, "verifier": verifier})
+    if response.status_code == 404:
+        return None
+    if not response.is_success:
+        raise CursorAuthError(f"Cursor refused the sign-in poll (HTTP {response.status_code}).")
+    return _tokens_from_payload(response.json())
+
+
 class CursorLoginFlow:
     """One browser sign-in, polled rather than redirected because Cursor's flow has no callback."""
 
@@ -207,6 +218,14 @@ class CursorLoginFlow:
         self._verifier = _generate_verifier()
         self._uuid = str(uuid_module.uuid4())
         self._cancelled = False
+
+    @property
+    def login_id(self) -> str:
+        return self._uuid
+
+    @property
+    def verifier(self) -> str:
+        return self._verifier
 
     @property
     def authorize_url(self) -> str:

@@ -1,6 +1,6 @@
 """The GitHub App mention runtime.
 
-The service supplies the provider, model, API key, installation token, and App identity.
+The service supplies the provider, credentials, installation token, and App identity.
 Follow-up mentions on the same issue or pull request restore the saved session. The
 agent commits and pushes on topic branches, while the service prevents pushes to the
 default branch and opens draft pull requests for issue work.
@@ -28,6 +28,7 @@ from langmesh import (
 )
 from langmesh.base.confinement import Profile
 from langmesh.base.content.models import resolve_litellm
+from langmesh.base.identity.providers import PROVIDERS
 from langmesh.base.contracts.ports import Checkpoints
 from langmesh.github.detect import is_mention_turn
 from langmesh.github.reply import GitHubReply
@@ -540,10 +541,12 @@ def _session(
     provider: str,
     model: str,
     api_key: str,
+    credential_store: Any = None,
 ) -> Session:
     provider, model, key = provider.strip(), model.strip(), api_key.strip()
-    if not provider or not model or not key:
-        raise ValueError("provider, model, and API key are required")
+    definition = PROVIDERS.get(provider)
+    if not provider or not model or (not key and not (definition and definition.native)):
+        raise ValueError("provider and model are required; this provider also needs an API key")
     agent = AgentConfiguration(
         name="langmesh",
         description="Does the work asked in a GitHub mention, in the repository that comment is on.",
@@ -570,6 +573,7 @@ def _session(
         providers={provider: key} if key else None,
         components=SessionComponents(
             checkpoints=checkpoints,
+            credential_store=credential_store,
             features=mention_features(reply, workspace),
         ),
     )
@@ -585,8 +589,9 @@ async def run_turn(
     thread_followup: bool = False,
     provider: str,
     model: str,
-    api_key: str,
     checkpoints: Checkpoints,
+    api_key: str = "",
+    credential_store: Any = None,
 ) -> str:
     def publish_working(text: str) -> None:
         if publish is None:
@@ -603,16 +608,22 @@ async def run_turn(
         provider=provider,
         model=model,
         api_key=api_key,
+        credential_store=credential_store,
     ) as session:
         restored = await session.restore()
         followup = restored or thread_followup
         resolved_provider = provider.strip()
         resolved_model = model.strip()
         key = api_key.strip()
-        resolved = resolve_litellm(
-            f"{resolved_provider}/{resolved_model}",
-            {resolved_provider: key} if key else {},
-            {},
+        definition = PROVIDERS.get(resolved_provider)
+        resolved = (
+            {"model": f"{resolved_provider}/{resolved_model}", "api_base": "native"}
+            if definition and definition.native
+            else resolve_litellm(
+                f"{resolved_provider}/{resolved_model}",
+                {resolved_provider: key} if key else {},
+                {},
+            )
         )
         logger.info(
             "mention model %s/%s wire=%s base=%s restored=%s messages=%s "
@@ -630,7 +641,9 @@ async def run_turn(
         await session.set_permission_mode("automatic")
         answer = ""
         model_call = 0
-        async for event in session.stream(prompt_for(mention, checkout=checkout, followup=followup)):
+        async for event in session.stream(
+            prompt_for(mention, checkout=checkout, followup=followup)
+        ):
             if isinstance(event, Usage):
                 model_call += 1
                 logger.info(

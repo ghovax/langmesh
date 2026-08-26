@@ -93,11 +93,11 @@ A feature instance belongs to one session because attachment gives it session-sp
 There is no `compaction`, `compaction_preparation`, `continuations`, or `goal_review_journal` field. Those are features now: pass their instances through `features`, and any ports they need through `services` or a constructor argument:
 
 ```python
-from langmesh.runtime.plugins.compaction import Compaction, KeepRecentTurns
+from langmesh.runtime.plugins.compaction import Compaction
 
 components = SessionComponents(
     features=[
-        Compaction(strategy=KeepRecentTurns(24), preparation=None, summarizer=None),
+        Compaction(),
     ],
 )
 ```
@@ -375,7 +375,7 @@ The application layer composes which features a session runs. The library ships 
 
 ```python
 from langmesh import Session, SessionComponents
-from langmesh.runtime.plugins.compaction import Compaction, KeepRecentTurns
+from langmesh.runtime.plugins.compaction import Compaction
 from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 
 session = Session(
@@ -384,7 +384,7 @@ session = Session(
     components=SessionComponents(
         features=[
             GoalReviewFeature(journal=goal_review_journal),
-            Compaction(strategy=KeepRecentTurns(24)),
+            Compaction(),
         ],
     ),
 )

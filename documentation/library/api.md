@@ -69,8 +69,6 @@
 
 ## Compaction, continuation, and hooks
 
-::: langmesh.runtime.plugins.compaction.KeepRecentTurns
-
 ::: langmesh.runtime.plugins.compaction.ObservationCompactionPreparation
 
 ::: langmesh.runtime.plugins.compaction.DirectCompactionPreparation

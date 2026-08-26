@@ -27,6 +27,9 @@ from langmesh.base.primitives.limits import current_limits
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
 TOKEN_URL = "https://auth.openai.com/oauth/token"
+DEVICE_USER_CODE_URL = "https://auth.openai.com/api/accounts/deviceauth/usercode"
+DEVICE_TOKEN_URL = "https://auth.openai.com/api/accounts/deviceauth/token"
+DEVICE_VERIFICATION_URL = "https://auth.openai.com/codex/device"
 
 # OpenAI registered this redirect for the Codex client; it is not ours to change.
 REDIRECT_HOST = "127.0.0.1"
@@ -125,20 +128,52 @@ def _tokens_from_payload(payload: dict, previous: Optional[ChatGPTTokens] = None
     )
 
 
-async def _exchange_code(code: str, code_verifier: str) -> ChatGPTTokens:
+async def exchange_code(
+    code: str, code_verifier: str, redirect_uri: str = REDIRECT_URI
+) -> ChatGPTTokens:
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
             TOKEN_URL,
             data={
                 "grant_type": "authorization_code",
                 "code": code,
-                "redirect_uri": REDIRECT_URI,
+                "redirect_uri": redirect_uri,
                 "client_id": CLIENT_ID,
                 "code_verifier": code_verifier,
             },
         )
         response.raise_for_status()
         return _tokens_from_payload(response.json())
+
+
+async def request_device_code() -> dict[str, str | int]:
+    """Request the headless login code used by Codex on remote machines."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(DEVICE_USER_CODE_URL, json={"client_id": CLIENT_ID})
+        response.raise_for_status()
+        payload = response.json()
+    return {
+        "device_auth_id": str(payload["device_auth_id"]),
+        "user_code": str(payload.get("user_code") or payload.get("usercode") or ""),
+        "interval": int(payload.get("interval") or 5),
+    }
+
+
+async def poll_device_code(device_auth_id: str, user_code: str) -> dict[str, str] | None:
+    """Return the authorization exchange data once the user has approved the device."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            DEVICE_TOKEN_URL,
+            json={"device_auth_id": device_auth_id, "user_code": user_code},
+        )
+    if response.status_code in {403, 404}:
+        return None
+    response.raise_for_status()
+    payload = response.json()
+    return {
+        "authorization_code": str(payload["authorization_code"]),
+        "code_verifier": str(payload["code_verifier"]),
+    }
 
 
 async def _refresh(tokens: ChatGPTTokens) -> ChatGPTTokens:
@@ -195,8 +230,11 @@ def _callback_page(message: str) -> str:
 class ChatGPTLoginFlow:
     """One browser sign-in, whose redirect lands on a loopback server this flow owns for its lifetime."""
 
-    def __init__(self, store: CredentialStore | None = None) -> None:
+    def __init__(
+        self, store: CredentialStore | None = None, redirect_uri: str = REDIRECT_URI
+    ) -> None:
         self._store = store or credential_store()
+        self._redirect_uri = redirect_uri
         self._code_verifier = _generate_code_verifier()
         self._state = secrets.token_urlsafe(24)
         self._server: Optional[HTTPServer] = None
@@ -204,11 +242,19 @@ class ChatGPTLoginFlow:
         self._captured: dict[str, str] = {}
 
     @property
+    def state(self) -> str:
+        return self._state
+
+    @property
+    def code_verifier(self) -> str:
+        return self._code_verifier
+
+    @property
     def authorize_url(self) -> str:
         params = {
             "response_type": "code",
             "client_id": CLIENT_ID,
-            "redirect_uri": REDIRECT_URI,
+            "redirect_uri": self._redirect_uri,
             "scope": SCOPE,
             "code_challenge": _code_challenge(self._code_verifier),
             "code_challenge_method": "S256",
@@ -232,7 +278,7 @@ class ChatGPTLoginFlow:
         assert self._server is not None, "start() must be called before wait()"
         try:
             code = await asyncio.to_thread(self._serve_until_callback, timeout)
-            tokens = await _exchange_code(code, self._code_verifier)
+            tokens = await exchange_code(code, self._code_verifier, self._redirect_uri)
             await asyncio.to_thread(save_tokens, tokens, self._store)
             return tokens
         finally:

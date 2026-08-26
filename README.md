@@ -126,13 +126,13 @@ class Timed:
         finally:
             metrics.timing("langmesh.tool", time.monotonic() - started, tags={"tool": call.name})
 
-from langmesh.runtime.plugins.compaction import Compaction, KeepRecentTurns
+from langmesh.runtime.plugins.compaction import Compaction
 
 
 components = SessionComponents(
     hooks=(MaximumToolCalls(20), RefuseNetworkTools()),
     middleware=(Timed(),),
-    features=[Compaction(strategy=KeepRecentTurns(20))],
+    features=[Compaction()],
 )
 session = Session(reviewer, directory="/srv/checkout", components=components)
 ```
