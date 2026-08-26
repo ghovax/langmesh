@@ -1315,6 +1315,7 @@ dependencies = [
     { name = "mcp", extra = ["cli"] },
     { name = "minify-html" },
     { name = "model2vec" },
+    { name = "models-provider" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
     { name = "parakeet-mlx", marker = "sys_platform == 'darwin'" },
@@ -1393,6 +1394,7 @@ requires-dist = [
     { name = "mcp", extras = ["cli"], specifier = ">=1.27,<2" },
     { name = "minify-html", specifier = ">=0.15" },
     { name = "model2vec", specifier = ">=0.8.2" },
+    { name = "models-provider", git = "https://github.com/ghovax/models-provider.git?rev=b8123b6" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.27.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.27.0" },
     { name = "parakeet-mlx", marker = "sys_platform == 'darwin'", specifier = ">=0.3" },
@@ -1874,6 +1876,14 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/54/c8/8efa9e52d210957b02b1c711f4e3b88d1e9eb5485d1869aaa9833d0cd1c5/model2vec-0.8.2.tar.gz", hash = "sha256:4e88d1a5eb2136475ebd90505689046f61caf25c69371c331f21c6499637c110", size = 4532469, upload-time = "2026-05-29T12:01:21.035Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7b/a1/38101b223fb6cea0f2e401fbacdf4f6121628d45dc9329b255d7ac843234/model2vec-0.8.2-py3-none-any.whl", hash = "sha256:f0ecfe994316e401dca583fbf6dd22079d308c05717dd36d40bff60f265431cf", size = 54749, upload-time = "2026-05-29T12:01:19.411Z" },
+]
+
+[[package]]
+name = "models-provider"
+version = "0.1.0"
+source = { git = "https://github.com/ghovax/models-provider.git?rev=b8123b6#b8123b6c57fa3a6c03fa17853a45dcd0b28a7df9" }
+dependencies = [
+    { name = "langchain-core" },
 ]
 
 [[package]]

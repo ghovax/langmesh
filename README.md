@@ -39,6 +39,21 @@ Download the latest release, install both, and open the app (or run `langmesh se
 
 See the [Installation guide](documentation/user/installation.md) for both paths in full.
 
+### Interchangeable model providers
+
+LangMesh provides an optional adapter for the independent `models-provider`
+package. The abstraction package does not import LangMesh; this direction is
+intentional.
+
+```python
+from langmesh.models_provider import LangMeshProvider
+from models_provider import ModelConfiguration
+
+provider = LangMeshProvider(providers={"anthropic": "sk-ant-…"})
+model = provider.create(ModelConfiguration(provider="anthropic", model="claude-sonnet-4-5"))
+answer = model.invoke("Explain this paragraph.")
+```
+
 ## Quickstart
 
 The same harness, reached two ways. Start at the layer you want: an object in your own program, or a window.
