@@ -24,7 +24,8 @@ from langmesh.runtime.values import ToolStatus
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
 # Model openings of this mention job between progress reminders. Opening 1
-# reminds so a direction update lands before other work; then 25, 49, …
+# asks the model to choose between a direct reply and a progress update; then
+# 25, 49, … asks for another update during sustained work.
 PROGRESS_TURNS_INTERVAL = 24
 
 CommentKind = Literal["progress", "reply"]
@@ -37,7 +38,7 @@ class GitHubComment(BaseModel):
         description=_PROMPTS.load("github_comment", {}).strip(),
     )
     kind: CommentKind = Field(
-        default="progress",
+        default="reply",
         description=_PROMPTS.load("github_comment_kind", {}).strip(),
     )
 
@@ -47,7 +48,7 @@ class GitHubReplyCapability(Protocol):
     @property
     def comment(self) -> str | None: ...
 
-    def submit(self, comment: str, *, kind: CommentKind = "progress") -> None: ...
+    def submit(self, comment: str, *, kind: CommentKind = "reply") -> None: ...
 
 
 async def _submit_github_comment(**arguments: Any) -> str:
@@ -90,7 +91,7 @@ class GitHubReply(Feature):
     def comment(self) -> str | None:
         return self._comment
 
-    def submit(self, comment: str, *, kind: CommentKind = "progress") -> None:
+    def submit(self, comment: str, *, kind: CommentKind = "reply") -> None:
         self._comment = comment
         if kind == "reply":
             self._replied = True
@@ -102,7 +103,7 @@ class GitHubReply(Feature):
             logger.exception("could not write submit_github_comment onto the thread")
 
     def prepare_request(self) -> None:
-        """Append a progress reminder at the first opening, then every ``PROGRESS_TURNS_INTERVAL``.
+        """Append a conditional opening reminder, then periodic work reminders.
 
         The note is a harness reminder on the conversation tail. The system prompt and
         tool schema are not rewritten, so the provider-cache prefix stays intact.
