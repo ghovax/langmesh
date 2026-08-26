@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TypedDict
 
 import httpx
+from models_provider import load_catalogue
 
 from langmesh.base.identity.providers import (
     PROVIDERS,
@@ -77,32 +78,28 @@ _AUTO_PROVIDER_PREFIXES = {
 
 
 def _catalog() -> list[ModelDefinition]:
-    """The model catalog from models.dev, best effort so the harness still starts without one."""
-    MODELS_DEV_URL = "https://models.dev/api.json"
+    """The models.dev catalogue, projected into LangMesh's runtime model view."""
     try:
-        response = httpx.get(MODELS_DEV_URL, timeout=5)
-        response.raise_for_status()
-        raw = response.json()
+        catalogue = load_catalogue(timeout_seconds=5)
     except Exception:
         logging.getLogger(__name__).warning(
-            "Could not fetch model catalog from %s — no models available",
-            MODELS_DEV_URL,
+            "Could not fetch the models.dev catalogue — no models available",
         )
         return []
 
     models: dict[str, ModelDefinition] = {}
-    for models_dev_id, provider_info in raw.items():
-        local_id = models_dev_id
+    for provider_info in catalogue.providers():
+        local_id = provider_info.identifier
         definition = get_provider_definition(local_id)
-        env_vars = tuple(str(value) for value in (provider_info.get("env") or ()) if value)
+        env_vars = provider_info.environment_variables
         if definition is None:
-            # Every models.dev provider is routable: register it from the catalogue's own metadata (declared env var, endpoint, wire protocol) when nothing is curated.
-            npm = str(provider_info.get("npm") or "")
+            # Every models.dev provider is routable: register it from the catalogue's own metadata.
+            npm = provider_info.npm
             litellm_prefix = _AUTO_PROVIDER_PREFIXES.get(npm, "openai")
-            api = str(provider_info.get("api") or "")
+            api = provider_info.api_base
             definition = register_models_dev_provider(
                 local_id,
-                name=str(provider_info.get("name") or models_dev_id).strip(),
+                name=provider_info.name,
                 litellm_prefix=litellm_prefix,
                 env_vars=env_vars,
                 default_base_url=api,
@@ -115,18 +112,13 @@ def _catalog() -> list[ModelDefinition]:
         else:
             # The curated key names stay authoritative; models.dev's own names join as aliases.
             extend_provider_env_vars(local_id, env_vars)
-        for model_id, model_info in provider_info.get("models", {}).items():
-            # Stripped, because the catalogue is community-maintained and some names carry stray whitespace.
-            name = (model_info.get("name", "") or model_id).strip() or model_id
-            identifier = f"{local_id}/{model_id}"
-            modalities = model_info.get("modalities") or {}
-            input_modalities = tuple(
-                str(modality) for modality in (modalities.get("input") or []) if modality
-            )
+        for model_info in catalogue.models(local_id):
+            identifier = model_info.identifier
+            input_modalities = model_info.input_modalities
             litellm_prefix = ""
             if local_id in {"opencode", "opencode-go"}:
-                model_provider = model_info.get("provider") or {}
-                sdk_package = model_provider.get("npm") or provider_info.get("npm") or ""
+                model_provider = model_info.extra.get("provider") or {}
+                sdk_package = model_provider.get("npm") or provider_info.npm
                 litellm_prefix = _GATEWAY_LITELLM_PREFIXES.get(str(sdk_package), "")
                 if not litellm_prefix:
                     logging.getLogger(__name__).warning(
@@ -139,13 +131,13 @@ def _catalog() -> list[ModelDefinition]:
                 identifier,
                 ModelDefinition(
                     identifier=identifier,
-                    name=name,
+                    name=model_info.name,
                     provider=local_id,
-                    attachment=bool(model_info.get("attachment")),
+                    attachment=model_info.attachment,
                     vision="image" in input_modalities,
                     input_modalities=input_modalities,
-                    context_length=int((model_info.get("limit") or {}).get("context") or 0),
-                    release_date=str(model_info.get("release_date") or "").strip(),
+                    context_length=model_info.context_length,
+                    release_date=model_info.release_date,
                     litellm_prefix=litellm_prefix,
                 ),
             )
