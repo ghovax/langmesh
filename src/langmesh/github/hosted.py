@@ -17,7 +17,6 @@ import os
 import secrets
 import subprocess
 import tempfile
-import threading
 import time
 import urllib.parse
 import urllib.error
@@ -448,7 +447,7 @@ class Processor:
     def __init__(self, settings: Settings, store: Store, github: GitHub) -> None:
         self.settings, self.store, self.github = settings, store, github
         self._checkpoints: Checkpoints = SQLAlchemyCheckpoints(store.engine)
-        self._locks: dict[str, threading.Lock] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
 
     async def initialize(self) -> None:
         initialize = getattr(self._checkpoints, "initialize", None)
@@ -462,18 +461,30 @@ class Processor:
                 await asyncio.sleep(self.settings.queue_poll_seconds)
                 continue
             delivery_id = str(delivery["delivery_id"])
+            attempts = int(delivery.get("attempts") or 1)
+            event_name = str(delivery["event_name"])
+            installation_id = int(delivery["installation_id"])
+            logger.info(
+                "claimed GitHub delivery id=%s event=%s installation=%s attempt=%s",
+                delivery_id,
+                event_name,
+                installation_id,
+                attempts,
+            )
             try:
                 await self.process(
-                    str(delivery["event_name"]),
+                    event_name,
                     json.loads(str(delivery["payload"])),
-                    int(delivery["installation_id"]),
+                    installation_id,
+                    delivery_id=delivery_id,
+                    attempt=attempts,
                 )
             except Exception as error:
                 logger.exception("GitHub delivery %s failed", delivery_id)
-                attempts = int(delivery.get("attempts") or 1)
                 await self.store.retry(delivery_id, str(error), min(300, 2 ** min(attempts, 8)))
             else:
                 await self.store.complete(delivery_id)
+                logger.info("completed GitHub delivery id=%s", delivery_id)
 
     def _runner(self, token: str):
         def run(arguments: list[str], *, cwd: str, env: Mapping[str, str] | None = None, extraheader: str = "") -> str:
@@ -515,10 +526,22 @@ class Processor:
         )
         return str(record.get("html_url") or "")
 
-    async def process(self, event_name: str, event: dict[str, Any], installation_id: int) -> None:
+    async def process(
+        self,
+        event_name: str,
+        event: dict[str, Any],
+        installation_id: int,
+        *,
+        delivery_id: str = "",
+        attempt: int = 0,
+    ) -> None:
         configuration = await self.store.configuration(installation_id)
         if configuration is None:
-            logger.info("installation %s has no provider configuration", installation_id)
+            logger.info(
+                "ignoring delivery id=%s installation=%s: no provider configuration",
+                delivery_id,
+                installation_id,
+            )
             return
         provider, model, api_key = configuration
         repository = str((event.get("repository") or {}).get("full_name") or "")
@@ -539,20 +562,59 @@ class Processor:
         )
         if mention is None or not mention.allowed:
             return
+        logger.info(
+            "processing delivery id=%s attempt=%s installation=%s repository=%s session=%s",
+            delivery_id,
+            attempt,
+            installation_id,
+            repository,
+            mention.session_id,
+        )
         lock_key = f"{installation_id}:{repository}"
-        lock = self._locks.setdefault(lock_key, threading.Lock())
-        with lock:
+        lock = self._locks.setdefault(lock_key, asyncio.Lock())
+        async with lock:
             with tempfile.TemporaryDirectory(prefix="langmesh-github-") as temporary_directory:
                 workspace = Path(temporary_directory) / repository.replace("/", "__")
-                await self._process_locked(mention, event, workspace, token, slug, provider, model, api_key)
+                await self._process_locked(
+                    mention,
+                    event,
+                    workspace,
+                    token,
+                    slug,
+                    provider,
+                    model,
+                    api_key,
+                    delivery_id=delivery_id,
+                    attempt=attempt,
+                )
 
-    async def _process_locked(self, mention: Mention, event: dict[str, Any], workspace: Path, token: str, slug: str, provider: str, model: str, api_key: str) -> None:
+    async def _process_locked(
+        self,
+        mention: Mention,
+        event: dict[str, Any],
+        workspace: Path,
+        token: str,
+        slug: str,
+        provider: str,
+        model: str,
+        api_key: str,
+        *,
+        delivery_id: str,
+        attempt: int,
+    ) -> None:
         self._checkout(mention.repository, workspace, token)
         runner = self._runner(token)
         if mention.kind == "pull" and not mention.head_ref:
             pull = self.github.request(f"/repos/{mention.repository}/pulls/{mention.number}", token)
             mention = mention_from_event(event, repository=mention.repository, pull=pull, known_turn=True, bot_login=f"{slug}[bot]") or mention
         ack = create_comment(mention.repository, mention.number, working_comment(""), token, self.settings.github_api_url)
+        logger.info(
+            "started GitHub mention delivery id=%s attempt=%s session=%s acknowledgement=%s",
+            delivery_id,
+            attempt,
+            mention.session_id,
+            ack,
+        )
         try:
             checkout = prepare_tree(mention, workspace, token=token, app_slug=slug, app_id=self.settings.app_id, run=runner)
             followup = thread_has_prior_bot_comment(event, repository=mention.repository, token=token, api=self.settings.github_api_url, bot_login=f"{slug}[bot]", ignore_ids=(ack,))
@@ -567,8 +629,22 @@ class Processor:
             )
             pull_url = self._publish(mention, workspace, token, runner) if tree_is_dirty(workspace, run=runner) or commits_to_push(workspace, run=runner) else ""
             publish_thread_comment(mention.repository, mention.number, posted_reply(answer, pull_url), token, self.settings.github_api_url, comment_id=ack)
+            logger.info(
+                "finished GitHub mention delivery id=%s attempt=%s session=%s pull_request=%s",
+                delivery_id,
+                attempt,
+                mention.session_id,
+                bool(pull_url),
+            )
         except Exception:
-            logger.exception("hosted mention turn failed for %s#%s", mention.repository, mention.number)
+            logger.exception(
+                "hosted mention delivery failed id=%s attempt=%s session=%s for %s#%s",
+                delivery_id,
+                attempt,
+                mention.session_id,
+                mention.repository,
+                mention.number,
+            )
             publish_thread_comment(mention.repository, mention.number, user_failure("Something went wrong while I was working on this."), token, self.settings.github_api_url, comment_id=ack)
 
 
@@ -594,6 +670,10 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             await store.close()
 
     app = FastAPI(title="LangMesh GitHub App", lifespan=lifespan)
+
+    @app.get("/")
+    async def root() -> dict[str, str]:
+        return {"service": "langmesh-agent", "status": "ok"}
 
     @app.get("/healthz")
     async def health() -> dict[str, str]:

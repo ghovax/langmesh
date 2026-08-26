@@ -63,9 +63,13 @@ class WindowView:
     """The context-window accounting the loop keeps."""
 
     context_window: int  #: The model's advertised window, or 0 when unknown.
-    latest_context_tokens: int  #: How full the context is, from the last reported call.
+    _latest_context_tokens: Callable[[], int]  #: Reads how full the context is from the last reported call.
     set_latest_context_tokens: Callable[[int], None]  #: Adopts a new context estimate.
     refresh_cached_prompt: Callable[[], None]  #: Invalidates the cached static prompt.
+
+    @property
+    def latest_context_tokens(self) -> int:
+        return self._latest_context_tokens()
 
 
 @dataclass(frozen=True)
