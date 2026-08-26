@@ -20,6 +20,7 @@ from typing import Any, Awaitable, Callable, Literal, Optional
 from pydantic import ValidationError
 
 from langmesh.base.configuration import PermissionEvaluator
+from langmesh.base.configuration.configuration import GoalReviewConfiguration
 from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.contracts.ports import GoalReviewContext, GoalReviewOutcome
 from langmesh.base.primitives.identifiers import new_id
@@ -39,8 +40,8 @@ from langmesh.runtime.features import BackgroundCapability
 from langmesh.runtime.plugins.continuation import Continuation
 from langmesh.runtime.plugins.goal_review.models import GoalReview
 from langmesh.runtime.plugins.goal_review.tools import (
+    described_update_goal,
     submit_goal_review,
-    update_goal,
 )
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.runtime import AgentRuntime
@@ -95,7 +96,7 @@ _REVIEWER_TOOLS = frozenset(
 
 
 class GoalReviewFeature(Feature):
-    """The session's goal and the isolated review that decides where it stands."""
+    """The session's goal and, when configured, the isolated review that decides where it stands."""
 
     def __init__(self, *, journal: Any = None) -> None:
         self._journal = journal
@@ -127,9 +128,37 @@ class GoalReviewFeature(Feature):
         """The goal as the model sees it, never the bookkeeping around it."""
         context["goal"] = self.goal.for_model() if self.goal is not None else {}
 
+    @property
+    def settlement(self) -> str:
+        """Who settles a `satisfied` or `blocked` mark for this session."""
+        context = getattr(self, "_context", None)
+        if context is None:
+            return GoalReviewConfiguration.REVIEWER
+        return context.global_configuration.goal_review.settlement
+
     def contribute_tools(self) -> list:
         """The goal and review tools this plugin owns."""
-        return [update_goal, submit_goal_review]
+        return [described_update_goal(settlement=self.settlement), submit_goal_review]
+
+    def apply_agent_mark(self) -> Optional[Goal]:
+        """Take the working agent's claimed status as the settlement, with no secondary review."""
+        goal = self.goal
+        if goal is None:
+            return None
+        claimed = goal.pending_review
+        if claimed not in (Goal.SATISFIED, Goal.BLOCKED):
+            return goal
+        self.write(
+            goal.updated(
+                status=claimed,
+                pending_review=None,
+                review_message=None,
+                review_id=None,
+                blocker=None if claimed == Goal.SATISFIED else goal.blocker,
+                evidence=None if claimed == Goal.BLOCKED else goal.evidence,
+            )
+        )
+        return self.goal
 
     def terminate_tool_call(self, tool_call_id: str) -> bool:
         """Stop a tool still running inside the live reviewer session, if any."""
@@ -296,9 +325,7 @@ class GoalReviewFeature(Feature):
 
         review_turn = asyncio.create_task(run())
         try:
-            if await await_interruptible(
-                review_turn, self._host.turn.abort_event, reviewer.abort
-            ):
+            if await await_interruptible(review_turn, self._host.turn.abort_event, reviewer.abort):
                 return False
             return True
         finally:

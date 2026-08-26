@@ -174,9 +174,11 @@ export function GoalBar({
             </Box>
           </Flex>
         </Tooltip>
-        {/* A review in progress (or the parked state it left behind) is worth opening: the
-            transcript panel shows the reviewer's reasoning and verdict as they happen. */}
-        {(reviewPhase || status === "parked") && (
+        {/* A live review is worth opening: the transcript panel shows the reviewer's
+            reasoning and verdict as they happen. Parked goals keep the same control when
+            a reviewer settled (or failed to), and hide it when the working agent is itself
+            the settlement. */}
+        {(reviewPhase || (status === "parked" && goal.settlement !== "agent")) && (
           <Button
             title={translation("viewReview")}
             size="2xs"
