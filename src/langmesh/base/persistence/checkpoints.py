@@ -9,6 +9,9 @@ import sqlite3
 from collections.abc import Callable
 from typing import TypeVar
 
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
 from langmesh.runtime.session_control import SessionCheckpoint
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -79,4 +82,56 @@ class SQLiteCheckpoints:
         return SessionCheckpoint.from_data(data)
 
 
-__all__ = ["SQLiteCheckpoints"]
+class SQLAlchemyCheckpoints:
+    """Session checkpoints in a caller-owned SQLAlchemy async engine."""
+
+    def __init__(self, engine: AsyncEngine, *, table: str = "langmesh_session_checkpoints") -> None:
+        if not isinstance(engine, AsyncEngine):
+            raise TypeError("engine must be a sqlalchemy.ext.asyncio.AsyncEngine")
+        if not _IDENTIFIER.fullmatch(table):
+            raise ValueError("table must be a plain SQL identifier")
+        self._engine = engine
+        self._table = table
+
+    async def initialize(self) -> None:
+        async with self._engine.begin() as connection:
+            await connection.execute(
+                text(
+                    f"CREATE TABLE IF NOT EXISTS {self._table} ("
+                    "session_id TEXT PRIMARY KEY, checkpoint TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+                )
+            )
+
+    async def save(self, session_id: str, checkpoint: SessionCheckpoint) -> None:
+        if not session_id:
+            raise ValueError("session_id must not be empty")
+        if not isinstance(checkpoint, SessionCheckpoint):
+            raise TypeError("checkpoint must be a SessionCheckpoint value")
+        payload = json.dumps(checkpoint.to_data(), ensure_ascii=False, separators=(",", ":"))
+        async with self._engine.begin() as connection:
+            await connection.execute(
+                text(
+                    f"INSERT INTO {self._table} (session_id, checkpoint) VALUES (:session_id, :checkpoint) "
+                    "ON CONFLICT (session_id) DO UPDATE SET checkpoint = EXCLUDED.checkpoint, updated_at = CURRENT_TIMESTAMP"
+                ),
+                {"session_id": session_id, "checkpoint": payload},
+            )
+
+    async def load(self, session_id: str) -> SessionCheckpoint | None:
+        if not session_id:
+            raise ValueError("session_id must not be empty")
+        async with self._engine.connect() as connection:
+            result = await connection.execute(
+                text(f"SELECT checkpoint FROM {self._table} WHERE session_id = :session_id"),
+                {"session_id": session_id},
+            )
+            row = result.first()
+        if row is None:
+            return None
+        data = json.loads(str(row[0]))
+        if not isinstance(data, dict):
+            raise ValueError("stored checkpoint must be a JSON object")
+        return SessionCheckpoint.from_data(data)
+
+
+__all__ = ["SQLiteCheckpoints", "SQLAlchemyCheckpoints"]

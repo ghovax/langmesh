@@ -37,6 +37,15 @@ def _command_mail(arguments: argparse.Namespace) -> int:
     return mail.run(arguments)
 
 
+def _command_github(arguments: argparse.Namespace) -> int:
+    """Serve the installation-level GitHub App webhook and setup UI."""
+    from langmesh.github.hosted import create_app
+    import uvicorn
+
+    uvicorn.run(create_app(arguments.configuration), host=arguments.host, port=arguments.port)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="langmesh",
@@ -79,13 +88,25 @@ def build_parser() -> argparse.ArgumentParser:
     mail_sub = mail.add_subparsers(dest="mail_command", required=False)
     mail_sub.add_parser(
         "check",
-        help="prove mailbox config, IMAP login, and SMTP auth without IDLEing",
+        help="prove mailbox configuration, IMAP login, and SMTP auth without IDLEing",
     )
     mail_sub.add_parser(
         "auth",
         help="sign in with OAuth and write the mailbox refresh token",
     )
     mail.set_defaults(handler=_command_mail)
+
+    github = subparsers.add_parser(
+        "github", help="serve the universal installation-level GitHub App"
+    )
+    github.add_argument(
+        "--configuration",
+        default="~/.config/langmesh/github.yaml",
+        help="service configuration outside any repository (default: ~/.config/langmesh/github.yaml)",
+    )
+    github.add_argument("--host", default="127.0.0.1", help="address to bind")
+    github.add_argument("--port", type=int, default=8826, help="port to listen on")
+    github.set_defaults(handler=_command_github)
 
     return parser
 
