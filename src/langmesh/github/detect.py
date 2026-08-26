@@ -1,8 +1,8 @@
-"""Whether a GitHub comment is a mention turn. Stdlib only, so the ack step can use it.
+"""Whether a GitHub comment is a mention turn.
 
-The Action posts the acknowledgement before the venv exists. A comment starts a turn
-when it addresses the bot, or when it is a reply to one of the bot's comments — a
-review reply (`in_reply_to_id`) or the comment immediately after the bot.
+An addressed comment starts a turn when it addresses the installed bot, or when it
+is a reply to one of that bot's comments — a review reply (`in_reply_to_id`) or the
+comment immediately after the bot.
 
 Reply detection follows those pointers only: one parent comment, or the two most
 recent comments on the same collection. It does not load the thread into memory.
@@ -16,55 +16,20 @@ import urllib.error
 import urllib.request
 from typing import Any, Mapping
 
-MENTION = "@langmesh[bot]"
-MENTION_ALIASES = (MENTION, "@langmesh")
-# `LangMesh` cannot be a GitHub App (reserved for @langmesh). Accept @langmesh-…[bot].
-_HYPHENATED_BOT = re.compile(r"@langmesh-[\w-]+\[bot\](?![\w-])", re.IGNORECASE)
 
-
-def _policy_mention() -> str:
-    try:
-        from langmesh.github.policy import load_github_policy
-    except ImportError:
-        from policy import load_github_policy
-
-    return (load_github_policy().get("mention") or "").strip()
-
-
-def mention_handles() -> tuple[str, ...]:
-    """`@langmesh[bot]` first, then `@langmesh`, then an optional handle from `.github/langmesh.yaml`."""
-    extra = _policy_mention()
-    handles: list[str] = list(MENTION_ALIASES)
-    if extra and extra.lower() not in {name.lower() for name in handles}:
-        handles.insert(0, extra)
-    return tuple(handles)
-
-
-def mentioned(body: str) -> bool:
-    """Whether the comment addressed the bot, not some longer `@langmesh…` login.
-
-    `@langmesh-agent[bot]` and other `@langmesh-…[bot]` slugs count even when
-    `.github/langmesh.yaml` has no ``mention`` key, because ``LangMesh`` itself
-    cannot be an App.
-    """
+def mentioned(body: str, *, bot_login: str) -> bool:
+    """Whether the comment addressed the installed bot, not a different login."""
     text = body.lower()
-    for handle in mention_handles():
-        if re.search(re.escape(handle.lower()) + r"(?![\w-])", text):
-            return True
-    return _HYPHENATED_BOT.search(text) is not None
+    handle = f"@{bot_login}".lower()
+    return re.search(re.escape(handle) + r"(?![\w-])", text) is not None
 
 
-def mention_bot_login(login: str) -> bool:
+def mention_bot_login(login: str, *, bot_login: str) -> bool:
     """Whether this login is the mention job's bot, not some other App."""
     name = (login or "").strip()
     if not name.endswith("[bot]"):
         return False
-    handle = f"@{name}"
-    if any(handle.lower() == item.lower() for item in mention_handles()):
-        return True
-    if name.lower() == "github-actions[bot]":
-        return True
-    return bool(re.fullmatch(r"langmesh(?:-[\w-]+)?\[bot\]", name, flags=re.IGNORECASE))
+    return name.lower() == bot_login.lower()
 
 
 def _get(url: str, token: str) -> Any:
@@ -125,6 +90,7 @@ def reply_to_mention_bot(
     repository: str,
     token: str,
     api: str,
+    bot_login: str,
 ) -> bool:
     """A review reply or the comment immediately after the mention bot."""
     if not token:
@@ -141,7 +107,7 @@ def reply_to_mention_bot(
             except (RuntimeError, TypeError, ValueError):
                 continue
             login = str((record.get("user") or {}).get("login") or "")
-            if mention_bot_login(login):
+            if mention_bot_login(login, bot_login=bot_login):
                 return True
     try:
         previous = _previous_comment(event, repository=repository, token=token, api=api)
@@ -149,7 +115,9 @@ def reply_to_mention_bot(
         return False
     if previous is None:
         return False
-    return mention_bot_login(str((previous.get("user") or {}).get("login") or ""))
+    return mention_bot_login(
+        str((previous.get("user") or {}).get("login") or ""), bot_login=bot_login
+    )
 
 
 def thread_has_prior_bot_comment(
@@ -158,6 +126,7 @@ def thread_has_prior_bot_comment(
     repository: str,
     token: str,
     api: str,
+    bot_login: str,
     ignore_ids: tuple[int, ...] = (),
 ) -> bool:
     """Whether the mention bot already wrote on this collection before this comment.
@@ -191,7 +160,7 @@ def thread_has_prior_bot_comment(
         if int(row.get("id") or 0) in ignored:
             continue
         login = str((row.get("user") or {}).get("login") or "")
-        if mention_bot_login(login):
+        if mention_bot_login(login, bot_login=bot_login):
             return True
     return False
 
@@ -202,12 +171,13 @@ def is_mention_turn(
     repository: str,
     token: str,
     api: str,
+    bot_login: str,
 ) -> bool:
-    """Whether this comment is a mention or a reply the Action should answer."""
+    """Whether this comment is a mention or a reply the App should answer."""
     comment = event.get("comment") or {}
     if str((comment.get("user") or {}).get("login") or "").endswith("[bot]"):
         return False
     body = str(comment.get("body") or "")
-    return mentioned(body) or reply_to_mention_bot(
-        event, repository=repository, token=token, api=api
+    return mentioned(body, bot_login=bot_login) or reply_to_mention_bot(
+        event, repository=repository, token=token, api=api, bot_login=bot_login
     )

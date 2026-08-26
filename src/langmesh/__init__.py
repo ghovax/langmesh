@@ -72,7 +72,7 @@ from langmesh.base.persistence.schedules import (
     is_due,
     next_firing,
 )
-from langmesh.base.persistence.checkpoints import SQLiteCheckpoints
+from langmesh.base.persistence.checkpoints import SQLAlchemyCheckpoints, SQLiteCheckpoints
 from langmesh.base.persistence.schedules import (
     validate as validate_schedule,
 )
@@ -219,6 +219,7 @@ __all__ = [
     "SessionSnapshot",
     "SessionState",
     "SQLiteCheckpoints",
+    "SQLAlchemyCheckpoints",
     "Skill",
     "SshExecutor",
     "Status",
