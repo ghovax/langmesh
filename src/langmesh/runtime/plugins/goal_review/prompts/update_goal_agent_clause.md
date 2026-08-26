@@ -1,0 +1,1 @@
+- A `satisfied` or `blocked` mark is final when you set it; there is no independent reviewer, and the session ends.

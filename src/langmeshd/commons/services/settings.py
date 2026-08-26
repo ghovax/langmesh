@@ -100,4 +100,11 @@ async def _reload_configuration_from_disk() -> None:
         document.get("composio") or {}
     )
     await _apply_live_credentials()
+    from langmeshd.commons.services.sessions import attached_goal
+
+    for session_id, goal in list(state._session_goals.items()):
+        overlaid = attached_goal(goal)
+        if overlaid is not None:
+            state._session_goals[session_id] = overlaid
     state.broadcaster.publish({"type": "settings_changed"})
+    state.broadcaster.publish({"type": "sessions_changed"})
