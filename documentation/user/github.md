@@ -64,7 +64,25 @@ The App owner keeps the App ID, private key, OAuth client secret, and webhook se
 1. Install the App on a personal account or organization, selecting all or only the repositories it may access.
 2. GitHub opens the service setup URL.
 3. Sign in with GitHub when redirected. The service verifies that this account can access the installation.
-4. Enter the provider, model, and API key in the configuration form.
+4. The callback returns a JSON object containing a short-lived setup token. Use that token as a bearer token when calling the JSON configuration endpoint:
+
+```sh
+curl --fail-with-body --request PUT \
+  --url https://langmesh-agent.onrender.com/github/configuration \
+  --header 'Authorization: Bearer SETUP_TOKEN_FROM_CALLBACK' \
+  --header 'Content-Type: application/json' \
+  --data '{"provider":"openrouter","model":"deepseek/deepseek-chat-v3-0324","api_key":"sk-or-v1-01f4c8e9..."}'
+```
+
+Read the saved state with the same token:
+
+```sh
+curl --fail-with-body \
+  --url https://langmesh-agent.onrender.com/github/configuration \
+  --header 'Authorization: Bearer SETUP_TOKEN_FROM_CALLBACK'
+```
+
+The response never includes the API key.
 
 After that, mention the installed bot in an issue or same-repository pull request. The bot identity is the actual App login, such as `@langmesh-agent[bot]`, and its commits use that identity. A webhook is ignored until its installation has a provider/model configuration.
 
@@ -74,4 +92,4 @@ The setup flow verifies the installer through GitHub before accepting settings; 
 
 The App service keeps its delivery queue, encrypted installation settings, and session checkpoints in the external database. Each delivery gets a temporary checkout on the execution machine, and that checkout is deleted when processing ends; GitHub branches and pull requests remain the durable source for repository changes. It uses installation tokens limited to the installed repositories and creates or updates topic branches and draft pull requests there. No repository file is created to select a model or provider.
 
-To change the provider, model, or API key, reopen the installation setup page and save the new values. The next mention uses the new configuration.
+To change the provider, model, or API key, start the setup flow again and send another JSON `PUT` request. The next mention uses the new configuration.
