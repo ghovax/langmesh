@@ -23,8 +23,8 @@ from langmesh.runtime.values import ToolStatus
 
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
-# Model openings of this mention job between progress reminders. Opening 1
-# reminds so a direction update lands before other work; then 25, 49, …
+# Model openings of this mention job between progress reminders. The initial
+# acknowledgement already exists, so reminders begin only after sustained work.
 PROGRESS_TURNS_INTERVAL = 24
 
 CommentKind = Literal["progress", "reply"]
@@ -37,7 +37,7 @@ class GitHubComment(BaseModel):
         description=_PROMPTS.load("github_comment", {}).strip(),
     )
     kind: CommentKind = Field(
-        default="progress",
+        default="reply",
         description=_PROMPTS.load("github_comment_kind", {}).strip(),
     )
 
@@ -47,7 +47,7 @@ class GitHubReplyCapability(Protocol):
     @property
     def comment(self) -> str | None: ...
 
-    def submit(self, comment: str, *, kind: CommentKind = "progress") -> None: ...
+    def submit(self, comment: str, *, kind: CommentKind = "reply") -> None: ...
 
 
 async def _submit_github_comment(**arguments: Any) -> str:
@@ -90,7 +90,7 @@ class GitHubReply(Feature):
     def comment(self) -> str | None:
         return self._comment
 
-    def submit(self, comment: str, *, kind: CommentKind = "progress") -> None:
+    def submit(self, comment: str, *, kind: CommentKind = "reply") -> None:
         self._comment = comment
         if kind == "reply":
             self._replied = True
@@ -102,7 +102,7 @@ class GitHubReply(Feature):
             logger.exception("could not write submit_github_comment onto the thread")
 
     def prepare_request(self) -> None:
-        """Append a progress reminder at the first opening, then every ``PROGRESS_TURNS_INTERVAL``.
+        """Append a progress reminder after sustained work, then periodically.
 
         The note is a harness reminder on the conversation tail. The system prompt and
         tool schema are not rewritten, so the provider-cache prefix stays intact.
@@ -111,15 +111,12 @@ class GitHubReply(Feature):
         if host is None or host.turn.maintenance_active():
             return
         self._openings += 1
-        if self._openings % PROGRESS_TURNS_INTERVAL != 1:
+        if self._openings <= 1 or (self._openings - 1) % PROGRESS_TURNS_INTERVAL != 0:
             return
-        name = (
-            "github_comment_progress_start"
-            if self._openings == 1
-            else "github_comment_progress_interval"
-        )
         host.conversation.messages.append(
-            host.turn.reminder_message(_PROMPTS.load(name, {}).strip())
+            host.turn.reminder_message(
+                _PROMPTS.load("github_comment_progress_interval", {}).strip()
+            )
         )
         host.bookkeeping.note_state_changed()
 

@@ -204,9 +204,9 @@ def note_observation_registry(runtime, metadata: dict, error: str | None = None)
 
 
 def background_jobs(runtime):
-    from langmesh.runtime.plugins.background import BackgroundJobsFeature
+    from langmesh.runtime.plugins.background import BackgroundJobs
 
-    feature = _resolve_feature(runtime, BackgroundJobsFeature)
+    feature = _resolve_feature(runtime, BackgroundJobs)
     return feature.runner if feature is not None else None
 
 
@@ -227,9 +227,9 @@ async def wait_for_jobs(runtime) -> None:
 
 
 def inject_stored_background_result(runtime, **kwargs) -> None:
-    from langmesh.runtime.plugins.background import BackgroundJobsFeature
+    from langmesh.runtime.plugins.background import BackgroundJobs
 
-    feature = _resolve_feature(runtime, BackgroundJobsFeature)
+    feature = _resolve_feature(runtime, BackgroundJobs)
     if feature is not None:
         feature.inject_stored_result(**kwargs)
 

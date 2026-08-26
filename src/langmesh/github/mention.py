@@ -45,7 +45,7 @@ from langmesh.github.files import ACK_ID_NAME, APP_SLUG_NAME, read_job_file
 from langmesh.github.policy import load_github_policy
 from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features import Feature
-from langmesh.runtime.plugins.background import BackgroundJobsFeature
+from langmesh.runtime.plugins.background import BackgroundJobs
 from langmesh.runtime.plugins.bash import Bash
 from langmesh.runtime.plugins.compaction import (
     Compaction,
@@ -766,7 +766,7 @@ def mention_features(reply: GitHubReply, workspace: Path) -> list[Feature]:
         ),
         PermissionReview(),
         Continuation(),
-        BackgroundJobsFeature(),
+        BackgroundJobs(),
         Bash(),
         Web(),
         reply,
