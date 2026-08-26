@@ -74,7 +74,7 @@ asyncio.run(main())
 
 ```python
 from langmesh import Session, SessionComponents
-from langmesh.runtime.plugins.background import BackgroundJobsFeature
+from langmesh.runtime.plugins.background import BackgroundJobs
 from langmesh.runtime.plugins.bash import Bash
 from langmesh.runtime.plugins.web import Web
 
@@ -82,7 +82,7 @@ session = Session(
     reviewer,
     directory="/srv/checkout",
     providers={"anthropic": "sk-ant-…"},
-    components=SessionComponents(features=[BackgroundJobsFeature(), Bash(), Web()]),
+    components=SessionComponents(features=[BackgroundJobs(), Bash(), Web()]),
 )
 async for event in session.stream("Summarise what the test suite covers."):
     ...  # Dispatch on each typed TurnEvent as it arrives.
