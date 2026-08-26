@@ -802,7 +802,8 @@
       "recent_working_set_fraction": "Kept verbatim (share)"
     },
     "goal_review": {
-      "_": "Goal review"
+      "_": "Goal review",
+      "settlement": "Who settles a mark"
     }
   },
   "SettingsAbout": {
@@ -1027,7 +1028,8 @@
       "recent_working_set_fraction": "Share of the usable window kept verbatim after older history is discarded. It is measured in tokens because one turn may contain hundreds of tool results."
     },
     "goal_review": {
-      "_": "How the secondary review settles an agent-marked goal. A reviewer that stops without a verdict is asked again until it submits."
+      "_": "How a satisfied or blocked mark is settled. A reviewer that stops without a verdict is asked again until it submits.",
+      "settlement": "An independent reviewer confirms or overrides the working agent's mark, or that mark is final and the session ends."
     }
   },
   "SettingsChoices": {
@@ -1042,6 +1044,12 @@
         "none": "The project directory",
         "branch": "A branch per session",
         "worktree": "A worktree per session"
+      }
+    },
+    "goal_review": {
+      "settlement": {
+        "reviewer": "Independent reviewer",
+        "agent": "The working agent"
       }
     },
     "sandbox": {

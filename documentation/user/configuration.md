@@ -184,7 +184,17 @@ When a conversation reaches its recommended preparation threshold, LangMesh appe
 - `reclaim_at_fraction` is the recommended preparation boundary, not a hard cutoff.
 - `recent_working_set_fraction` is how much stays verbatim, measured in tokens rather than turns.
 
-`goal_review` governs the secondary review that settles a goal the agent marked. The agent owns its goal's `status` through the `update_goal` tool (`active`, `satisfied`, `blocked`, `parked`, `cleared`). A `satisfied` or `blocked` mark is not final by itself: after the working turn ends, an independent reviewer inspects the work and either confirms the mark or overrides it (an unsupported `satisfied` becomes `unmet`, sending the goal back to work). `parked` and `cleared` are administrative and apply directly. A goal left `active` and unmarked is simply re-opened with a light continuation reminder until it is reached or the person stops it. The reviewer is asked again until it submits a verdict — modelling correctly is the model's own responsibility, and nothing puts a price on honesty.
+`goal_review` governs how a goal the agent marked is settled. The agent owns its goal's `status` through the `update_goal` tool (`active`, `satisfied`, `blocked`, `parked`, `cleared`). `parked` and `cleared` are administrative and apply directly. A goal left `active` and unmarked is simply re-opened with a light continuation reminder until it is reached or the person stops it.
+
+```yaml
+goal_review:
+  settlement: reviewer
+```
+
+Who settles a `satisfied` or `blocked` mark is `goal_review.settlement`:
+
+- `reviewer` (the default): the mark is not final by itself. After the working turn ends, an independent reviewer inspects the work and either confirms the mark or overrides it (an unsupported `satisfied` becomes `unmet`, sending the goal back to work). The reviewer is asked again until it submits a verdict — modelling correctly is the model's own responsibility, and nothing puts a price on honesty.
+- `agent`: the working agent's mark is final and the session ends. There is no second reviewer session.
 
 Observations are workspace-owned current state and explicit. Agents retrieve and maintain them through Bash using the `observational-memory` skill. The daemon watches each active location's registry through native filesystem notifications and shares one watcher across its sessions. A committed revision broadcasts a complete validated snapshot to the memory panel. The append-only session context receives only progressive-disclosure metadata, never observation rows. A registry that is missing or no longer matches its schema is itself reported as metadata (`status: missing|broken` with a problem message), so an agent hears about the state and repairs it rather than silently working without memory; the pre-columnar JSON-schema format is never read or migrated.
 
@@ -332,7 +342,11 @@ How conversation history is compacted as it grows.
 
 ### Goal review
 
-How an agent-marked goal is settled. It has no settings: the reviewer confirms or overrides a `satisfied` or `blocked` mark, and is asked again until it submits a verdict.
+How an agent-marked goal is settled.
+
+| Setting                    | Type   | Default    | What it is for |
+| -------------------------- | ------ | ---------- | -------------- |
+| `goal_review.settlement`   | choice | `reviewer` | Who settles a `satisfied` or `blocked` mark: an independent reviewer (`reviewer`), or the working agent (`agent`), in which case that mark is final and the session ends. |
 
 ### Attachments
 

@@ -19,7 +19,7 @@ class GoalReviewPhase(StrEnum):
 
 
 class Goal(BaseModel):
-    """The session's single contract for completion. The agent states it; the review decides where it stands."""
+    """The session's single contract for completion. The agent states it; who settles a mark is configured."""
 
     #: The end state, in the agent's own words.
     text: NonBlankText
@@ -37,8 +37,9 @@ class Goal(BaseModel):
     review_id: NonBlankText | None = None
     #: How many turns have been opened since a person last spoke, and deliberately not shown to the model.
     continuations: int = 0
-    #: The non-active status the agent just marked for itself, awaiting the secondary review
-    #: that either confirms it or reverts it. Empty once the review has decided.
+    #: The non-active status the agent just marked for itself, awaiting settlement when a
+    #: reviewer confirms or reverts it. Empty once settled, and never set when the working
+    #: agent is itself the settlement.
     pending_review: str | None = None
 
     #: Being worked, so the session keeps going on its own.
