@@ -208,6 +208,8 @@ def turn_payload(
             payload["head"] = head.strip()
     if mention.comment_url.strip():
         payload["comment_url"] = mention.comment_url.strip()
+    if mention.user.strip():
+        payload["comment_author"] = mention.user.strip()
     payload["comment"] = mention.body
     return payload
 
