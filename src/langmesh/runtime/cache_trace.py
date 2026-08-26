@@ -222,6 +222,8 @@ def diagnose(current: RequestTrace, previous: Optional[RequestTrace]) -> dict[st
     if previous is None:
         return {
             "cache_prefix_reusable": None,
+            "cache_request_reusable": None,
+            "cache_read_fraction": None,
             "reusable_prefix_tokens": 0,
             "segments": len(current.segments),
             "shared_segments": 0,
@@ -254,7 +256,11 @@ def diagnose(current: RequestTrace, previous: Optional[RequestTrace]) -> dict[st
     }
 
 
-def reconcile(diagnosis: dict, cache_read: int) -> dict:
+def reconcile(
+    diagnosis: dict,
+    cache_read: int,
+    input_tokens: int | None = None,
+) -> dict:
     """Correct the pre-request verdict with what the provider actually served from cache.
 
     ``diagnose`` reads only the two request shapes, so its ``cache_prefix_reusable`` may judge a
@@ -262,6 +268,12 @@ def reconcile(diagnosis: dict, cache_read: int) -> dict:
     response's ``cache_read`` and adjusts the judgment in place, leaving the ``divergence``
     detail for anyone who wants to know exactly where the request changed.
     """
+    if input_tokens is not None and input_tokens > 0:
+        diagnosis["cache_read_fraction"] = min(1.0, max(0.0, cache_read / input_tokens))
+        diagnosis["cache_request_reusable"] = cache_read >= input_tokens * 0.98
+    else:
+        diagnosis.setdefault("cache_read_fraction", None)
+        diagnosis.setdefault("cache_request_reusable", None)
     verdict = diagnosis.get("cache_prefix_reusable")
     if verdict is None or verdict is True:
         return diagnosis  # no baseline, or the byte prediction already held
