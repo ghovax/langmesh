@@ -42,7 +42,7 @@ from langmesh.runtime.plugins.compaction import (
 from langmesh.runtime.plugins.continuation import Continuation
 from langmesh.runtime.plugins.permissions import PermissionReview
 from langmesh.runtime.plugins.web import Web
-from langmesh.runtime.turn_events import Done, Suspended, Usage
+from langmesh.runtime.turn_events import CompactionDone, CompactionStarted, Done, Suspended, Usage
 
 ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 PROTECTED_BRANCHES = frozenset({"main", "master"})
@@ -632,11 +632,16 @@ async def run_turn(
         )
         await session.set_permission_mode("automatic")
         answer = ""
+        model_call = 0
         async for event in session.stream(prompt_for(mention, checkout=checkout, followup=followup)):
             if isinstance(event, Usage):
+                model_call += 1
                 logger.info(
-                    "mention usage input=%s output=%s cache_read=%s cache_write=%s "
-                    "prefix_reusable=%s reusable_prefix=%s shared=%s/%s",
+                    "mention usage session=%s call=%s input=%s output=%s "
+                    "cache_read=%s cache_write=%s prefix_reusable=%s "
+                    "reusable_prefix=%s shared=%s/%s divergence=%s",
+                    mention.session_id,
+                    model_call,
                     event.input_tokens,
                     event.output_tokens,
                     event.cache_read_tokens,
@@ -645,6 +650,29 @@ async def run_turn(
                     event.reusable_prefix_tokens,
                     event.shared_segments,
                     event.segments,
+                    event.divergence,
+                )
+            if isinstance(event, CompactionStarted):
+                logger.info(
+                    "mention compaction started session=%s reason=%s "
+                    "messages_before=%s tokens_before=%s",
+                    mention.session_id,
+                    event.reason,
+                    event.messages_before,
+                    event.tokens_before,
+                )
+            if isinstance(event, CompactionDone):
+                logger.info(
+                    "mention compaction done session=%s reason=%s ok=%s "
+                    "messages=%s->%s tokens=%s->%s error=%s",
+                    mention.session_id,
+                    event.reason,
+                    event.ok,
+                    event.messages_before,
+                    event.messages_after,
+                    event.tokens_before,
+                    event.tokens_after,
+                    event.error_code,
                 )
             if isinstance(event, Suspended):
                 raise PermissionError(
