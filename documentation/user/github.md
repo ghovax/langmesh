@@ -9,21 +9,28 @@ The service receives `issue_comment` and `pull_request_review_comment` webhooks,
 Run the hosted service outside a repository:
 
 ```sh
-langmesh github-app --configuration ~/.config/langmesh/github-app.yaml
+langmesh github --configuration ~/.config/langmesh/github.yaml
 ```
 
 The configuration file is an operator/deployment file, not a repository file. It points at the App private key, webhook secret, and encryption key. Keep those files in a secret manager or a locked service directory. A complete shape is:
 
 ```yaml
-app_id: "2149876"
-private_key_path: "/srv/langmesh/secrets/langmesh-agent.2026-08.pem"
-webhook_secret: "langmesh-gh-9a5b7c1d4e6f8a0b2c3d"
-oauth_client_id: "Iv1.8f2c1d4e6a7b9c0d"
-oauth_client_secret: "9c8b7a6d5e4f3210fedcba9876543210abcd1234"
-encryption_key_path: "/srv/langmesh/secrets/provider-keys.fernet"
-database_path: "/srv/langmesh/data/github-app.sqlite"
-workspaces_path: "/srv/langmesh/data/workspaces"
-public_url: "https://agent.langmesh.dev"
+github:
+  app:
+    id: "2149876"
+    private_key_path: "/srv/langmesh/secrets/langmesh-agent.2026-08.pem"
+  webhook:
+    secret: "langmesh-gh-9a5b7c1d4e6f8a0b2c3d"
+  oauth:
+    client_id: "Iv1.8f2c1d4e6a7b9c0d"
+    client_secret: "9c8b7a6d5e4f3210fedcba9876543210abcd1234"
+  api_url: "https://api.github.com"
+server:
+  public_url: "https://github-agent.example.net"
+storage:
+  encryption_key_path: "/srv/langmesh/secrets/provider-keys.fernet"
+  database_path: "/srv/langmesh/data/github.sqlite"
+  workspaces_path: "/srv/langmesh/data/workspaces"
 ```
 
 `encryption_key_path` must contain a Fernet key. Generate one once with:
@@ -40,9 +47,9 @@ The service stores provider API keys encrypted in its database, keyed by GitHub 
 
 Register one App for the service owner and set:
 
-- **Setup URL:** `https://agent.langmesh.dev/github/setup`
-- **Callback URL:** `https://agent.langmesh.dev/github/setup/callback`
-- **Webhook URL:** `https://agent.langmesh.dev/github/webhook`
+- **Setup URL:** `https://github-agent.example.net/github/setup`
+- **Callback URL:** `https://github-agent.example.net/github/setup/callback`
+- **Webhook URL:** `https://github-agent.example.net/github/webhook`
 - **Webhook secret:** the same value as `webhook_secret` in the service configuration
 - **Webhook events:** `Installation`, `Issue comment`, and `Pull request review comment`
 - **Repository permissions:** Contents read/write, Issues read/write, Pull requests read/write, and Metadata read-only

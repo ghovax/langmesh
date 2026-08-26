@@ -50,9 +50,11 @@ from langmesh.github.mention import (
     user_failure,
     working_comment,
 )
+from langmesh import PackagePromptLoader
 
 logger = logging.getLogger("langmesh.github.hosted")
-DEFAULT_CONFIGURATION_PATH = Path.home() / ".config" / "langmesh" / "github-app.yaml"
+DEFAULT_CONFIGURATION_PATH = Path.home() / ".config" / "langmesh" / "github.yaml"
+_HTML = PackagePromptLoader(Path(__file__).resolve().parent / "assets", extension="html")
 
 
 @dataclass(frozen=True)
@@ -78,23 +80,43 @@ class Settings:
         if not isinstance(values, dict):
             raise RuntimeError(f"GitHub App configuration must be a YAML mapping: {configuration_path}")
 
-        def required(name: str) -> str:
-            value = str(values.get(name) or "").strip()
-            if not value:
-                raise RuntimeError(f"GitHub App configuration needs {name!r}: {configuration_path}")
+        def section(name: str) -> Mapping[str, Any]:
+            value = values.get(name)
+            if not isinstance(value, Mapping):
+                raise RuntimeError(f"GitHub App configuration needs a {name!r} section: {configuration_path}")
             return value
 
+        def section_from(source: Mapping[str, Any], name: str, path: Path) -> Mapping[str, Any]:
+            value = source.get(name)
+            if not isinstance(value, Mapping):
+                raise RuntimeError(f"GitHub App configuration needs a {name!r} section: {path}")
+            return value
+
+        def required(source: Mapping[str, Any], name: str, section_name: str) -> str:
+            value = str(source.get(name) or "").strip()
+            if not value:
+                raise RuntimeError(
+                    f"GitHub App configuration needs {section_name}.{name!s}: {configuration_path}"
+                )
+            return value
+
+        github = section("github")
+        app = section_from(github, "app", configuration_path)
+        webhook = section_from(github, "webhook", configuration_path)
+        oauth = section_from(github, "oauth", configuration_path)
+        server = section("server")
+        storage = section("storage")
         return cls(
-            app_id=required("app_id"),
-            private_key_path=Path(required("private_key_path")).expanduser(),
-            webhook_secret=required("webhook_secret"),
-            oauth_client_id=required("oauth_client_id"),
-            oauth_client_secret=required("oauth_client_secret"),
-            encryption_key_path=Path(required("encryption_key_path")).expanduser(),
-            database_path=Path(required("database_path")).expanduser(),
-            workspaces_path=Path(required("workspaces_path")).expanduser(),
-            public_url=required("public_url").rstrip("/"),
-            github_api_url=str(values.get("github_api_url") or "https://api.github.com").rstrip("/"),
+            app_id=required(app, "id", "github.app"),
+            private_key_path=Path(required(app, "private_key_path", "github.app")).expanduser(),
+            webhook_secret=required(webhook, "secret", "github.webhook"),
+            oauth_client_id=required(oauth, "client_id", "github.oauth"),
+            oauth_client_secret=required(oauth, "client_secret", "github.oauth"),
+            encryption_key_path=Path(required(storage, "encryption_key_path", "storage")).expanduser(),
+            database_path=Path(required(storage, "database_path", "storage")).expanduser(),
+            workspaces_path=Path(required(storage, "workspaces_path", "storage")).expanduser(),
+            public_url=required(server, "public_url", "server").rstrip("/"),
+            github_api_url=str(github.get("api_url") or "https://api.github.com").rstrip("/"),
         )
 
 
@@ -274,11 +296,7 @@ class GitHub:
 
 
 def _html_page(title: str, body: str) -> HTMLResponse:
-    return HTMLResponse(
-        "<!doctype html><meta name='viewport' content='width=device-width'>"
-        f"<title>{html.escape(title)}</title><main style='max-width:38rem;margin:3rem auto;font:16px system-ui'>"
-        f"{body}</main>"
-    )
+    return HTMLResponse(_HTML.load("page", {"title": html.escape(title), "body": body}))
 
 
 class Processor:
@@ -409,7 +427,10 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             if not record.get("repositories") and record.get("total_count") == 0:
                 raise RuntimeError("your GitHub account cannot access this installation")
         except Exception as error:
-            return _html_page("LangMesh setup failed", f"<h1>Setup failed</h1><p>{html.escape(str(error))}</p>")
+            return _html_page(
+                "LangMesh setup failed",
+                _HTML.load("setup_failed", {"message": html.escape(str(error))}),
+            )
         response = RedirectResponse("/github/configure", status_code=303)
         response.set_cookie("langmesh_setup", state, httponly=True, secure=True, samesite="lax", max_age=600)
         return response
@@ -419,16 +440,12 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         setup_token = request.cookies.get("langmesh_setup", "")
         setup = store.setup(setup_token)
         if setup is None:
-            return _html_page("LangMesh setup", "<h1>Setup expired</h1><p>Open the GitHub App installation link again.</p>")
+            return _html_page("LangMesh setup", _HTML.load("setup_expired", {}))
         current = store.configuration(setup[0])
         provider, model = (current[0], current[1]) if current else ("", "")
-        body = (
-            "<h1>Configure LangMesh</h1><p>These settings apply only to this GitHub App installation.</p>"
-            "<form method='post' action='/github/configure'>"
-            f"<label>Provider<br><input name='provider' required value='{html.escape(provider)}'></label><br><br>"
-            f"<label>Model<br><input name='model' required value='{html.escape(model)}'></label><br><br>"
-            "<label>API key<br><input name='api_key' type='password' placeholder='leave blank to keep the current key'></label><br><br>"
-            "<button>Save configuration</button></form>"
+        body = _HTML.load(
+            "configuration",
+            {"provider": html.escape(provider), "model": html.escape(model)},
         )
         return _html_page("Configure LangMesh", body)
 
@@ -437,17 +454,17 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         setup_token = request.cookies.get("langmesh_setup", "")
         setup = store.setup(setup_token)
         if setup is None:
-            return _html_page("LangMesh setup", "<h1>Setup expired</h1>")
+            return _html_page("LangMesh setup", _HTML.load("setup_expired", {}))
         form = await request.form()
         provider, model = str(form.get("provider") or "").strip(), str(form.get("model") or "").strip()
         if not provider or not model:
-            return _html_page("LangMesh setup", "<h1>Provider and model are required</h1>")
+            return _html_page("LangMesh setup", _HTML.load("configuration_missing", {}))
         current = store.configuration(setup[0])
         api_key = str(form.get("api_key") or "")
         if not api_key and current:
             api_key = current[2]
         store.save_installation(setup[0], setup[1], "unknown", provider, model, api_key)
-        return _html_page("LangMesh configured", "<h1>LangMesh is configured</h1><p>You can now mention the installed bot in a repository.</p>")
+        return _html_page("LangMesh configured", _HTML.load("configured", {}))
 
     @app.post("/github/webhook")
     async def webhook(request: Request, background_tasks: BackgroundTasks) -> Response:
