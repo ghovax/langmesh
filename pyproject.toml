@@ -8,6 +8,7 @@ dependencies = [
     "langchain>=0.3.0",
     "litellm>=1.60.0",
     "sqlalchemy>=2.0",
+    "asyncpg>=0.30",
     "pyyaml>=6.0",
     "pydantic>=2.0",
     "fastapi>=0.115.0",
@@ -68,6 +69,7 @@ dependencies = [
     # Segno renders pairing links as terminal QR codes without image dependencies.
     "segno>=1.6,<2",
     "authlib>=1.7.2",
+    "cryptography>=44.0",
 ]
 
 [project.scripts]
