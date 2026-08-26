@@ -28,12 +28,15 @@ github:
 server:
   public_url: "https://github-agent.example.net"
 storage:
-  encryption_key_path: "/srv/langmesh/secrets/provider-keys.fernet"
-  database_path: "/srv/langmesh/data/github.sqlite"
-  workspaces_path: "/srv/langmesh/data/workspaces"
+  database:
+    url: "postgresql+asyncpg://postgres:correct-horse-battery-staple@db.qxwzjvkrmno.supabase.co:5432/postgres?ssl=require"
+  encryption:
+    key_path: "/srv/langmesh/secrets/provider-keys.fernet"
+  queue:
+    poll_seconds: 5
 ```
 
-`encryption_key_path` must contain a Fernet key. Generate one once with:
+`storage.encryption.key_path` must contain a Fernet key. Generate one once with:
 
 ```sh
 python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())' \
@@ -41,7 +44,7 @@ python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 chmod 600 /srv/langmesh/secrets/provider-keys.fernet
 ```
 
-The service stores provider API keys encrypted in its database, keyed by GitHub installation. Different installations can choose different providers and models. For example, an installation may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like `sk-or-v1-01f4c8e9...`.
+The service stores provider API keys encrypted in the external database, keyed by GitHub installation. The delivery queue and session checkpoints use that same database, so another worker can continue after the original worker disappears. Different installations can choose different providers and models. For example, an installation may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like `sk-or-v1-01f4c8e9...`.
 
 ## GitHub App settings
 
@@ -69,6 +72,6 @@ The setup flow verifies the installer through GitHub before accepting settings; 
 
 ## Repository behavior
 
-The App service keeps session checkpoints and working clones in its own data directory. It uses installation tokens limited to the installed repositories and creates or updates topic branches and draft pull requests there. No repository file is created to select a model or provider.
+The App service keeps its delivery queue, encrypted installation settings, and session checkpoints in the external database. Each delivery gets a temporary checkout on the execution machine, and that checkout is deleted when processing ends; GitHub branches and pull requests remain the durable source for repository changes. It uses installation tokens limited to the installed repositories and creates or updates topic branches and draft pull requests there. No repository file is created to select a model or provider.
 
 To change the provider, model, or API key, reopen the installation setup page and save the new values. The next mention uses the new configuration.
