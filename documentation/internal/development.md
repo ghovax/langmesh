@@ -143,7 +143,7 @@ The repository ships **no unit-test suite**. It ships two guards and one verific
 | `web/` | The desktop app: Next.js UI, and the Tauri shell in `src-tauri/` |
 | `mobile/` | The phone client: an Expo WebView onto the same interface |
 | `.github/` | Repository metadata only; the universal GitHub App lives under `src/langmesh/github/` |
-| `packaging/` | PyInstaller spec and signing, plus `entry.py` for the frozen build |
+| `packaging/` | PyInstaller build metadata and signing, plus `entry.py` for the frozen build |
 | `scripts/` | Event-schema generation and the web dev script |
 | `examples/` | Example MCP servers |
 

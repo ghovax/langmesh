@@ -8,10 +8,10 @@ History management has two independent policies: preparation establishes that du
 
 ```python
 class CompactionPreparation:
-    def instruction(self, default: str) -> str | None: ...
+    def instruction(self, default: str): ...
     async def baseline(self): ...
-    async def completed(self, baseline) -> bool: ...
-    async def describe(self) -> dict: ...
+    async def completed(self, baseline): ...
+    async def describe(self): ...
 ```
 
 `ObservationCompactionPreparation` is the standard handoff: it captures the observational-memory revision, runs the private preparation instruction with local foreground Bash only, and compacts only after the revision advances. `DirectCompactionPreparation` opens no preparation turn.
@@ -58,7 +58,7 @@ from langmesh.runtime.plugins.compaction import Compaction
 
 
 class ServiceSummarizer:
-    async def summarize(self, state: CompactionSummaryState) -> str | None:
+    async def summarize(self, state: CompactionSummaryState):
         reply = await cheaper_model.ainvoke(
             [SystemMessage(content=state.system_prompt), *state.messages]
         )
@@ -112,10 +112,10 @@ A remote adapter implements the same protocol and uses `to_data()` and `from_dat
 from langmesh import SessionCheckpoint
 
 class RedisCheckpoints:
-    async def save(self, session_id: str, checkpoint: SessionCheckpoint) -> None:
+    async def save(self, session_id: str, checkpoint: SessionCheckpoint):
         await redis.set(f"langmesh:{session_id}", json.dumps(checkpoint.to_data()))
 
-    async def load(self, session_id: str) -> SessionCheckpoint | None:
+    async def load(self, session_id: str):
         value = await redis.get(f"langmesh:{session_id}")
         return SessionCheckpoint.from_data(json.loads(value)) if value else None
 ```

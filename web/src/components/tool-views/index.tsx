@@ -190,7 +190,7 @@ function codedAppearance(field: string, value: string): { key: string; palette: 
   }
 }
 
-// "task-..." or a bare index -> "#..." — the internal id is never shown raw, only its numeric suffix.
+// "task-..." or a bare index becomes "#..."; the internal id is never shown raw, only its numeric suffix.
 function taskHashLabel(id: string): string {
   const match = id.match(/(\d+)\s*$/);
   return match ? `#${match[1]}` : id;

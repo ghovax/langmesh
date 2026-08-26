@@ -131,7 +131,7 @@ from langchain_core.tools import tool
 from langmesh import Session, SessionComponents
 
 @tool
-async def incident_lookup(service: str) -> list[dict]:
+async def incident_lookup(service: str):
     """Return open incidents for a service."""
     return await incidents.open_for(service)
 
@@ -159,7 +159,7 @@ A caller-supplied tool is gated by default (`tool_gate="ask"`, so every call ask
 await session.ask("Inspect the recent incidents.")
 
 @tool
-def current_incident() -> dict:
+def current_incident():
     """The most recent incident, for the report."""
     return incidents.latest()
 
@@ -402,13 +402,13 @@ A feature is a subclass of `Feature` implementing the hooks it needs:
 from langmesh.runtime.features import Feature
 
 class CustomFeature(Feature):
-    def __init__(self, project: str) -> None:
+    def __init__(self, project: str):
         self._project = project
 
-    def compose_context(self, context: dict) -> None:
+    def compose_context(self, context: dict):
         context["project"] = self._project
 
-    def compose_prompt(self, variables: dict[str, str]) -> None:
+    def compose_prompt(self, variables: dict[str, str]):
         variables["project"] = f"Work in the {self._project} repository."
 ```
 
@@ -418,11 +418,11 @@ A tool plugin names only the tools it provides:
 from langchain_core.tools import StructuredTool
 from langmesh.runtime.features import Feature
 
-async def lookup_ticket(identifier: str) -> str:
+async def lookup_ticket(identifier: str):
     return await ticket_service.read(identifier)
 
 class Tickets(Feature):
-    def contribute_tools(self) -> list:
+    def contribute_tools(self):
         return [StructuredTool.from_function(coroutine=lookup_ticket, name="lookup_ticket", description="Read one ticket by identifier.")]
 ```
 
@@ -431,7 +431,7 @@ Composing `Tickets()` makes exactly `lookup_ticket` available. The plugin neithe
 A feature that wants to hear what others publish subscribes in `attach`:
 
 ```python
-    def attach(self, context: PluginContext, host=None) -> None:
+    def attach(self, context: PluginContext, host=None):
         context.bus.subscribe(CustomEvent, self._on_custom_event)
 ```
 

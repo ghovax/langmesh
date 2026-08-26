@@ -20,22 +20,16 @@
 
 LangMesh is two Python packages that ship together as one image. The **library** (`src/langmesh`) is the harness: `langmesh.Session` drives an agent turn by turn in your process. It reads no machine configuration, starts nothing, and composes nothing you did not hand it — every tool and sub-behavior is a feature. The **product** (`src/langmeshd`) is everything that makes sessions durable and addressable: the machine loaders that turn your `.agents` trees into what the library takes, the daemon that hosts sessions, the CLI, the REST surface, dictation, and the worker machinery. The library never imports the product; the product hosts the library.
 
-The product is one executable entered two ways. `langmesh` is the command a person runs (`serve` for the interface, `mail` for IMAP/SMTP in front of the daemon); `langmeshd` is the daemon that hosts sessions. They are the same image, not two binaries, so packaging stays a single specification and every session carries the signed bundle's code identity. One macOS Accessibility grant covers the whole fleet instead of prompting per session.
+The product is one executable entered two ways. `langmesh` is the command a person runs (`serve` for the interface, `mail` for IMAP/SMTP in front of the daemon); `langmeshd` is the daemon that hosts sessions. They are the same image, not two binaries, so packaging stays a single build description and every session carries the signed bundle's code identity. One macOS Accessibility grant covers the whole fleet instead of prompting per session.
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Daemon as langmeshd
-    participant Session
-    participant Model as Model provider
-
-    Client->>Daemon: send work
-    Daemon->>Session: run the turn
-    Session->>Model: call the model
-    Model-->>Session: stream output
-    Session-->>Daemon: emit events
-    Daemon-->>Client: relay events
-```
+| Stage | Responsibility |
+| --- | --- |
+| Client | Sends work to the daemon |
+| Daemon | Starts the session turn |
+| Session | Calls the model |
+| Model | Streams output to the session |
+| Session | Emits events to the daemon |
+| Daemon | Relays events to the client |
 
 ## The feature seam
 
