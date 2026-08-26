@@ -76,11 +76,19 @@ submit_github_comment = StructuredTool.from_function(
 class GitHubReply(Feature):
     """Write `submit_github_comment` in place and remind until a call is a reply."""
 
-    def __init__(self, publish: Callable[[str], None] | None = None) -> None:
+    def __init__(
+        self,
+        publish: Callable[[str], None] | None = None,
+        *,
+        progress_turns_interval: int = 8,
+    ) -> None:
+        if progress_turns_interval < 1:
+            raise ValueError("progress_turns_interval must be at least 1")
         self._comment: str | None = None
         self._replied = False
         self._publish = publish
         self._openings = 0
+        self._progress_turns_interval = progress_turns_interval
         self._host: PluginHost | None = None
 
     def attach(self, context: PluginContext, host: PluginHost | None = None) -> None:
@@ -112,7 +120,7 @@ class GitHubReply(Feature):
         if host is None or host.turn.maintenance_active():
             return
         self._openings += 1
-        if self._openings % PROGRESS_TURNS_INTERVAL != 1:
+        if self._openings % self._progress_turns_interval != 1:
             return
         name = (
             "github_comment_progress_start"
@@ -146,6 +154,5 @@ __all__ = [
     "GitHubComment",
     "GitHubReply",
     "GitHubReplyCapability",
-    "PROGRESS_TURNS_INTERVAL",
     "submit_github_comment",
 ]

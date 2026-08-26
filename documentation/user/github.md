@@ -20,16 +20,16 @@ github:
     id: "2149876"
     private_key_path: "/srv/langmesh/secrets/langmesh-agent.2026-08.pem"
   webhook:
-    secret: "langmesh-gh-9a5b7c1d4e6f8a0b2c3d"
+    secret: "langmesh-gh-..."
   oauth:
-    client_id: "Iv1.8f2c1d4e6a7b9c0d"
-    client_secret: "9c8b7a6d5e4f3210fedcba9876543210abcd1234"
+    client_id: "Iv1...."
+    client_secret: "..."
   api_url: "https://api.github.com"
 server:
   public_url: "https://github-agent.example.net"
 storage:
   database:
-    url: "postgresql+asyncpg://postgres:correct-horse-battery-staple@db.qxwzjvkrmno.supabase.co:5432/postgres?ssl=require"
+    url: "postgresql+asyncpg://postgres:...@db.qxwzjvkrmno.supabase.co:5432/postgres?ssl=require"
   encryption:
     key_path: "/srv/langmesh/secrets/provider-keys.fernet"
   queue:
@@ -44,7 +44,7 @@ python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 chmod 600 /srv/langmesh/secrets/provider-keys.fernet
 ```
 
-The service stores provider API keys encrypted in the external database, keyed by GitHub installation. The delivery queue and session checkpoints use that same database, so another worker can continue after the original worker disappears. Different installations can choose different providers and models. For example, an installation may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like `sk-or-v1-01f4c8e9...`.
+The service stores provider API keys encrypted in the external database, keyed by GitHub installation. The GitHub worker composes compaction with a direct preparation port and keeps the latest 24 conversation turns. Compaction intentionally invalidates the conversation portion of the provider cache; the stable instructions and tool definitions remain reusable. The delivery queue and session checkpoints use that same database, so another worker can continue after the original worker disappears. Different installations can choose different providers and models. For example, an installation may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like `sk-or-v1-...`.
 
 ## GitHub App settings
 
