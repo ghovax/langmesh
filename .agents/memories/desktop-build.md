@@ -6,52 +6,142 @@ importance: high
 tags: packaging, tauri, pyinstaller, codesign, accessibility, macos
 ---
 
-LangMesh ships as **two independent macOS artifacts**: the harness (`LangMesh Computer Use.app` — the CLI and `langmeshd`, which hosts every session, in one image) and the desktop app (a Tauri v2 shell, Rust + a Next.js static export). The app is a **client**. It does not contain the harness, does not spawn it, and is powerless when no daemon is running — it reads the port and token `langmeshd` publishes into the runtime directory, exactly as it would reach a daemon on another host. Everything below is macOS-only and reproducible from a clean checkout. Never touch git history; work in-branch.
+LangMesh ships as **two independent macOS artifacts**: the harness
+(`LangMesh Computer Use.app` — the CLI and `langmeshd`, which hosts every session, in
+one image) and the desktop app (a Tauri v2 shell, Rust + a Next.js static export). The
+app is a **client**. It does not contain the harness, does not spawn it, and is
+powerless when no daemon is running — it reads the port and token `langmeshd` publishes
+into the runtime directory, exactly as it would reach a daemon on another host.
+Everything below is macOS-only and reproducible from a clean checkout. Never touch git
+history; work in-branch.
 
 ## Two builds, neither triggering the other
 
 - `packaging/build-daemon.sh` — the harness. `FORCE=1` overrides the freshness guard.
-- `cd web && bun run tauri:build` — the app. Run it from `web/`, because `beforeBuildCommand`'s `../packaging` paths assume that is where you are.
-- `packaging/sign-app.sh "packaging/dist/LangMesh Computer Use.app"` — sign the harness, which is what gives it the identity the Accessibility grant is attached to.
-- `packaging/sign-app.sh web/src-tauri/target/release/bundle/macos/LangMesh.app` — the same for the app.
+- `cd web && bun run tauri:build` — the app. Run it from `web/`, because
+  `beforeBuildCommand`'s `../packaging` paths assume that is where you are.
+- `packaging/sign-app.sh "packaging/dist/LangMesh Computer Use.app"` — sign the harness,
+  which is what gives it the identity the Accessibility grant is attached to.
+- `packaging/sign-app.sh web/src-tauri/target/release/bundle/macos/LangMesh.app` — the
+  same for the app.
 
-`tauri.conf.json`'s `beforeBuildCommand` no longer invokes the freeze and `bundle.resources` no longer exists, so the app build is a Rust compile and a static export — nothing Python. Install the harness by `ditto`-ing it to `/Applications` and symlinking `Contents/MacOS/langmesh` onto `PATH`; install the app the same way. The app starts the daemon if needed and launches the window.
+`tauri.conf.json`'s `beforeBuildCommand` no longer invokes the freeze and
+`bundle.resources` no longer exists, so the app build is a Rust compile and a static
+export — nothing Python. Install the harness by `ditto`-ing it to `/Applications` and
+symlinking `Contents/MacOS/langmesh` onto `PATH`; install the app the same way. The app
+starts the daemon if needed and launches the window.
 
 ## Freezing the harness into a signed .app (the Accessibility identity trick)
 
-`packaging/langmesh-daemon.spec` (PyInstaller) freezes `packaging/entry.py` into a binary named `langmesh`. It is **one image with two entry points** — `langmesh` and `langmeshd`, chosen by the first argument — which is not packaging convenience: every session runs inside the daemon process, so the whole fleet carries the signed bundle's identity and one Accessibility grant covers it, without any session ever being spawned. Heavy deps use dynamic imports (litellm, uvicorn[standard], langchain, a2a), so the spec `collect_all`s them explicitly and `copy_metadata`s the ones read via `importlib.metadata`. `.agents/{agents,skills}` + `mcp.json` are bundled at the frozen root (the shipped base layer; `.agents/memories` is NOT shipped).
+`packaging/langmesh-daemon.spec` (PyInstaller) freezes `packaging/entry.py` into a
+binary named `langmesh`. It is **one image with two entry points** — `langmesh` and
+`langmeshd`, chosen by the first argument — which is not packaging convenience: every
+session runs inside the daemon process, so the whole fleet carries the signed bundle's
+identity and one Accessibility grant covers it, without any session ever being spawned.
+Heavy deps use dynamic imports (litellm, uvicorn[standard], langchain, a2a), so the spec
+`collect_all`s them explicitly and `copy_metadata`s the ones read via
+`importlib.metadata`. `.agents/{agents,skills}` + `mcp.json` are bundled at the frozen
+root (the shipped base layer; `.agents/memories` is NOT shipped).
 
-`build-daemon.sh` smoke-tests the frozen daemon before finishing: it launches it **with the `langmeshd` argument** (a bare launch lands in the CLI and exits) under a **throwaway set of XDG directories**, and waits for it to answer `/health` on its own unix socket. The loopback port is ephemeral, so the probe is the socket, never a fixed port.
+`build-daemon.sh` smoke-tests the frozen daemon before finishing: it launches it **with
+the `langmeshd` argument** (a bare launch lands in the CLI and exits) under a
+**throwaway set of XDG directories**, and waits for it to answer `/health` on its own
+unix socket. The loopback port is ephemeral, so the probe is the socket, never a fixed
+port.
 
-The isolation is the point, not hygiene. Started with the developer's own XDG roots, the frozen daemon finds `langmeshd.lock` held by whatever daemon they are running, logs "Another langmeshd already holds the runtime directory; standing down", and **exits 0** — and a probe that checked the socket first then found *that* daemon answering and reported success for a binary it had never run. Liveness of the child is now checked before the socket, for the same reason.
+The isolation is the point, not hygiene. Started with the developer's own XDG roots, the
+frozen daemon finds `langmeshd.lock` held by whatever daemon they are running, logs
+"Another langmeshd already holds the runtime directory; standing down", and **exits 0**
+— and a probe that checked the socket first then found *that* daemon answering and
+reported success for a binary it had never run. Liveness of the child is now checked
+before the socket, for the same reason.
 
-The spec ends in a `BUNDLE(...)` step that wraps the frozen output as **`LangMesh Computer Use.app`** with `CFBundleName="LangMesh"`, `bundle_identifier="com.ghovax.langmesh"`, `LSUIElement=True`. Both artifacts carry that same name and identifier, which is why signing both with one certificate keeps them a single **LangMesh** row in Accessibility — and why the wrapper survived the app no longer bundling anything.
+The spec ends in a `BUNDLE(...)` step that wraps the frozen output as
+**`LangMesh Computer Use.app`** with `CFBundleName="LangMesh"`,
+`bundle_identifier="com.ghovax.langmesh"`, `LSUIElement=True`. Both artifacts carry that
+same name and identifier, which is why signing both with one certificate keeps them a
+single **LangMesh** row in Accessibility — and why the wrapper survived the app no
+longer bundling anything.
 
-`packaging/Entitlements.plist` moved from the app to the daemon, where it always belonged: `apple-events` for the login-items and running-apps probes, `disable-library-validation` for PyInstaller's dylibs. Both were the daemon's requirements, sitting on the app only because the app was its parent process.
+`packaging/Entitlements.plist` moved from the app to the daemon, where it always
+belonged: `apple-events` for the login-items and running-apps probes,
+`disable-library-validation` for PyInstaller's dylibs. Both were the daemon's
+requirements, sitting on the app only because the app was its parent process.
 
-Why a bundle, not a bare binary: the *daemon* — not the Tauri shell — is the process that calls the macOS Accessibility API for the computer-use tool, and TCC lists whichever process exercises a permission. A bare binary shows its raw filename in System Settings ▸ Privacy ▸ Accessibility. Wrapped as a bundle carrying the **same** `CFBundleName` + identifier as the desktop app and signed with the same cert, it folds into the app's single **"LangMesh"** entry instead of a second row, and — because the identity is stable — the grant survives rebuilds. This is also why sessions run inside the daemon rather than as separate helpers: a different path is a different identity, and would prompt once per session.
+Why a bundle, not a bare binary: the *daemon* — not the Tauri shell — is the process
+that calls the macOS Accessibility API for the computer-use tool, and TCC lists
+whichever process exercises a permission. A bare binary shows its raw filename in System
+Settings ▸ Privacy ▸ Accessibility. Wrapped as a bundle carrying the **same**
+`CFBundleName` + identifier as the desktop app and signed with the same cert, it folds
+into the app's single **"LangMesh"** entry instead of a second row, and — because the
+identity is stable — the grant survives rebuilds. This is also why sessions run inside
+the daemon rather than as separate helpers: a different path is a different identity,
+and would prompt once per session.
 
-macOS caches `AXIsProcessTrusted` per process, so after granting, the **daemon must restart** to see the grant (it is the process that asks). Restarting the *app* no longer does that — the daemon is not its child. The Settings dialog asks the daemon to restart itself over the control plane (`daemon.restart`), which **keeps live sessions** — the registry is durable, so each one loses only its executor and comes back asleep — then calls the `restart_app` Tauri command to reload the webview against the fresh daemon and auto-enables computer-control on return (localStorage `langmesh:pendingComputerControlEnable`).
+macOS caches `AXIsProcessTrusted` per process, so after granting, the **daemon must
+restart** to see the grant (it is the process that asks). Restarting the *app* no longer
+does that — the daemon is not its child. The Settings dialog asks the daemon to restart
+itself over the control plane (`daemon.restart`), which **keeps live sessions** — the
+registry is durable, so each one loses only its executor and comes back asleep — then
+calls the `restart_app` Tauri command to reload the webview against the fresh daemon and
+auto-enables computer-control on return (localStorage
+`langmesh:pendingComputerControlEnable`).
 
 ## The self-signed codesign identity (stable across rebuilds)
 
-Ad-hoc signing changes the cdhash every build, which invalidates the TCC grant. Instead `packaging/create-signing-certificate.sh` makes a persistent self-signed identity **"LangMesh Local Codesign"** in the login keychain. Gotcha: use **`/usr/bin/openssl`** (LibreSSL) for the p12 — openssl 3.x writes a MAC that `security import` rejects ("MAC verification failed"). Import with `security import -A -T /usr/bin/codesign`.
+Ad-hoc signing changes the cdhash every build, which invalidates the TCC grant. Instead
+`packaging/create-signing-certificate.sh` makes a persistent self-signed identity
+**"LangMesh Local Codesign"** in the login keychain. Gotcha: use **`/usr/bin/openssl`**
+(LibreSSL) for the p12 — openssl 3.x writes a MAC that `security import` rejects ("MAC
+verification failed"). Import with `security import -A -T /usr/bin/codesign`.
 
-`packaging/sign-app.sh` takes one or both artifacts. The daemon gets `--deep` plus `packaging/Entitlements.plist` (its dylibs, its Apple Events); the app signs plain, having neither nested code nor those needs. Each bundle takes its identifier from its own Info.plist (both `com.ghovax.langmesh`); no hardened runtime, so PyInstaller's dylibs still load.
+`packaging/sign-app.sh` takes one or both artifacts. The daemon gets `--deep` plus
+`packaging/Entitlements.plist` (its dylibs, its Apple Events); the app signs plain,
+having neither nested code nor those needs. Each bundle takes its identifier from its
+own Info.plist (both `com.ghovax.langmesh`); no hardened runtime, so PyInstaller's
+dylibs still load.
 
 ## Icon — Apple's own no-Xcode pipeline
 
-`packaging/export-icon.py` drives Icon Composer's own `ictool` over `web/src-tauri/LangMesh.icon`, exporting a 1024² macOS rendition; that export becomes `app-icon.png` for the non-macOS platform assets, `icon.icns` is written directly through Pillow at every size in `MACOS_ICON_SIZES`, and `tauri icon` generates the rest. No squircle or glass is hand-drawn — modern macOS applies the rounded-rect mask itself. Do NOT hand-roll the icon; the `.icon` document is the source of truth and this script is the sanctioned way to render it.
+`packaging/export-icon.py` drives Icon Composer's own `ictool` over
+`web/src-tauri/LangMesh.icon`, exporting a 1024² macOS rendition; that export becomes
+`app-icon.png` for the non-macOS platform assets, `icon.icns` is written directly
+through Pillow at every size in `MACOS_ICON_SIZES`, and `tauri icon` generates the rest.
+No squircle or glass is hand-drawn — modern macOS applies the rounded-rect mask itself.
+Do NOT hand-roll the icon; the `.icon` document is the source of truth and this script
+is the sanctioned way to render it.
 
 ## Size, and the two gotchas behind it
 
-The frozen harness is ~228 MB; it was 1.8 GB. Neither cause was the freezer — swapping PyInstaller for Nuitka would not have helped (Nuitka's macOS onedir/.app output is typically ~2× PyInstaller's and much slower to build).
+The frozen harness is ~228 MB; it was 1.8 GB. Neither cause was the freezer — swapping
+PyInstaller for Nuitka would not have helped (Nuitka's macOS onedir/.app output is
+typically ~2× PyInstaller's and much slower to build).
 
-1. **Committed skill `.venv` rode into the freeze.** `.agents/skills/literature-search/scripts/.venv` is a committed ~145 MB uv devshell (pymupdf/libmupdf 33 MB, lxml, numpy, PIL). The spec walks `.agents/{agents,skills}` file-by-file (`_bundle_tree`) and prunes regenerable runtime artifacts (`.venv`, `__pycache__`, `.git`, `node_modules`, tool caches) instead of a wholesale `datas.append((dir, dest))`. Skills recreate their venv on demand where they run.
-2. **Tauri dereferenced PyInstaller's symlinks.** PyInstaller's codesignable layout puts real Mach-Os in `Contents/Frameworks`, real Python in `Contents/Resources`, and cross-symlinks each side so the import root sees one merged tree. Tauri's resource copier followed every one of those when it bundled the helper, turning each into a full second copy (~5×), and `sign-app.sh` had to `ditto` a pristine copy back before signing. **This is gone**: nothing bundles the daemon, so nothing dereferences it, and the repair step went with the coupling that required it.
+1. **Committed skill `.venv` rode into the freeze.**
+   `.agents/skills/literature-search/scripts/.venv` is a committed ~145 MB uv devshell
+   (pymupdf/libmupdf 33 MB, lxml, numpy, PIL). The spec walks `.agents/{agents,skills}`
+   file-by-file (`_bundle_tree`) and prunes regenerable runtime artifacts (`.venv`,
+   `__pycache__`, `.git`, `node_modules`, tool caches) instead of a wholesale
+   `datas.append((dir, dest))`. Skills recreate their venv on demand where they run.
+1. **Tauri dereferenced PyInstaller's symlinks.** PyInstaller's codesignable layout puts
+   real Mach-Os in `Contents/Frameworks`, real Python in `Contents/Resources`, and
+   cross-symlinks each side so the import root sees one merged tree. Tauri's resource
+   copier followed every one of those when it bundled the helper, turning each into a
+   full second copy (~5×), and `sign-app.sh` had to `ditto` a pristine copy back before
+   signing. **This is gone**: nothing bundles the daemon, so nothing dereferences it,
+   and the repair step went with the coupling that required it.
 
 ## Freshness guard
 
-`build-daemon.sh` skips the freeze when `packaging/dist/LangMesh Computer Use.app/Contents/MacOS/langmesh` is newer than everything that goes into it: `packaging/entry.py`, the spec, `pyproject.toml`, `uv.lock`, `src/langmesh`, and `.agents/{agents,skills,mcp.json}`. `FORCE=1` rebuilds. Two bugs it used to have, both fixed: it did not watch `.agents/` at all despite bundling it, so a skill edit shipped stale; and it counted `__pycache__` and `.DS_Store` as source changes, so merely running the harness forced a needless multi-minute re-freeze. The `find` expression now prunes both.
+`build-daemon.sh` skips the freeze when
+`packaging/dist/LangMesh Computer Use.app/Contents/MacOS/langmesh` is newer than
+everything that goes into it: `packaging/entry.py`, the spec, `pyproject.toml`,
+`uv.lock`, `src/langmesh`, and `.agents/{agents,skills,mcp.json}`. `FORCE=1` rebuilds.
+Two bugs it used to have, both fixed: it did not watch `.agents/` at all despite
+bundling it, so a skill edit shipped stale; and it counted `__pycache__` and `.DS_Store`
+as source changes, so merely running the harness forced a needless multi-minute
+re-freeze. The `find` expression now prunes both.
 
-The Python steps in this chain (`export-icon.py`, and `web/`'s `check:events`) go through `uv run --project ..` rather than a hardcoded `.venv/bin/python`, so the build works whether or not the virtualenv has been created yet.
+The Python steps in this chain (`export-icon.py`, and `web/`'s `check:events`) go
+through `uv run --project ..` rather than a hardcoded `.venv/bin/python`, so the build
+works whether or not the virtualenv has been created yet.
