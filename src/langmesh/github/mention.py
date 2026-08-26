@@ -32,7 +32,7 @@ from langmesh.base.contracts.ports import Checkpoints
 from langmesh.github.detect import is_mention_turn
 from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features import Feature
-from langmesh.runtime.plugins.background import BackgroundJobsFeature
+from langmesh.runtime.plugins.background import BackgroundJobs
 from langmesh.runtime.plugins.bash import Bash
 from langmesh.runtime.plugins.compaction import (
     Compaction,
@@ -526,7 +526,7 @@ def mention_features(reply: GitHubReply, workspace: Path) -> list[Feature]:
         ),
         PermissionReview(),
         Continuation(),
-        BackgroundJobsFeature(),
+        BackgroundJobs(),
         Bash(),
         Web(),
         reply,

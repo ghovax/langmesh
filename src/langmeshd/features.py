@@ -11,7 +11,7 @@ from typing import Any
 
 from langmeshd.daemon.persistence.observation_registry import SQLiteObservationStore
 from langmesh.runtime.plugins.compaction import ObservationCompactionPreparation
-from langmesh.runtime.plugins.background import BackgroundJobsFeature
+from langmesh.runtime.plugins.background import BackgroundJobs
 from langmesh.runtime.plugins.bash import Bash
 from langmesh.runtime.plugins.compaction import Compaction
 from langmesh.runtime.plugins.continuation import Continuation
@@ -101,7 +101,7 @@ def compose_plugins(
         PermissionReview(),
         Continuation(policy=None),
         ObservationMemory(),
-        BackgroundJobsFeature(store=job_store),
+        BackgroundJobs(store=job_store),
         WorkHabits(_shell_command_usage()),
         TitleAssignment(),
         # The locations plugin is opt-in: it is composed only when the workspace has locations.
@@ -141,7 +141,7 @@ def contributed_tools() -> dict[str, Any]:
         PermissionReview(),
         Continuation(policy=None),
         ObservationMemory(),
-        BackgroundJobsFeature(store=None),
+        BackgroundJobs(store=None),
         WorkHabits(),
         TitleAssignment(),
         Bash(),
