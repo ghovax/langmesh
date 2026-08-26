@@ -178,6 +178,23 @@ class Store:
         async with self.engine.begin() as connection:
             for statement in statements:
                 await connection.execute(text(statement))
+            if connection.dialect.name == "sqlite":
+                try:
+                    await connection.execute(
+                        text(
+                            "ALTER TABLE langmesh_github_deliveries ADD COLUMN "
+                            "next_attempt_at BIGINT NOT NULL DEFAULT 0"
+                        )
+                    )
+                except Exception:
+                    pass
+            else:
+                await connection.execute(
+                    text(
+                        "ALTER TABLE langmesh_github_deliveries ADD COLUMN IF NOT EXISTS "
+                        "next_attempt_at BIGINT NOT NULL DEFAULT 0"
+                    )
+                )
 
     async def close(self) -> None:
         await self.engine.dispose()
@@ -208,11 +225,13 @@ class Store:
         async with self.engine.begin() as connection:
             result = await connection.execute(
                 text(
-                    "SELECT delivery_id, event_name, installation_id, payload FROM langmesh_github_deliveries "
-                    "WHERE status = 'queued' OR (status = 'processing' AND claimed_at < :stale_at) "
+                    "SELECT delivery_id, event_name, installation_id, payload, attempts "
+                    "FROM langmesh_github_deliveries "
+                    "WHERE (status = 'queued' AND next_attempt_at <= :now) "
+                    "OR (status = 'processing' AND claimed_at < :stale_at) "
                     "ORDER BY received_at LIMIT 1 FOR UPDATE SKIP LOCKED"
                 ),
-                {"stale_at": now - stale_after},
+                {"now": now, "stale_at": now - stale_after},
             )
             row = result.mappings().first()
             if row is None:
@@ -233,14 +252,19 @@ class Store:
                 {"delivery_id": delivery_id},
             )
 
-    async def retry(self, delivery_id: str, error: str) -> None:
+    async def retry(self, delivery_id: str, error: str, delay: int) -> None:
         async with self.engine.begin() as connection:
             await connection.execute(
                 text(
-                    "UPDATE langmesh_github_deliveries SET status = 'queued', claimed_at = NULL, last_error = :error "
+                    "UPDATE langmesh_github_deliveries SET status = 'queued', claimed_at = NULL, "
+                    "next_attempt_at = :next_attempt_at, last_error = :error "
                     "WHERE delivery_id = :delivery_id"
                 ),
-                {"delivery_id": delivery_id, "error": error[:4000]},
+                {
+                    "delivery_id": delivery_id,
+                    "error": error[:4000],
+                    "next_attempt_at": int(time.time()) + max(1, delay),
+                },
             )
 
     async def configuration(self, installation_id: int) -> tuple[str, str, str] | None:
@@ -446,7 +470,8 @@ class Processor:
                 )
             except Exception as error:
                 logger.exception("GitHub delivery %s failed", delivery_id)
-                await self.store.retry(delivery_id, str(error))
+                attempts = int(delivery.get("attempts") or 1)
+                await self.store.retry(delivery_id, str(error), min(300, 2 ** min(attempts, 8)))
             else:
                 await self.store.complete(delivery_id)
 
@@ -569,6 +594,10 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             await store.close()
 
     app = FastAPI(title="LangMesh GitHub App", lifespan=lifespan)
+
+    @app.get("/healthz")
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
 
     @app.get("/github/setup")
     async def setup(installation_id: int) -> Response:
