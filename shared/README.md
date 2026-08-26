@@ -1,12 +1,8 @@
 # `shared/` — what the desktop and the phone both read
 
-The phone is a WebView onto the same interface the desktop shows, so there is one implementation
-of the screens and nothing to keep in step. What is still genuinely two programs is the shell
-around that page: the phone's pairing screen and machine list are its own, and they show the same
-words in the same languages as everything else.
+The phone is a WebView onto the same interface the desktop shows, so there is one implementation of the screens and nothing to keep in step. What is still genuinely two programs is the shell around that page: the phone's pairing screen and machine list are its own, and they show the same words in the same languages as everything else.
 
-So this directory holds what has no renderer in it — text, names, colours, and the wire contract.
-Anything here can be read by a React DOM page, by a React Native screen, or by neither.
+So this directory holds what has no renderer in it — text, names, colours, and the wire contract. Anything here can be read by a React DOM page, by a React Native screen, or by neither.
 
 ## What belongs here
 
@@ -25,11 +21,8 @@ Anything with no import from `react-dom`, `@chakra-ui/*`, `react-native`, or `ne
 
 Components. Styling. Anything that imports a renderer.
 
-`tools.ts` names a glyph — `"terminal"`, `"file-text"` — rather than exporting a component, so
-what a tool call *is called* and what it is *drawn with* are one decision, made where the other
-decisions about that tool are made.
+`tools.ts` names a glyph — `"terminal"`, `"file-text"` — rather than exporting a component, so what a tool call *is called* and what it is *drawn with* are one decision, made where the other decisions about that tool are made.
 
 ## How each side reaches it
 
-The web client resolves `@shared/*` through `tsconfig.json`. The phone resolves it the same way,
-plus a Metro `watchFolders` entry so the bundler follows the files out of `mobile/`.
+The web client resolves `@shared/*` through `tsconfig.json`. The phone resolves it the same way, plus a Metro `watchFolders` entry so the bundler follows the files out of `mobile/`.
