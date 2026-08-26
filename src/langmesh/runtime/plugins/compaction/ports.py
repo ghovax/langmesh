@@ -73,24 +73,8 @@ class DirectCompactionPreparation:
         return {}
 
 
-class KeepRecentTurns:
-    """Keep the last `keep` exchanges and drop the rest, with no model call and no cost."""
-
-    def __init__(self, keep: int = 20) -> None:
-        if keep < 1:
-            raise ValueError(f"keep must be at least 1, got {keep}.")
-        self._keep = keep
-
-    def should_compact(self, state) -> bool:
-        return len(state.messages) > self._keep * 2
-
-    async def compact(self, state) -> list:
-        return list(state.messages[-self._keep * 2 :])
-
-
 __all__ = [
     "CompactionSummary",
     "DirectCompactionPreparation",
-    "KeepRecentTurns",
     "ObservationCompactionPreparation",
 ]
