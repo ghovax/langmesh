@@ -1,6 +1,10 @@
 # Library quickstart
 
-`Session` owns one embedded runtime, its checkpoint store, and its control state. It starts no daemon and reads no machine-level configuration; a bare library catalogue has no agents, skills, or memories from disk. Plugin behavior (the tools, goal review, compaction, permissions, and the rest) is composed explicitly through `SessionComponents`.
+`Session` owns one embedded runtime, its checkpoint store, and its control state. It
+starts no daemon and reads no machine-level configuration; a bare library catalogue has
+no agents, skills, or memories from disk. Plugin behavior (the tools, goal review,
+compaction, permissions, and the rest) is composed explicitly through
+`SessionComponents`.
 
 ## Install and run
 
@@ -31,7 +35,8 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Use `stream()` when the caller needs live text, tool activity, usage, suspension, compaction, or goal-review events.
+Use `stream()` when the caller needs live text, tool activity, usage, suspension,
+compaction, or goal-review events.
 
 ```python
 from langmesh import Done, TextChunk, ToolCall
@@ -46,13 +51,18 @@ async for event in session.stream("Run the focused tests and explain any failure
             ...  # The turn finished.
 ```
 
-`stream()` yields a closed `TurnEventUnion`; dispatch on the variant class. See [Lifecycle and driving](lifecycle.md) for the whole contract.
+`stream()` yields a closed `TurnEventUnion`; dispatch on the variant class. See
+[Lifecycle and driving](lifecycle.md) for the whole contract.
 
 ## Add capabilities
 
-Replaceable behavior belongs in one `SessionComponents` value. The value is frozen and snapshots sequence inputs as tuples, so caller mutation cannot change a live runtime accidentally.
+Replaceable behavior belongs in one `SessionComponents` value. The value is frozen and
+snapshots sequence inputs as tuples, so caller mutation cannot change a live runtime
+accidentally.
 
-The library ships no default battery. A `SessionComponents()` with nothing else is a plain model turn with no tools; every tool and every sub-behavior is a `Feature` you compose:
+The library ships no default battery. A `SessionComponents()` with nothing else is a
+plain model turn with no tools; every tool and every sub-behavior is a `Feature` you
+compose:
 
 ```python
 from langmesh import Session, SessionComponents
@@ -68,7 +78,11 @@ session = Session(
 )
 ```
 
-Now the agent can run shell commands and search/fetch the web. Everything else the product runs — goal review, compaction, permission gating, autonomous continuation, observational memory, background jobs, screen control, session naming, asking you questions — is the same `Feature` seam. See [Composition](composition.md#composing-a-sessions-features).
+Now the agent can run shell commands and search/fetch the web. Everything else the
+product runs — goal review, compaction, permission gating, autonomous continuation,
+observational memory, background jobs, screen control, session naming, asking you
+questions — is the same `Feature` seam. See
+[Composition](composition.md#composing-a-sessions-features).
 
 Hooks, middleware, and a compaction strategy ride the same value:
 
@@ -94,7 +108,10 @@ session = Session(agent, directory="/srv/checkout", components=components)
 
 ## Supplied tools
 
-Pass predictable tools to `Session(..., tools=[...])` so they join the initial stable provider schema, or add or replace one later with `session.grant_tool(...)`. A live grant intentionally changes the next request's tool segment, then becomes the reusable schema for following calls. A caller-supplied tool is gated by default.
+Pass predictable tools to `Session(..., tools=[...])` so they join the initial stable
+provider schema, or add or replace one later with `session.grant_tool(...)`. A live
+grant intentionally changes the next request's tool segment, then becomes the reusable
+schema for following calls. A caller-supplied tool is gated by default.
 
 ```python
 from langchain_core.tools import tool
@@ -116,7 +133,14 @@ See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 
 ## Next
 
-- [Composition](composition.md) explains every configured value, the plugin seam, and the product boundary.
-- [Lifecycle and driving](lifecycle.md) covers suspension, resume, interrupts, steering, retries, and the complete stream contract.
-- [Compaction, continuation, and persistence](persistence.md) covers history compaction, autonomous work, checkpoints, artifacts, transcripts, observational memory, and background jobs.
-- [Universal GitHub App](../user/github.md) handles `@<app-slug>[bot]` comments through signed installation webhooks. Provider/model settings, the delivery queue, and session checkpoints use an external database, while each worker uses a disposable checkout. An issue with file edits opens a draft PR; a pull-request mention updates that PR.
+- [Composition](composition.md) explains every configured value, the plugin seam, and
+  the product boundary.
+- [Lifecycle and driving](lifecycle.md) covers suspension, resume, interrupts, steering,
+  retries, and the complete stream contract.
+- [Compaction, continuation, and persistence](persistence.md) covers history compaction,
+  autonomous work, checkpoints, artifacts, transcripts, observational memory, and
+  background jobs.
+- [Universal GitHub App](../user/github.md) handles `@<app-slug>[bot]` comments through
+  signed installation webhooks. Provider/model settings, the delivery queue, and session
+  checkpoints use an external database, while each worker uses a disposable checkout. An
+  issue with file edits opens a draft PR; a pull-request mention updates that PR.
