@@ -61,10 +61,7 @@ The App owner keeps the App ID, private key, OAuth client secret, and webhook se
 
 ## Installation and configuration
 
-1. Install the App on a personal account or organization, selecting all or only the repositories it may access.
-2. GitHub opens the service setup URL.
-3. Sign in with GitHub when redirected. The service verifies that this account can access the installation.
-4. Enter the provider, model, and API key in the configuration form.
+1. Install the App on a personal account or organization, selecting all or only the repositories it may access. 2. GitHub opens the service setup URL. 3. Sign in with GitHub when redirected. The service verifies that this account can access the installation. 4. Enter the provider, model, and API key in the configuration form.
 
 After that, mention the installed bot in an issue or same-repository pull request. The bot identity is the actual App login, such as `@langmesh-agent[bot]`, and its commits use that identity. A webhook is ignored until its installation has a provider/model configuration.
 

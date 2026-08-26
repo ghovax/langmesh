@@ -4,9 +4,7 @@ LangMesh targets **macOS on Apple Silicon (`aarch64`)**. The screen-control tool
 
 ## Option 1: download the app
 
-1. Open the [**Releases**](https://github.com/ghovax/langmesh/releases) page and download the latest `LANGMESH_<version>_aarch64.dmg`.
-2. Open the `.dmg` and drag **LangMesh** into **Applications**.
-3. Launch it.
+1. Open the [**Releases**](https://github.com/ghovax/langmesh/releases) page and download the latest `LANGMESH_<version>_aarch64.dmg`. 2. Open the `.dmg` and drag **LangMesh** into **Applications**. 3. Launch it.
 
 ### Gatekeeper
 
@@ -116,19 +114,13 @@ Diagnostics go to stderr; the exit code carries the outcome.
 
 ## Run LangMesh on a server
 
-The harness is a Python library plus a daemon; nothing about the daemon requires the machine it
-runs on to have a screen. `langmeshd` will run headless on a low-end Linux VPS — a single core
-and a gigabyte of RAM is plenty — and that is how you give real, always-on cloud agents a home:
-the compute, the files, and the credentials live on the VPS, and your desktop stays a client.
+The harness is a Python library plus a daemon; nothing about the daemon requires the machine it runs on to have a screen. `langmeshd` will run headless on a low-end Linux VPS — a single core and a gigabyte of RAM is plenty — and that is how you give real, always-on cloud agents a home: the compute, the files, and the credentials live on the VPS, and your desktop stays a client.
 
-What does **not** work on a headless Linux box are the macOS-only parts: the desktop app, and the
-screen-control tools. Everything an agent does with a shell, the filesystem, the network, MCP
-servers, peer sessions, goals, and its durable history is fully supported.
+What does **not** work on a headless Linux box are the macOS-only parts: the desktop app, and the screen-control tools. Everything an agent does with a shell, the filesystem, the network, MCP servers, peer sessions, goals, and its durable history is fully supported.
 
 ### Install
 
-Python 3.13 and `uv` are the only requirements. Build from source on the server, since the
-packaged bundles are macOS images:
+Python 3.13 and `uv` are the only requirements. Build from source on the server, since the packaged bundles are macOS images:
 
 ```sh
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -136,8 +128,7 @@ git clone https://github.com/ghovax/langmesh.git && cd langmesh
 uv sync
 ```
 
-That installs `langmesh` (the CLI, which only serves) and `langmeshd` (the daemon) into the
-project's `.venv`.
+That installs `langmesh` (the CLI, which only serves) and `langmeshd` (the daemon) into the project's `.venv`.
 
 ### Run it as a service
 
@@ -165,38 +156,27 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now langmeshd
 ```
 
-On first boot the daemon seeds `~/.config/langmesh/configuration.yaml`. Add a provider key as a secret file under `$XDG_DATA_HOME/langmesh/secrets/`, and give the server's user the
-`.agents/` tree your agents and skills live in.
+On first boot the daemon seeds `~/.config/langmesh/configuration.yaml`. Add a provider key as a secret file under `$XDG_DATA_HOME/langmesh/secrets/`, and give the server's user the `.agents/` tree your agents and skills live in.
 
 ### Reach it
 
-The daemon binds loopback and guards itself with a capability token. Carry it off the machine
-with a transport you choose:
+The daemon binds loopback and guards itself with a capability token. Carry it off the machine with a transport you choose:
 
 - **SSH tunnel.** Forward the daemon's port to your laptop. The port the daemon publishes is
   written under its runtime directory; the token sits beside it.
 - **Tailscale.** Install Tailscale on the VPS and on your laptop, then pair from **Settings, then Connection** using the `langmesh://pair#…` link `langmesh serve --reach` prints at the machine's tailnet address.
 
-A remote agent created on the server is a normal session: it keeps its transcript, its goals, and
-its approvals, and it is reachable from anywhere you can reach the daemon.
+A remote agent created on the server is a normal session: it keeps its transcript, its goals, and its approvals, and it is reachable from anywhere you can reach the daemon.
 
 ### Email in front of the daemon
 
-Mail is a second long-running client, not a second daemon. `langmesh mail` IDLEs an allowlisted
-mailbox, strips quoted reply history, and drives `session.create` / `session.send` on loopback.
-Replies go out over SMTP in the same thread. See [Email](email.md). Fill `configuration.yaml`
-(`email.address`, `email.machine`, `email.allow_from`) and the secret files, run
-`uv run langmesh mail check` until it prints `ready`, then either `uv run langmesh mail` on this
-machine or, on a VPS, install both systemd units so the mail client comes back with the daemon.
-A new thread is addressed to `local+machine@domain`, not the untagged mailbox.
+Mail is a second long-running client, not a second daemon. `langmesh mail` IDLEs an allowlisted mailbox, strips quoted reply history, and drives `session.create` / `session.send` on loopback. Replies go out over SMTP in the same thread. See [Email](email.md). Fill `configuration.yaml` (`email.address`, `email.machine`, `email.allow_from`) and the secret files, run `uv run langmesh mail check` until it prints `ready`, then either `uv run langmesh mail` on this machine or, on a VPS, install both systemd units so the mail client comes back with the daemon. A new thread is addressed to `local+machine@domain`, not the untagged mailbox.
 
 ```sh
 sudo packaging/mail/install.sh
 ```
 
-The script writes `/etc/systemd/system/langmeshd.service` and `langmesh-mail.service`, copies
-policy and secrets onto `/srv/langmesh/xdg`, then enables them. Pass `--prefix DIR` to install
-somewhere other than `/srv/langmesh`.
+The script writes `/etc/systemd/system/langmeshd.service` and `langmesh-mail.service`, copies policy and secrets onto `/srv/langmesh/xdg`, then enables them. Pass `--prefix DIR` to install somewhere other than `/srv/langmesh`.
 
 ### Keep it small
 

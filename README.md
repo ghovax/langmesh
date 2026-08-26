@@ -14,9 +14,7 @@ One conversation with an agent is a **session**. You create one, send it work, a
 
 LangMesh is four layers, and the first three are two packages that ship as one image. Each layer uses the one under it and adds a single thing:
 
-1. **The library** — `import langmesh`. `langmesh.Session` runs an agent in your own process. You give it the agent, the model, an absolute working directory, and the credentials; it performs no implicit user or project discovery, starts no daemon, and forces no plugin. Explicit tools operate only when composed, while shipped prompt assets remain package resources. This is the harness itself, and the three layers above are all built on it. See [As a library](documentation/library/index.md).
-2. **The machine loaders and the daemon** — the `langmeshd` package. The machine loaders (`langmeshd.daemon.machine`) read your configuration file and the agents in your `.agents` directories and turn them into what the library takes. `langmeshd` then hosts every session. This layer knows your home directory exists; the library does not.
-3. **The clients** — the `langmesh` command (`serve` for the interface, `mail` for IMAP/SMTP in front of the daemon), the macOS app, and a phone. All talk to the daemon and contain no harness of their own; anything one can do, the others can.
+1. **The library** — `import langmesh`. `langmesh.Session` runs an agent in your own process. You give it the agent, the model, an absolute working directory, and the credentials; it performs no implicit user or project discovery, starts no daemon, and forces no plugin. Explicit tools operate only when composed, while shipped prompt assets remain package resources. This is the harness itself, and the three layers above are all built on it. See [As a library](documentation/library/index.md). 2. **The machine loaders and the daemon** — the `langmeshd` package. The machine loaders (`langmeshd.daemon.machine`) read your configuration file and the agents in your `.agents` directories and turn them into what the library takes. `langmeshd` then hosts every session. This layer knows your home directory exists; the library does not. 3. **The clients** — the `langmesh` command (`serve` for the interface, `mail` for IMAP/SMTP in front of the daemon), the macOS app, and a phone. All talk to the daemon and contain no harness of their own; anything one can do, the others can.
 
 An agent can use these too. When a session needs help it creates a second session and messages it, over the same API your terminal uses. The helper appears in your session list, you can watch it, and it ends when its parent does. Its answer arrives as a message, in its own words.
 
@@ -153,9 +151,7 @@ $ langmesh mail
 
 ### From the app
 
-1. **Launch LangMesh.** The app starts the separately installed daemon when it cannot find one, then opens the window.
-2. **Add a model key.** Open **Settings**, then **Providers**, and paste a key for any provider. You can also sign in with a ChatGPT or Cursor subscription. Then pick a model. Keys live in your LangMesh configuration file — see the [Configuration guide](documentation/user/configuration.md).
-3. **Start a conversation.** Type a task. Approve tool calls as they come up, or relax the [permission mode](documentation/user/configuration.md#permission-modes) once you trust a flow.
+1. **Launch LangMesh.** The app starts the separately installed daemon when it cannot find one, then opens the window. 2. **Add a model key.** Open **Settings**, then **Providers**, and paste a key for any provider. You can also sign in with a ChatGPT or Cursor subscription. Then pick a model. Keys live in your LangMesh configuration file — see the [Configuration guide](documentation/user/configuration.md). 3. **Start a conversation.** Type a task. Approve tool calls as they come up, or relax the [permission mode](documentation/user/configuration.md#permission-modes) once you trust a flow.
 
 The screen-control tools need a one-time Accessibility grant and Chrome's remote-debugging toggle — see the [Installation guide](documentation/user/installation.md#permissions-the-app-may-ask-for).
 
