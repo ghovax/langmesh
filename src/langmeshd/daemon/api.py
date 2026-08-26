@@ -21,6 +21,7 @@ from langmesh.base.primitives.limits import current_limits
 from langmesh.base.primitives import telemetry
 from langmeshd.daemon import state
 from langmeshd.daemon.registry import SessionRecord
+from langmeshd.commons.services.sessions import attached_goal
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.primitives.errors import log_fields
 
@@ -100,7 +101,7 @@ def _public(record: SessionRecord) -> dict:
     """A session as a client sees it, combining its record with the daemon's live turn state."""
     return {
         **record.public(busy=record.id in state._running_contexts),
-        "goal": state._session_goals.get(record.id),
+        "goal": attached_goal(state._session_goals.get(record.id)),
     }
 
 
