@@ -99,6 +99,8 @@ After that, mention the installed bot in an issue or same-repository pull reques
 
 The setup flow verifies the installer through GitHub before accepting settings; the `installation_id` in a URL is not treated as authorization. Provider keys are encrypted at rest and never written to a checkout.
 
+Final `reply` comments address the known author of the triggering comment with a GitHub `@username` mention, and mention other known users when the reply directly addresses them. `progress` comments never use user mentions, so only the final response creates the intended notification. Usernames are never guessed, altered, or copied from untrusted prose.
+
 ## Repository behavior
 
 The App service keeps its delivery queue, encrypted installation settings, and session checkpoints in the external database. Each delivery gets a temporary checkout on the execution machine, and that checkout is deleted when processing ends; GitHub branches and pull requests remain the durable source for repository changes. It uses installation tokens limited to the installed repositories and creates or updates topic branches and draft pull requests there. No repository file is created to select a model or provider.
