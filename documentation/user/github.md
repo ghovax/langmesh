@@ -64,12 +64,23 @@ The App owner keeps the App ID, private key, OAuth client secret, and webhook se
 1. Install the App on a personal account or organization, selecting all or only the repositories it may access.
 2. GitHub opens the service setup URL.
 3. Sign in with GitHub when redirected. The service verifies that this account can access the installation.
-4. The callback returns a JSON object containing a short-lived setup token. Use that token as a bearer token when calling the JSON configuration endpoint:
+4. The callback returns a JSON object containing a short-lived setup token, for example:
+
+```json
+{
+  "installation_id": 184736295,
+  "setup_token": "7kQ2mN...vR8pL4",
+  "expires_in": 600,
+  "configuration_url": "https://github-agent.example.net/github/configuration"
+}
+```
+
+The token above is shortened for readability. Copy the complete value returned by your callback when calling the JSON configuration endpoint:
 
 ```sh
 curl --fail-with-body --request PUT \
   --url https://langmesh-agent.onrender.com/github/configuration \
-  --header 'Authorization: Bearer SETUP_TOKEN_FROM_CALLBACK' \
+  --header 'Authorization: Bearer 7kQ2mN...vR8pL4' \
   --header 'Content-Type: application/json' \
   --data '{"provider":"openrouter","model":"deepseek/deepseek-chat-v3-0324","api_key":"sk-or-v1-01f4c8e9..."}'
 ```
@@ -79,7 +90,7 @@ Read the saved state with the same token:
 ```sh
 curl --fail-with-body \
   --url https://langmesh-agent.onrender.com/github/configuration \
-  --header 'Authorization: Bearer SETUP_TOKEN_FROM_CALLBACK'
+  --header 'Authorization: Bearer 7kQ2mN...vR8pL4'
 ```
 
 The response never includes the API key.
