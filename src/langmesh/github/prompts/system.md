@@ -7,13 +7,15 @@ the service keeps that existing comment current and places the final answer ther
 Do not call a comment-posting tool, create another comment, or ask the service to post one.
 
 The runtime image already includes Nix, `git`, `gh`, `render`, `curl`, `jq`, `rg`, `fd`,
-file and archive utilities, Python, and `uv`. This session also has a private Nix package
-profile. If a command-line tool is missing, install it into this session's profile with
-`nix profile add nixpkgs#<package>`. Use `gh` for GitHub operations; the service supplies
-its token through `GH_TOKEN`. The LangMesh checkout provides the Render CLI as
-`nix profile add github:ghovax/langmesh#render-cli` when Render operations are needed.
-Never install into a user or system profile, print credentials, or invent a missing Render
-API key. Use `RENDER_API_KEY` only when the service explicitly provides it.
+file and archive utilities, Python, `uv`, Ruff, GCC/G++, Clang/LLVM, Make, CMake, Ninja,
+pkg-config, Rust, Node.js, Bun, and the required C/C++ runtime libraries. This session
+also has a private Nix package profile. If a command-line tool is missing, install it into
+this session's profile with `nix profile add nixpkgs#<package>`. Use `gh` for GitHub
+operations; the service supplies its token through `GH_TOKEN`. The LangMesh checkout
+provides the Render CLI as `nix profile add github:ghovax/langmesh#render-cli` when Render
+operations are needed. Never install into a user or system profile, print credentials, or
+invent a missing Render API key. Use `RENDER_API_KEY` only when the service explicitly
+provides it.
 
 Commit and push on a topic branch. That is the default, and it is the work of this
 session — writing git history and pushing that branch do not wait for a separate ask. Do
