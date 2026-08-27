@@ -482,12 +482,13 @@ def update_comment(repository: str, comment_id: int, text: str, token: str, api:
     )
 
 
-def delivery_marker(delivery_id: str) -> str:
-    return f"<!-- langmesh-delivery:{delivery_id} -->"
+def comment_marker(comment_id: str) -> str:
+    return f"<!-- id:{comment_id} -->"
 
 
-def comment_body(delivery_id: str, text: str) -> str:
-    return f"{delivery_marker(delivery_id)}\n{text.strip()}".strip()
+def comment_body(comment_id: str, text: str) -> str:
+    return f"""{comment_marker(comment_id)}
+{text.strip()}""".strip()
 
 
 def find_delivery_comment(
@@ -502,7 +503,7 @@ def find_delivery_comment(
         f"{api}/repos/{repository}/issues/{number}/comments?per_page=100",
         token,
     )
-    marker = delivery_marker(delivery_id)
+    marker = comment_marker(delivery_id)
     comments = raw if isinstance(raw, list) else []
     for record in comments:
         if not isinstance(record, Mapping) or marker not in str(record.get("body") or ""):
