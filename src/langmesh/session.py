@@ -390,9 +390,28 @@ class Session:
         ):
             self._restored = True
             return False
-        from langchain_core.messages import messages_from_dict
+        from langchain_core.messages import ToolMessage, messages_from_dict
 
-        self.runtime.conversation[:] = messages_from_dict(list(checkpoint.conversation))
+        from langmesh.base.primitives.limits import (
+            bind_limits,
+            limits_from_configuration,
+            reset_limits,
+        )
+        from langmesh.runtime.internals import _cap_model_result_payload
+
+        restored_messages = messages_from_dict(list(checkpoint.conversation))
+        limits_token = bind_limits(limits_from_configuration(self._configuration.tuning))
+        try:
+            for message in restored_messages:
+                if not isinstance(message, ToolMessage):
+                    continue
+                if isinstance(message.content, str):
+                    message.content = _cap_model_result_payload(message.content)
+                if isinstance(message.artifact, dict):
+                    message.artifact.pop("result", None)
+        finally:
+            reset_limits(limits_token)
+        self.runtime.conversation[:] = restored_messages
         self.runtime.restore_session(checkpoint.session)
         if checkpoint.session.permission_mode:
             self._permission_mode = checkpoint.session.permission_mode
