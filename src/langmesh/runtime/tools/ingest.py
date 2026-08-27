@@ -7,9 +7,6 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from charset_normalizer import from_bytes
-from PIL import Image, UnidentifiedImageError
-
 from langmesh.base.confinement.confinement import expand
 from langmesh.base.content.attachments import image_url_block, model_supports_vision
 from langmesh.base.primitives.limits import clip_to_tokens, current_limits
@@ -19,6 +16,8 @@ from langmesh.runtime.tools.execution import current_tool_services
 
 def _image_mime(raw: bytes) -> str | None:
     """The image MIME type Pillow recognises, or ``None`` when the bytes are not an image."""
+    from PIL import Image, UnidentifiedImageError
+
     try:
         with Image.open(BytesIO(raw)) as image:
             fmt = image.format
@@ -31,6 +30,8 @@ def _image_mime(raw: bytes) -> str | None:
 
 def _decode_text(raw: bytes) -> str | None:
     """Decode ``raw`` as text via charset-normalizer, or ``None`` when it is not text."""
+    from charset_normalizer import from_bytes
+
     if not raw:
         return ""
     match = from_bytes(raw).best()
