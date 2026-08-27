@@ -1116,10 +1116,7 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
 
     def provider_redirect_uri(provider: str) -> str:
         provider_identifier = provider.strip().lower()
-        registered_redirect_uri = authentication.redirect_uri(provider_identifier)
-        if registered_redirect_uri:
-            return registered_redirect_uri
-        return f"{settings.public_url}/github/auth/{urllib.parse.quote(provider_identifier, safe='')}/callback"
+        return authentication.redirect_uri(provider_identifier)
 
     async def require_oauth_provider(provider: str) -> str:
         provider_identifier = provider.strip().lower()
@@ -1171,7 +1168,7 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             await store.finish_oauth_authorization(state)
             raise HTTPException(400, detail=f"OAuth authorization failed: {error}")
         installation_id, _user_login, code_verifier, redirect_uri = authorization_record
-        if not code.strip():
+        if redirect_uri and not code.strip():
             raise HTTPException(400, detail="OAuth authorization code is required")
         try:
             authorization = authentication.authorization_request(

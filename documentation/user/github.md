@@ -159,7 +159,9 @@ curl --fail-with-body --get \
   --data-urlencode 'state=returned_authorization_state'
 ```
 
-For a provider with a registered public callback, the provider redirects directly to
+Cursor uses its own browser and polling flow; after authorization, call the returned
+`completion_url` with its `state` and without a `code`. For a provider with a registered
+public callback, the provider redirects directly to
 `/github/auth/{provider}/callback`. The service validates the one-time state, exchanges
 the code with PKCE, and stores the encrypted provider token. Select the resulting
 provider model without an API key:
