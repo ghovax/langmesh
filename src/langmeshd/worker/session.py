@@ -25,6 +25,7 @@ from langmeshd.commons.toolboxes import toolbox_for
 from langmesh.base.primitives.limits import current_limits
 from langmeshd.daemon.persistence.file_leases import FileLeaseManager
 from langmesh.base.configuration import Configuration
+from langmesh.base.configuration.configuration import GoalReviewConfiguration
 from langmeshd.daemon.persistence.background_jobs import get_background_job_store
 from langmesh.base.contracts.ports import JobStore
 from langmeshd.daemon.persistence.worktrees import SessionWorktree
@@ -483,8 +484,8 @@ class SessionExecutor(AgentExecutor):
         self._maybe_evict(session_id)
 
     async def _continue(self, session_id: str, plan: _ContinuationPlan) -> None:
-        """A marked goal is settled by a secondary review; an open, unmarked goal is reminded;
-        either rides with the task obligation in a single next turn."""
+        """A marked goal is settled by whoever `goal_review.settlement` names; an open, unmarked
+        goal is reminded; either rides with the task obligation in a single next turn."""
         state = self._contexts.get(session_id)
         runtime = state.runtime if state is not None else None
         if runtime is None:
@@ -495,28 +496,40 @@ class SessionExecutor(AgentExecutor):
         try:
             goal = _features.goal(runtime)
             if plan.review and goal is not None and goal.pending_review:
-                # The secondary review settles the status the agent marked; the review itself
-                # drives no model turn, so what opens next is decided from its verdict.
-                await self._continue_with_review(session_id, state, runtime, goal)
-                review_phase_active = True
-                goal = _features.goal(runtime)
-                if goal is not None and goal.is_open and goal.review_message:
-                    await self._drive_self_sent_turn(
-                        session_id,
-                        GOAL_CONTINUATION_KIND,
-                        metadata_flags={
-                            Metadata.GOAL_CONTINUATION: True,
-                            Metadata.GOAL_REVIEW_ID: goal.review_id,
-                            **({Metadata.TASK_CONTINUATION: True} if plan.tasks else {}),
-                        },
-                        text=goal.review_message,
-                    )
-                elif plan.tasks:
-                    await self._drive_self_sent_turn(
-                        session_id,
-                        TASK_CONTINUATION_KIND,
-                        metadata_flags={Metadata.TASK_CONTINUATION: True},
-                    )
+                if _features.goal_settlement(runtime) == GoalReviewConfiguration.AGENT:
+                    # The working agent's mark is the settlement: apply it and do not open a reviewer.
+                    _features.apply_agent_goal_mark(runtime)
+                    await self._persist_session_state(session_id, runtime)
+                    goal = _features.goal(runtime)
+                    if plan.tasks and goal is not None and goal.is_open:
+                        await self._drive_self_sent_turn(
+                            session_id,
+                            TASK_CONTINUATION_KIND,
+                            metadata_flags={Metadata.TASK_CONTINUATION: True},
+                        )
+                else:
+                    # The secondary review settles the status the agent marked; the review itself
+                    # drives no model turn, so what opens next is decided from its verdict.
+                    await self._continue_with_review(session_id, state, runtime, goal)
+                    review_phase_active = True
+                    goal = _features.goal(runtime)
+                    if goal is not None and goal.is_open and goal.review_message:
+                        await self._drive_self_sent_turn(
+                            session_id,
+                            GOAL_CONTINUATION_KIND,
+                            metadata_flags={
+                                Metadata.GOAL_CONTINUATION: True,
+                                Metadata.GOAL_REVIEW_ID: goal.review_id,
+                                **({Metadata.TASK_CONTINUATION: True} if plan.tasks else {}),
+                            },
+                            text=goal.review_message,
+                        )
+                    elif plan.tasks:
+                        await self._drive_self_sent_turn(
+                            session_id,
+                            TASK_CONTINUATION_KIND,
+                            metadata_flags={Metadata.TASK_CONTINUATION: True},
+                        )
             elif plan.goal and goal is not None and goal.is_open:
                 # The goal is still open and the agent did not mark it: a hidden reminder to
                 # keep going or state where it stands, carrying the task obligation with it.
@@ -543,6 +556,11 @@ class SessionExecutor(AgentExecutor):
 
     async def _continue_with_review(self, session_id, state, runtime, goal) -> None:
         """Settle a marked goal: the secondary review either confirms the claimed status or overrides it."""
+        if _features.goal_settlement(runtime) == GoalReviewConfiguration.AGENT:
+            _features.apply_agent_goal_mark(runtime)
+            await self._persist_session_state(session_id, runtime)
+            self._notify_goal_state(session_id, _features.goal(runtime))
+            return
         self._notify_goal_state(session_id, goal, review_phase=GoalReviewPhase.CHECKING)
         review = asyncio.create_task(cast(Coroutine[Any, Any, Any], _features.review_goal(runtime)))
         state.continuation.attach_review(review)
@@ -608,6 +626,17 @@ class SessionExecutor(AgentExecutor):
         goal = _features.goal(runtime) if runtime is not None else None
         if runtime is None or goal is None or not goal.is_parked:
             return False
+        if (
+            _features.goal_settlement(runtime) == GoalReviewConfiguration.AGENT
+            and goal.pending_review
+        ):
+            # A parked claim from before the reviewer was turned off settles as the agent marked it.
+            if state is not None:
+                state.aborted = False
+                state.continuation.cancel_review()
+            _features.apply_agent_goal_mark(runtime)
+            await self._persist_session_state(session_id, runtime)
+            return True
         if state is not None:
             state.aborted = False
             state.continuation.cancel_review()
@@ -669,6 +698,7 @@ class SessionExecutor(AgentExecutor):
                     "session_id": session_id,
                     "goal": {
                         **goal.public(),
+                        "settlement": self._global_configuration.goal_review.settlement,
                         **(
                             {"review_phase": review_phase.value} if review_phase is not None else {}
                         ),
@@ -1309,7 +1339,10 @@ class SessionExecutor(AgentExecutor):
                         continue
                     kind = str(data.get("kind") or data.get("type") or "")
                     inbound_id = str(data.get("message_id") or data.get("messageId") or "")
-                    if kind in {"inbound_message", "InboundMessageEvent"} and inbound_id == message_id:
+                    if (
+                        kind in {"inbound_message", "InboundMessageEvent"}
+                        and inbound_id == message_id
+                    ):
                         status = getattr(turn, "status", None)
                         state = getattr(getattr(status, "state", None), "value", None) or str(
                             getattr(status, "state", "") or ""

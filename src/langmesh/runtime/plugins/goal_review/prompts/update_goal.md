@@ -13,12 +13,12 @@ reached.
 - You set the goal and you own its `status`. Use `status` to say where it stands:
   `active` while you keep working, `satisfied` once you believe the end state holds,
   `blocked` when something genuinely stops it, `parked` to set it aside, `cleared` when
-  it is no longer wanted. A `satisfied` or `blocked` mark is checked by an independent
-  secondary review before it is final; `parked` and `cleared` apply directly.
+  it is no longer wanted. `parked` and `cleared` apply directly. {{ reviewer_clause }}
+  {{ agent_clause }}
 - Do not end a turn on an open goal without saying where it stands. If the goal is
   genuinely met, mark it `satisfied` rather than declaring victory in prose and walking
-  away — the review confirms rather than trusting your word. If you are not done, keep
-  `status` `active` and continue, or mark a blocker honestly.
+  away — {{ satisfied_consequence }}. If you are not done, keep `status` `active` and
+  continue, or mark a blocker honestly.
 
 Arguments:
 

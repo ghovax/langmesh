@@ -124,6 +124,10 @@ class Usage(TurnEvent):
     cumulative: dict[str, Any] = field(default_factory=dict)
     #: Whether the preceding request is a complete prefix; ``None`` means this lane has no local baseline.
     cache_prefix_reusable: bool | None = None
+    #: Whether the provider's cache read covered the whole input request.
+    cache_request_reusable: bool | None = None
+    #: The provider-reported cached share of the input request.
+    cache_read_fraction: float | None = None
     #: How much of the prefix is locally reusable, estimated with this harness's tokenizer rather than the provider's.
     reusable_prefix_tokens: int = 0
     #: How many segments the request had, and how many the previous one already carried unchanged.

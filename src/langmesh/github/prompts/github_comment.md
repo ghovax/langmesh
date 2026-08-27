@@ -1,2 +1,3 @@
-The text that replaces the acknowledgement. Everyday English, kept compact. A short list
-or a URL is welcome when it carries the answer; don't omit what they asked.
+The text that replaces the acknowledgement. Use clear human language and keep it
+concise. Prose, lists, and tables are allowed. Never use emoji, ASCII art, diagrams, or
+unnecessary technical jargon.

@@ -32,17 +32,16 @@ from langmesh.base.contracts.ports import Checkpoints
 from langmesh.github.detect import is_mention_turn
 from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features import Feature
-from langmesh.runtime.plugins.background import BackgroundJobsFeature
+from langmesh.runtime.plugins.background import BackgroundJobs
 from langmesh.runtime.plugins.bash import Bash
 from langmesh.runtime.plugins.compaction import (
     Compaction,
     DirectCompactionPreparation,
-    KeepRecentTurns,
 )
 from langmesh.runtime.plugins.continuation import Continuation
 from langmesh.runtime.plugins.permissions import PermissionReview
 from langmesh.runtime.plugins.web import Web
-from langmesh.runtime.turn_events import Done, Suspended, Usage
+from langmesh.runtime.turn_events import CompactionDone, CompactionStarted, Done, Suspended, Usage
 
 ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 PROTECTED_BRANCHES = frozenset({"main", "master"})
@@ -209,6 +208,8 @@ def turn_payload(
             payload["head"] = head.strip()
     if mention.comment_url.strip():
         payload["comment_url"] = mention.comment_url.strip()
+    if mention.user.strip():
+        payload["comment_author"] = mention.user.strip()
     payload["comment"] = mention.body
     return payload
 
@@ -519,14 +520,10 @@ def mention_features(reply: GitHubReply, workspace: Path) -> list[Feature]:
     service has already supplied network access and the installation token.
     """
     return [
-        Compaction(
-            strategy=KeepRecentTurns(24),
-            preparation=DirectCompactionPreparation(),
-            summarizer=None,
-        ),
+        Compaction(preparation=DirectCompactionPreparation()),
         PermissionReview(),
         Continuation(),
-        BackgroundJobsFeature(),
+        BackgroundJobs(),
         Bash(),
         Web(),
         reply,
@@ -632,11 +629,17 @@ async def run_turn(
         )
         await session.set_permission_mode("automatic")
         answer = ""
+        model_call = 0
         async for event in session.stream(prompt_for(mention, checkout=checkout, followup=followup)):
             if isinstance(event, Usage):
+                model_call += 1
                 logger.info(
-                    "mention usage input=%s output=%s cache_read=%s cache_write=%s "
-                    "prefix_reusable=%s reusable_prefix=%s shared=%s/%s",
+                    "mention usage session=%s call=%s input=%s output=%s "
+                    "cache_read=%s cache_write=%s prefix_reusable=%s "
+                    "reusable_prefix=%s shared=%s/%s divergence=%s "
+                    "request_reusable=%s cache_fraction=%s",
+                    mention.session_id,
+                    model_call,
                     event.input_tokens,
                     event.output_tokens,
                     event.cache_read_tokens,
@@ -645,6 +648,31 @@ async def run_turn(
                     event.reusable_prefix_tokens,
                     event.shared_segments,
                     event.segments,
+                    event.divergence,
+                    event.cache_request_reusable,
+                    event.cache_read_fraction,
+                )
+            if isinstance(event, CompactionStarted):
+                logger.info(
+                    "mention compaction started session=%s reason=%s "
+                    "messages_before=%s tokens_before=%s",
+                    mention.session_id,
+                    event.reason,
+                    event.messages_before,
+                    event.tokens_before,
+                )
+            if isinstance(event, CompactionDone):
+                logger.info(
+                    "mention compaction done session=%s reason=%s ok=%s "
+                    "messages=%s->%s tokens=%s->%s error=%s",
+                    mention.session_id,
+                    event.reason,
+                    event.ok,
+                    event.messages_before,
+                    event.messages_after,
+                    event.tokens_before,
+                    event.tokens_after,
+                    event.error_code,
                 )
             if isinstance(event, Suspended):
                 raise PermissionError(

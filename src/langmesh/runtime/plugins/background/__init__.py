@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from langmesh.runtime.background import (
-    BackgroundJobs,
+    BackgroundJobs as BackgroundRunner,
     background_completion_event,
     background_include_result,
 )
@@ -47,7 +47,7 @@ class BackgroundState:
         )
 
 
-class BackgroundJobsFeature(Feature):
+class BackgroundJobs(Feature):
     """One background-job runner and the delivery of its finished work to the model."""
 
     def __init__(self, *, store: Any = None) -> None:
@@ -58,7 +58,7 @@ class BackgroundJobsFeature(Feature):
         self._context = context
         self._host = host
         self._prompts = context.prompts("background")
-        self._runner = BackgroundJobs(
+        self._runner = BackgroundRunner(
             session_id=context.session_id,
             agent_name=context.agent_configuration.identifier,
             store=self._store,
@@ -66,7 +66,7 @@ class BackgroundJobsFeature(Feature):
         )
 
     @property
-    def runner(self) -> BackgroundJobs:
+    def runner(self) -> BackgroundRunner:
         """The runner the executor's resume pump and the tools read."""
         return self._runner
 

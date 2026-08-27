@@ -728,6 +728,7 @@ class ChatLiteLLMModel(BaseChatModel):
                     reconcile(
                         diagnosis,
                         int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0),
+                        int(usage.get("input_tokens", 0) or 0),
                     )
                     generation_chunk.message.additional_kwargs["cache_trace"] = diagnosis
                 yield generation_chunk
@@ -909,6 +910,7 @@ class ChatLiteLLMModel(BaseChatModel):
         reconcile(
             diagnosis,
             int((reported_usage.get("input_token_details") or {}).get("cache_read", 0) or 0),
+            int(reported_usage.get("input_tokens", 0) or 0),
         )
         result = self._response_to_result(response)
         if result.generations:

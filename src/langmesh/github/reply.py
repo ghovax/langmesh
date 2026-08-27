@@ -23,10 +23,6 @@ from langmesh.runtime.values import ToolStatus
 
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
-# Model openings of this mention job between progress reminders. Opening 1
-# reminds so a direction update lands before other work; then 25, 49, …
-PROGRESS_TURNS_INTERVAL = 24
-
 CommentKind = Literal["progress", "reply"]
 
 
@@ -37,7 +33,7 @@ class GitHubComment(BaseModel):
         description=_PROMPTS.load("github_comment", {}).strip(),
     )
     kind: CommentKind = Field(
-        default="progress",
+        default="reply",
         description=_PROMPTS.load("github_comment_kind", {}).strip(),
     )
 
@@ -47,7 +43,7 @@ class GitHubReplyCapability(Protocol):
     @property
     def comment(self) -> str | None: ...
 
-    def submit(self, comment: str, *, kind: CommentKind = "progress") -> None: ...
+    def submit(self, comment: str, *, kind: CommentKind = "reply") -> None: ...
 
 
 async def _submit_github_comment(**arguments: Any) -> str:
@@ -75,11 +71,19 @@ submit_github_comment = StructuredTool.from_function(
 class GitHubReply(Feature):
     """Write `submit_github_comment` in place and remind until a call is a reply."""
 
-    def __init__(self, publish: Callable[[str], None] | None = None) -> None:
+    def __init__(
+        self,
+        publish: Callable[[str], None] | None = None,
+        *,
+        progress_turns: int = 8,
+    ) -> None:
+        if progress_turns < 1:
+            raise ValueError("progress_turns must be at least 1")
         self._comment: str | None = None
         self._replied = False
         self._publish = publish
         self._openings = 0
+        self._progress_turns = progress_turns
         self._host: PluginHost | None = None
 
     def attach(self, context: PluginContext, host: PluginHost | None = None) -> None:
@@ -90,7 +94,7 @@ class GitHubReply(Feature):
     def comment(self) -> str | None:
         return self._comment
 
-    def submit(self, comment: str, *, kind: CommentKind = "progress") -> None:
+    def submit(self, comment: str, *, kind: CommentKind = "reply") -> None:
         self._comment = comment
         if kind == "reply":
             self._replied = True
@@ -100,9 +104,11 @@ class GitHubReply(Feature):
             self._publish(comment)
         except Exception:
             logger.exception("could not write submit_github_comment onto the thread")
+        else:
+            logger.info("GitHub comment submitted kind=%s chars=%s", kind, len(comment))
 
     def prepare_request(self) -> None:
-        """Append a progress reminder at the first opening, then every ``PROGRESS_TURNS_INTERVAL``.
+        """Append a conditional opening reminder, then periodic work reminders.
 
         The note is a harness reminder on the conversation tail. The system prompt and
         tool schema are not rewritten, so the provider-cache prefix stays intact.
@@ -111,7 +117,7 @@ class GitHubReply(Feature):
         if host is None or host.turn.maintenance_active():
             return
         self._openings += 1
-        if self._openings % PROGRESS_TURNS_INTERVAL != 1:
+        if self._openings % self._progress_turns != 1:
             return
         name = (
             "github_comment_progress_start"
@@ -145,6 +151,5 @@ __all__ = [
     "GitHubComment",
     "GitHubReply",
     "GitHubReplyCapability",
-    "PROGRESS_TURNS_INTERVAL",
     "submit_github_comment",
 ]
