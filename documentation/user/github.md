@@ -61,6 +61,15 @@ different providers and models. For example, an installation may use provider
 `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like
 `sk-or-v1-...`.
 
+GitHub mention sessions have a private Nix package profile. The service image already
+contains Nix, Git, `gh`, the Render CLI, `curl`, `jq`, `ripgrep`, `fd`, archive tools,
+and the Python/uv runtime. The agent can install another package into its private profile
+with `nix profile add nixpkgs#<package>`. The LangMesh checkout also contains the
+reproducible Render CLI package, available as
+`nix profile add github:ghovax/langmesh#render-cli`.
+The GitHub service supplies `GH_TOKEN` for repository operations. Render commands require
+an explicitly configured `RENDER_API_KEY`; the agent must never fabricate or print it.
+
 ## GitHub App settings
 
 Register one App for the service owner and set:
