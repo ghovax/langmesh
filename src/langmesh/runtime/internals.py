@@ -139,49 +139,65 @@ def _cap_model_result_payload(result: str, *, code: str = "tool_result_truncated
         return result
 
     parsed = _maybe_json(result)
-    if not isinstance(parsed, dict):
-        excerpt, _ = clip_to_tokens(result, budget)
-        return compact(
-            {
-                "code": code,
-                "truncated": True,
-                "omitted_characters": len(result) - len(excerpt),
-                "output_excerpt": excerpt,
-            }
-        )
-
-    kept = dict(parsed)
+    kept = dict(parsed) if isinstance(parsed, dict) else {"code": code, "output": result}
     omitted: dict[str, int] = {}
 
     def rendered_with(fields: dict) -> str:
         return compact({**fields, "truncated": True, **({"omitted": omitted} if omitted else {})})
 
-    def over(fields: dict) -> bool:
-        return clip_to_tokens(rendered_with(fields), budget)[1]
+    def rendered_tokens(fields: dict) -> int:
+        return count_tokens(rendered_with(fields))
 
     # Largest first, but never the fields that say what happened: a failure is what a model can act on.
-    essential = {"ok", "error", "error_code", "code", "status"}
+    essential = {
+        "ok",
+        "error",
+        "error_code",
+        "code",
+        "status",
+        "output",
+        "truncated",
+    }
     for key in sorted(kept, key=lambda key: len(compact(kept[key])), reverse=True):
-        if not over(kept):
+        if rendered_tokens(kept) <= budget:
             break
         if key not in essential:
             omitted[key] = len(compact(kept.pop(key)))
 
-    if not over(kept):
+    if rendered_tokens(kept) <= budget:
         return rendered_with(kept)
 
-    # One field enormous on its own: clip its text in place, so the result keeps its shape.
-    for key in sorted(kept, key=lambda key: len(compact(kept[key])), reverse=True):
-        if not over(kept) or not isinstance(kept[key], str):
-            continue
-        elsewhere = count_tokens(
-            rendered_with({other: value for other, value in kept.items() if other != key})
-        )
-        excerpt, clipped = clip_to_tokens(kept[key], max(1, budget - elsewhere))
-        if clipped:
-            omitted[f"{key} (clipped)"] = len(kept[key]) - len(excerpt)
+    # Preserve result shape by shrinking its prose fields until the rendered envelope fits too.
+    fixed_fields = {"ok", "error_code", "code", "status", "truncated"}
+    for include_fixed in (False, True):
+        while rendered_tokens(kept) > budget:
+            candidates = [
+                key
+                for key, value in kept.items()
+                if isinstance(value, str)
+                and count_tokens(value) > 1
+                and (include_fixed or key not in fixed_fields)
+            ]
+            if not candidates:
+                break
+            key = max(candidates, key=lambda candidate: count_tokens(kept[candidate]))
+            value = kept[key]
+            value_tokens = count_tokens(value)
+            excess = rendered_tokens(kept) - budget
+            excerpt, _ = clip_to_tokens(value, max(1, value_tokens - excess - 32))
+            if excerpt == value:
+                break
+            omitted_key = f"{key} (clipped)"
+            omitted[omitted_key] = omitted.get(omitted_key, 0) + len(value) - len(excerpt)
             kept[key] = excerpt
-    return rendered_with(kept)
+        if rendered_tokens(kept) <= budget:
+            return rendered_with(kept)
+
+    # An unusually tiny host budget still receives valid JSON rather than an over-budget fragment.
+    fallback = compact({"code": code, "truncated": True})
+    if count_tokens(fallback) <= budget:
+        return fallback
+    return "{}"
 
 
 def message_tokens(message: Any) -> int:
