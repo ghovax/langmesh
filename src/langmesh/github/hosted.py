@@ -11,14 +11,12 @@ import asyncio
 from contextlib import asynccontextmanager
 import hashlib
 import hmac
-import html
 import json
 import logging
 import os
 import secrets
 import subprocess
 import tempfile
-import threading
 import time
 import urllib.parse
 import urllib.error
@@ -31,11 +29,12 @@ import jwt
 import yaml
 from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from langmesh import PackagePromptLoader, SQLAlchemyCheckpoints
+from langmesh import SQLAlchemyCheckpoints
 from langmesh.base.contracts.ports import Checkpoints
 from langmesh.github.detect import is_mention_turn, thread_has_prior_bot_comment
 from langmesh.github.mention import (
@@ -57,7 +56,12 @@ from langmesh.github.mention import (
 )
 logger = logging.getLogger("langmesh.github.hosted")
 DEFAULT_CONFIGURATION_PATH = Path.home() / ".config" / "langmesh" / "github.yaml"
-_HTML = PackagePromptLoader(Path(__file__).resolve().parent / "assets", extension="html")
+
+
+class ConfigurationUpdate(BaseModel):
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    api_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -173,6 +177,23 @@ class Store:
         async with self.engine.begin() as connection:
             for statement in statements:
                 await connection.execute(text(statement))
+            if connection.dialect.name == "sqlite":
+                try:
+                    await connection.execute(
+                        text(
+                            "ALTER TABLE langmesh_github_deliveries ADD COLUMN "
+                            "next_attempt_at BIGINT NOT NULL DEFAULT 0"
+                        )
+                    )
+                except Exception:
+                    pass
+            else:
+                await connection.execute(
+                    text(
+                        "ALTER TABLE langmesh_github_deliveries ADD COLUMN IF NOT EXISTS "
+                        "next_attempt_at BIGINT NOT NULL DEFAULT 0"
+                    )
+                )
 
     async def close(self) -> None:
         await self.engine.dispose()
@@ -203,11 +224,13 @@ class Store:
         async with self.engine.begin() as connection:
             result = await connection.execute(
                 text(
-                    "SELECT delivery_id, event_name, installation_id, payload FROM langmesh_github_deliveries "
-                    "WHERE status = 'queued' OR (status = 'processing' AND claimed_at < :stale_at) "
+                    "SELECT delivery_id, event_name, installation_id, payload, attempts "
+                    "FROM langmesh_github_deliveries "
+                    "WHERE (status = 'queued' AND next_attempt_at <= :now) "
+                    "OR (status = 'processing' AND claimed_at < :stale_at) "
                     "ORDER BY received_at LIMIT 1 FOR UPDATE SKIP LOCKED"
                 ),
-                {"stale_at": now - stale_after},
+                {"now": now, "stale_at": now - stale_after},
             )
             row = result.mappings().first()
             if row is None:
@@ -228,14 +251,19 @@ class Store:
                 {"delivery_id": delivery_id},
             )
 
-    async def retry(self, delivery_id: str, error: str) -> None:
+    async def retry(self, delivery_id: str, error: str, delay: int) -> None:
         async with self.engine.begin() as connection:
             await connection.execute(
                 text(
-                    "UPDATE langmesh_github_deliveries SET status = 'queued', claimed_at = NULL, last_error = :error "
+                    "UPDATE langmesh_github_deliveries SET status = 'queued', claimed_at = NULL, "
+                    "next_attempt_at = :next_attempt_at, last_error = :error "
                     "WHERE delivery_id = :delivery_id"
                 ),
-                {"delivery_id": delivery_id, "error": error[:4000]},
+                {
+                    "delivery_id": delivery_id,
+                    "error": error[:4000],
+                    "next_attempt_at": int(time.time()) + max(1, delay),
+                },
             )
 
     async def configuration(self, installation_id: int) -> tuple[str, str, str] | None:
@@ -342,7 +370,7 @@ class GitHub:
         now = int(time.time())
         return str(
             jwt.encode(
-                {"iat": now - 60, "exp": now + 540, "iss": int(self.settings.app_id)},
+                {"iat": now - 60, "exp": now + 540, "iss": self.settings.app_id},
                 self.private_key,
                 algorithm="RS256",
             )
@@ -415,15 +443,11 @@ class GitHub:
         )
 
 
-def _html_page(title: str, body: str) -> HTMLResponse:
-    return HTMLResponse(_HTML.load("page", {"title": html.escape(title), "body": body}))
-
-
 class Processor:
     def __init__(self, settings: Settings, store: Store, github: GitHub) -> None:
         self.settings, self.store, self.github = settings, store, github
         self._checkpoints: Checkpoints = SQLAlchemyCheckpoints(store.engine)
-        self._locks: dict[str, threading.Lock] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
 
     async def initialize(self) -> None:
         initialize = getattr(self._checkpoints, "initialize", None)
@@ -437,17 +461,30 @@ class Processor:
                 await asyncio.sleep(self.settings.queue_poll_seconds)
                 continue
             delivery_id = str(delivery["delivery_id"])
+            attempts = int(delivery.get("attempts") or 1)
+            event_name = str(delivery["event_name"])
+            installation_id = int(delivery["installation_id"])
+            logger.info(
+                "claimed GitHub delivery id=%s event=%s installation=%s attempt=%s",
+                delivery_id,
+                event_name,
+                installation_id,
+                attempts,
+            )
             try:
                 await self.process(
-                    str(delivery["event_name"]),
+                    event_name,
                     json.loads(str(delivery["payload"])),
-                    int(delivery["installation_id"]),
+                    installation_id,
+                    delivery_id=delivery_id,
+                    attempt=attempts,
                 )
             except Exception as error:
                 logger.exception("GitHub delivery %s failed", delivery_id)
-                await self.store.retry(delivery_id, str(error))
+                await self.store.retry(delivery_id, str(error), min(300, 2 ** min(attempts, 8)))
             else:
                 await self.store.complete(delivery_id)
+                logger.info("completed GitHub delivery id=%s", delivery_id)
 
     def _runner(self, token: str):
         def run(arguments: list[str], *, cwd: str, env: Mapping[str, str] | None = None, extraheader: str = "") -> str:
@@ -489,10 +526,22 @@ class Processor:
         )
         return str(record.get("html_url") or "")
 
-    async def process(self, event_name: str, event: dict[str, Any], installation_id: int) -> None:
+    async def process(
+        self,
+        event_name: str,
+        event: dict[str, Any],
+        installation_id: int,
+        *,
+        delivery_id: str = "",
+        attempt: int = 0,
+    ) -> None:
         configuration = await self.store.configuration(installation_id)
         if configuration is None:
-            logger.info("installation %s has no provider configuration", installation_id)
+            logger.info(
+                "ignoring delivery id=%s installation=%s: no provider configuration",
+                delivery_id,
+                installation_id,
+            )
             return
         provider, model, api_key = configuration
         repository = str((event.get("repository") or {}).get("full_name") or "")
@@ -513,20 +562,59 @@ class Processor:
         )
         if mention is None or not mention.allowed:
             return
+        logger.info(
+            "processing delivery id=%s attempt=%s installation=%s repository=%s session=%s",
+            delivery_id,
+            attempt,
+            installation_id,
+            repository,
+            mention.session_id,
+        )
         lock_key = f"{installation_id}:{repository}"
-        lock = self._locks.setdefault(lock_key, threading.Lock())
-        with lock:
+        lock = self._locks.setdefault(lock_key, asyncio.Lock())
+        async with lock:
             with tempfile.TemporaryDirectory(prefix="langmesh-github-") as temporary_directory:
                 workspace = Path(temporary_directory) / repository.replace("/", "__")
-                await self._process_locked(mention, event, workspace, token, slug, provider, model, api_key)
+                await self._process_locked(
+                    mention,
+                    event,
+                    workspace,
+                    token,
+                    slug,
+                    provider,
+                    model,
+                    api_key,
+                    delivery_id=delivery_id,
+                    attempt=attempt,
+                )
 
-    async def _process_locked(self, mention: Mention, event: dict[str, Any], workspace: Path, token: str, slug: str, provider: str, model: str, api_key: str) -> None:
+    async def _process_locked(
+        self,
+        mention: Mention,
+        event: dict[str, Any],
+        workspace: Path,
+        token: str,
+        slug: str,
+        provider: str,
+        model: str,
+        api_key: str,
+        *,
+        delivery_id: str,
+        attempt: int,
+    ) -> None:
         self._checkout(mention.repository, workspace, token)
         runner = self._runner(token)
         if mention.kind == "pull" and not mention.head_ref:
             pull = self.github.request(f"/repos/{mention.repository}/pulls/{mention.number}", token)
             mention = mention_from_event(event, repository=mention.repository, pull=pull, known_turn=True, bot_login=f"{slug}[bot]") or mention
         ack = create_comment(mention.repository, mention.number, working_comment(""), token, self.settings.github_api_url)
+        logger.info(
+            "started GitHub mention delivery id=%s attempt=%s session=%s acknowledgement=%s",
+            delivery_id,
+            attempt,
+            mention.session_id,
+            ack,
+        )
         try:
             checkout = prepare_tree(mention, workspace, token=token, app_slug=slug, app_id=self.settings.app_id, run=runner)
             followup = thread_has_prior_bot_comment(event, repository=mention.repository, token=token, api=self.settings.github_api_url, bot_login=f"{slug}[bot]", ignore_ids=(ack,))
@@ -541,8 +629,22 @@ class Processor:
             )
             pull_url = self._publish(mention, workspace, token, runner) if tree_is_dirty(workspace, run=runner) or commits_to_push(workspace, run=runner) else ""
             publish_thread_comment(mention.repository, mention.number, posted_reply(answer, pull_url), token, self.settings.github_api_url, comment_id=ack)
+            logger.info(
+                "finished GitHub mention delivery id=%s attempt=%s session=%s pull_request=%s",
+                delivery_id,
+                attempt,
+                mention.session_id,
+                bool(pull_url),
+            )
         except Exception:
-            logger.exception("hosted mention turn failed for %s#%s", mention.repository, mention.number)
+            logger.exception(
+                "hosted mention delivery failed id=%s attempt=%s session=%s for %s#%s",
+                delivery_id,
+                attempt,
+                mention.session_id,
+                mention.repository,
+                mention.number,
+            )
             publish_thread_comment(mention.repository, mention.number, user_failure("Something went wrong while I was working on this."), token, self.settings.github_api_url, comment_id=ack)
 
 
@@ -569,7 +671,15 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
 
     app = FastAPI(title="LangMesh GitHub App", lifespan=lifespan)
 
-    @app.get("/github/setup", response_class=HTMLResponse)
+    @app.get("/")
+    async def root() -> dict[str, str]:
+        return {"service": "langmesh-agent", "status": "ok"}
+
+    @app.get("/healthz")
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/github/setup")
     async def setup(installation_id: int) -> Response:
         if installation_id <= 0:
             raise HTTPException(400, "invalid installation_id")
@@ -577,8 +687,8 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         query = urllib.parse.urlencode({"client_id": settings.oauth_client_id, "redirect_uri": f"{settings.public_url}/github/setup/callback", "state": token})
         return RedirectResponse(f"https://github.com/login/oauth/authorize?{query}")
 
-    @app.get("/github/setup/callback", response_class=HTMLResponse)
-    async def setup_callback(code: str, state: str) -> Response:
+    @app.get("/github/setup/callback")
+    async def setup_callback(code: str, state: str) -> dict[str, Any]:
         try:
             oauth = github.oauth_token(code)
             user = github.user(oauth)
@@ -589,44 +699,57 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             if not record.get("repositories") and record.get("total_count") == 0:
                 raise RuntimeError("your GitHub account cannot access this installation")
         except Exception as error:
-            return _html_page(
-                "LangMesh setup failed",
-                _HTML.load("setup_failed", {"message": html.escape(str(error))}),
-            )
-        response = RedirectResponse("/github/configuration", status_code=303)
-        response.set_cookie("langmesh_setup", state, httponly=True, secure=True, samesite="lax", max_age=600)
-        return response
+            raise HTTPException(400, detail=str(error)) from error
+        return {
+            "installation_id": installation_id[0],
+            "setup_token": state,
+            "expires_in": 600,
+            "configuration_url": f"{settings.public_url}/github/configuration",
+        }
 
-    @app.get("/github/configuration", response_class=HTMLResponse)
-    async def configuration_page(request: Request) -> HTMLResponse:
-        setup_token = request.cookies.get("langmesh_setup", "")
-        setup = await store.setup(setup_token)
-        if setup is None:
-            return _html_page("LangMesh setup", _HTML.load("setup_expired", {}))
-        current = await store.configuration(setup[0])
-        provider, model = (current[0], current[1]) if current else ("", "")
-        body = _HTML.load(
-            "configuration",
-            {"provider": html.escape(provider), "model": html.escape(model)},
-        )
-        return _html_page("LangMesh configuration", body)
+    def setup_token(request: Request) -> str:
+        authorization = request.headers.get("authorization", "")
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not token.strip():
+            raise HTTPException(401, detail="use Authorization: Bearer SETUP_TOKEN")
+        return token.strip()
 
-    @app.post("/github/configuration", response_class=HTMLResponse)
-    async def save_configuration(request: Request) -> HTMLResponse:
-        setup_token = request.cookies.get("langmesh_setup", "")
-        setup = await store.setup(setup_token)
+    @app.get("/github/configuration")
+    async def configuration_page(request: Request) -> dict[str, Any]:
+        setup = await store.setup(setup_token(request))
         if setup is None:
-            return _html_page("LangMesh setup", _HTML.load("setup_expired", {}))
-        form = await request.form()
-        provider, model = str(form.get("provider") or "").strip(), str(form.get("model") or "").strip()
+            raise HTTPException(401, detail="setup token is missing or expired")
         current = await store.configuration(setup[0])
-        api_key = str(form.get("api_key") or "")
+        return {
+            "installation_id": setup[0],
+            "account": setup[1],
+            "configured": current is not None,
+            "provider": current[0] if current else "",
+            "model": current[1] if current else "",
+            "api_key_configured": bool(current and current[2]),
+        }
+
+    @app.put("/github/configuration")
+    async def save_configuration(payload: ConfigurationUpdate, request: Request) -> dict[str, Any]:
+        token = setup_token(request)
+        setup = await store.setup(token)
+        if setup is None:
+            raise HTTPException(401, detail="setup token is missing or expired")
+        provider, model = payload.provider.strip(), payload.model.strip()
+        api_key = (payload.api_key or "").strip()
+        current = await store.configuration(setup[0])
         if not api_key and current:
             api_key = current[2]
         if not provider or not model or not api_key:
-            return _html_page("LangMesh setup", _HTML.load("configuration_missing", {}))
+            raise HTTPException(422, detail="provider, model, and api_key are required")
         await store.save_installation(setup[0], setup[1], "unknown", provider, model, api_key)
-        return _html_page("LangMesh configuration saved", _HTML.load("configured", {}))
+        return {
+            "installation_id": setup[0],
+            "configured": True,
+            "provider": provider,
+            "model": model,
+            "api_key_configured": True,
+        }
 
     @app.post("/github/webhook")
     async def webhook(request: Request) -> Response:

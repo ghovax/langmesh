@@ -226,11 +226,11 @@ in-memory or durable storage without coupling the turn loop to LangGraph.
 ### Transcript, audit, and background jobs
 
 `Transcript` records one `TurnSummary` per completed or cancelled turn. `Observer`
-receives transient audit `Observation` values and cannot fail a turn.
-`BackgroundJobsFeature` records detached work through `JobStore`; `MemoryJobStore` is
-process-local, while a durable implementation enables restart recovery. Duplicate job
-identifiers are rejected before their coroutine starts, preventing an idempotent retry
-from repeating an external effect.
+receives transient audit `Observation` values and cannot fail a turn. `BackgroundJobs`
+records detached work through `JobStore`; `MemoryJobStore` is process-local, while a
+durable implementation enables restart recovery. Duplicate job identifiers are rejected
+before their coroutine starts, preventing an idempotent retry from repeating an external
+effect.
 
 Filesystem mutation is never an implicit persistence behavior of these interfaces. An
 explicit tool may of course modify a path the caller authorized, and the library reads

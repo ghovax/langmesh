@@ -32,7 +32,6 @@ from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 from langmesh.runtime.plugins.compaction.ports import (
     CompactionSummary,
     DirectCompactionPreparation,
-    KeepRecentTurns,
     ObservationCompactionPreparation,
 )
 from langmesh.runtime.runtime import AgentRuntime

@@ -171,13 +171,21 @@ class CompactionConfiguration(Section):
 
 
 class GoalReviewConfiguration(Section):
-    """How the secondary goal review settles an agent-marked goal.
+    """Who settles an agent-marked goal.
 
-    The agent owns its goal's status; a marked ``satisfied`` or ``blocked`` is settled by an
-    independent reviewer that either confirms the mark or overrides it, while an open, unmarked
-    goal is re-opened with a light continuation reminder. The reviewer is asked again until it
+    The agent owns its goal's status. A marked ``satisfied`` or ``blocked`` is settled either by
+    an independent reviewer that confirms or overrides the mark, or by the working agent itself,
+    in which case that mark is final and the session ends. An open, unmarked goal is re-opened
+    with a light continuation reminder. When a reviewer runs, it is asked again until it
     submits — modelling correctly is the model's own job, so nothing caps how often.
     """
+
+    #: An isolated session confirms or overrides the working agent's mark.
+    REVIEWER: ClassVar[str] = "reviewer"
+    #: The working agent's mark is the settlement; there is no second session.
+    AGENT: ClassVar[str] = "agent"
+
+    settlement: Literal["reviewer", "agent"] = Field(default="reviewer")
 
 
 class AttachmentsConfiguration(Section):

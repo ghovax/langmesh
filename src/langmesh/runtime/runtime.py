@@ -477,7 +477,7 @@ class AgentRuntime(_RunsTurns):
             ),
             window=WindowView(
                 context_window=self._context_window,
-                latest_context_tokens=self._latest_context_tokens,
+                _latest_context_tokens=lambda: self._latest_context_tokens,
                 set_latest_context_tokens=lambda value: setattr(
                     self, "_latest_context_tokens", value
                 ),
@@ -772,6 +772,8 @@ class AgentRuntime(_RunsTurns):
             context_window_estimated=self._context_window_estimated,
             cumulative=dict(self._token_usage),
             cache_prefix_reusable=cache_trace.get("cache_prefix_reusable"),
+            cache_request_reusable=cache_trace.get("cache_request_reusable"),
+            cache_read_fraction=cache_trace.get("cache_read_fraction"),
             reusable_prefix_tokens=reachable,
             segments=int(cache_trace.get("segments", 0) or 0),
             shared_segments=int(cache_trace.get("shared_segments", 0) or 0),

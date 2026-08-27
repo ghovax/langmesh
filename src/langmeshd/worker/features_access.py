@@ -79,6 +79,23 @@ def apply_goal_review(runtime, review):
     return feature.apply(review)
 
 
+def goal_settlement(runtime) -> str:
+    from langmesh.base.configuration.configuration import GoalReviewConfiguration
+    from langmesh.runtime.plugins.goal_review import GoalReviewFeature
+
+    feature = _resolve_feature(runtime, GoalReviewFeature)
+    return feature.settlement if feature is not None else GoalReviewConfiguration.REVIEWER
+
+
+def apply_agent_goal_mark(runtime):
+    from langmesh.runtime.plugins.goal_review import GoalReviewFeature
+
+    feature = _resolve_feature(runtime, GoalReviewFeature)
+    if feature is None:
+        return goal(runtime)
+    return feature.apply_agent_mark()
+
+
 def should_continue_goal(runtime) -> bool:
     from langmesh.runtime.plugins.continuation import Continuation
 
@@ -204,9 +221,9 @@ def note_observation_registry(runtime, metadata: dict, error: str | None = None)
 
 
 def background_jobs(runtime):
-    from langmesh.runtime.plugins.background import BackgroundJobsFeature
+    from langmesh.runtime.plugins.background import BackgroundJobs
 
-    feature = _resolve_feature(runtime, BackgroundJobsFeature)
+    feature = _resolve_feature(runtime, BackgroundJobs)
     return feature.runner if feature is not None else None
 
 
@@ -227,9 +244,9 @@ async def wait_for_jobs(runtime) -> None:
 
 
 def inject_stored_background_result(runtime, **kwargs) -> None:
-    from langmesh.runtime.plugins.background import BackgroundJobsFeature
+    from langmesh.runtime.plugins.background import BackgroundJobs
 
-    feature = _resolve_feature(runtime, BackgroundJobsFeature)
+    feature = _resolve_feature(runtime, BackgroundJobs)
     if feature is not None:
         feature.inject_stored_result(**kwargs)
 
@@ -245,6 +262,7 @@ def send_tool_to_background(runtime, tool_call_identifier: str) -> bool:
 
 
 __all__ = [
+    "apply_agent_goal_mark",
     "apply_goal_review",
     "awaiting_compaction_recording",
     "background_jobs",
@@ -255,6 +273,7 @@ __all__ = [
     "continuation_messages",
     "goal",
     "goal_continuation_message",
+    "goal_settlement",
     "has_actionable_tasks",
     "has_completed_undelivered_jobs",
     "has_pending_jobs",

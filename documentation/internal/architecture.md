@@ -275,15 +275,16 @@ feature.
 - **Setting a goal is the whole of the agent's authority over it.** The agent owns the
   goal's `status` through `update_goal`: it keeps `active` while working, marks
   `satisfied` or `blocked` when it believes work or blockage is real, parks, or clears.
-  Where a review must guard against self-grading, the mark itself is what the secondary
-  review audits.
-- **A marked status is settled by a review**: an isolated agent session made when a turn
-  ends. The reviewer receives the main session's exact conversation, model, and cached
-  static prompt, while runtime policy narrows execution to read-only work. Its verdict
-  tool, `submit_goal_review`, is bound only in that hidden lane; the working session
-  never carries an inert verdict tool, and the review's distinct tools segment makes its
-  first cache boundary explicit rather than pretending prose can declare a callable
-  function.
+  Who settles a `satisfied` or `blocked` mark is `goal_review.settlement`. Under
+  `reviewer`, the mark itself is what the secondary review audits. Under `agent`, that
+  mark is final and the session ends; no isolated reviewer session is opened.
+- **A marked status is settled by a review** when `goal_review.settlement` is
+  `reviewer`: an isolated agent session made when a turn ends. The reviewer receives the
+  main session's exact conversation, model, and cached static prompt, while runtime
+  policy narrows execution to read-only work. Its verdict tool, `submit_goal_review`, is
+  bound only in that hidden lane; the working session never carries an inert verdict
+  tool, and the review's distinct tools segment makes its first cache boundary explicit
+  rather than pretending prose can declare a callable function.
 - The reviewer is linked to the working session and visible in the dedicated goal-review
   panel, working from a read-only workspace and disposable scratch directory. It forms
   its own opinion by reading the user's requests, searching the code, inspecting the
@@ -314,13 +315,15 @@ agent sees that message and nothing else from the verdict.
 Tracked tasks have their own continuation obligation and allowance. At the
 completed-turn boundary, the session derives one plan containing the independent goal,
 review, and tasks reasons. One owned workflow drains those plans under the session's
-turn lock: it settles a marked status with the secondary review first, then opens
-exactly one next turn — the review's continuation message when it reverts the mark, a
-light goal-reminder turn when the goal stayed open and unmarked, or a task-only reminder
-turn when only tasks remain. Each plugin contributes its own segment (the goal its
-reminder or review prose, tracked tasks their audit note), staged as its own separate
-message in order — so obligations compose without ever being merged into one text, and
-competing automatic turns are structurally impossible.
+turn lock: it settles a marked status first — with the secondary review when
+`goal_review.settlement` is `reviewer`, or by applying the working agent's mark when it
+is `agent` — then opens exactly one next turn when work remains — the review's
+continuation message when a reviewer reverts the mark, a light goal-reminder turn when
+the goal stayed open and unmarked, or a task-only reminder turn when only tasks remain.
+A mark settled by the working agent ends the session. Each plugin contributes its own
+segment (the goal its reminder or review prose, tracked tasks their audit note), staged
+as its own separate message in order — so obligations compose without ever being merged
+into one text, and competing automatic turns are structurally impossible.
 
 ## Prompt caching, and what is recorded about it
 

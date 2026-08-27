@@ -66,7 +66,7 @@ compose:
 
 ```python
 from langmesh import Session, SessionComponents
-from langmesh.runtime.plugins.background import BackgroundJobsFeature
+from langmesh.runtime.plugins.background import BackgroundJobs
 from langmesh.runtime.plugins.bash import Bash
 from langmesh.runtime.plugins.web import Web
 
@@ -74,7 +74,7 @@ session = Session(
     agent,
     directory="/srv/checkout",
     providers={"anthropic": "sk-ant-…"},
-    components=SessionComponents(features=[BackgroundJobsFeature(), Bash(), Web()]),
+    components=SessionComponents(features=[BackgroundJobs(), Bash(), Web()]),
 )
 ```
 

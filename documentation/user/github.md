@@ -27,16 +27,16 @@ github:
     id: "2149876"
     private_key_path: "/srv/langmesh/secrets/langmesh-agent.2026-08.pem"
   webhook:
-    secret: "langmesh-gh-9a5b7c1d4e6f8a0b2c3d"
+    secret: "langmesh-gh-..."
   oauth:
-    client_id: "Iv1.8f2c1d4e6a7b9c0d"
-    client_secret: "9c8b7a6d5e4f3210fedcba9876543210abcd1234"
+    client_id: "Iv1...."
+    client_secret: "..."
   api_url: "https://api.github.com"
 server:
   public_url: "https://github-agent.example.net"
 storage:
   database:
-    url: "postgresql+asyncpg://postgres:correct-horse-battery-staple@db.qxwzjvkrmno.supabase.co:5432/postgres?ssl=require"
+    url: "postgresql+asyncpg://postgres:...@db.qxwzjvkrmno.supabase.co:5432/postgres?ssl=require"
   encryption:
     key_path: "/srv/langmesh/secrets/provider-keys.fernet"
   queue:
@@ -52,11 +52,14 @@ chmod 600 /srv/langmesh/secrets/provider-keys.fernet
 ```
 
 The service stores provider API keys encrypted in the external database, keyed by GitHub
-installation. The delivery queue and session checkpoints use that same database, so
-another worker can continue after the original worker disappears. Different
-installations can choose different providers and models. For example, an installation
-may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key
-shaped like `sk-or-v1-01f4c8e9...`.
+installation. The GitHub worker uses the compaction plugin's configured threshold with a
+direct preparation port. Compaction intentionally invalidates the conversation portion
+of the provider cache; the stable instructions and tool definitions remain reusable. The
+delivery queue and session checkpoints use that same database, so another worker can
+continue after the original worker disappears. Different installations can choose
+different providers and models. For example, an installation may use provider
+`openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like
+`sk-or-v1-...`.
 
 ## GitHub App settings
 
@@ -80,7 +83,37 @@ the service deployment. They are not installation settings.
 1. GitHub opens the service setup URL.
 1. Sign in with GitHub when redirected. The service verifies that this account can
    access the installation.
-1. Enter the provider, model, and API key in the configuration form.
+1. The callback returns a JSON object containing a short-lived setup token, for example:
+
+```json
+{
+  "installation_id": 184736295,
+  "setup_token": "7kQ2mN...vR8pL4",
+  "expires_in": 600,
+  "configuration_url": "https://github-agent.example.net/github/configuration"
+}
+```
+
+The token above is shortened for readability. Copy the complete value returned by your
+callback when calling the JSON configuration endpoint:
+
+```sh
+curl --fail-with-body --request PUT \
+  --url https://langmesh-agent.onrender.com/github/configuration \
+  --header 'Authorization: Bearer 7kQ2mN...vR8pL4' \
+  --header 'Content-Type: application/json' \
+  --data '{"provider":"openrouter","model":"deepseek/deepseek-chat-v3-0324","api_key":"sk-or-v1-01f4c8e9..."}'
+```
+
+Read the saved state with the same token:
+
+```sh
+curl --fail-with-body \
+  --url https://langmesh-agent.onrender.com/github/configuration \
+  --header 'Authorization: Bearer 7kQ2mN...vR8pL4'
+```
+
+The response never includes the API key.
 
 After that, mention the installed bot in an issue or same-repository pull request. The
 bot identity is the actual App login, such as `@langmesh-agent[bot]`, and its commits
@@ -91,6 +124,12 @@ The setup flow verifies the installer through GitHub before accepting settings; 
 `installation_id` in a URL is not treated as authorization. Provider keys are encrypted
 at rest and never written to a checkout.
 
+Final `reply` comments address the known author of the triggering comment with a GitHub
+`@username` mention, and mention other known users when the reply directly addresses
+them. `progress` comments never use user mentions, so only the final response creates
+the intended notification. Usernames are never guessed, altered, or copied from
+untrusted prose.
+
 ## Repository behavior
 
 The App service keeps its delivery queue, encrypted installation settings, and session
@@ -100,5 +139,5 @@ and pull requests remain the durable source for repository changes. It uses inst
 tokens limited to the installed repositories and creates or updates topic branches and
 draft pull requests there. No repository file is created to select a model or provider.
 
-To change the provider, model, or API key, reopen the installation setup page and save
-the new values. The next mention uses the new configuration.
+To change the provider, model, or API key, start the setup flow again and send another
+JSON `PUT` request. The next mention uses the new configuration.

@@ -12,6 +12,15 @@ from langmeshd.commons.database import SessionRecord
 from langmeshd.commons.services.broadcast import _publish_broadcast
 
 
+def attached_goal(goal: dict | None) -> dict | None:
+    """The goal a client sees, with who currently settles a mark laid over the stored snapshot."""
+    if not isinstance(goal, dict):
+        return None
+    configuration = state.global_configuration
+    settlement = configuration.goal_review.settlement if configuration is not None else "reviewer"
+    return {**goal, "settlement": settlement}
+
+
 def _normalize_permission_mode(mode: str) -> str:
     """A validated permission mode at a persistence boundary."""
     from langmesh.base.configuration.permission_mode import PermissionMode
@@ -198,7 +207,7 @@ def _sessions_payload() -> dict[str, list[dict[str, Any]]]:
                     "running": row.id in state._running_contexts,
                     "awaiting_input": row.id in state._awaiting_input_contexts,
                     # What this session is working toward, read from the live map because a goal belongs to its process.
-                    "goal": state._session_goals.get(row.id),
+                    "goal": attached_goal(state._session_goals.get(row.id)),
                     # What the session is doing, which its lifecycle deliberately does not say.
                     "activity": _activity_of(row.id, str(row.lifecycle or "live")),
                 }

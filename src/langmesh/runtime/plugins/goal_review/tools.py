@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from copy import copy
 from pathlib import Path
 from typing import Any
 
 from langchain.tools import tool
 from langchain_core.tools import StructuredTool
 
+from langmesh.base.configuration.configuration import GoalReviewConfiguration
 from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.features import GoalCapability
@@ -18,6 +20,39 @@ from langmesh.runtime.values import ToolStatus
 
 #: The tools' model-facing descriptions, read from this plugin's own prompts directory.
 _DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
+
+
+def update_goal_description(settlement: str) -> str:
+    """The model-facing `update_goal` text for who settles a mark."""
+    reviewer = settlement != GoalReviewConfiguration.AGENT
+    return _DESCRIPTIONS.load(
+        "update_goal",
+        {
+            "reviewer_clause": (
+                _DESCRIPTIONS.load("update_goal_reviewer_clause", {}).strip() if reviewer else ""
+            ),
+            "agent_clause": (
+                _DESCRIPTIONS.load("update_goal_agent_clause", {}).strip() if not reviewer else ""
+            ),
+            "satisfied_consequence": (
+                "the review confirms rather than trusting your word"
+                if reviewer
+                else "that mark ends the session"
+            ),
+        },
+    ).strip()
+
+
+def described_update_goal(*, settlement: str):
+    """`update_goal` bound to the settlement the session actually uses, without mutating the shared tool."""
+    description = update_goal_description(settlement)
+    if description == update_goal.description:
+        return update_goal
+    if hasattr(update_goal, "model_copy"):
+        return update_goal.model_copy(update={"description": description})
+    cloned = copy(update_goal)
+    cloned.description = description
+    return cloned
 
 
 async def _submit_goal_review(**arguments: Any) -> str:
@@ -76,10 +111,16 @@ async def update_goal(
     else:
         goals = services.features.require(GoalCapability)
         current = goals.goal
-        # A mark the agent sets for itself earns a secondary review only when it is a
-        # completion or blockage claim worth auditing; a deferral or a clear is administrative.
-        # A claim is not a verdict: the goal stays active while the review checks it.
-        pending_review = status_text if status_text in (Goal.SATISFIED, Goal.BLOCKED) else None
+        # A mark the agent sets for itself is a claim when a reviewer settles it, and the
+        # verdict itself when the working agent is the settlement. A deferral or a clear
+        # is administrative either way.
+        settlement = getattr(goals, "settlement", GoalReviewConfiguration.REVIEWER)
+        reviewer_settles = settlement != GoalReviewConfiguration.AGENT
+        pending_review = (
+            status_text
+            if reviewer_settles and status_text in (Goal.SATISFIED, Goal.BLOCKED)
+            else None
+        )
         effective_status = Goal.ACTIVE if pending_review is not None else status_text
         goals.write(
             Goal(
@@ -104,4 +145,6 @@ async def update_goal(
     return compact(result)
 
 
-update_goal.description = _DESCRIPTIONS.load("update_goal", {}).strip() or update_goal.description
+update_goal.description = (
+    update_goal_description(GoalReviewConfiguration.REVIEWER) or update_goal.description
+)
