@@ -28,7 +28,6 @@ RUN nix profile install --accept-flake-config --priority 4 \
     nixpkgs#jq \
     nixpkgs#less \
     nixpkgs#openssl \
-    nixpkgs#procps \
     nixpkgs#python313 \
     nixpkgs#ripgrep \
     nixpkgs#unzip \
@@ -36,6 +35,7 @@ RUN nix profile install --accept-flake-config --priority 4 \
     nixpkgs#which \
     nixpkgs#zip \
     .#render-cli
+RUN nix profile install --accept-flake-config --priority 3 nixpkgs#procps
 
 COPY . .
 RUN uv sync --frozen --no-dev
