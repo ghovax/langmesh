@@ -2,17 +2,17 @@
 
 Everything that shapes how LangMesh behaves, its agents, their reusable skills, its
 memory, and its tool servers, is **plain Markdown and JSON on disk**. There are three
-layers, and they merge by name:
+sources, and entries with the same name are merged by precedence:
 
-- **Bundled:** the profiles shipped with the harness — always present, the base layer.
+- **Bundled:** the profiles shipped with the harness — always present, the base source.
 - **Global:** `~/.agents/` — available everywhere.
 - **Project-local:** `.agents/` in the working directory you point an agent at.
 
 A project-local entry **overrides** a global or bundled one with the same name, so a
 repository can ship its own agents and skills without touching your global setup. The
 daemon seeds `~/.agents/` from the bundled set on first run, non-destructively, and
-re-reads all three layers live. The library, embedded, reads none of this by default: it
-composes agents, skills, and memories in code unless you hand it a catalogue.
+re-reads all three sources live. The library, embedded, reads none of this by default:
+it composes agents, skills, and memories in code unless you hand it a catalogue.
 
 Everything sits under `.agents/`:
 
@@ -222,8 +222,8 @@ its result arrives on its own; the agent never polls it.
 | `load_skill`                 | Load a `SKILL.md` capability on demand.                                                         |
 | `ask_user`                   | Ask the user one or more questions and wait for the answers.                                    |
 
-A goal is not a longer task list. The task list is the steps; the goal is the outcome
-the steps are for. When a turn ends with actionable tracked tasks unfinished, the
+A goal is not a longer task list. The task list records the work; the goal is the
+outcome that work serves. When a turn ends with actionable tracked tasks unfinished, the
 harness opens a hidden reminder turn that asks the session to reassess the user's
 requests, add any omitted work, and continue instead of merely describing it. Explicitly
 blocked tasks wait for the person, and a bounded continuation allowance prevents a stale

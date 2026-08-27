@@ -49,7 +49,7 @@ build triggers the other.
 You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv`
 included) and optionally [direnv](https://direnv.net).
 
-### Every step, and what you should see
+### Build checklist
 
 | #   | Run                                                                                                | What it does                                                                          | You should see                                                           | Takes                        |
 | --- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------- |
@@ -62,7 +62,7 @@ included) and optionally [direnv](https://direnv.net).
 | 7   | `packaging/sign-app.sh "packaging/dist/LangMesh Computer Use.app"`                                 | Signs the daemon `--deep` with its entitlements                                       | `signed …`, then `Identifier=` and `Authority=`                          | seconds                      |
 | 8   | `ditto "packaging/dist/LangMesh Computer Use.app" "/Applications/LangMesh Computer Use.app"`       | Installs the harness                                                                  |                                                                          | seconds                      |
 | 9   | `ln -sf "/Applications/LangMesh Computer Use.app/Contents/MacOS/langmesh" /usr/local/bin/langmesh` | Puts `langmesh` and `langmeshd` on your `PATH`                                        | May need `sudo`                                                          | seconds                      |
-| 10  | `cd web && bun run tauri:build`                                                                    | Rust compile plus a static export. No Python in this step                             | `LangMesh.app` and a `.dmg` under `web/src-tauri/target/release/bundle/` | first time, about 10 minutes |
+| 10  | `cd web && bun run tauri:build`                                                                    | Rust compile plus a static export. No Python in this command                          | `LangMesh.app` and a `.dmg` under `web/src-tauri/target/release/bundle/` | first time, about 10 minutes |
 | 11  | `packaging/sign-app.sh web/src-tauri/target/release/bundle/macos/LangMesh.app`                     | Signs the app plainly with the same identity, so both fold into one Accessibility row | `signed …`                                                               | seconds                      |
 | 12  | `ditto` that `LangMesh.app` to `/Applications`                                                     | Installs the window                                                                   |                                                                          | seconds                      |
 | 13  | Open `LangMesh.app`                                                                                | Starts the daemon and opens the window                                                | First run seeds `~/.config/langmesh/configuration.yaml`                  | seconds                      |
@@ -78,9 +78,9 @@ included) and optionally [direnv](https://direnv.net).
 | `ln -sf … /usr/local/bin/langmesh` is denied                                     | `/usr/local/bin` is root-owned                                                                                                        | `sudo ln -sf …`, or symlink into `~/.local/bin` and put that on `PATH`                                                  |
 | `packaging/build-daemon.sh` says "daemon up to date" after you changed something | The freshness guard decided nothing that goes into the freeze had changed                                                             | `FORCE=1 packaging/build-daemon.sh`                                                                                     |
 
-Signing (steps 6, 7, 11) is optional for a build that only runs. It is necessary for a
-**stable Accessibility grant**: without it, every rebuild is a new code identity and
-macOS asks again.
+The certificate and signing commands are optional for a build that only runs. They are
+necessary for a **stable Accessibility grant**: without it, every rebuild is a new code
+identity and macOS asks again.
 
 Both artifacts carry the same `CFBundleName` and identifier, so one certificate over
 both keeps them a single **LangMesh** row. See the

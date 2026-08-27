@@ -11,7 +11,7 @@ gating, autonomous continuation, observational memory, background jobs — is a 
 composed by whoever runs a session. The library names no plugin; the product composes
 its own set.
 
-## Choose your layer
+## Choose an entry point
 
 | Need                                           | Use                                                           | Read                                                               |
 | ---------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
