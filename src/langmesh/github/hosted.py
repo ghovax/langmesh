@@ -628,13 +628,19 @@ class Processor:
             return
         provider, model, api_key = configuration
         repository = str((event.get("repository") or {}).get("full_name") or "")
-        if not repository or event_name not in {"issue_comment", "pull_request_review_comment"}:
+        if not repository or event_name not in {
+            "issues",
+            "pull_request",
+            "issue_comment",
+            "pull_request_review_comment",
+        }:
             return
         token = self.github.installation_token(installation_id)
         slug = self.github.app_slug()
         bot_login = f"{slug}[bot]"
         if not is_mention_turn(
             event,
+            event_name=event_name,
             repository=repository,
             token=token,
             api=self.settings.github_api_url,
@@ -643,6 +649,7 @@ class Processor:
             return
         mention = mention_from_event(
             event,
+            event_name=event_name,
             repository=repository,
             token=token,
             api=self.settings.github_api_url,
@@ -698,6 +705,7 @@ class Processor:
             mention = (
                 mention_from_event(
                     event,
+                    event_name="pull_request",
                     repository=mention.repository,
                     pull=pull,
                     known_turn=True,

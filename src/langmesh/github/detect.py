@@ -1,8 +1,9 @@
-"""Whether a GitHub comment is a mention turn.
+"""Whether a GitHub event is a turn for the installed agent.
 
-An addressed comment starts a turn when it addresses the installed bot, or when it
-is a reply to one of that bot's comments — a review reply (`in_reply_to_id`) or the
-comment immediately after the bot.
+An issue or pull request opening starts a turn automatically. An addressed comment
+starts a turn when it addresses the installed bot, or when it is a reply to one of
+that bot's comments — a review reply (`in_reply_to_id`) or the comment immediately
+after the bot.
 
 Reply detection follows those pointers only: one parent comment, or the two most
 recent comments on the same collection. It does not load the thread into memory.
@@ -18,10 +19,10 @@ from typing import Any, Mapping
 
 
 def mentioned(body: str, *, bot_login: str) -> bool:
-    """Whether the comment addressed the installed bot, not a different login."""
+    """Whether the text addresses the installed bot or one of its public aliases."""
     text = body.lower()
-    handle = f"@{bot_login}".lower()
-    return re.search(re.escape(handle) + r"(?![\w-])", text) is not None
+    handles = {f"@{bot_login}".lower(), "@langmesh", "@langmesh[bot]"}
+    return any(re.search(re.escape(handle) + r"(?![\w-])", text) for handle in handles)
 
 
 def mention_bot_login(login: str, *, bot_login: str) -> bool:
@@ -168,13 +169,22 @@ def thread_has_prior_bot_comment(
 def is_mention_turn(
     event: Mapping[str, Any],
     *,
+    event_name: str = "",
     repository: str,
     token: str,
     api: str,
     bot_login: str,
 ) -> bool:
-    """Whether this comment is a mention or a reply the App should answer."""
+    """Whether this event starts a turn the App should answer."""
     action = event.get("action")
+    if event_name in {"issues", "pull_request"}:
+        if action != "opened":
+            return False
+        source = event.get("issue") or event.get("pull_request") or {}
+        author = str((source.get("user") or {}).get("login") or "")
+        return not author.lower().endswith("[bot]")
+    if event_name and event_name not in {"issue_comment", "pull_request_review_comment"}:
+        return False
     if action is not None and action != "created":
         return False
     comment = event.get("comment") or {}
