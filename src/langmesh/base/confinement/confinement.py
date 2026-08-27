@@ -781,6 +781,9 @@ def _apply_landlock(profile: Profile, workspace: str) -> None:
         "/lib64",
         "/etc",
         "/opt",
+        # Nix profiles are symlinks into this shared store. Without this allowance
+        # an executable can be visible on PATH but still fail with EACCES.
+        "/nix",
         "/proc",
         "/dev",
         "/var",
