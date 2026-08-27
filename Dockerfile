@@ -11,7 +11,6 @@ ENV UV_LINK_MODE=copy
 COPY flake.nix flake.lock pyproject.toml uv.lock README.md ./
 COPY nix ./nix
 RUN nix profile install --accept-flake-config \
-    nixpkgs#bash \
     nixpkgs#cacert \
     nixpkgs#coreutils \
     nixpkgs#curl \
