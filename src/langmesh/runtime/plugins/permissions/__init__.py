@@ -514,9 +514,20 @@ class PermissionReview(Feature):
     async def decide_retry(self, gate: _PreflightGate) -> tuple[str, Optional[Grant]]:
         """What to do with a retry gate: ask, run with a grant, or refuse. Three answers, not an optional grant."""
         if self._host.boundary.call_policy(None).asks:
+            logger.info(
+                "sandbox retry awaiting person session=%s kind=%s evidence=%s",
+                self._context.session_id,
+                gate.reason.kind if hasattr(gate.reason, "kind") else "unknown",
+                gate.denial_evidence,
+            )
             return "ask", None
         decision = await self.review(gate)
         if decision.action != "allow":
+            logger.warning(
+                "sandbox retry refused by reviewer session=%s evidence=%s",
+                self._context.session_id,
+                gate.denial_evidence,
+            )
             gate.deny_message = self._reviewer.denied_message(decision.explanation)
             self._host.bookkeeping.record_event(
                 "retry_refused",
@@ -532,6 +543,11 @@ class PermissionReview(Feature):
                 "command": gate.command,
                 "reason": decision.explanation,
             },
+        )
+        logger.info(
+            "sandbox retry allowed by reviewer session=%s evidence=%s",
+            self._context.session_id,
+            gate.denial_evidence,
         )
         return "run", confinement.approved(
             by=confinement.APPROVED_BY_PERMISSION_REVIEWER,

@@ -168,7 +168,8 @@ and `nix profile add nixpkgs#jq` installs into that profile with no flag and no 
 The packages come from the shared read-only store; what the session owns is a directory
 of symlinks under `~/.local/share/langmesh/sessions/<id>` (the toolbox root), deleted
 when the session is reaped. Your own profile is never written to, and the confinement is
-unchanged.
+unchanged. The confinement grants the shared Nix store read and execute access so these
+profile links work as commands; writes remain limited to the session profile.
 
 It needs [Nix](https://nixos.org). On a machine without it there is no toolbox, and the
 agent is told nothing about installing anything.

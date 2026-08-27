@@ -8,6 +8,7 @@ names it.
 from __future__ import annotations
 
 import asyncio
+import logging
 import shlex
 from dataclasses import replace
 from pathlib import Path
@@ -32,6 +33,8 @@ from langmesh.runtime.internals import _maybe_json
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.execution import ToolExecution
 from langmesh.runtime.turn_events import Error, RetryRequested, ToolResult
+
+logger = logging.getLogger(__name__)
 
 _bash_language = Language(tree_sitter_bash.language())
 _bash_parser = Parser(_bash_language)
@@ -198,6 +201,12 @@ async def handle_bash(execution: ToolExecution) -> AsyncIterator[Any]:
         model_guidance = ""
         denial = sandbox_denial(services, result_data, policy)
         if denial is not None:
+            logger.warning(
+                "sandbox denied bash call id=%s kind=%s evidence=%s",
+                tool_call_identifier,
+                denial.kind,
+                denial.evidence,
+            )
             retry_gate = permissions.retry_gate(
                 tool_call_id=tool_call_identifier,
                 command=raw_command,

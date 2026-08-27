@@ -85,6 +85,7 @@ class FilesystemConfiguration(Section):
             "~/.agents",
             "~/.config",
             "~/.local",
+            "~/.nix-profile",
             "~/.ssh",
             "~/.gitconfig",
             "~/.gitignore_global",
