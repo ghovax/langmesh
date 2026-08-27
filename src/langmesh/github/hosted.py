@@ -44,10 +44,8 @@ from langmesh.github.mention import (
     _run,
     acknowledgement,
     commits_to_push,
-    comment_body,
     create_comment,
     current_branch,
-    find_delivery_comment,
     mention_from_event,
     posted_reply,
     prepare_tree,
@@ -171,7 +169,8 @@ class Store:
                 received_at BIGINT NOT NULL,
                 claimed_at BIGINT,
                 attempts BIGINT NOT NULL DEFAULT 0,
-                last_error TEXT NOT NULL DEFAULT ''
+                last_error TEXT NOT NULL DEFAULT '',
+                comment_id BIGINT
             )
             """,
             """
@@ -198,11 +197,23 @@ class Store:
                     )
                 except Exception:
                     pass
+                try:
+                    await connection.execute(
+                        text("ALTER TABLE langmesh_github_deliveries ADD COLUMN comment_id BIGINT")
+                    )
+                except Exception:
+                    pass
             else:
                 await connection.execute(
                     text(
                         "ALTER TABLE langmesh_github_deliveries ADD COLUMN IF NOT EXISTS "
                         "next_attempt_at BIGINT NOT NULL DEFAULT 0"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE langmesh_github_deliveries ADD COLUMN IF NOT EXISTS "
+                        "comment_id BIGINT"
                     )
                 )
 
@@ -279,6 +290,28 @@ class Store:
                     "error": error[:4000],
                     "next_attempt_at": int(time.time()) + max(1, delay),
                 },
+            )
+
+    async def comment_id_for_delivery(self, delivery_id: str) -> int | None:
+        async with self.engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT comment_id FROM langmesh_github_deliveries "
+                    "WHERE delivery_id = :delivery_id"
+                ),
+                {"delivery_id": delivery_id},
+            )
+            value = result.scalar_one_or_none()
+        return int(value) if value is not None else None
+
+    async def remember_comment_id(self, delivery_id: str, comment_id: int) -> None:
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "UPDATE langmesh_github_deliveries SET comment_id = :comment_id "
+                    "WHERE delivery_id = :delivery_id"
+                ),
+                {"delivery_id": delivery_id, "comment_id": comment_id},
             )
 
     async def configuration(self, installation_id: int) -> tuple[str, str, str] | None:
@@ -672,21 +705,16 @@ class Processor:
                 )
                 or mention
             )
-        ack = find_delivery_comment(
-            mention.repository,
-            mention.number,
-            delivery_id,
-            token,
-            self.settings.github_api_url,
-        )
+        ack = await self.store.comment_id_for_delivery(delivery_id)
         if ack is None:
             ack = create_comment(
                 mention.repository,
                 mention.number,
-                comment_body(delivery_id, acknowledgement()),
+                acknowledgement(),
                 token,
                 self.settings.github_api_url,
             )
+            await self.store.remember_comment_id(delivery_id, ack)
         logger.info(
             "started GitHub mention delivery id=%s attempt=%s session=%s acknowledgement=%s",
             delivery_id,
@@ -717,7 +745,7 @@ class Processor:
                     update_comment(
                         mention.repository,
                         ack,
-                        comment_body(delivery_id, text),
+                        text.strip(),
                         token,
                         self.settings.github_api_url,
                     )
@@ -762,10 +790,7 @@ class Processor:
                 update_comment(
                     mention.repository,
                     ack,
-                    comment_body(
-                        delivery_id,
-                        user_failure("Something went wrong while I was working on this."),
-                    ),
+                    user_failure("Something went wrong while I was working on this."),
                     token,
                     self.settings.github_api_url,
                 )
