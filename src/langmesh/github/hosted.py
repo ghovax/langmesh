@@ -829,7 +829,7 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
 
     app = FastAPI(title="LangMesh GitHub App", lifespan=lifespan)
 
-    @app.get("/")
+    @app.api_route("/", methods=["GET", "HEAD"])
     async def root() -> dict[str, str]:
         return {"service": "langmesh-agent", "status": "ok"}
 
