@@ -67,7 +67,6 @@ from langmesh.base.contracts.ports import (
     TurnSummary,
 )
 from langmesh.base.contracts.tools import ToolLike
-from langmesh.base.persistence.artifacts import DirectoryArtifacts
 from langmesh.base.persistence.schedules import (
     ScheduleError,
     is_due,
@@ -167,7 +166,6 @@ __all__ = [
     "CredentialStore",
     "DurableModelCache",
     "DirectiveEntry",
-    "DirectoryArtifacts",
     "DeniedInjection",
     "Done",
     "Error",

@@ -22,7 +22,6 @@ from typing import Any, Callable, Mapping, Protocol
 from langmesh import (
     AgentConfiguration,
     Configuration,
-    DirectoryArtifacts,
     PackagePromptLoader,
     SandboxConfiguration,
     Session,
@@ -33,6 +32,7 @@ from langmesh.base.confinement import Profile, environment_variables
 from langmesh.base.configuration import CompactionConfiguration, TuningConfiguration
 from langmesh.base.content.model_routing import resolve_litellm
 from langmesh.base.contracts.ports import Checkpoints
+from langmesh.base.persistence.artifacts import DirectoryArtifacts
 from langmesh.github.detect import is_mention_turn
 from langmesh.runtime.features import Feature
 from langmesh.runtime.plugins.background import BackgroundJobs
