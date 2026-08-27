@@ -145,8 +145,8 @@ def mention_from_event(
     comment = event.get("comment") or {}
     issue = event.get("issue") or {}
     pull_event = event.get("pull_request") or {}
-    source = comment or pull_event or issue
-    body = str(source.get("body") or "")
+    event_source = comment or pull_event or issue
+    body = str(event_source.get("body") or "")
     if not known_turn and not is_mention_turn(
         event,
         event_name=event_name,
@@ -156,15 +156,15 @@ def mention_from_event(
         bot_login=bot_login,
     ):
         return None
-    user = str((source.get("user") or {}).get("login") or "")
+    user = str((event_source.get("user") or {}).get("login") or "")
     if user.lower().endswith("[bot]"):
         return None
     number = issue.get("number") or pull_event.get("number")
     if not number:
         return None
     kind = "pull" if pull_event or issue.get("pull_request") else "issue"
-    source = pull or pull_event or {}
-    head = source.get("head") or {}
+    pull_source = pull or pull_event or {}
+    head = pull_source.get("head") or {}
     head_repository = str((head.get("repo") or {}).get("full_name") or "")
     default_branch = str((event.get("repository") or {}).get("default_branch") or "main")
     html_url = str(issue.get("html_url") or pull_event.get("html_url") or "")
@@ -176,7 +176,7 @@ def mention_from_event(
         html_url=html_url,
         source_url=comment_pointer(comment, html_url) if comment else html_url,
         user=user,
-        association=str(source.get("author_association") or ""),
+        association=str(event_source.get("author_association") or ""),
         default_branch=default_branch,
         repository=repository,
         head_ref=str(head.get("ref") or ""),
