@@ -155,9 +155,13 @@ its `code` and `state` to the returned `completion_url`:
 ```sh
 curl --fail-with-body --get \
   --url https://langmesh-agent.onrender.com/github/auth/chatgpt/complete \
-  --data-urlencode 'code=returned_authorization_code' \
-  --data-urlencode 'state=returned_authorization_state'
+  --data-urlencode 'code=4/0AeaK7...nQ2' \
+  --data-urlencode 'state=J8m2...pL7'
 ```
+
+Replace `4/0AeaK7...nQ2` with the one-time `code` value from the copied localhost URL,
+and replace `J8m2...pL7` with its `state` value. The abbreviated values above are only
+examples.
 
 Cursor uses its own browser and polling flow; after authorization, call the returned
 `completion_url` with its `state` and without a `code`. For a provider with a registered
