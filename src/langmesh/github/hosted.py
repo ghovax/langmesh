@@ -508,8 +508,10 @@ class Store:
                 {"installation_id": installation_id},
             )
             existing = result.first()
-            same_provider = existing is not None and str(existing[0]) == provider
-            selected_model = model.strip() or (str(existing[1]) if same_provider else "")
+            existing_model = (
+                str(existing[1]) if existing is not None and str(existing[0]) == provider else ""
+            )
+            selected_model = model.strip() or existing_model
             if not selected_model:
                 raise ValueError("OAuth authentication requires a model")
             if existing is None:
@@ -1223,15 +1225,18 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         }
 
     async def complete_provider_authentication(
-        provider: str, *, code: str, state: str, error: str
+        provider: str, *, code: str, state: str, authorization_error: str
     ) -> dict[str, Any]:
         provider_identifier = await require_oauth_provider(provider)
         authorization_record = await store.oauth_authorization(provider_identifier, state)
         if authorization_record is None:
             raise HTTPException(400, detail="OAuth authorization state is missing or expired")
-        if error:
+        if authorization_error:
             await store.consume_oauth_authorization(state)
-            raise HTTPException(400, detail=f"OAuth authorization failed: {error}")
+            raise HTTPException(
+                400,
+                detail=f"OAuth authorization failed: {authorization_error}",
+            )
         installation_id, _user_login, model, code_verifier, redirect_uri = authorization_record
         if redirect_uri and not code.strip():
             raise HTTPException(400, detail="OAuth authorization code is required")
@@ -1264,13 +1269,23 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
     ) -> dict[str, Any]:
         if not code.strip() and not error:
             raise HTTPException(400, detail="OAuth authorization returned no code")
-        return await complete_provider_authentication(provider, code=code, state=state, error=error)
+        return await complete_provider_authentication(
+            provider,
+            code=code,
+            state=state,
+            authorization_error=error,
+        )
 
     @app.get("/github/auth/{provider}/complete")
     async def complete_provider_browser_authentication(
         provider: str, code: str = "", state: str = "", error: str = ""
     ) -> dict[str, Any]:
-        return await complete_provider_authentication(provider, code=code, state=state, error=error)
+        return await complete_provider_authentication(
+            provider,
+            code=code,
+            state=state,
+            authorization_error=error,
+        )
 
     @app.get("/github/configuration")
     async def configuration_page(request: Request) -> dict[str, Any]:
