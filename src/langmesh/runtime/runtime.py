@@ -7,26 +7,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence, cast
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     messages_to_dict,
 )
 from langchain_core.tools import BaseTool
-from pydantic import SecretStr
-from models_provider import CredentialStore, ModelUsage, ProviderAuthentication, provider_auth_profile
+from models_provider import (
+    ModelUsage,
+)
 
 from langmesh.base import confinement as _confinement
 from langmesh.base.configuration import (
-    AgentConfiguration,
     Configuration,
     PermissionEvaluator,
     SandboxConfiguration,
 )
 from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base.confinement import Grant, Profile
-from langmesh.base.content.models import find_model, resolve_litellm
-from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
+from langmesh.base.content.models import find_model
 from langmesh.base.contracts.catalogue import project_catalogue
 from langmesh.base.contracts.ports import Artifacts, MemoryArtifacts, Observation, describe_unmet
 from langmesh.base.primitives.serialization import content_address
@@ -52,9 +50,7 @@ from langmesh.runtime.internals import (
     _utc_timestamp,
     conversation_tokens,
 )
-from langmesh.runtime.models.codex import ChatCodexModel
-from langmesh.runtime.models.cursor import ChatCursorModel
-from langmesh.runtime.models.litellm import ChatLiteLLMModel
+from langmesh.runtime.models.factory import build_chat_model
 from langmesh.runtime.pipeline import ToolPipeline
 from langmesh.runtime.session_control import PendingInput, RenderedPrompt, SessionSnapshot
 from langmesh.runtime.tools import registry as tools_registry
@@ -88,75 +84,6 @@ class _CataloguePrompts:
 
     def load(self, template_name: str, variables: dict[str, str]) -> str:
         return self._catalogue.prompt(template_name, variables)
-
-
-def build_chat_model(
-    model_identifier: str,
-    global_configuration: Configuration,
-    agent_configuration: AgentConfiguration,
-    working_directory: str,
-    session_id: str = "",
-    credential_store: CredentialStore | None = None,
-) -> BaseChatModel:
-    """Build the chat model for a ``provider/model`` id: LiteLLM for almost all, and the two OAuth providers apart."""
-    provider_identifier, model_suffix = model_identifier.split("/", 1)
-    if provider_identifier == "chatgpt":
-        catalog_entry = find_model(model_identifier)
-        return ChatCodexModel(
-            model=model_suffix,
-            reasoning_effort=agent_configuration.reasoning_effort,
-            context_length=catalog_entry.context_length if catalog_entry else 0,
-            session_id=session_id,
-        )
-    if provider_identifier == "cursor":
-        catalog_entry = find_model(model_identifier)
-        # No reasoning_effort: a Cursor model id carries its effort, so a second setting could only disagree.
-        return ChatCursorModel(
-            model=model_suffix,
-            workspace=working_directory,
-            context_length=catalog_entry.context_length if catalog_entry else 0,
-        )
-    resolved = resolve_litellm(
-        model_identifier,
-        global_configuration.configured_provider_keys(),
-        global_configuration.configured_provider_bases(),
-        credential_store=credential_store,
-    )
-    # The catalogue's window travels with the model, since LiteLLM knows nothing of a gateway's models.
-    catalogued = find_model(model_identifier)
-    definition = get_provider_definition(provider_identifier)
-    profile = provider_auth_profile(
-        provider_identifier,
-        environment_variables=provider_env_vars(provider_identifier),
-        default_base_url=definition.default_base_url if definition else "",
-        headers=definition.default_headers if definition else {},
-        anonymous_api_key=definition.anonymous_api_key if definition else "",
-        credential_identifier=(
-            definition.credential_identifier if definition else ""
-        ),
-    )
-    authentication = ProviderAuthentication(
-        {provider_identifier: profile},
-        api_keys=global_configuration.configured_provider_keys(),
-        api_bases=global_configuration.configured_provider_bases(),
-        store=credential_store,
-    )
-    model = ChatLiteLLMModel.model_validate(
-        {
-            "model": resolved["model"],
-            "api_key": SecretStr(resolved["api_key"]) if resolved["api_key"] else None,
-            "api_base": resolved["api_base"] or None,
-            "default_headers": resolved["headers"],
-            "session_id": session_id,
-            "context_length": catalogued.context_length if catalogued else 0,
-            "temperature": 0,
-            "reasoning_effort": agent_configuration.reasoning_effort,
-            "provider_identifier": provider_identifier,
-            "provider_environment_variables": profile.environment_variables,
-        }
-    )
-    model._authentication = authentication
-    return model
 
 
 def _as_profile(sandbox: Any) -> Profile:

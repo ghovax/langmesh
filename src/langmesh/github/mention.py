@@ -27,7 +27,7 @@ from langmesh import (
     SessionComponents,
 )
 from langmesh.base.confinement import Profile
-from langmesh.base.content.models import resolve_litellm
+from langmesh.base.content.model_routing import resolve_litellm
 from langmesh.base.contracts.ports import Checkpoints
 from langmesh.github.detect import is_mention_turn
 from langmesh.github.reply import GitHubReply
@@ -630,7 +630,9 @@ async def run_turn(
         await session.set_permission_mode("automatic")
         answer = ""
         model_call = 0
-        async for event in session.stream(prompt_for(mention, checkout=checkout, followup=followup)):
+        async for event in session.stream(
+            prompt_for(mention, checkout=checkout, followup=followup)
+        ):
             if isinstance(event, Usage):
                 model_call += 1
                 logger.info(
