@@ -30,6 +30,15 @@ import yaml
 from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
+from models_provider import (
+    ChatGPTAuthorizationRequest,
+    ChatGPTTokens,
+    CHATGPT_CLIENT_ID,
+    InMemoryCredentialStore,
+    chatgpt_tokens,
+    chatgpt_tokens_from_mapping,
+    chatgpt_tokens_to_mapping,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -66,6 +75,26 @@ class ConfigurationUpdate(BaseModel):
 
 
 @dataclass(frozen=True)
+class InstallationConfiguration:
+    """The selected model and its installation-owned authentication."""
+
+    provider: str
+    model: str
+    api_key: str
+    oauth_tokens: Mapping[str, Any] | None
+
+    @property
+    def ready(self) -> bool:
+        if not self.model:
+            return False
+        return bool(self.oauth_tokens) if self.provider == "chatgpt" else bool(self.api_key)
+
+    @property
+    def uses_chatgpt_oauth(self) -> bool:
+        return self.provider == "chatgpt" and bool(self.oauth_tokens)
+
+
+@dataclass(frozen=True)
 class Settings:
     app_id: str
     private_key_path: Path
@@ -77,6 +106,7 @@ class Settings:
     queue_poll_seconds: float
     public_url: str
     github_api_url: str = "https://api.github.com"
+    openai_client_id: str = CHATGPT_CLIENT_ID
 
     @classmethod
     def load(cls, path: str | Path = DEFAULT_CONFIGURATION_PATH) -> "Settings":
@@ -136,6 +166,7 @@ class Settings:
             queue_poll_seconds=max(0.5, float(queue.get("poll_seconds") or 5)),
             public_url=required(server, "public_url", "server").rstrip("/"),
             github_api_url=str(github.get("api_url") or "https://api.github.com").rstrip("/"),
+            openai_client_id=str(oauth.get("openai_client_id") or CHATGPT_CLIENT_ID).strip(),
         )
 
 
@@ -156,6 +187,7 @@ class Store:
                 provider TEXT NOT NULL DEFAULT '',
                 model TEXT NOT NULL DEFAULT '',
                 api_key TEXT NOT NULL DEFAULT '',
+                oauth_tokens TEXT NOT NULL DEFAULT '',
                 updated_at BIGINT NOT NULL
             )
             """,
@@ -181,8 +213,18 @@ class Store:
                 expires_at BIGINT NOT NULL
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS langmesh_github_chatgpt_authorizations (
+                state TEXT PRIMARY KEY,
+                installation_id BIGINT NOT NULL,
+                user_login TEXT NOT NULL DEFAULT '',
+                code_verifier TEXT NOT NULL,
+                expires_at BIGINT NOT NULL
+            )
+            """,
             "CREATE INDEX IF NOT EXISTS langmesh_github_deliveries_ready ON langmesh_github_deliveries (status, received_at)",
             "CREATE INDEX IF NOT EXISTS langmesh_github_setup_sessions_expiry ON langmesh_github_setup_sessions (expires_at)",
+            "CREATE INDEX IF NOT EXISTS langmesh_github_chatgpt_authorizations_expiry ON langmesh_github_chatgpt_authorizations (expires_at)",
         )
         async with self.engine.begin() as connection:
             for statement in statements:
@@ -203,6 +245,15 @@ class Store:
                     )
                 except Exception:
                     pass
+                try:
+                    await connection.execute(
+                        text(
+                            "ALTER TABLE langmesh_github_installations ADD COLUMN "
+                            "oauth_tokens TEXT NOT NULL DEFAULT ''"
+                        )
+                    )
+                except Exception:
+                    pass
             else:
                 await connection.execute(
                     text(
@@ -214,6 +265,12 @@ class Store:
                     text(
                         "ALTER TABLE langmesh_github_deliveries ADD COLUMN IF NOT EXISTS "
                         "comment_id BIGINT"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE langmesh_github_installations ADD COLUMN IF NOT EXISTS "
+                        "oauth_tokens TEXT NOT NULL DEFAULT ''"
                     )
                 )
 
@@ -314,20 +371,29 @@ class Store:
                 {"delivery_id": delivery_id, "comment_id": comment_id},
             )
 
-    async def configuration(self, installation_id: int) -> tuple[str, str, str] | None:
+    async def configuration(self, installation_id: int) -> InstallationConfiguration | None:
         async with self.engine.connect() as connection:
             result = await connection.execute(
                 text(
-                    "SELECT provider, model, api_key FROM langmesh_github_installations "
+                    "SELECT provider, model, api_key, oauth_tokens FROM langmesh_github_installations "
                     "WHERE installation_id = :installation_id"
                 ),
                 {"installation_id": installation_id},
             )
             row = result.first()
-        if not row or not row[0] or not row[1]:
+        if not row or not row[0]:
             return None
         key = self._cipher.decrypt(str(row[2]).encode()).decode() if row[2] else ""
-        return str(row[0]), str(row[1]), key
+        oauth_tokens: Mapping[str, Any] | None = None
+        if row[3]:
+            try:
+                decoded = json.loads(self._cipher.decrypt(str(row[3]).encode()).decode())
+            except (json.JSONDecodeError, TypeError, ValueError) as error:
+                raise RuntimeError("Stored ChatGPT credentials are invalid") from error
+            if not isinstance(decoded, Mapping):
+                raise RuntimeError("Stored ChatGPT credentials are invalid")
+            oauth_tokens = dict(decoded)
+        return InstallationConfiguration(str(row[0]), str(row[1]), key, oauth_tokens)
 
     async def save_installation(
         self,
@@ -336,29 +402,36 @@ class Store:
         account_type: str,
         provider: str,
         model: str,
-        api_key: str,
+        api_key: str | None,
+        *,
+        clear_oauth: bool = False,
     ) -> None:
         encrypted = self._cipher.encrypt(api_key.encode()).decode() if api_key else ""
-        if not api_key:
-            async with self.engine.connect() as connection:
-                result = await connection.execute(
-                    text(
-                        "SELECT api_key FROM langmesh_github_installations "
-                        "WHERE installation_id = :installation_id"
-                    ),
-                    {"installation_id": installation_id},
-                )
-                row = result.first()
+        async with self.engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT api_key, oauth_tokens FROM langmesh_github_installations "
+                    "WHERE installation_id = :installation_id"
+                ),
+                {"installation_id": installation_id},
+            )
+            row = result.first()
+        if api_key is None:
             encrypted = str(row[0]) if row and row[0] else ""
+        existing_oauth = str(row[1]) if row and row[1] else ""
+        if clear_oauth:
+            existing_oauth = ""
         async with self.engine.begin() as connection:
             await connection.execute(
                 text(
                     "INSERT INTO langmesh_github_installations "
-                    "(installation_id, account_login, account_type, provider, model, api_key, updated_at) "
-                    "VALUES (:installation_id, :account_login, :account_type, :provider, :model, :api_key, :updated_at) "
+                    "(installation_id, account_login, account_type, provider, model, api_key, oauth_tokens, updated_at) "
+                    "VALUES (:installation_id, :account_login, :account_type, :provider, :model, :api_key, :oauth_tokens, :updated_at) "
                     "ON CONFLICT (installation_id) DO UPDATE SET account_login = EXCLUDED.account_login, "
                     "account_type = EXCLUDED.account_type, provider = EXCLUDED.provider, model = EXCLUDED.model, "
-                    "api_key = EXCLUDED.api_key, updated_at = EXCLUDED.updated_at"
+                    "api_key = EXCLUDED.api_key, "
+                    "oauth_tokens = CASE WHEN :clear_oauth THEN '' ELSE EXCLUDED.oauth_tokens END, "
+                    "updated_at = EXCLUDED.updated_at"
                 ),
                 {
                     "installation_id": installation_id,
@@ -367,9 +440,72 @@ class Store:
                     "provider": provider,
                     "model": model,
                     "api_key": encrypted,
+                    "oauth_tokens": existing_oauth,
+                    "clear_oauth": clear_oauth,
                     "updated_at": int(time.time()),
                 },
             )
+
+    async def save_chatgpt_tokens(self, installation_id: int, tokens: ChatGPTTokens) -> None:
+        encrypted = self._cipher.encrypt(
+            json.dumps(chatgpt_tokens_to_mapping(tokens), separators=(",", ":")).encode()
+        ).decode()
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO langmesh_github_installations "
+                    "(installation_id, account_login, account_type, provider, model, api_key, oauth_tokens, updated_at) "
+                    "VALUES (:installation_id, :account_login, 'unknown', 'chatgpt', '', '', :oauth_tokens, :updated_at) "
+                    "ON CONFLICT (installation_id) DO UPDATE SET "
+                    "oauth_tokens = EXCLUDED.oauth_tokens, updated_at = EXCLUDED.updated_at"
+                ),
+                {
+                    "installation_id": installation_id,
+                    "account_login": "",
+                    "oauth_tokens": encrypted,
+                    "updated_at": int(time.time()),
+                },
+            )
+
+    async def begin_chatgpt_authorization(
+        self, installation_id: int, user_login: str, state: str, code_verifier: str
+    ) -> None:
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO langmesh_github_chatgpt_authorizations "
+                    "(state, installation_id, user_login, code_verifier, expires_at) "
+                    "VALUES (:state, :installation_id, :user_login, :code_verifier, :expires_at)"
+                ),
+                {
+                    "state": state,
+                    "installation_id": installation_id,
+                    "user_login": user_login,
+                    "code_verifier": code_verifier,
+                    "expires_at": int(time.time()) + 600,
+                },
+            )
+
+    async def consume_chatgpt_authorization(self, state: str) -> tuple[int, str, str] | None:
+        async with self.engine.begin() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT installation_id, user_login, code_verifier "
+                    "FROM langmesh_github_chatgpt_authorizations "
+                    "WHERE state = :state AND expires_at >= :now"
+                ),
+                {"state": state, "now": int(time.time())},
+            )
+            row = result.first()
+            if row is None:
+                return None
+            deleted = await connection.execute(
+                text("DELETE FROM langmesh_github_chatgpt_authorizations WHERE state = :state"),
+                {"state": state},
+            )
+            if deleted.rowcount != 1:
+                return None
+        return int(row[0]), str(row[1]), str(row[2])
 
     async def begin_setup(self, installation_id: int) -> str:
         token = secrets.token_urlsafe(32)
@@ -609,6 +745,18 @@ class Processor:
         )
         return str(record.get("html_url") or "")
 
+    @staticmethod
+    def _credential_store(
+        configuration: InstallationConfiguration,
+    ) -> InMemoryCredentialStore | None:
+        if configuration.provider != "chatgpt":
+            return None
+        if not configuration.oauth_tokens:
+            raise RuntimeError("ChatGPT is selected but no OAuth credentials are connected")
+        credentials = InMemoryCredentialStore()
+        credentials.save("chatgpt", chatgpt_tokens_from_mapping(configuration.oauth_tokens))
+        return credentials
+
     async def process(
         self,
         event_name: str,
@@ -619,14 +767,19 @@ class Processor:
         attempt: int = 0,
     ) -> None:
         configuration = await self.store.configuration(installation_id)
-        if configuration is None:
+        if configuration is None or not configuration.ready:
             logger.info(
                 "ignoring delivery id=%s installation=%s: no provider configuration",
                 delivery_id,
                 installation_id,
             )
             return
-        provider, model, api_key = configuration
+        provider, model, api_key = (
+            configuration.provider,
+            configuration.model,
+            configuration.api_key,
+        )
+        credential_store = self._credential_store(configuration)
         repository = str((event.get("repository") or {}).get("full_name") or "")
         if not repository or event_name not in {
             "issues",
@@ -680,6 +833,8 @@ class Processor:
                     provider,
                     model,
                     api_key,
+                    credential_store,
+                    installation_id,
                     delivery_id=delivery_id,
                     attempt=attempt,
                 )
@@ -694,6 +849,8 @@ class Processor:
         provider: str,
         model: str,
         api_key: str,
+        credential_store: InMemoryCredentialStore | None,
+        installation_id: int,
         *,
         delivery_id: str,
         attempt: int,
@@ -760,18 +917,28 @@ class Processor:
                 except Exception:
                     logger.exception("could not update GitHub comment %s", ack)
 
-            answer = await run_turn(
-                mention,
-                workspace,
-                checkout=checkout,
-                update_comment=update_existing_comment,
-                token=token,
-                thread_followup=followup,
-                provider=provider,
-                model=model,
-                api_key=api_key,
-                checkpoints=self._checkpoints,
-            )
+            try:
+                answer = await run_turn(
+                    mention,
+                    workspace,
+                    checkout=checkout,
+                    update_comment=update_existing_comment,
+                    token=token,
+                    thread_followup=followup,
+                    provider=provider,
+                    model=model,
+                    api_key=api_key,
+                    checkpoints=self._checkpoints,
+                    credential_store=credential_store,
+                )
+            finally:
+                if credential_store is not None:
+                    refreshed = chatgpt_tokens(credential_store)
+                    if refreshed is not None:
+                        await self.store.save_chatgpt_tokens(
+                            installation_id,
+                            refreshed,
+                        )
             pull_url = (
                 self._publish(mention, workspace, token, runner)
                 if tree_is_dirty(workspace, run=runner) or commits_to_push(workspace, run=runner)
@@ -878,6 +1045,51 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             raise HTTPException(401, detail="use Authorization: Bearer SETUP_TOKEN")
         return token.strip()
 
+    def chatgpt_redirect_uri() -> str:
+        return f"{settings.public_url}/github/auth/chatgpt/callback"
+
+    @app.post("/github/auth/chatgpt/start")
+    async def start_chatgpt_authentication(request: Request) -> dict[str, Any]:
+        setup = await store.setup(setup_token(request))
+        if setup is None:
+            raise HTTPException(401, detail="setup token is missing or expired")
+        authorization = ChatGPTAuthorizationRequest(
+            chatgpt_redirect_uri(), client_id=settings.openai_client_id
+        )
+        await store.begin_chatgpt_authorization(
+            setup[0], setup[1], authorization.state, authorization.code_verifier
+        )
+        return {"authorize_url": authorization.authorize_url, "expires_in": 600}
+
+    @app.get("/github/auth/chatgpt/callback")
+    async def chatgpt_authentication_callback(
+        code: str = "", state: str = "", error: str = ""
+    ) -> dict[str, Any]:
+        authorization_record = await store.consume_chatgpt_authorization(state)
+        if authorization_record is None:
+            raise HTTPException(400, detail="ChatGPT authorization state is missing or expired")
+        if error:
+            raise HTTPException(400, detail=f"ChatGPT authorization failed: {error}")
+        if not code.strip():
+            raise HTTPException(400, detail="ChatGPT authorization returned no code")
+        installation_id, _user_login, code_verifier = authorization_record
+        authorization = ChatGPTAuthorizationRequest(
+            chatgpt_redirect_uri(),
+            client_id=settings.openai_client_id,
+            state=state,
+            code_verifier=code_verifier,
+        )
+        try:
+            tokens = await authorization.exchange(code)
+            await store.save_chatgpt_tokens(installation_id, tokens)
+        except Exception as error:  # noqa: BLE001 — the callback must return an HTTP error
+            raise HTTPException(400, detail=str(error)) from error
+        return {
+            "authenticated": True,
+            "account": tokens.account,
+            "configuration_url": f"{settings.public_url}/github/configuration",
+        }
+
     @app.get("/github/configuration")
     async def configuration_page(request: Request) -> dict[str, Any]:
         setup = await store.setup(setup_token(request))
@@ -887,10 +1099,11 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         return {
             "installation_id": setup[0],
             "account": setup[1],
-            "configured": current is not None,
-            "provider": current[0] if current else "",
-            "model": current[1] if current else "",
-            "api_key_configured": bool(current and current[2]),
+            "configured": bool(current and current.ready),
+            "provider": current.provider if current else "",
+            "model": current.model if current else "",
+            "api_key_configured": bool(current and current.api_key),
+            "oauth_configured": bool(current and current.uses_chatgpt_oauth),
         }
 
     @app.put("/github/configuration")
@@ -899,20 +1112,36 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         setup = await store.setup(token)
         if setup is None:
             raise HTTPException(401, detail="setup token is missing or expired")
-        provider, model = payload.provider.strip(), payload.model.strip()
+        provider, model = payload.provider.strip().lower(), payload.model.strip()
         api_key = (payload.api_key or "").strip()
         current = await store.configuration(setup[0])
-        if not api_key and current:
-            api_key = current[2]
-        if not provider or not model or not api_key:
-            raise HTTPException(422, detail="provider, model, and api_key are required")
-        await store.save_installation(setup[0], setup[1], "unknown", provider, model, api_key)
+        if not provider or not model:
+            raise HTTPException(422, detail="provider and model are required")
+        if provider == "chatgpt":
+            if api_key:
+                raise HTTPException(422, detail="chatgpt uses OAuth; do not provide an api_key")
+            if current is None or not current.oauth_tokens:
+                raise HTTPException(
+                    422, detail="connect ChatGPT OAuth before selecting this provider"
+                )
+            await store.save_installation(
+                setup[0], setup[1], "unknown", provider, model, "", clear_oauth=False
+            )
+        else:
+            if not api_key and current:
+                api_key = current.api_key
+            if not api_key:
+                raise HTTPException(422, detail="provider, model, and api_key are required")
+            await store.save_installation(
+                setup[0], setup[1], "unknown", provider, model, api_key, clear_oauth=True
+            )
         return {
             "installation_id": setup[0],
             "configured": True,
             "provider": provider,
             "model": model,
-            "api_key_configured": True,
+            "api_key_configured": bool(api_key),
+            "oauth_configured": provider == "chatgpt",
         }
 
     @app.post("/github/webhook")
