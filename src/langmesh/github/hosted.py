@@ -221,6 +221,7 @@ class Store:
                 installation_id BIGINT NOT NULL,
                 user_login TEXT NOT NULL DEFAULT '',
                 code_verifier TEXT NOT NULL,
+                redirect_uri TEXT NOT NULL,
                 expires_at BIGINT NOT NULL
             )
             """,
@@ -257,6 +258,15 @@ class Store:
                     )
                 except Exception:
                     pass
+                try:
+                    await connection.execute(
+                        text(
+                            "ALTER TABLE langmesh_github_oauth_authorizations ADD COLUMN "
+                            "redirect_uri TEXT NOT NULL DEFAULT ''"
+                        )
+                    )
+                except Exception:
+                    pass
             else:
                 await connection.execute(
                     text(
@@ -274,6 +284,12 @@ class Store:
                     text(
                         "ALTER TABLE langmesh_github_installations ADD COLUMN IF NOT EXISTS "
                         "oauth_tokens TEXT NOT NULL DEFAULT ''"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE langmesh_github_oauth_authorizations ADD COLUMN IF NOT EXISTS "
+                        "redirect_uri TEXT NOT NULL DEFAULT ''"
                     )
                 )
 
@@ -509,13 +525,14 @@ class Store:
         provider: str,
         state: str,
         code_verifier: str,
+        redirect_uri: str,
     ) -> None:
         async with self.engine.begin() as connection:
             await connection.execute(
                 text(
                     "INSERT INTO langmesh_github_oauth_authorizations "
-                    "(state, provider, installation_id, user_login, code_verifier, expires_at) "
-                    "VALUES (:state, :provider, :installation_id, :user_login, :code_verifier, :expires_at)"
+                    "(state, provider, installation_id, user_login, code_verifier, redirect_uri, expires_at) "
+                    "VALUES (:state, :provider, :installation_id, :user_login, :code_verifier, :redirect_uri, :expires_at)"
                 ),
                 {
                     "state": state,
@@ -523,15 +540,18 @@ class Store:
                     "installation_id": installation_id,
                     "user_login": user_login,
                     "code_verifier": code_verifier,
+                    "redirect_uri": redirect_uri,
                     "expires_at": int(time.time()) + 600,
                 },
             )
 
-    async def oauth_authorization(self, provider: str, state: str) -> tuple[int, str, str] | None:
+    async def oauth_authorization(
+        self, provider: str, state: str
+    ) -> tuple[int, str, str, str] | None:
         async with self.engine.connect() as connection:
             result = await connection.execute(
                 text(
-                    "SELECT installation_id, user_login, code_verifier "
+                    "SELECT installation_id, user_login, code_verifier, redirect_uri "
                     "FROM langmesh_github_oauth_authorizations "
                     "WHERE state = :state AND provider = :provider AND expires_at >= :now"
                 ),
@@ -539,7 +559,7 @@ class Store:
             )
             row = result.first()
 
-        return (int(row[0]), str(row[1]), str(row[2])) if row else None
+        return (int(row[0]), str(row[1]), str(row[2]), str(row[3])) if row else None
 
     async def finish_oauth_authorization(self, state: str) -> bool:
         async with self.engine.begin() as connection:
@@ -1095,7 +1115,11 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
     authentication = ProviderAuthentication()
 
     def provider_redirect_uri(provider: str) -> str:
-        return f"{settings.public_url}/github/auth/{urllib.parse.quote(provider, safe='')}/callback"
+        provider_identifier = provider.strip().lower()
+        registered_redirect_uri = authentication.redirect_uri(provider_identifier)
+        if registered_redirect_uri:
+            return registered_redirect_uri
+        return f"{settings.public_url}/github/auth/{urllib.parse.quote(provider_identifier, safe='')}/callback"
 
     async def require_oauth_provider(provider: str) -> str:
         provider_identifier = provider.strip().lower()
@@ -1126,6 +1150,7 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             provider_identifier,
             authorization.state,
             authorization.code_verifier,
+            provider_redirect_uri(provider_identifier),
         )
         return {
             "provider": provider_identifier,
@@ -1145,11 +1170,13 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         if error:
             await store.finish_oauth_authorization(state)
             raise HTTPException(400, detail=f"OAuth authorization failed: {error}")
-        installation_id, _user_login, code_verifier = authorization_record
+        installation_id, _user_login, code_verifier, redirect_uri = authorization_record
+        if not code.strip():
+            raise HTTPException(400, detail="OAuth authorization code is required")
         try:
             authorization = authentication.authorization_request(
                 provider_identifier,
-                provider_redirect_uri(provider_identifier),
+                redirect_uri,
                 client_id=settings.provider_application_ids.get(provider_identifier, ""),
                 state=state,
                 code_verifier=code_verifier,
@@ -1177,10 +1204,10 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         return await complete_provider_authentication(provider, code=code, state=state, error=error)
 
     @app.get("/github/auth/{provider}/complete")
-    async def complete_provider_polling_authentication(
-        provider: str, state: str = "", error: str = ""
+    async def complete_provider_browser_authentication(
+        provider: str, code: str = "", state: str = "", error: str = ""
     ) -> dict[str, Any]:
-        return await complete_provider_authentication(provider, code="", state=state, error=error)
+        return await complete_provider_authentication(provider, code=code, state=state, error=error)
 
     @app.get("/github/configuration")
     async def configuration_page(request: Request) -> dict[str, Any]:

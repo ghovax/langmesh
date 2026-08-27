@@ -147,11 +147,22 @@ curl --fail-with-body --request POST \
   --header 'Authorization: Bearer 7kQ2mN...vR8pL4'
 ```
 
-Open the returned `authorize_url` in a browser. A callback-capable provider redirects to
-`/github/auth/{provider}/callback`; providers with a polling sign-in use the returned
-`completion_url` after the browser flow finishes. The service validates the one-time
-state, exchanges or completes the provider flow with PKCE where supported, and stores the
-encrypted provider token. Select the resulting provider model without an API key:
+Open the returned `authorize_url` in a browser. The URL uses the redirect URI registered
+for that provider. For ChatGPT, this is `http://localhost:1455/auth/callback`; after
+authorization, copy the complete localhost URL from the browser address bar and submit
+its `code` and `state` to the returned `completion_url`:
+
+```sh
+curl --fail-with-body --get \
+  --url https://langmesh-agent.onrender.com/github/auth/chatgpt/complete \
+  --data-urlencode 'code=returned_authorization_code' \
+  --data-urlencode 'state=returned_authorization_state'
+```
+
+For a provider with a registered public callback, the provider redirects directly to
+`/github/auth/{provider}/callback`. The service validates the one-time state, exchanges
+the code with PKCE, and stores the encrypted provider token. Select the resulting
+provider model without an API key:
 
 ```sh
 curl --fail-with-body --request PUT \
