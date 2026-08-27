@@ -33,7 +33,9 @@ github:
   oauth:
     client_id: "Iv1...."
     client_secret: "..."
-    openai_client_id: "app_..."
+    client_ids:
+      chatgpt: "app_..."
+      cursor: "..."
   api_url: "https://api.github.com"
 server:
   public_url: "https://github-agent.example.net"
@@ -54,8 +56,8 @@ python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 chmod 600 /srv/langmesh/secrets/provider-keys.fernet
 ```
 
-The service stores provider API keys and ChatGPT OAuth tokens encrypted in the external
-database, keyed by GitHub installation. The GitHub worker uses the compaction plugin's
+The service stores provider API keys and OAuth tokens encrypted in the external database,
+keyed by GitHub installation. The GitHub worker uses the compaction plugin's
 configured threshold with a direct preparation port. Compaction intentionally invalidates
 the conversation portion
 of the provider cache; the stable instructions and tool definitions remain reusable. The
@@ -133,10 +135,11 @@ curl --fail-with-body \
 
 The response never includes the API key.
 
-### ChatGPT subscription OAuth
+### Provider OAuth
 
-The hosted service can keep a ChatGPT OAuth session for an installation. Start the flow
-with the setup token returned by the GitHub callback:
+The hosted service can keep an OAuth session for any registered OAuth provider. Start the
+flow with the setup token returned by the GitHub callback, replacing `chatgpt` with the
+provider identifier:
 
 ```sh
 curl --fail-with-body --request POST \
@@ -144,10 +147,11 @@ curl --fail-with-body --request POST \
   --header 'Authorization: Bearer SETUP_TOKEN'
 ```
 
-Open the returned `authorize_url` in a browser and complete the OpenAI sign-in. OpenAI
-redirects the browser to the service callback, which exchanges the one-time code with
-PKCE and stores the encrypted provider token. The callback response includes the same
-configuration URL; select the subscription model without an API key:
+Open the returned `authorize_url` in a browser. A callback-capable provider redirects to
+`/github/auth/{provider}/callback`; providers with a polling sign-in use the returned
+`completion_url` after the browser flow finishes. The service validates the one-time
+state, exchanges or completes the provider flow with PKCE where supported, and stores the
+encrypted provider token. Select the resulting provider model without an API key:
 
 ```sh
 curl --fail-with-body --request PUT \
@@ -157,12 +161,10 @@ curl --fail-with-body --request PUT \
   --data '{"provider":"chatgpt","model":"SUBSCRIPTION_MODEL_SLUG"}'
 ```
 
-The callback URI must be accepted by the OpenAI OAuth client used by the deployment;
-set its public client identifier as `github.oauth.openai_client_id` when it differs from
-the provider default.
-The flow does not reuse GitHub OAuth, expose tokens to GitHub, or store them in a
-repository. If the client only permits a local loopback callback, use a local bridge or
-continue with an OpenAI API key instead.
+If a provider needs a deployment-specific client identifier, set it under
+`github.oauth.client_ids`. The flow does not reuse GitHub OAuth, expose provider tokens
+to GitHub, or store them in a repository. Each provider controls its endpoints, token
+shape, refresh behavior, and request headers in models-provider.
 
 After that, opening an issue or same-repository pull request starts an automatic first
 response. Later comments can address the installed bot with `@langmesh`,
