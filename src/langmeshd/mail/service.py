@@ -15,6 +15,7 @@ import logging
 from email.message import Message
 from typing import Any, Callable, Optional
 
+from langmesh.base.identity.providers import resolve_provider_credentials
 from langmesh.base.primitives.errors import log_fields
 from langmeshd.commons.configuration import EmailConfiguration
 from langmeshd.mail import body
@@ -593,7 +594,6 @@ def _agent_credential_problem(configuration: EmailConfiguration) -> str:
     from langmesh.base.content.models import find_model, list_models
     from langmesh.base.identity.providers import (
         get_provider_definition,
-        resolve_api_key,
         resolve_base_url,
     )
 
@@ -620,12 +620,17 @@ def _agent_credential_problem(configuration: EmailConfiguration) -> str:
     except Exception:  # noqa: BLE001 — an unreadable YAML still allows secret files
         configured = {}
         bases = {}
-    key = resolve_api_key(provider, configured)
+    from langmeshd.daemon.persistence.credentials import file_credential_store
+
+    resolved_credentials = resolve_provider_credentials(
+        provider, configured, credential_store=file_credential_store()
+    )
+    key = resolved_credentials.api_key
     billed = definition
     if definition is not None and definition.credential_identifier:
         billed = get_provider_definition(definition.credential_identifier) or definition
     anonymous = (billed.anonymous_api_key if billed is not None else "") or ""
-    if not key.strip() or key.strip() == anonymous:
+    if not resolved_credentials.available or key.strip() == anonymous:
         credential = provider
         if definition is not None:
             credential = definition.credential_identifier or definition.identifier

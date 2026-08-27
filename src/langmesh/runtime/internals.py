@@ -11,7 +11,7 @@ from models_provider import chatgpt_tokens, cursor_tokens
 from langmesh.base.configuration import Configuration
 from langmesh.base.confinement import ApprovedBy, Grant
 from langmesh.runtime.values import ToolStatus, tool_status_from_result
-from langmesh.base.identity.providers import resolve_api_key
+from langmesh.base.identity.providers import resolve_provider_credentials
 from langmesh.base.content.message_content import message_text
 from langmesh.base.content.models import find_model
 from langmesh.runtime.boundary import Escape
@@ -90,9 +90,9 @@ def model_is_authorized(
         return True
     # models.dev providers are registered while the catalogue is resolved. Authorization must trigger the same ordered discovery as model construction on a cold worker.
     find_model(model_identifier)
-    return bool(
-        resolve_api_key(provider_identifier, global_configuration.configured_provider_keys())
-    )
+    return resolve_provider_credentials(
+        provider_identifier, global_configuration.configured_provider_keys()
+    ).available
 
 
 def _maybe_json(value: str) -> Any:
