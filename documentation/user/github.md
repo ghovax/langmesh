@@ -33,6 +33,9 @@ github:
   oauth:
     client_id: "Iv1...."
     client_secret: "..."
+    provider_application_ids:
+      chatgpt: "app_4f8c2d1e7a9b"
+      cursor: "cursor_oauth_8a2f6c1d"
   api_url: "https://api.github.com"
 server:
   public_url: "https://github-agent.example.net"
@@ -53,9 +56,10 @@ python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 chmod 600 /srv/langmesh/secrets/provider-keys.fernet
 ```
 
-The service stores provider API keys encrypted in the external database, keyed by GitHub
-installation. The GitHub worker uses the compaction plugin's configured threshold with a
-direct preparation port. Compaction intentionally invalidates the conversation portion
+The service stores provider API keys and OAuth tokens encrypted in the external database,
+keyed by GitHub installation. The GitHub worker uses the compaction plugin's
+configured threshold with a direct preparation port. Compaction intentionally invalidates
+the conversation portion
 of the provider cache; the stable instructions and tool definitions remain reusable. The
 delivery queue and session checkpoints use that same database, so another worker can
 continue after the original worker disappears. Different installations can choose
@@ -114,7 +118,11 @@ curl --fail-with-body --request PUT \
   --url https://langmesh-agent.onrender.com/github/configuration \
   --header 'Authorization: Bearer 7kQ2mN...vR8pL4' \
   --header 'Content-Type: application/json' \
-  --data '{"provider":"openrouter","model":"deepseek/deepseek-chat-v3-0324","api_key":"sk-or-v1-01f4c8e9..."}'
+  --data '{
+    "provider": "openrouter",
+    "model": "deepseek/deepseek-chat-v3-0324",
+    "api_key": "sk-or-v1-01f4c8e9..."
+  }'
 ```
 
 Read the saved state with the same token:
@@ -127,6 +135,37 @@ curl --fail-with-body \
 
 The response never includes the API key.
 
+### Provider OAuth
+
+The hosted service can keep an OAuth session for any registered OAuth provider. Start the
+flow with the setup token returned by the GitHub callback, replacing `chatgpt` with the
+provider identifier:
+
+```sh
+curl --fail-with-body --request POST \
+  --url https://langmesh-agent.onrender.com/github/auth/chatgpt/start \
+  --header 'Authorization: Bearer 7kQ2mN...vR8pL4'
+```
+
+Open the returned `authorize_url` in a browser. A callback-capable provider redirects to
+`/github/auth/{provider}/callback`; providers with a polling sign-in use the returned
+`completion_url` after the browser flow finishes. The service validates the one-time
+state, exchanges or completes the provider flow with PKCE where supported, and stores the
+encrypted provider token. Select the resulting provider model without an API key:
+
+```sh
+curl --fail-with-body --request PUT \
+  --url https://langmesh-agent.onrender.com/github/configuration \
+  --header 'Authorization: Bearer 7kQ2mN...vR8pL4' \
+  --header 'Content-Type: application/json' \
+  --data '{"provider":"chatgpt","model":"gpt-5.4"}'
+```
+
+If a provider needs a deployment-specific client identifier, set it under
+`github.oauth.provider_application_ids`. The flow does not reuse GitHub OAuth, expose
+provider tokens to GitHub, or store them in a repository. Each provider controls its
+endpoints, token shape, refresh behavior, and request headers in models-provider.
+
 After that, opening an issue or same-repository pull request starts an automatic first
 response. Later comments can address the installed bot with `@langmesh`,
 `@langmesh[bot]`, or its actual App login, such as `@langmesh-agent[bot]`; replies to the
@@ -134,8 +173,8 @@ bot are also handled. Its commits use the App identity. A webhook is ignored unt
 installation has a provider/model configuration.
 
 The setup flow verifies the installer through GitHub before accepting settings; the
-`installation_id` in a URL is not treated as authorization. Provider keys are encrypted
-at rest and never written to a checkout.
+`installation_id` in a URL is not treated as authorization. Provider keys and OAuth
+tokens are encrypted at rest and never written to a checkout.
 
 Each turn creates one acknowledgement comment and updates that same comment with useful
 status and the final response. A failed update never creates a replacement comment, and

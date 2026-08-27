@@ -533,9 +533,12 @@ def _session(
     provider: str,
     model: str,
     api_key: str,
+    credential_store: Any = None,
 ) -> Session:
-    provider, model, key = provider.strip(), model.strip(), api_key.strip()
-    if not provider or not model or not key:
+    provider, model, key = provider.strip().lower(), model.strip(), api_key.strip()
+    if not provider or not model:
+        raise ValueError("provider and model are required")
+    if provider != "chatgpt" and not key:
         raise ValueError("provider, model, and API key are required")
     agent = AgentConfiguration(
         name="langmesh",
@@ -564,6 +567,7 @@ def _session(
         components=SessionComponents(
             checkpoints=checkpoints,
             features=mention_features(workspace),
+            credential_store=credential_store,
         ),
     )
 
@@ -580,6 +584,7 @@ async def run_turn(
     model: str,
     api_key: str,
     checkpoints: Checkpoints,
+    credential_store: Any = None,
 ) -> str:
     async with _session(
         mention,
@@ -589,6 +594,7 @@ async def run_turn(
         provider=provider,
         model=model,
         api_key=api_key,
+        credential_store=credential_store,
     ) as session:
         restored = await session.restore()
         followup = restored or thread_followup
@@ -599,6 +605,7 @@ async def run_turn(
             f"{resolved_provider}/{resolved_model}",
             {resolved_provider: key} if key else {},
             {},
+            credential_store=credential_store,
         )
         logger.info(
             "mention model %s/%s wire=%s base=%s restored=%s messages=%s "

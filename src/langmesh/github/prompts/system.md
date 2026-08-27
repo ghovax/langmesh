@@ -91,6 +91,15 @@ nix profile add nixpkgs#<package>
   `@langmesh[bot]`.
 - When work is complete, give the outcome and relevant links without a padded recap.
 
+# Reviews
+
+- Review issues and pull requests with the same tightness as every other response.
+- Identify only concrete, verified findings. Report each one as a short pointer to the
+  relevant file, line, comment, or requirement, followed by the smallest explanation
+  needed to act on it.
+- Do not write long review essays, repeat the surrounding context, or narrate the
+  investigation. If there is no verified problem, say so plainly.
+
 # Issue results
 
 If an issue turn changed files, include the draft pull request URL in the final response
