@@ -56,9 +56,21 @@ def terminate_bash_call(tool_call_id: str) -> bool:
 @tool
 async def bash(
     *,
-    command: Annotated[str, Field(description="The shell command to run as a single string. Must be an executable shell command, not a natural-language description.")],
-    background: Annotated[bool, Field(description="Run in background when true; the tool returns immediately with a job id.")] = False,
-    timeout: Annotated[float, Field(description="Seconds to wait before moving the command to background.")] = 60.0,
+    command: Annotated[
+        str,
+        Field(
+            description="The shell command to run as a single string. Must be an executable shell command, not a natural-language description."
+        ),
+    ],
+    background: Annotated[
+        bool,
+        Field(
+            description="Run in background when true; the tool returns immediately with a job id."
+        ),
+    ] = False,
+    timeout: Annotated[
+        float, Field(description="Seconds to wait before moving the command to background.")
+    ] = 60.0,
     **kwargs: Any,
 ) -> str:
     """Run a shell command inside the session's confinement; described in descriptions/bash.md."""
@@ -122,17 +134,15 @@ async def bash(
                 await process.wait()
             raise
         artifact = None
+        output_size = 0
+        preview = bytearray()
+        preview_limit = max(1, current_limits().output_tokens * 8)
 
         async def close_output():
             nonlocal artifact
             if artifact is None:
                 artifact = await writer.close()
             return artifact
-
-        async def read_output() -> str:
-            reference = await close_output()
-            content = await artifacts.read(reference.identifier) or b""
-            return content.decode(errors="replace")
 
         process_id = process.pid
         # Persist the group id, so a subtree orphaned by a crash is reaped on the next startup.
@@ -145,11 +155,21 @@ async def bash(
             pass
 
         async def write_stream(stream):
+            nonlocal output_size
             while True:
                 line = await stream.readline()
                 if not line:
                     break
+                output_size += len(line)
+                available = preview_limit - len(preview)
+                if available > 0:
+                    preview.extend(line[:available])
                 await writer.write(line)
+
+        def model_output() -> tuple[str, bool]:
+            decoded = preview.decode(errors="replace")
+            inline, clipped = clip_to_tokens(decoded, current_limits().output_tokens)
+            return inline, clipped or output_size > len(preview)
 
         try:
             await asyncio.gather(write_stream(process.stdout), write_stream(process.stderr))
@@ -169,8 +189,8 @@ async def bash(
                     except ProcessLookupError:
                         pass
                 await process.wait()
-            output = await read_output()
-            inline_output, output_truncated = clip_to_tokens(output, current_limits().output_tokens)
+            await close_output()
+            inline_output, output_truncated = model_output()
             payload = {
                 "code": "bash_cancelled",
                 "status": "error",
@@ -178,19 +198,19 @@ async def bash(
                 "output_artifact": artifact_identifier,
                 "truncated": output_truncated,
                 "pid": process_id,
-                "size": len(output),
+                "size": output_size,
                 "returncode": process.returncode,
             }
             return compact(payload)
         except BaseException:
             await close_output()
             raise
-        output = await read_output()
+        await close_output()
         # A non-zero exit is a failure the model must see, or `exit 7` reads as success.
         return_code = process.returncode or 0
         result_code = "bash_completed" if return_code == 0 else "bash_failed"
         result_status = "ok" if return_code == 0 else "error"
-        if not output:
+        if output_size == 0:
             return compact(
                 {
                     "code": result_code,
@@ -203,7 +223,7 @@ async def bash(
                     "returncode": return_code,
                 }
             )
-        inline_output, truncated = clip_to_tokens(output, current_limits().output_tokens)
+        inline_output, truncated = model_output()
         result = {
             "code": result_code,
             "status": result_status,
@@ -211,7 +231,7 @@ async def bash(
             "output_artifact": artifact_identifier,
             "truncated": truncated,
             "pid": process_id,
-            "size": len(output),
+            "size": output_size,
             "returncode": return_code,
         }
         return compact(result)

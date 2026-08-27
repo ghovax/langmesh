@@ -22,6 +22,7 @@ from typing import Any, Callable, Mapping, Protocol
 from langmesh import (
     AgentConfiguration,
     Configuration,
+    DirectoryArtifacts,
     PackagePromptLoader,
     SandboxConfiguration,
     Session,
@@ -565,6 +566,7 @@ def _session(
         configuration=Configuration(toolbox=ToolboxConfiguration(enabled=True)),
         providers={provider: key} if key else None,
         components=SessionComponents(
+            artifacts=DirectoryArtifacts(workspace.parent / "artifacts"),
             checkpoints=checkpoints,
             features=mention_features(workspace),
             credential_store=credential_store,
