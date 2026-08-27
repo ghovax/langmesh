@@ -104,7 +104,7 @@ the service deployment. They are not installation settings.
 ```json
 {
   "installation_id": 184736295,
-  "setup_token": "q9vK2mN8pL4xY7cA3sF6wR1tU5zE0hJ",
+  "setup_token": "7kQ2mN...vR8pL4",
   "expires_in": 600,
   "configuration_url": "https://github-agent.example.net/github/configuration"
 }
@@ -116,7 +116,7 @@ callback when calling the JSON configuration endpoint:
 ```sh
 curl --fail-with-body --request PUT \
   --url https://langmesh-agent.onrender.com/github/configuration \
-  --header 'Authorization: Bearer q9vK2mN8pL4xY7cA3sF6wR1tU5zE0hJ' \
+  --header 'Authorization: Bearer 7kQ2mN...vR8pL4' \
   --header 'Content-Type: application/json' \
   --data '{
     "provider": "openrouter",
@@ -130,7 +130,7 @@ Read the saved state with the same token:
 ```sh
 curl --fail-with-body \
   --url https://langmesh-agent.onrender.com/github/configuration \
-  --header 'Authorization: Bearer q9vK2mN8pL4xY7cA3sF6wR1tU5zE0hJ'
+  --header 'Authorization: Bearer 7kQ2mN...vR8pL4'
 ```
 
 The response never includes the API key.
@@ -144,7 +144,7 @@ provider identifier:
 ```sh
 curl --fail-with-body --request POST \
   --url https://langmesh-agent.onrender.com/github/auth/chatgpt/start \
-  --header 'Authorization: Bearer q9vK2mN8pL4xY7cA3sF6wR1tU5zE0hJ'
+  --header 'Authorization: Bearer 7kQ2mN...vR8pL4'
 ```
 
 Open the returned `authorize_url` in a browser. A callback-capable provider redirects to
@@ -156,7 +156,7 @@ encrypted provider token. Select the resulting provider model without an API key
 ```sh
 curl --fail-with-body --request PUT \
   --url https://langmesh-agent.onrender.com/github/configuration \
-  --header 'Authorization: Bearer q9vK2mN8pL4xY7cA3sF6wR1tU5zE0hJ' \
+  --header 'Authorization: Bearer 7kQ2mN...vR8pL4' \
   --header 'Content-Type: application/json' \
   --data '{"provider":"chatgpt","model":"gpt-5.4"}'
 ```
