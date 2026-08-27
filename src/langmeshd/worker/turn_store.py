@@ -168,7 +168,7 @@ class HostTurnStore(TaskStore):
             part=part,
         )
 
-    async def finish_goal_review(
+    async def complete_goal_review(
         self,
         session_id: str,
         review_id: str,
@@ -177,7 +177,7 @@ class HostTurnStore(TaskStore):
         completed_at: str,
     ) -> None:
         await self._call(
-            "goal_review.finish",
+            "goal_review.complete",
             session_id=session_id,
             review_id=review_id,
             status=status,

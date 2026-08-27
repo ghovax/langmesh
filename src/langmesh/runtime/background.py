@@ -144,14 +144,14 @@ class BackgroundJobs:
         )
         # Persist the finished result the moment the task completes, so a restart sees it undelivered.
         task.add_done_callback(
-            lambda _task, job_identifier=identifier: self._persist_finished(job_identifier)
+            lambda _task, job_identifier=identifier: self._persist_completed(job_identifier)
         )
         return identifier
 
-    def _persist_finished(self, identifier: str) -> None:
+    def _persist_completed(self, identifier: str) -> None:
         record = self._jobs.get(identifier)
         if record is not None and self._session_id:
-            self._store.record_finished(
+            self._store.record_completed(
                 identifier, self._result_string(record), status=STATUS_COMPLETED
             )
 
@@ -319,7 +319,7 @@ class BackgroundJobs:
             record.task.cancel()
             if self._session_id:
                 result = compact({"code": f"{record.kind}_cancelled", "job_id": record.identifier})
-                self._store.record_finished(identifier, result, status=STATUS_DELIVERED)
+                self._store.record_completed(identifier, result, status=STATUS_DELIVERED)
             self._jobs.pop(identifier, None)
 
     def cancel_by_tool_call(self, tool_call_identifier: str) -> bool:
@@ -337,7 +337,7 @@ class BackgroundJobs:
             record.task.cancel()
             if self._session_id:
                 result = compact({"code": f"{record.kind}_cancelled", "job_id": record.identifier})
-                self._store.record_finished(identifier, result, status=STATUS_DELIVERED)
+                self._store.record_completed(identifier, result, status=STATUS_DELIVERED)
             self._jobs.pop(identifier, None)
             return True
         return False
@@ -355,7 +355,7 @@ class BackgroundJobs:
         record.task.cancel()
         if self._session_id:
             result = compact({"code": f"{record.kind}_cancelled", "job_id": record.identifier})
-            self._store.record_finished(identifier, result, status=STATUS_DELIVERED)
+            self._store.record_completed(identifier, result, status=STATUS_DELIVERED)
         self._jobs.pop(identifier, None)
         return True
 

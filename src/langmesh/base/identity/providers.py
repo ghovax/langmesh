@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
+from models_provider import (
+    ApiKeyResolution,
+    CredentialStore,
+    ProviderAuthentication,
+    provider_auth_profile,
+)
+
 
 @dataclass(frozen=True)
 class ProviderDefinition:
@@ -368,9 +375,21 @@ def provider_env_vars(provider_identifier: str) -> tuple[str, ...]:
 def resolve_api_key(
     provider_identifier: str,
     configured_keys: dict[str, str],
+    credential_store: CredentialStore | None = None,
 ) -> str:
-    """Resolve a provider key from an in-memory map, then secret files, else the anonymous sentinel."""
-    from langmesh.base.secrets import provider_api_key_name, read_secret
+    """Resolve a provider key through Models Provider's authentication boundary."""
+    return resolve_provider_credentials(
+        provider_identifier, configured_keys, credential_store=credential_store
+    ).api_key
+
+
+def resolve_provider_credentials(
+    provider_identifier: str,
+    configured_keys: dict[str, str],
+    *,
+    credential_store: CredentialStore | None = None,
+) -> ApiKeyResolution:
+    """Resolve a provider's key or cloud environment through Models Provider."""
 
     identifier = provider_identifier.strip()
     definition = PROVIDERS.get(identifier) or PROVIDERS.get(identifier.lower())
@@ -380,16 +399,22 @@ def resolve_api_key(
     configured = configured_keys.get(credential_identifier, "") or configured_keys.get(
         identifier, ""
     )
-    if configured:
-        return configured
-    file_key = read_secret(provider_api_key_name(credential_identifier))
-    if file_key:
-        return file_key
-    if identifier != credential_identifier:
-        file_key = read_secret(provider_api_key_name(identifier))
-        if file_key:
-            return file_key
-    return definition.anonymous_api_key if definition is not None else ""
+    profile = provider_auth_profile(
+        identifier,
+        environment_variables=provider_env_vars(identifier),
+        default_base_url=definition.default_base_url if definition is not None else "",
+        headers=definition.default_headers if definition is not None else {},
+        anonymous_api_key=definition.anonymous_api_key if definition is not None else "",
+        credential_identifier=credential_identifier,
+    )
+    authentication = ProviderAuthentication(
+        {identifier: profile},
+        api_keys={credential_identifier: configured},
+        store=credential_store,
+    )
+    return authentication.resolve(
+        identifier, environment_variables=profile.environment_variables
+    )
 
 
 def resolve_base_url(

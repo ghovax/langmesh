@@ -418,7 +418,7 @@ class GoalReviewFeature(Feature):
                 )
             )
 
-        async def finish_transcript(
+        async def close_transcript(
             status: Literal["completed", "canceled", "failed"], review: GoalReview | None = None
         ) -> None:
             nonlocal transcript_finished
@@ -451,7 +451,7 @@ class GoalReviewFeature(Feature):
             async def _run_turn(instruction: str) -> bool:
                 ran = await self._run_goal_review_turn(reviewer, instruction, review_id, publish)
                 if not ran:
-                    await finish_transcript("canceled")
+                    await close_transcript("canceled")
                 return ran
 
             def _submitted():
@@ -460,7 +460,7 @@ class GoalReviewFeature(Feature):
 
             async def _on_success(review):
                 review._review_id = review_id
-                await finish_transcript("completed", review)
+                await close_transcript("completed", review)
 
             def _on_empty(attempt: int) -> None:
                 logger.warning(
@@ -483,10 +483,10 @@ class GoalReviewFeature(Feature):
             if review is not None:
                 return review
         except asyncio.CancelledError:
-            await finish_transcript("canceled")
+            await close_transcript("canceled")
             raise
         except Exception:
-            await finish_transcript("failed")
+            await close_transcript("failed")
             raise
         finally:
             self._live_reviewer = None
@@ -496,7 +496,7 @@ class GoalReviewFeature(Feature):
             if runner is not None:
                 runner.cancel_all()
             if not transcript_finished:
-                await finish_transcript("canceled")
+                await close_transcript("canceled")
         return None
 
     def apply(self, review: Optional[GoalReview]) -> Optional[Goal]:

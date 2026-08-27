@@ -299,7 +299,7 @@ def _pids_showing_a_window() -> set[int]:
     showing = set()
     for window in windows:
         bounds = window.get("kCGWindowBounds") or {}
-        # Layer 0 and a real size: a document window, not a menu-bar strip or an overlay.
+        # A real size: a document window, not a menu-bar strip or an overlay.
         if (
             window.get("kCGWindowLayer") == 0
             and int(bounds.get("Width", 0)) > 200

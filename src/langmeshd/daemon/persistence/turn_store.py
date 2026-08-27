@@ -555,7 +555,7 @@ class AppendOnlyTaskStore(TaskStore):
                 )
             )
 
-    async def finish_goal_review(
+    async def complete_goal_review(
         self, review_id: str, status: str, standing: str | None, completed_at: str
     ) -> None:
         """Settle one review session while preserving its linked transcript."""
