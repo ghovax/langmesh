@@ -623,7 +623,7 @@ class ThreadStore:
         assert row is not None
         return _row(row)
 
-    def already_finished(self, mailbox: str, uidvalidity: int, uid: int, message_id: str) -> bool:
+    def already_completed(self, mailbox: str, uidvalidity: int, uid: int, message_id: str) -> bool:
         item = self.item_by_message_id(message_id) if message_id else None
         if item is None:
             item = self.item_by_uid(mailbox, uidvalidity, uid)

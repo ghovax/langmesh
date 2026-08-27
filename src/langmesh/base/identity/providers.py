@@ -381,15 +381,9 @@ def resolve_api_key(
     configured = configured_keys.get(credential_identifier, "") or configured_keys.get(
         identifier, ""
     )
-    if configured:
-        return configured
-    file_key = read_secret(provider_api_key_name(credential_identifier))
-    if file_key:
-        return file_key
+    stored_key = read_secret(provider_api_key_name(credential_identifier))
     if identifier != credential_identifier:
-        file_key = read_secret(provider_api_key_name(identifier))
-        if file_key:
-            return file_key
+        stored_key = stored_key or read_secret(provider_api_key_name(identifier))
     profile = ProviderAuthProfile(
         identifier=identifier,
         environment_variables=provider_env_vars(identifier),
@@ -397,9 +391,12 @@ def resolve_api_key(
         headers=definition.default_headers if definition is not None else {},
         anonymous_api_key=definition.anonymous_api_key if definition is not None else "",
     )
-    return ProviderAuthentication({identifier: profile}, api_keys={identifier: configured or file_key}).resolve_key(
-        identifier,
-        environment_variables=profile.environment_variables,
+    authentication = ProviderAuthentication(
+        {identifier: profile},
+        api_keys={identifier: configured or stored_key},
+    )
+    return authentication.resolve_key(
+        identifier, environment_variables=profile.environment_variables
     ).api_key
 
 

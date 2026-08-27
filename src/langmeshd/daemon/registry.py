@@ -160,7 +160,7 @@ class SessionRegistry:
         task = asyncio.create_task(persist_in_order(), name=f"persist-session-{record.id}")
         self._persistence_tail = task
         self._persistence_tasks.add(task)
-        task.add_done_callback(self._finish_persistence)
+        task.add_done_callback(self._retire_persistence)
         return task
 
     async def persist_off_loop(self, record: SessionRecord) -> None:
@@ -179,7 +179,7 @@ class SessionRegistry:
             return
         self._schedule_persistence(record)
 
-    def _finish_persistence(self, task: asyncio.Task[None]) -> None:
+    def _retire_persistence(self, task: asyncio.Task[None]) -> None:
         """Retire an asynchronous registry write and report a storage failure."""
         self._persistence_tasks.discard(task)
         if self._persistence_tail is task:

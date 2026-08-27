@@ -217,10 +217,10 @@ class SessionExecutor(AgentExecutor):
         """Start session-owned work and retain it until completion or shutdown."""
         task = asyncio.create_task(coroutine, name=f"langmesh:{self._session_id}:{name}")
         self._background_tasks.add(task)
-        task.add_done_callback(self._finish_background)
+        task.add_done_callback(self._retire_background)
         return task
 
-    def _finish_background(self, task: asyncio.Task[Any]) -> None:
+    def _retire_background(self, task: asyncio.Task[Any]) -> None:
         """Retire completed session work and surface an otherwise unobserved failure."""
         self._background_tasks.discard(task)
         if task.cancelled():
@@ -436,7 +436,7 @@ class SessionExecutor(AgentExecutor):
         workflow = asyncio.create_task(self._run_continuations(session_id))
         state.continuation.attach(workflow)
         workflow.add_done_callback(
-            lambda completed: self._finish_continuation(session_id, completed)
+            lambda completed: self._retire_continuation(session_id, completed)
         )
 
     async def _run_continuations(self, session_id: str) -> None:
@@ -468,7 +468,7 @@ class SessionExecutor(AgentExecutor):
             self._notify_turn_state(session_id, False)
         return True
 
-    def _finish_continuation(self, session_id: str, workflow: asyncio.Task) -> None:
+    def _retire_continuation(self, session_id: str, workflow: asyncio.Task) -> None:
         """Retire the owned workflow and report an unexpected failure."""
         state = self._contexts.get(session_id)
         owns_workflow = state is not None and state.continuation.detach(workflow)
@@ -680,9 +680,9 @@ class SessionExecutor(AgentExecutor):
 
         task = asyncio.create_task(publish())
         self._goal_state_tail = task
-        task.add_done_callback(self._finish_goal_state_publish)
+        task.add_done_callback(self._retire_goal_state_publish)
 
-    def _finish_goal_state_publish(self, task: asyncio.Task) -> None:
+    def _retire_goal_state_publish(self, task: asyncio.Task) -> None:
         """Retire the ordered publisher and surface the last failed update."""
         if self._goal_state_tail is task:
             self._goal_state_tail = None

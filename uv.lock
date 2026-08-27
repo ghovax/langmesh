@@ -1394,7 +1394,7 @@ requires-dist = [
     { name = "mcp", extras = ["cli"], specifier = ">=1.27,<2" },
     { name = "minify-html", specifier = ">=0.15" },
     { name = "model2vec", specifier = ">=0.8.2" },
-    { name = "models-provider", git = "https://github.com/ghovax/models-provider.git?rev=9601c51" },
+    { name = "models-provider", git = "https://github.com/ghovax/models-provider.git?rev=44114190f23076e1164bc54949933477f11279b9" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.27.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.27.0" },
     { name = "parakeet-mlx", marker = "sys_platform == 'darwin'", specifier = ">=0.3" },
@@ -1881,7 +1881,7 @@ wheels = [
 [[package]]
 name = "models-provider"
 version = "0.1.0"
-source = { git = "https://github.com/ghovax/models-provider.git?rev=9601c51#9601c51e394d7aabd6a80eb8225cc51d1d147806" }
+source = { git = "https://github.com/ghovax/models-provider.git?rev=44114190f23076e1164bc54949933477f11279b9#44114190f23076e1164bc54949933477f11279b9" }
 dependencies = [
     { name = "httpx" },
     { name = "langchain-core" },

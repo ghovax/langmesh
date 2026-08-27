@@ -100,7 +100,7 @@ reviewer = AgentConfiguration(
     model="claude-opus-4-5",
 )
 
-async def main() -> None:
+async def main():
     async with Session(
         reviewer,
         directory="/srv/checkout",

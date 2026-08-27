@@ -134,7 +134,7 @@ load-bearing: with your own directories it would find the lock held by the daemo
 already run and stand down, and the probe would then find that daemon's socket
 answering, a green result for a binary the probe never exercised.
 
-For the full step-by-step with expected output, see
+For the complete procedure with expected output, see
 [Installation](../user/installation.md#every-step-and-what-you-should-see).
 
 ### Stable code-signing
