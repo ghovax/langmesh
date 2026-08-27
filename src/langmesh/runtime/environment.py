@@ -25,10 +25,7 @@ class RuntimeEnvironment:
                 token = bind_limits(self.limits)
                 stack.callback(reset_limits, token)
             if self.credentials is not None:
-                from langmesh.base.identity.credential_store import (
-                    bind_credential_store,
-                    reset_credential_store,
-                )
+                from models_provider import bind_credential_store, reset_credential_store
 
                 token = bind_credential_store(self.credentials)
                 stack.callback(reset_credential_store, token)

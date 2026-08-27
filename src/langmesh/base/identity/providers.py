@@ -370,7 +370,6 @@ def resolve_api_key(
     configured_keys: dict[str, str],
 ) -> str:
     """Resolve a provider key through Models Provider's authentication boundary."""
-    from langmesh.base.secrets import provider_api_key_name, read_secret
     from models_provider import ProviderAuthentication, ProviderAuthProfile
 
     identifier = provider_identifier.strip()
@@ -381,19 +380,17 @@ def resolve_api_key(
     configured = configured_keys.get(credential_identifier, "") or configured_keys.get(
         identifier, ""
     )
-    stored_key = read_secret(provider_api_key_name(credential_identifier))
-    if identifier != credential_identifier:
-        stored_key = stored_key or read_secret(provider_api_key_name(identifier))
     profile = ProviderAuthProfile(
         identifier=identifier,
         environment_variables=provider_env_vars(identifier),
         default_base_url=definition.default_base_url if definition is not None else "",
         headers=definition.default_headers if definition is not None else {},
         anonymous_api_key=definition.anonymous_api_key if definition is not None else "",
+        credential_identifier=credential_identifier,
     )
     authentication = ProviderAuthentication(
         {identifier: profile},
-        api_keys={identifier: configured or stored_key},
+        api_keys={credential_identifier: configured},
     )
     return authentication.resolve_key(
         identifier, environment_variables=profile.environment_variables

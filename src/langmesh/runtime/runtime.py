@@ -129,6 +129,9 @@ def build_chat_model(
         default_base_url=definition.default_base_url if definition else "",
         headers=definition.default_headers if definition else {},
         anonymous_api_key=definition.anonymous_api_key if definition else "",
+        credential_identifier=(
+            definition.credential_identifier if definition else ""
+        ),
     )
     authentication = ProviderAuthentication(
         {provider_identifier: profile},

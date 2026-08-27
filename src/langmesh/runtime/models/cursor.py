@@ -38,33 +38,34 @@ from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import PrivateAttr
 
-from langmesh.base.identity.cursor_credentials import (
-    CursorAuthError,
+from models_provider import (
+    AuthenticationError,
     CursorTokens,
-    load_tokens,
-    valid_tokens,
+    cursor_tokens,
+    valid_cursor_tokens,
 )
-from langmesh.base.content.prompts import PackagePromptLoader
-from langmesh.runtime.cache_trace import active_cache_lane
-from langmesh.base.identity.cursor_subscription import (
+from models_provider.subscriptions import (
     APPEND_PATH,
     RUN_HOSTS,
     RUN_PATH,
     STATUS_RESOURCE_EXHAUSTED,
     STATUS_UNAUTHENTICATED,
     UNKNOWN_CONTEXT_WINDOW,
-    cached_subscription_models,
+    cached_cursor_models,
     machine_time_zone,
     observed_context_window,
     record_context_window,
-    request_headers,
+    request_cursor_headers,
 )
+from langmesh.base.content.prompts import PackagePromptLoader
+from langmesh.runtime.cache_trace import active_cache_lane
 from langmesh.base.content.message_content import content_blocks_to_message_content, message_text
 from langmesh.base.primitives.serialization import compact, upstream_detail
 
 from langmesh.runtime.models import cursor_wire as wire
 
 from langmesh.base.primitives.limits import current_limits
+
 
 
 # Everything this client says to a model is a prompt on disk, like every other prompt the harness sends.
@@ -182,7 +183,7 @@ class _Channel:
         response = await self._client.post(
             self._append_url,
             content=wire.frame(wire.bidi_append_request(self._request_id, self._sequence, payload)),
-            headers=request_headers(self._tokens, self._request_id),
+            headers=request_cursor_headers(self._tokens, self._request_id),
         )
         self._sequence += 1
         if response.status_code >= 400:
@@ -231,7 +232,7 @@ class ChatCursorModel(BaseChatModel):
         """The model's context window, preferring an observed turn over the catalog over the configured default."""
         if observed := observed_context_window(self.model):
             return observed
-        discovered = cached_subscription_models().get(self.model) or {}
+        discovered = cached_cursor_models().get(self.model) or {}
         return int(discovered.get("context") or 0) or self.context_length or UNKNOWN_CONTEXT_WINDOW
 
     @property
@@ -241,7 +242,7 @@ class ChatCursorModel(BaseChatModel):
     @staticmethod
     def _account_key() -> str:
         """Fingerprint the account a server checkpoint belongs to without persisting its identity."""
-        tokens = load_tokens()
+        tokens = cursor_tokens()
         if tokens is None or not tokens.account:
             return ""
         return hashlib.sha256(tokens.account.encode()).hexdigest()
@@ -534,7 +535,7 @@ class ChatCursorModel(BaseChatModel):
 
     def _variant(self) -> bytes:
         """The `RequestedModel` for this model when discovery learned its variant, and nothing when it did not."""
-        variant = cached_subscription_models().get(self.model, {}).get("variant")
+        variant = cached_cursor_models().get(self.model, {}).get("variant")
         if not variant:
             return b""
         return wire.requested_model(
@@ -550,7 +551,7 @@ class ChatCursorModel(BaseChatModel):
         """The exception an HTTP failure becomes, chosen so the caller can tell whether another backend could help."""
         if status in (401, 403):
             # Definitive: the token is the problem and every host will say the same.
-            return CursorAuthError(
+            return AuthenticationError(
                 f"Cursor rejected the subscription token (expired, revoked, or the plan lacks access). Sign in again. Detail: {upstream_detail(detail)}"
             )
         return _HostUnavailable(
@@ -562,7 +563,7 @@ class ChatCursorModel(BaseChatModel):
         if status == STATUS_RESOURCE_EXHAUSTED:
             return RuntimeError("Cursor reports this subscription's usage limit is reached.")
         if status == STATUS_UNAUTHENTICATED:
-            return CursorAuthError("Cursor rejected the subscription token. Sign in again.")
+            return AuthenticationError("Cursor rejected the subscription token. Sign in again.")
         return RuntimeError(
             f"Cursor agent stream failed (grpc-status {status}): {message or 'no detail'}"
         )
@@ -576,7 +577,7 @@ class ChatCursorModel(BaseChatModel):
         run_manager=None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
-        tokens = await valid_tokens()
+        tokens = await valid_cursor_tokens()
         turn, blobs, conversation_id = self._build_turn(messages, kwargs.get("tools") or [])
         tool_names = {
             (tool.get("function", tool)).get("name", "") for tool in (kwargs.get("tools") or [])
@@ -616,7 +617,7 @@ class ChatCursorModel(BaseChatModel):
         tool_names: set[str],
     ) -> AsyncIterator[ChatGenerationChunk]:
         request_id = str(uuid.uuid4())
-        headers = request_headers(tokens, request_id)
+        headers = request_cursor_headers(tokens, request_id)
         run_url = f"{host}{RUN_PATH}"
         append_url = f"{host}{APPEND_PATH}"
 

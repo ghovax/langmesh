@@ -26,10 +26,16 @@ from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import PrivateAttr
 
-from langmesh.base.identity.credentials import (
-    ChatGPTAuthError,
-    load_tokens,
-    valid_tokens,
+from models_provider import (
+    AuthenticationError,
+    chatgpt_tokens,
+    valid_chatgpt_tokens,
+)
+from models_provider.subscriptions import (
+    RESPONSES_URL,
+    cached_chatgpt_models,
+    capture_usage_headers,
+    request_chatgpt_headers,
 )
 from langmesh.base.content.message_content import (
     REASONING_MODEL_KEY,
@@ -54,12 +60,7 @@ from langmesh.runtime.cache_trace import (
     trace,
 )
 from langmesh.base.primitives.serialization import compact, upstream_detail
-from langmesh.base.identity.subscription import (
-    RESPONSES_URL,
-    cached_subscription_models,
-    capture_usage_headers,
-    request_headers,
-)
+
 
 # What the endpoint serves before its catalogue is fetched, deliberately the conservative figure.
 COLD_START_WINDOW = 272_000
@@ -106,7 +107,7 @@ class ChatCodexModel(BaseChatModel):
 
     def context_window(self) -> int:
         # The live subscription catalog is authoritative for the real Codex budget.
-        live = cached_subscription_models().get(self.model)
+        live = cached_chatgpt_models().get(self.model)
         if live and live.get("context"):
             return int(live["context"])
         # Until the catalogue is warm, models.dev's figure is wrong in the direction that does harm, since Codex serves less.
@@ -278,12 +279,12 @@ class ChatCodexModel(BaseChatModel):
 
     async def _headers(self) -> dict[str, str]:
         """The request headers, with a freshly-valid access token and this conversation's id."""
-        return request_headers(await valid_tokens(), self.session_id)
+        return request_chatgpt_headers(await valid_chatgpt_tokens(), self.session_id)
 
     @staticmethod
     def _http_error(status: int, body: str) -> Exception:
         if status in (401, 403):
-            return ChatGPTAuthError(
+            return AuthenticationError(
                 f"ChatGPT rejected the subscription token (expired, revoked, or plan lacks access). Sign in again. Detail: {upstream_detail(body)}"
             )
         # An overlong request is refused before the stream opens as often as during it, so both paths report it the same way.
@@ -581,11 +582,11 @@ class ChatCodexModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         # `BaseChatModel` requires a synchronous path, so this fallback reads the token without the async refresh.
-        tokens = load_tokens()
+        tokens = chatgpt_tokens()
         if tokens is None or tokens.is_expired():
-            raise ChatGPTAuthError("Not signed in to ChatGPT (or the session expired).")
+            raise AuthenticationError("Not signed in to ChatGPT (or the session expired).")
         payload = self._build_payload(messages, stream=True, **kwargs)
-        headers = request_headers(tokens, self.session_id)
+        headers = request_chatgpt_headers(tokens, self.session_id)
         diagnosis = self._cache_diagnosis(self._trace_payload(payload))
         reported = False
         # Carried so a failure can name the model that refused the request and the window it was measured against.
