@@ -410,7 +410,7 @@ class Store:
         clear_oauth: bool = False,
     ) -> None:
         encrypted = self._cipher.encrypt(api_key.encode()).decode() if api_key else ""
-        async with self.engine.connect() as connection:
+        async with self.engine.begin() as connection:
             result = await connection.execute(
                 text(
                     "SELECT api_key, oauth_tokens FROM langmesh_github_installations "
@@ -419,12 +419,11 @@ class Store:
                 {"installation_id": installation_id},
             )
             row = result.first()
-        if api_key is None:
-            encrypted = str(row[0]) if row and row[0] else ""
-        existing_oauth = str(row[1]) if row and row[1] else ""
-        if clear_oauth:
-            existing_oauth = ""
-        async with self.engine.begin() as connection:
+            if api_key is None:
+                encrypted = str(row[0]) if row and row[0] else ""
+            existing_oauth = str(row[1]) if row and row[1] else ""
+            if clear_oauth:
+                existing_oauth = ""
             await connection.execute(
                 text(
                     "INSERT INTO langmesh_github_installations "
@@ -461,7 +460,7 @@ class Store:
                 authentication.serialize_token(provider, tokens), separators=(",", ":")
             ).encode()
         ).decode()
-        async with self.engine.connect() as connection:
+        async with self.engine.begin() as connection:
             result = await connection.execute(
                 text(
                     "SELECT provider, model FROM langmesh_github_installations "
@@ -470,9 +469,8 @@ class Store:
                 {"installation_id": installation_id},
             )
             existing = result.first()
-        same_provider = existing is not None and str(existing[0]) == provider
-        selected_model = str(existing[1]) if same_provider else ""
-        async with self.engine.begin() as connection:
+            same_provider = existing is not None and str(existing[0]) == provider
+            selected_model = str(existing[1]) if same_provider else ""
             if existing is None:
                 await connection.execute(
                     text(
@@ -1099,7 +1097,7 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
     def provider_redirect_uri(provider: str) -> str:
         return f"{settings.public_url}/github/auth/{urllib.parse.quote(provider, safe='')}/callback"
 
-    async def require_oauth_provider(provider: str):
+    async def require_oauth_provider(provider: str) -> str:
         provider_identifier = provider.strip().lower()
         profile = authentication.profile(provider_identifier)
         if profile.method != "oauth":
@@ -1167,7 +1165,6 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         return {
             "authenticated": True,
             "provider": provider_identifier,
-            "account": str(getattr(tokens, "account", "")),
             "configuration_url": f"{settings.public_url}/github/configuration",
         }
 
