@@ -46,7 +46,6 @@ class DirectoryArtifacts:
     def __init__(self, directory: str | Path) -> None:
         self._directory = Path(directory).expanduser().resolve()
         self._directory.mkdir(parents=True, exist_ok=True)
-        self._active: set[str] = set()
 
     @staticmethod
     def _file_name(identifier: str) -> str:
@@ -68,14 +67,9 @@ class DirectoryArtifacts:
             media_type=media_type,
         )
         path = self._path(reference.identifier)
-        if reference.identifier in self._active or path.exists():
+        if path.exists():
             raise FileExistsError(f"Artifact already exists: {reference.identifier}")
-        self._active.add(reference.identifier)
-        try:
-            stream = path.open("xb")
-        except BaseException:
-            self._active.discard(reference.identifier)
-            raise
+        stream = path.open("xb")
         return _DirectoryArtifactWriter(path, stream, reference)
 
     async def read(self, identifier: str) -> bytes | None:
