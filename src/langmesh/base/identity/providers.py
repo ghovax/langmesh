@@ -372,17 +372,6 @@ def provider_env_vars(provider_identifier: str) -> tuple[str, ...]:
     return tuple(names)
 
 
-def resolve_api_key(
-    provider_identifier: str,
-    configured_keys: dict[str, str],
-    credential_store: CredentialStore | None = None,
-) -> str:
-    """Resolve a provider key through Models Provider's authentication boundary."""
-    return resolve_provider_credentials(
-        provider_identifier, configured_keys, credential_store=credential_store
-    ).api_key
-
-
 def resolve_provider_credentials(
     provider_identifier: str,
     configured_keys: dict[str, str],
