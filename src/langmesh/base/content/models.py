@@ -4,19 +4,16 @@ import logging
 import re
 import threading
 from dataclasses import dataclass
-from typing import TypedDict
 
 import httpx
 from models_provider import CredentialStore
 
 from langmesh.base.identity.providers import (
     PROVIDERS,
-    ProviderDefinition,
     extend_provider_env_vars,
     get_provider_definition,
     register_models_dev_provider,
     resolve_provider_credentials,
-    resolve_base_url,
 )
 
 
@@ -37,16 +34,6 @@ class ModelDefinition:
     release_date: str = ""
     # A per-model override for gateways that expose several wire protocols.
     litellm_prefix: str = ""
-
-
-class ResolvedLiteLLM(TypedDict):
-    """The LiteLLM call parameters for one model: routed id, credential, endpoint, and headers."""
-
-    model: str
-    api_key: str
-    api_base: str
-    headers: dict[str, str]
-    environment: dict[str, str]
 
 
 # Wire-protocol names from models.dev, mapped to the LiteLLM prefix that speaks them.
@@ -287,52 +274,3 @@ def available_models(
         or provider.identifier == "custom"
     }
     return [model for model in list_models() if model.provider in unlocked_providers]
-
-
-def _gateway_api_base(provider_base_url: str, litellm_prefix: str) -> str:
-    """The base URL to hand LiteLLM for a gateway serving several wire protocols from one host."""
-    if litellm_prefix == "anthropic":
-        return f"{provider_base_url.rstrip('/')}/messages"
-    return provider_base_url
-
-
-def resolve_litellm(
-    model_identifier: str,
-    configured_keys: dict[str, str],
-    configured_bases: dict[str, str],
-    *,
-    credential_store: CredentialStore | None = None,
-) -> ResolvedLiteLLM:
-    """Translate a provider-qualified model into LiteLLM call parameters."""
-    split = split_model_identifier(model_identifier)
-    if split is None:
-        raise ValueError(f"Model id has no provider prefix: {model_identifier!r}")
-    provider_identifier, suffix = split
-    # `models.dev` providers are registered while the catalogue is built. Resolve the model first so a cold runtime can run its first turn without depending on the UI having listed models beforehand; model selection and provider registration become one ordered operation.
-    catalog_model = find_model(model_identifier)
-    definition: ProviderDefinition | None = get_provider_definition(provider_identifier)
-    if definition is None:
-        raise ValueError(f"Unknown provider in model id: {model_identifier!r}")
-    # The catalogue's prefix is an override set only for multi-protocol gateways, so an empty one means the provider's own.
-    litellm_prefix = (
-        catalog_model.litellm_prefix if catalog_model else ""
-    ) or definition.litellm_prefix
-    provider_base_url = (
-        resolve_base_url(provider_identifier, configured_bases)
-        if definition.uses_custom_base_url or definition.openai_compatible
-        else ""
-    )
-    credentials = resolve_provider_credentials(
-        provider_identifier, configured_keys, credential_store=credential_store
-    )
-    return {
-        "model": f"{litellm_prefix}/{suffix}",
-        "api_key": credentials.api_key,
-        "api_base": (
-            _gateway_api_base(provider_base_url, litellm_prefix)
-            if definition.uses_custom_base_url
-            else provider_base_url
-        ),
-        "headers": definition.default_headers,
-        "environment": dict(credentials.environment),
-    }

@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.internals import model_is_authorized
-from langmesh.runtime.runtime import build_chat_model
+from langmesh.runtime.models.factory import build_chat_model
 from langmesh.runtime.verdict import collect_structured_call
 
 from langmesh.base.primitives.limits import current_limits
