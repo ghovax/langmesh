@@ -4,9 +4,11 @@ LangMesh Agent is an installation-level GitHub App. A repository only needs the 
 installed; it does not need a workflow, YAML policy, App ID, provider setting, API key,
 or GitHub secret.
 
-The service receives `issue_comment` and `pull_request_review_comment` webhooks, creates
-a repository-scoped installation token, and runs the mention session as the installed
-App. The App private key belongs only to the service operator. It is never entered by a
+The service receives issue, pull request, issue-comment, and pull-request-review-comment
+webhooks, creates a repository-scoped installation token, and runs the session as the
+installed App. New issues and pull requests receive an automatic first response; later
+comment turns start when a person addresses the bot or replies to one of its comments.
+The App private key belongs only to the service operator. It is never entered by a
 person configuring an installation and is never stored in a repository.
 
 ## Service configuration
@@ -78,7 +80,8 @@ Register one App for the service owner and set:
 - **Callback URL:** `https://github-agent.example.net/github/setup/callback`
 - **Webhook URL:** `https://github-agent.example.net/github/webhook`
 - **Webhook secret:** the same value as `webhook_secret` in the service configuration
-- **Webhook events:** `Installation`, `Issue comment`, and `Pull request review comment`
+- **Webhook events:** `Installation`, `Issues`, `Pull requests`, `Issue comment`, and
+  `Pull request review comment`
 - **Repository permissions:** Contents read/write, Issues read/write, Pull requests
   read/write, and Metadata read-only
 
@@ -124,10 +127,11 @@ curl --fail-with-body \
 
 The response never includes the API key.
 
-After that, mention the installed bot in an issue or same-repository pull request. The
-bot identity is the actual App login, such as `@langmesh-agent[bot]`, and its commits
-use that identity. A webhook is ignored until its installation has a provider/model
-configuration.
+After that, opening an issue or same-repository pull request starts an automatic first
+response. Later comments can address the installed bot with `@langmesh`,
+`@langmesh[bot]`, or its actual App login, such as `@langmesh-agent[bot]`; replies to the
+bot are also handled. Its commits use the App identity. A webhook is ignored until its
+installation has a provider/model configuration.
 
 The setup flow verifies the installer through GitHub before accepting settings; the
 `installation_id` in a URL is not treated as authorization. Provider keys are encrypted

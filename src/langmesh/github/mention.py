@@ -86,7 +86,7 @@ class Mention:
     kind: str
     title: str
     html_url: str
-    comment_url: str
+    source_url: str
     user: str
     association: str
     default_branch: str
@@ -129,6 +129,7 @@ def comment_pointer(comment: Mapping[str, Any], thread_url: str) -> str:
 def mention_from_event(
     event: Mapping[str, Any],
     *,
+    event_name: str = "",
     repository: str,
     pull: Mapping[str, Any] | None = None,
     token: str = "",
@@ -138,20 +139,26 @@ def mention_from_event(
 ) -> Mention | None:
     """The mention this payload is, or ``None`` when it is not a mention to answer.
 
-    ``known_turn`` is set when the ack step already decided this comment starts a
+    ``known_turn`` is set when the event filter already decided this event starts a
     turn, so this call does not walk GitHub again.
     """
     comment = event.get("comment") or {}
-    body = str(comment.get("body") or "")
-    if not known_turn and not is_mention_turn(
-        event, repository=repository, token=token, api=api, bot_login=bot_login
-    ):
-        return None
-    user = str((comment.get("user") or {}).get("login") or "")
-    if user.endswith("[bot]"):
-        return None
     issue = event.get("issue") or {}
     pull_event = event.get("pull_request") or {}
+    source = comment or pull_event or issue
+    body = str(source.get("body") or "")
+    if not known_turn and not is_mention_turn(
+        event,
+        event_name=event_name,
+        repository=repository,
+        token=token,
+        api=api,
+        bot_login=bot_login,
+    ):
+        return None
+    user = str((source.get("user") or {}).get("login") or "")
+    if user.lower().endswith("[bot]"):
+        return None
     number = issue.get("number") or pull_event.get("number")
     if not number:
         return None
@@ -167,9 +174,9 @@ def mention_from_event(
         kind=kind,
         title=str(issue.get("title") or pull_event.get("title") or ""),
         html_url=html_url,
-        comment_url=comment_pointer(comment, html_url),
+        source_url=comment_pointer(comment, html_url) if comment else html_url,
         user=user,
-        association=str(comment.get("author_association") or ""),
+        association=str(source.get("author_association") or ""),
         default_branch=default_branch,
         repository=repository,
         head_ref=str(head.get("ref") or ""),
@@ -210,11 +217,11 @@ def turn_payload(
         head = checkout.branch if checkout is not None else ""
         if head.strip():
             payload["head"] = head.strip()
-    if mention.comment_url.strip():
-        payload["comment_url"] = mention.comment_url.strip()
+    if mention.source_url.strip():
+        payload["source_url"] = mention.source_url.strip()
     if mention.user.strip():
-        payload["comment_author"] = mention.user.strip()
-    payload["comment"] = mention.body
+        payload["source_author"] = mention.user.strip()
+    payload["body"] = mention.body
     return payload
 
 
