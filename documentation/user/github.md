@@ -124,11 +124,11 @@ The setup flow verifies the installer through GitHub before accepting settings; 
 `installation_id` in a URL is not treated as authorization. Provider keys are encrypted
 at rest and never written to a checkout.
 
-Final `reply` comments address the known author of the triggering comment with a GitHub
-`@username` mention, and mention other known users when the reply directly addresses
-them. `progress` comments never use user mentions, so only the final response creates
-the intended notification. Usernames are never guessed, altered, or copied from
-untrusted prose.
+Each turn creates one acknowledgement comment and updates that same comment with useful
+status and the final response. A failed update never creates a replacement comment, and
+the service ignores edited or deleted comment events. The final response addresses the
+known author of the triggering comment with a GitHub `@username` mention when
+appropriate. Usernames are never guessed, altered, or copied from untrusted prose.
 
 ## Repository behavior
 

@@ -101,7 +101,7 @@ class EmailReply(Feature):
         """The mail tool, for a profile that declared it, or before attachment for discovery.
 
         The daemon names `submit_email` in `tools_enabled` only for mailbox sessions, the same
-        way the GitHub embedder names `submit_github_comment`.
+        way the GitHub service owns its existing acknowledgement comment.
         """
         context = getattr(self, "_context", None)
         if context is None:

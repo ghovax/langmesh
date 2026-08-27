@@ -42,18 +42,21 @@ from langmesh.github.mention import (
     _git_header,
     _git_header_key,
     _run,
+    acknowledgement,
     commits_to_push,
+    comment_body,
     create_comment,
     current_branch,
+    find_delivery_comment,
     mention_from_event,
     posted_reply,
     prepare_tree,
-    publish_thread_comment,
     run_turn,
     tree_is_dirty,
     user_failure,
-    working_comment,
+    update_comment,
 )
+
 logger = logging.getLogger("langmesh.github.hosted")
 DEFAULT_CONFIGURATION_PATH = Path.home() / ".config" / "langmesh" / "github.yaml"
 
@@ -83,14 +86,20 @@ class Settings:
         try:
             values = yaml.safe_load(configuration_path.read_text(encoding="utf-8")) or {}
         except OSError as error:
-            raise RuntimeError(f"GitHub App configuration is missing: {configuration_path}") from error
+            raise RuntimeError(
+                f"GitHub App configuration is missing: {configuration_path}"
+            ) from error
         if not isinstance(values, dict):
-            raise RuntimeError(f"GitHub App configuration must be a YAML mapping: {configuration_path}")
+            raise RuntimeError(
+                f"GitHub App configuration must be a YAML mapping: {configuration_path}"
+            )
 
         def section(name: str) -> Mapping[str, Any]:
             value = values.get(name)
             if not isinstance(value, Mapping):
-                raise RuntimeError(f"GitHub App configuration needs a {name!r} section: {configuration_path}")
+                raise RuntimeError(
+                    f"GitHub App configuration needs a {name!r} section: {configuration_path}"
+                )
             return value
 
         def section_from(source: Mapping[str, Any], name: str, path: Path) -> Mapping[str, Any]:
@@ -122,7 +131,9 @@ class Settings:
             webhook_secret=required(webhook, "secret", "github.webhook"),
             oauth_client_id=required(oauth, "client_id", "github.oauth"),
             oauth_client_secret=required(oauth, "client_secret", "github.oauth"),
-            encryption_key_path=Path(required(encryption, "key_path", "storage.encryption")).expanduser(),
+            encryption_key_path=Path(
+                required(encryption, "key_path", "storage.encryption")
+            ).expanduser(),
             database_url=required(database, "url", "storage.database"),
             queue_poll_seconds=max(0.5, float(queue.get("poll_seconds") or 5)),
             public_url=required(server, "public_url", "server").rstrip("/"),
@@ -198,7 +209,9 @@ class Store:
     async def close(self) -> None:
         await self.engine.dispose()
 
-    async def enqueue(self, delivery_id: str, event_name: str, installation_id: int, payload: str) -> bool:
+    async def enqueue(
+        self, delivery_id: str, event_name: str, installation_id: int, payload: str
+    ) -> bool:
         if not delivery_id:
             return False
         async with self.engine.begin() as connection:
@@ -247,7 +260,9 @@ class Store:
     async def complete(self, delivery_id: str) -> None:
         async with self.engine.begin() as connection:
             await connection.execute(
-                text("UPDATE langmesh_github_deliveries SET status = 'completed' WHERE delivery_id = :delivery_id"),
+                text(
+                    "UPDATE langmesh_github_deliveries SET status = 'completed' WHERE delivery_id = :delivery_id"
+                ),
                 {"delivery_id": delivery_id},
             )
 
@@ -282,7 +297,13 @@ class Store:
         return str(row[0]), str(row[1]), key
 
     async def save_installation(
-        self, installation_id: int, account_login: str, account_type: str, provider: str, model: str, api_key: str
+        self,
+        installation_id: int,
+        account_login: str,
+        account_type: str,
+        provider: str,
+        model: str,
+        api_key: str,
     ) -> None:
         encrypted = self._cipher.encrypt(api_key.encode()).decode() if api_key else ""
         if not api_key:
@@ -325,7 +346,11 @@ class Store:
                     "INSERT INTO langmesh_github_setup_sessions "
                     "(token, installation_id, expires_at) VALUES (:token, :installation_id, :expires_at)"
                 ),
-                {"token": token, "installation_id": installation_id, "expires_at": int(time.time()) + 600},
+                {
+                    "token": token,
+                    "installation_id": installation_id,
+                    "expires_at": int(time.time()) + 600,
+                },
             )
         return token
 
@@ -342,7 +367,9 @@ class Store:
             if row is None:
                 return None
             await connection.execute(
-                text("UPDATE langmesh_github_setup_sessions SET user_login = :user_login WHERE token = :token"),
+                text(
+                    "UPDATE langmesh_github_setup_sessions SET user_login = :user_login WHERE token = :token"
+                ),
                 {"user_login": user_login, "token": token},
             )
         return int(row[0]), user_login
@@ -487,7 +514,13 @@ class Processor:
                 logger.info("completed GitHub delivery id=%s", delivery_id)
 
     def _runner(self, token: str):
-        def run(arguments: list[str], *, cwd: str, env: Mapping[str, str] | None = None, extraheader: str = "") -> str:
+        def run(
+            arguments: list[str],
+            *,
+            cwd: str,
+            env: Mapping[str, str] | None = None,
+            extraheader: str = "",
+        ) -> str:
             merged = dict(env or os.environ)
             merged["GH_TOKEN"] = token
             merged["GITHUB_TOKEN"] = token
@@ -501,7 +534,14 @@ class Processor:
             return
         workspace.parent.mkdir(parents=True, exist_ok=True)
         header = _git_header(token)
-        command = ["git", "-c", f"{_git_header_key()}={header}", "clone", f"https://github.com/{repository}.git", str(workspace)]
+        command = [
+            "git",
+            "-c",
+            f"{_git_header_key()}={header}",
+            "clone",
+            f"https://github.com/{repository}.git",
+            str(workspace),
+        ]
         subprocess.run(command, check=True, capture_output=True, text=True)
 
     def _publish(self, mention: Mention, workspace: Path, token: str, run: Any) -> str:
@@ -511,7 +551,11 @@ class Processor:
         run(["git", "add", "-A"], cwd=str(workspace))
         if not commits_to_push(workspace, run=run):
             return ""
-        run(["git", "push", "-u", "origin", f"HEAD:{branch}"], cwd=str(workspace), extraheader=_git_header(token))
+        run(
+            ["git", "push", "-u", "origin", f"HEAD:{branch}"],
+            cwd=str(workspace),
+            extraheader=_git_header(token),
+        )
         owner = mention.repository.split("/", 1)[0]
         pulls = self.github.request(
             f"/repos/{mention.repository}/pulls?state=open&head={urllib.parse.quote(owner + ':' + branch)}",
@@ -522,7 +566,13 @@ class Processor:
         record = self.github.request(
             f"/repos/{mention.repository}/pulls",
             token,
-            data={"title": mention.title or branch, "head": branch, "base": mention.default_branch, "body": f"Opened from {mention.html_url}", "draft": True},
+            data={
+                "title": mention.title or branch,
+                "head": branch,
+                "base": mention.default_branch,
+                "body": f"Opened from {mention.html_url}",
+                "draft": True,
+            },
         )
         return str(record.get("html_url") or "")
 
@@ -550,7 +600,13 @@ class Processor:
         token = self.github.installation_token(installation_id)
         slug = self.github.app_slug()
         bot_login = f"{slug}[bot]"
-        if not is_mention_turn(event, repository=repository, token=token, api=self.settings.github_api_url, bot_login=bot_login):
+        if not is_mention_turn(
+            event,
+            repository=repository,
+            token=token,
+            api=self.settings.github_api_url,
+            bot_login=bot_login,
+        ):
             return
         mention = mention_from_event(
             event,
@@ -606,8 +662,31 @@ class Processor:
         runner = self._runner(token)
         if mention.kind == "pull" and not mention.head_ref:
             pull = self.github.request(f"/repos/{mention.repository}/pulls/{mention.number}", token)
-            mention = mention_from_event(event, repository=mention.repository, pull=pull, known_turn=True, bot_login=f"{slug}[bot]") or mention
-        ack = create_comment(mention.repository, mention.number, working_comment(""), token, self.settings.github_api_url)
+            mention = (
+                mention_from_event(
+                    event,
+                    repository=mention.repository,
+                    pull=pull,
+                    known_turn=True,
+                    bot_login=f"{slug}[bot]",
+                )
+                or mention
+            )
+        ack = find_delivery_comment(
+            mention.repository,
+            mention.number,
+            delivery_id,
+            token,
+            self.settings.github_api_url,
+        )
+        if ack is None:
+            ack = create_comment(
+                mention.repository,
+                mention.number,
+                comment_body(delivery_id, acknowledgement()),
+                token,
+                self.settings.github_api_url,
+            )
         logger.info(
             "started GitHub mention delivery id=%s attempt=%s session=%s acknowledgement=%s",
             delivery_id,
@@ -616,19 +695,53 @@ class Processor:
             ack,
         )
         try:
-            checkout = prepare_tree(mention, workspace, token=token, app_slug=slug, app_id=self.settings.app_id, run=runner)
-            followup = thread_has_prior_bot_comment(event, repository=mention.repository, token=token, api=self.settings.github_api_url, bot_login=f"{slug}[bot]", ignore_ids=(ack,))
+            checkout = prepare_tree(
+                mention,
+                workspace,
+                token=token,
+                app_slug=slug,
+                app_id=self.settings.app_id,
+                run=runner,
+            )
+            followup = thread_has_prior_bot_comment(
+                event,
+                repository=mention.repository,
+                token=token,
+                api=self.settings.github_api_url,
+                bot_login=f"{slug}[bot]",
+                ignore_ids=(ack,),
+            )
 
-            def publish(text: str) -> None:
-                publish_thread_comment(mention.repository, mention.number, text, token, self.settings.github_api_url, comment_id=ack)
+            def update_existing_comment(text: str) -> None:
+                try:
+                    update_comment(
+                        mention.repository,
+                        ack,
+                        comment_body(delivery_id, text),
+                        token,
+                        self.settings.github_api_url,
+                    )
+                except Exception:
+                    logger.exception("could not update GitHub comment %s", ack)
 
             answer = await run_turn(
-                mention, workspace, checkout=checkout, publish=publish, token=token,
-                thread_followup=followup, provider=provider, model=model, api_key=api_key,
+                mention,
+                workspace,
+                checkout=checkout,
+                update_comment=update_existing_comment,
+                token=token,
+                thread_followup=followup,
+                provider=provider,
+                model=model,
+                api_key=api_key,
                 checkpoints=self._checkpoints,
             )
-            pull_url = self._publish(mention, workspace, token, runner) if tree_is_dirty(workspace, run=runner) or commits_to_push(workspace, run=runner) else ""
-            publish_thread_comment(mention.repository, mention.number, posted_reply(answer, pull_url), token, self.settings.github_api_url, comment_id=ack)
+            pull_url = (
+                self._publish(mention, workspace, token, runner)
+                if tree_is_dirty(workspace, run=runner) or commits_to_push(workspace, run=runner)
+                else ""
+            )
+            update_existing_comment(posted_reply(answer, pull_url))
             logger.info(
                 "finished GitHub mention delivery id=%s attempt=%s session=%s pull_request=%s",
                 delivery_id,
@@ -645,7 +758,19 @@ class Processor:
                 mention.repository,
                 mention.number,
             )
-            publish_thread_comment(mention.repository, mention.number, user_failure("Something went wrong while I was working on this."), token, self.settings.github_api_url, comment_id=ack)
+            try:
+                update_comment(
+                    mention.repository,
+                    ack,
+                    comment_body(
+                        delivery_id,
+                        user_failure("Something went wrong while I was working on this."),
+                    ),
+                    token,
+                    self.settings.github_api_url,
+                )
+            except Exception:
+                logger.exception("could not update failed GitHub comment %s", ack)
 
 
 def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> FastAPI:
@@ -684,7 +809,13 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         if installation_id <= 0:
             raise HTTPException(400, "invalid installation_id")
         token = await store.begin_setup(installation_id)
-        query = urllib.parse.urlencode({"client_id": settings.oauth_client_id, "redirect_uri": f"{settings.public_url}/github/setup/callback", "state": token})
+        query = urllib.parse.urlencode(
+            {
+                "client_id": settings.oauth_client_id,
+                "redirect_uri": f"{settings.public_url}/github/setup/callback",
+                "state": token,
+            }
+        )
         return RedirectResponse(f"https://github.com/login/oauth/authorize?{query}")
 
     @app.get("/github/setup/callback")
@@ -755,7 +886,9 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
     async def webhook(request: Request) -> Response:
         raw = await request.body()
         signature = request.headers.get("x-hub-signature-256", "")
-        expected = "sha256=" + hmac.new(settings.webhook_secret.encode(), raw, hashlib.sha256).hexdigest()
+        expected = (
+            "sha256=" + hmac.new(settings.webhook_secret.encode(), raw, hashlib.sha256).hexdigest()
+        )
         if not hmac.compare_digest(signature, expected):
             raise HTTPException(401, "invalid webhook signature")
         try:

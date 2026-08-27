@@ -65,9 +65,9 @@ def _previous_comment(
     """The comment immediately before this one on the same collection, or ``None``."""
     comment = event.get("comment") or {}
     this_id = comment.get("id")
-    number = (event.get("issue") or {}).get("number") or (
-        event.get("pull_request") or {}
-    ).get("number")
+    number = (event.get("issue") or {}).get("number") or (event.get("pull_request") or {}).get(
+        "number"
+    )
     if not number or not this_id:
         return None
     collection = "pulls" if _review_comment(comment) else "issues"
@@ -139,9 +139,9 @@ def thread_has_prior_bot_comment(
         return False
     comment = event.get("comment") or {}
     this_id = comment.get("id")
-    number = (event.get("issue") or {}).get("number") or (
-        event.get("pull_request") or {}
-    ).get("number")
+    number = (event.get("issue") or {}).get("number") or (event.get("pull_request") or {}).get(
+        "number"
+    )
     if not number:
         return False
     ignored = {int(this_id)} if this_id else set()
@@ -174,6 +174,9 @@ def is_mention_turn(
     bot_login: str,
 ) -> bool:
     """Whether this comment is a mention or a reply the App should answer."""
+    action = event.get("action")
+    if action is not None and action != "created":
+        return False
     comment = event.get("comment") or {}
     if str((comment.get("user") or {}).get("login") or "").endswith("[bot]"):
         return False
