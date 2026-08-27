@@ -4,6 +4,7 @@ WORKDIR /app
 
 ENV NIX_CONFIG="experimental-features = nix-command flakes"
 ENV PATH="/root/.local/state/nix/profiles/profile/bin:/root/.nix-profile/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/root/.local/state/nix/profiles/profile/lib:/root/.nix-profile/lib:${LD_LIBRARY_PATH}"
 ENV UV_LINK_MODE=copy
 
 # Keep the operational toolchain in the image. The GitHub session can add more
@@ -30,6 +31,7 @@ RUN nix profile install --accept-flake-config --priority 4 \
     nixpkgs#openssl \
     nixpkgs#python313 \
     nixpkgs#ripgrep \
+    nixpkgs#stdenv.cc.cc.lib \
     nixpkgs#unzip \
     nixpkgs#uv \
     nixpkgs#which \
