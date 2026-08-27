@@ -10,7 +10,7 @@ ENV UV_LINK_MODE=copy
 # packages to its private profile at runtime without modifying this image.
 COPY flake.nix flake.lock pyproject.toml uv.lock README.md ./
 COPY nix ./nix
-RUN nix profile install --accept-flake-config \
+RUN nix profile install --accept-flake-config --priority 4 \
     nixpkgs#cacert \
     nixpkgs#coreutils \
     nixpkgs#curl \
