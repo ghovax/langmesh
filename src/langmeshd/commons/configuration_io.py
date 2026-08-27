@@ -9,6 +9,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from models_provider import ProviderAuthentication
 from langmeshd.commons.paths import configuration_file_path
 from langmesh.base.configuration import Configuration
 from langmeshd.commons import configuration_file
@@ -72,25 +73,7 @@ def load_configuration(*, seed: bool = True) -> Configuration:
     if invalid:
         raise ValueError(f"invalid configuration: {invalid}")
     configuration = Configuration.model_validate(configuration_file.library_document(data or {}))
-    from langmesh.base.secrets import (
-        EXA_API_KEY,
-        FIRECRAWL_API_KEY,
-        JINA_API_KEY,
-        provider_keys_from_files,
-        read_secret,
-    )
-    from langmesh.base.configuration.configuration import ProviderCredential
-
-    files = provider_keys_from_files()
-    providers = dict(configuration.providers)
-    for identifier, existing in list(providers.items()):
-        providers[identifier] = existing.model_copy(
-            update={"api_key": files.get(identifier, "")}
-        )
-    for identifier, key in files.items():
-        if identifier not in providers:
-            providers[identifier] = ProviderCredential(api_key=key)
-    configuration = configuration.model_copy(update={"providers": providers})
+    from langmesh.base.secrets import EXA_API_KEY, FIRECRAWL_API_KEY, JINA_API_KEY, read_secret
     configuration = configuration.model_copy(
         update={"exa": configuration.exa.model_copy(update={"api_key": read_secret(EXA_API_KEY)})}
     )
@@ -165,13 +148,17 @@ def save_configuration_changes(
         data.setdefault("toolbox", {})["enabled"] = toolbox_enabled
     if provider_keys is not None or provider_base_urls is not None:
         providers_section = data.setdefault("providers", {})
+        authentication = None
+        if provider_keys is not None:
+            from langmeshd.daemon.persistence.credentials import file_credential_store
+
+            authentication = ProviderAuthentication(store=file_credential_store())
         all_provider_ids = {*(provider_keys or {}), *(provider_base_urls or {})}
         for provider_id in all_provider_ids:
             entry = dict(providers_section.get(provider_id) or {})
             if provider_keys is not None and provider_id in provider_keys:
-                from langmesh.base.secrets import provider_api_key_name, write_secret
-
-                write_secret(provider_api_key_name(provider_id), provider_keys[provider_id])
+                assert authentication is not None
+                authentication.save_api_key(provider_id, provider_keys[provider_id])
                 entry["api_key"] = ""
             if provider_base_urls is not None and provider_id in provider_base_urls:
                 entry["base_url"] = provider_base_urls[provider_id]

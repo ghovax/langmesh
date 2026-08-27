@@ -15,12 +15,12 @@ from fastapi import APIRouter, HTTPException
 
 from models_provider import (
     ProviderAuthentication,
-    ProviderAuthProfile,
     clear_chatgpt_models_cache,
     clear_cursor_models_cache,
     clear_usage_snapshot,
     display_cursor_account,
     get_usage_snapshot,
+    provider_auth_profile,
 )
 
 from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
@@ -51,8 +51,8 @@ class _ProviderAuth:
                 status_code=404,
                 detail=f"No provider named {self.provider_identifier!r}.",
             )
-        profile = ProviderAuthProfile(
-            identifier=self.provider_identifier,
+        profile = provider_auth_profile(
+            self.provider_identifier,
             environment_variables=provider_env_vars(self.provider_identifier),
             default_base_url=definition.default_base_url,
             headers=definition.default_headers,

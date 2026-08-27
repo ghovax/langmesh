@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
+from models_provider import (
+    ApiKeyResolution,
+    CredentialStore,
+    ProviderAuthentication,
+    provider_auth_profile,
+)
+
 
 @dataclass(frozen=True)
 class ProviderDefinition:
@@ -368,9 +375,21 @@ def provider_env_vars(provider_identifier: str) -> tuple[str, ...]:
 def resolve_api_key(
     provider_identifier: str,
     configured_keys: dict[str, str],
+    credential_store: CredentialStore | None = None,
 ) -> str:
     """Resolve a provider key through Models Provider's authentication boundary."""
-    from models_provider import ProviderAuthentication, ProviderAuthProfile
+    return resolve_provider_credentials(
+        provider_identifier, configured_keys, credential_store=credential_store
+    ).api_key
+
+
+def resolve_provider_credentials(
+    provider_identifier: str,
+    configured_keys: dict[str, str],
+    *,
+    credential_store: CredentialStore | None = None,
+) -> ApiKeyResolution:
+    """Resolve a provider's key or cloud environment through Models Provider."""
 
     identifier = provider_identifier.strip()
     definition = PROVIDERS.get(identifier) or PROVIDERS.get(identifier.lower())
@@ -380,8 +399,8 @@ def resolve_api_key(
     configured = configured_keys.get(credential_identifier, "") or configured_keys.get(
         identifier, ""
     )
-    profile = ProviderAuthProfile(
-        identifier=identifier,
+    profile = provider_auth_profile(
+        identifier,
         environment_variables=provider_env_vars(identifier),
         default_base_url=definition.default_base_url if definition is not None else "",
         headers=definition.default_headers if definition is not None else {},
@@ -391,10 +410,11 @@ def resolve_api_key(
     authentication = ProviderAuthentication(
         {identifier: profile},
         api_keys={credential_identifier: configured},
+        store=credential_store,
     )
-    return authentication.resolve_key(
+    return authentication.resolve(
         identifier, environment_variables=profile.environment_variables
-    ).api_key
+    )
 
 
 def resolve_base_url(

@@ -14,7 +14,7 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import BaseTool
 from pydantic import SecretStr
-from models_provider import ModelUsage, ProviderAuthentication, ProviderAuthProfile
+from models_provider import CredentialStore, ModelUsage, ProviderAuthentication, provider_auth_profile
 
 from langmesh.base import confinement as _confinement
 from langmesh.base.configuration import (
@@ -96,6 +96,7 @@ def build_chat_model(
     agent_configuration: AgentConfiguration,
     working_directory: str,
     session_id: str = "",
+    credential_store: CredentialStore | None = None,
 ) -> BaseChatModel:
     """Build the chat model for a ``provider/model`` id: LiteLLM for almost all, and the two OAuth providers apart."""
     provider_identifier, model_suffix = model_identifier.split("/", 1)
@@ -119,12 +120,13 @@ def build_chat_model(
         model_identifier,
         global_configuration.configured_provider_keys(),
         global_configuration.configured_provider_bases(),
+        credential_store=credential_store,
     )
     # The catalogue's window travels with the model, since LiteLLM knows nothing of a gateway's models.
     catalogued = find_model(model_identifier)
     definition = get_provider_definition(provider_identifier)
-    profile = ProviderAuthProfile(
-        identifier=provider_identifier,
+    profile = provider_auth_profile(
+        provider_identifier,
         environment_variables=provider_env_vars(provider_identifier),
         default_base_url=definition.default_base_url if definition else "",
         headers=definition.default_headers if definition else {},
@@ -137,6 +139,7 @@ def build_chat_model(
         {provider_identifier: profile},
         api_keys=global_configuration.configured_provider_keys(),
         api_bases=global_configuration.configured_provider_bases(),
+        store=credential_store,
     )
     model = ChatLiteLLMModel.model_validate(
         {
@@ -309,6 +312,7 @@ class AgentRuntime(_RunsTurns):
                 profile.agent,
                 self._working_directory,
                 profile.session_id,
+                credential_store=self._environment.credentials,
             )
         )
 

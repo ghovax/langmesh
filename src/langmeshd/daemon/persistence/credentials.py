@@ -32,8 +32,7 @@ class FileCredentialStore:
 
     def save(self, provider_identifier: str, tokens: Any) -> None:
         if isinstance(tokens, ApiKeyCredential):
-            if provider_identifier in _TOKEN_TYPES:
-                oauth_token_path(provider_identifier).unlink(missing_ok=True)
+            oauth_token_path(provider_identifier).unlink(missing_ok=True)
             write_secret(provider_api_key_name(provider_identifier), tokens.api_key)
             return
         if not isinstance(tokens, OAuthTokens) or not is_dataclass(tokens):
@@ -48,8 +47,7 @@ class FileCredentialStore:
         )
 
     def clear(self, provider_identifier: str) -> None:
-        if provider_identifier in _TOKEN_TYPES:
-            oauth_token_path(provider_identifier).unlink(missing_ok=True)
+        oauth_token_path(provider_identifier).unlink(missing_ok=True)
         write_secret(provider_api_key_name(provider_identifier), "")
 
 
