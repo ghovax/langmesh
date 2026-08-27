@@ -52,7 +52,7 @@ async def open_shared_resources() -> None:
 
     # REST handlers read subscription tokens through the task-local store; without this they
     # see an empty in-memory store even after a successful sign-in wrote the daemon's files.
-    from langmesh.base.identity.credential_store import bind_credential_store
+    from models_provider import bind_credential_store
     from langmeshd.daemon.persistence.credentials import file_credential_store
 
     bind_credential_store(file_credential_store())

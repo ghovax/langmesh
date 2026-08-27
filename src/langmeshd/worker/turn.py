@@ -376,7 +376,7 @@ class _TurnRunner:
 
     async def _publish_usage_snapshot(self) -> None:
         """Send the host what this turn learned about the account's limits. Never fatal to the turn."""
-        from langmesh.base.identity.subscription import get_usage_snapshot
+        from models_provider import get_usage_snapshot
 
         snapshot = get_usage_snapshot()
         if not snapshot:
