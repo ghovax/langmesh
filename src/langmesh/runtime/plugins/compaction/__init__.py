@@ -813,6 +813,5 @@ __all__ = [
     "CompactionControl",
     "CompactionSummary",
     "DirectCompactionPreparation",
-    "KeepRecentTurns",
     "ObservationCompactionPreparation",
 ]

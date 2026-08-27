@@ -163,9 +163,8 @@ atomic file adapter. A caller may implement the `Checkpoints`, `Artifacts`, `Job
 `Transcript`, `CredentialStore`, or other structural protocols and inject them through
 `SessionComponents`.
 
-Three more things sit around the turn: bound it, wrap its tools, decide how its history
-compacts. Each one is an object with a method or two, so your own is as short as the
-ones that ship:
+Three more things sit around the turn: bound it, wrap its tools, and compact its
+history. Each one is an object with a method or two:
 
 ```python
 from langmesh import MaximumToolCalls, Session, SessionComponents
@@ -186,13 +185,13 @@ class Timed:
         finally:
             metrics.timing("langmesh.tool", time.monotonic() - started, tags={"tool": call.name})
 
-from langmesh.runtime.plugins.compaction import Compaction, KeepRecentTurns
+from langmesh.runtime.plugins.compaction import Compaction
 
 
 components = SessionComponents(
     hooks=(MaximumToolCalls(20), RefuseNetworkTools()),
     middleware=(Timed(),),
-    features=[Compaction(strategy=KeepRecentTurns(20))],
+    features=[Compaction()],
 )
 session = Session(reviewer, directory="/srv/checkout", components=components)
 ```
