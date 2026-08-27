@@ -24,7 +24,6 @@ from langchain_core.messages import (
 )
 from langchain_core.messages.ai import add_ai_message_chunks
 from langchain_core.utils.json import parse_partial_json
-from litellm.exceptions import ContextWindowExceededError as ProviderContextWindowExceeded
 
 from langmesh.base.confinement import Denial, child_environment
 from langmesh.base.content.instructions import instructions_payload
@@ -706,16 +705,7 @@ class _RunsTurns(_DispatchesTools, ABC):
             try:
                 async for event in self._stream_model_call(messages, call):
                     yield event
-            except (ContextWindowExceeded, ProviderContextWindowExceeded) as error:
-                overflow = (
-                    error
-                    if isinstance(error, ContextWindowExceeded)
-                    else ContextWindowExceeded(
-                        "The provider rejected the assembled request as larger than its context window.",
-                        model=self.model_identifier,
-                        context_window=self._context_window,
-                    )
-                )
+            except ContextWindowExceeded as overflow:
                 # A refusal is itself a measurement, so the indicator stops reporting the last successful call's reading.
                 window = overflow.context_window or self._context_window
                 if window > 0:

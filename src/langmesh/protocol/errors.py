@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from litellm import exceptions as litellm_exceptions
-
 from langmesh.base.content.model_errors import CONTEXT_OVERFLOW_CODES, ContextWindowExceeded
+
+
+_BAD_REQUEST_ERRORS = frozenset({"BadRequestError"})
+_RATE_LIMIT_ERRORS = frozenset({"RateLimitError"})
+_AUTHENTICATION_ERRORS = frozenset({"AuthenticationError"})
+_UNAVAILABLE_ERRORS = frozenset({"ServiceUnavailableError", "InternalServerError"})
+_CONNECTION_ERRORS = frozenset({"APIConnectionError", "Timeout"})
+_CONTEXT_WINDOW_ERRORS = frozenset({"ContextWindowExceededError"})
 
 
 def _provider_error_body(error: object) -> dict:
@@ -43,6 +49,7 @@ def _safe_turn_error(error: object, had_images: bool = False) -> dict[str, objec
     """Classify a turn-level failure without exposing raw provider or tool text."""
     status_code = _provider_status_code(error)
     provider_code = _provider_error_code(error)
+    error_kind = type(error).__name__
     fields: dict[str, object] = {}
     if status_code is not None:
         fields["status"] = status_code
@@ -51,7 +58,7 @@ def _safe_turn_error(error: object, had_images: bool = False) -> dict[str, objec
     overflow = error if isinstance(error, ContextWindowExceeded) else None
     if (
         overflow is not None
-        or isinstance(error, litellm_exceptions.ContextWindowExceededError)
+        or error_kind in _CONTEXT_WINDOW_ERRORS
         or provider_code in CONTEXT_OVERFLOW_CODES
     ):
         window = getattr(overflow, "context_window", 0) or 0
@@ -69,28 +76,21 @@ def _safe_turn_error(error: object, had_images: bool = False) -> dict[str, objec
     # The provider's code classifies the failure but never reaches the wire event.
 
     # A rejected image almost always means the agent model is text-only, which is the actionable cause.
-    if had_images and (isinstance(error, litellm_exceptions.BadRequestError) or status_code == 400):
+    if had_images and (error_kind in _BAD_REQUEST_ERRORS or status_code == 400):
         return {
             **fields,
             "code": "image_unsupported",
         }
 
-    if isinstance(error, litellm_exceptions.RateLimitError) or status_code == 429:
+    if error_kind in _RATE_LIMIT_ERRORS or status_code == 429:
         return {**fields, "code": "rate_limited"}
-    if isinstance(error, litellm_exceptions.AuthenticationError) or status_code in {401, 403}:
+    if error_kind in _AUTHENTICATION_ERRORS or status_code in {401, 403}:
         return {**fields, "code": "authentication_failed"}
-    if isinstance(
-        error, (litellm_exceptions.ServiceUnavailableError, litellm_exceptions.InternalServerError)
-    ) or status_code in {500, 502, 503, 504}:
+    if error_kind in _UNAVAILABLE_ERRORS or status_code in {500, 502, 503, 504}:
         return {**fields, "code": "provider_unavailable"}
-    if (
-        isinstance(
-            error, (litellm_exceptions.APIConnectionError, litellm_exceptions.Timeout, TimeoutError)
-        )
-        or status_code == 408
-    ):
+    if error_kind in _CONNECTION_ERRORS or isinstance(error, TimeoutError) or status_code == 408:
         return {**fields, "code": "connection_failed"}
-    if isinstance(error, litellm_exceptions.BadRequestError) or status_code == 400:
+    if error_kind in _BAD_REQUEST_ERRORS or status_code == 400:
         # The overflow codes are tested against every error, since a streaming provider reports this mid-stream.
         return {**fields, "code": "request_rejected"}
     return {**fields, "code": "turn_failed"}
