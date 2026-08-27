@@ -487,38 +487,6 @@ def update_comment(repository: str, comment_id: int, text: str, token: str, api:
     )
 
 
-def comment_marker(comment_id: str) -> str:
-    return f"<!-- id:{comment_id} -->"
-
-
-def comment_body(comment_id: str, text: str) -> str:
-    return f"""{comment_marker(comment_id)}
-{text.strip()}""".strip()
-
-
-def find_delivery_comment(
-    repository: str,
-    number: int,
-    delivery_id: str,
-    token: str,
-    api: str,
-) -> int | None:
-    """Find the one comment reserved for a delivery, so retries remain idempotent."""
-    raw = _api_request(
-        f"{api}/repos/{repository}/issues/{number}/comments?per_page=100",
-        token,
-    )
-    marker = comment_marker(delivery_id)
-    comments = raw if isinstance(raw, list) else []
-    for record in comments:
-        if not isinstance(record, Mapping) or marker not in str(record.get("body") or ""):
-            continue
-        comment_id = record.get("id")
-        if comment_id:
-            return int(comment_id)
-    return None
-
-
 class UncommittedChanges(Feature):
     """Hold the turn open until the agent commits file edits."""
 
