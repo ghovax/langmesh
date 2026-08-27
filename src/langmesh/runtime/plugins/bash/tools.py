@@ -157,14 +157,14 @@ async def bash(
         async def write_stream(stream):
             nonlocal output_size
             while True:
-                line = await stream.readline()
-                if not line:
+                chunk = await stream.read(64 * 1024)
+                if not chunk:
                     break
-                output_size += len(line)
+                output_size += len(chunk)
                 available = preview_limit - len(preview)
                 if available > 0:
-                    preview.extend(line[:available])
-                await writer.write(line)
+                    preview.extend(chunk[:available])
+                await writer.write(chunk)
 
         def model_output() -> tuple[str, bool]:
             decoded = preview.decode(errors="replace")
