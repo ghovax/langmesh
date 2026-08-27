@@ -17,6 +17,7 @@ HTTPS_PROXY = "HTTPS_PROXY"
 ALL_PROXY = "ALL_PROXY"
 
 # Third-party integration keys, user-provided; each enables its tool or provider when present.
+RENDER_API_KEY = "RENDER_API_KEY"  # Render CLI, supplied explicitly to hosted GitHub sessions
 EXA_API_KEY = "EXA_API_KEY"  # web search (search_web)
 JINA_API_KEY = "JINA_API_KEY"  # a fetch_url rendering fallback
 FIRECRAWL_API_KEY = "FIRECRAWL_API_KEY"  # a fetch_url rendering fallback

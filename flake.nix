@@ -5,10 +5,24 @@
 
   outputs = { self, nixpkgs }:
     let
-      system = "aarch64-darwin";
-      pkgs = import nixpkgs { inherit system; };
+      supportedSystems = [ "aarch64-darwin" "x86_64-linux" ];
+      forEachSystem = systemFunction:
+        builtins.listToAttrs (map (system: {
+          name = system;
+          value = systemFunction system;
+        }) supportedSystems);
     in {
-      devShells.${system}.default = pkgs.mkShell {
+      packages = forEachSystem (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in {
+          render-cli = pkgs.callPackage ./nix/render-cli.nix { };
+        });
+
+      devShells.aarch64-darwin.default = let
+        system = "aarch64-darwin";
+        pkgs = import nixpkgs { inherit system; };
+      in pkgs.mkShell {
         # The full toolchain to develop and build LangMesh, pinned by flake.lock and
         # isolated to this directory:
         #   - uv           the Python harness's environment, and the PyInstaller freeze
@@ -25,6 +39,8 @@
         # fetches its own Python against .python-version, so no interpreter is pinned here.
         packages = with pkgs; [
           uv
+          gh
+          self.packages.${system}.render-cli
           # In the devshell as well as in the dev dependency group. It was in neither, so the
           # verification battery's lint stage silently reported it missing on every machine
           # that had not installed it by hand.
