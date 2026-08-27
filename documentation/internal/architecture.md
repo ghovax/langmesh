@@ -36,20 +36,12 @@ stays a single specification and every session carries the signed bundle's code
 identity. One macOS Accessibility grant covers the whole fleet instead of prompting per
 session.
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Daemon as langmeshd
-    participant Session
-    participant Model as Model provider
-
-    Client->>Daemon: send work
-    Daemon->>Session: run the turn
-    Session->>Model: call the model
-    Model-->>Session: stream output
-    Session-->>Daemon: emit events
-    Daemon-->>Client: relay events
-```
+| Component      | Responsibility                                 |
+| -------------- | ---------------------------------------------- |
+| Client         | Sends work to `langmeshd` and receives events. |
+| `langmeshd`    | Hosts sessions and relays their events.        |
+| Session        | Runs the agent turn and publishes its result.  |
+| Model provider | Supplies the model response to the session.    |
 
 ## The feature seam
 

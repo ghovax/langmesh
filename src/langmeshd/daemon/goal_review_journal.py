@@ -110,7 +110,7 @@ class HostGoalReviewJournal:
             timestamp=outcome.completed_at.isoformat(),
         )
         await self._turn_store.save(review.task)
-        await self._turn_store.finish_goal_review(
+        await self._turn_store.complete_goal_review(
             outcome.session_id,
             outcome.review_id,
             outcome.status,

@@ -86,7 +86,7 @@ class MailService:
 
         async def run() -> None:
             try:
-                await self._finish_one(http, item, inbox)
+                await self._process_one(http, item, inbox)
             finally:
                 self._inflight.discard(item.id)
 
@@ -366,7 +366,7 @@ class MailService:
             return item
         return self.store.update(item.id, state=SEEN)
 
-    async def finish(self, http, item: MailItem, inbox: Inbox | None) -> None:
+    async def process(self, http, item: MailItem, inbox: Inbox | None) -> None:
         current = self.store.get(item.id) or item
         if current.state in {SEEN, SKIPPED}:
             return
@@ -398,7 +398,7 @@ class MailService:
     async def ingest(self, uidvalidity: int, uid: int, message: Message) -> MailItem | None:
         mailbox = self.configuration.effective_imap_mailbox
         message_id = body.durable_identity(message)
-        if self.store.already_finished(mailbox, uidvalidity, uid, message_id):
+        if self.store.already_completed(mailbox, uidvalidity, uid, message_id):
             existing = self.store.item_by_message_id(message_id) or self.store.item_by_uid(
                 mailbox, uidvalidity, uid
             )
@@ -528,9 +528,9 @@ class MailService:
                     exc_info=True,
                 )
 
-    async def _finish_one(self, http, item: MailItem, inbox: Inbox | None) -> None:
+    async def _process_one(self, http, item: MailItem, inbox: Inbox | None) -> None:
         try:
-            await self.finish(http, item, inbox)
+            await self.process(http, item, inbox)
         except StaleConnection:
             self._stale.set()
             if inbox is not None:

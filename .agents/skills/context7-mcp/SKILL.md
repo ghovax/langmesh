@@ -19,14 +19,14 @@ Activate this skill when the user:
 
 ## How to Fetch Documentation
 
-### Step 1: Resolve the Library ID
+### Resolve the library ID
 
 Call `resolve-library-id` with:
 
 - `libraryName`: The library name extracted from the user's question
 - `query`: The user's full question (improves relevance ranking)
 
-### Step 2: Select the Best Match
+### Select the best match
 
 From the resolution results, choose based on:
 
@@ -34,14 +34,14 @@ From the resolution results, choose based on:
 - Higher benchmark scores indicate better documentation quality
 - If the user mentioned a version (e.g., "React 19"), prefer version-specific IDs
 
-### Step 3: Fetch the Documentation
+### Fetch the documentation
 
 Call `query-docs` with:
 
 - `libraryId`: The selected Context7 library ID (e.g., `/vercel/next.js`)
 - `query`: The user's specific question
 
-### Step 4: Use the Documentation
+### Use the documentation
 
 Incorporate the fetched documentation into your response:
 

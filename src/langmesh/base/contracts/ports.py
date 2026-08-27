@@ -288,7 +288,7 @@ class JobStore(Protocol):
 
     def record_process_group(self, job_id: str, process_group: int) -> None: ...
 
-    def record_finished(self, job_id: str, result: str, *, status: str = ...) -> None: ...
+    def record_completed(self, job_id: str, result: str, *, status: str = ...) -> None: ...
 
     def mark_delivered(self, job_id: str) -> None: ...
 
@@ -340,7 +340,7 @@ class MemoryJobStore:
         if job_id in self._jobs:
             self._jobs[job_id]["process_group"] = process_group
 
-    def record_finished(self, job_id: str, result: str, *, status: str = "completed") -> None:
+    def record_completed(self, job_id: str, result: str, *, status: str = "completed") -> None:
         if job_id in self._jobs and self._jobs[job_id]["status"] == "running":
             self._jobs[job_id].update(result=result, status=status)
 

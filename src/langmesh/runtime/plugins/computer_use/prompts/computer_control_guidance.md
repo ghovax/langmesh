@@ -139,7 +139,7 @@ new call starts blind.
 # .agents/workflows/<name>.py
 from langmesh.screen import Screen
 
-def <what_it_does>(screen: Screen, <what_varies>: str) -> <what_it_gives_back>:
+def <what_it_does>(screen: Screen, <what_varies>: str):
     # One sentence saying what this does — a real docstring here, in the file itself.
     ...
     return ...

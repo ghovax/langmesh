@@ -22,7 +22,7 @@ agent = AgentConfiguration(
 )
 
 
-async def main() -> None:
+async def main():
     async with Session(
         agent,
         directory="/srv/checkout",
@@ -118,7 +118,7 @@ from langchain_core.tools import tool
 
 
 @tool
-async def incident_lookup(service: str) -> list[dict]:
+async def incident_lookup(service: str):
     """Return open incidents for a service."""
     return await incidents.open_for(service)
 

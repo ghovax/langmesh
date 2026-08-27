@@ -338,7 +338,7 @@ samp {
   /* A workspace row contains its session rows, so its own hover rules are scoped not to reach them. */
   .sidebar-row:hover .sidebar-row:not(:hover):not(:focus-within) .sidebar-title[data-overflow="true"],
   .sidebar-row:focus-within .sidebar-row:not(:hover):not(:focus-within) .sidebar-title[data-overflow="true"] {
-    /* Variables only: this rule must not declare a mask, or it would replace the two-layer one above. */
+    /* Variables only: this rule must not declare a mask, or it would replace the paired rule above. */
     --sidebar-title-left-fade: 0px;
     --sidebar-title-right-solid: 82%;
     --sidebar-title-right-clear: 98%;

@@ -102,8 +102,8 @@ async def _goal_review_save(params: dict) -> dict:
     return {"saved": task.id}
 
 
-async def _goal_review_finish(params: dict) -> dict:
-    await state.turn_store.finish_goal_review(
+async def _goal_review_complete(params: dict) -> dict:
+    await state.turn_store.complete_goal_review(
         str(params.get("review_id") or ""),
         str(params.get("status") or ""),
         str(params.get("standing") or "") or None,
@@ -282,7 +282,7 @@ _METHODS = {
     "turn.load_session_state": _turn_load_session_state,
     "goal_review.create": _goal_review_create,
     "goal_review.save": _goal_review_save,
-    "goal_review.finish": _goal_review_finish,
+    "goal_review.complete": _goal_review_complete,
     "turn.list_for_session": _turn_list_for_session,
     "turn.list_control_records": _turn_list_control_records,
     "session.event": _session_event,
