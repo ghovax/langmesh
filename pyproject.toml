@@ -5,7 +5,7 @@ description = "A composable, durable agent runtime for embedded and hosted sessi
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "models-provider @ git+https://github.com/ghovax/models-provider.git@5f1053a552c220c5dbc34d7a3704b9ea9976a5c6",
+    "models-provider @ git+https://github.com/ghovax/models-provider.git@dda75008b3fbdda608233829c136eb0aeb805ab5",
     "langchain>=0.3.0",
     "litellm>=1.60.0",
     "sqlalchemy>=2.0",
