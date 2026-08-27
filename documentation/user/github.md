@@ -144,13 +144,16 @@ provider identifier:
 ```sh
 curl --fail-with-body --request POST \
   --url https://langmesh-agent.onrender.com/github/auth/chatgpt/start \
-  --header 'Authorization: Bearer 7kQ2mN...vR8pL4'
+  --header 'Authorization: Bearer 7kQ2mN...vR8pL4' \
+  --header 'Content-Type: application/json' \
+  --data '{"model":"gpt-5.6-luna"}'
 ```
 
-Open the returned `authorize_url` in a browser. The URL uses the redirect URI registered
-for that provider. For ChatGPT, this is `http://localhost:1455/auth/callback`; after
-authorization, copy the complete localhost URL from the browser address bar and submit
-its `code` and `state` to the returned `completion_url`:
+The response contains the selected `model`, the provider's `authorize_url`, and the
+`completion_url`. Open `authorize_url` in a browser. The URL uses the redirect URI
+registered for that provider. For ChatGPT, this is `http://localhost:1455/auth/callback`;
+after authorization, copy the complete localhost URL from the browser address bar and
+submit its `code` and `state` to the returned `completion_url`:
 
 ```sh
 curl --fail-with-body --get \
@@ -167,8 +170,9 @@ Cursor uses its own browser and polling flow; after authorization, call the retu
 `completion_url` with its `state` and without a `code`. For a provider with a registered
 public callback, the provider redirects directly to
 `/github/auth/{provider}/callback`. The service validates the one-time state, exchanges
-the code with PKCE, and stores the encrypted provider token. Select the resulting
-provider model without an API key:
+the code with PKCE, stores the encrypted provider token, and stores the requested model
+with it. The initial OAuth flow therefore does not require a second configuration call.
+To change the model later, update the provider configuration without an API key:
 
 ```sh
 curl --fail-with-body --request PUT \
