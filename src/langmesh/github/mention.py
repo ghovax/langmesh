@@ -60,6 +60,17 @@ _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
 
 
+def _resident_memory_megabytes() -> float:
+    """Current process RSS on Linux, or zero when the host does not expose it."""
+    try:
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith("VmRSS:"):
+                return round(int(line.split()[1]) / 1024, 1)
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0.0
+
+
 class Run(Protocol):
     def __call__(
         self,
@@ -108,11 +119,6 @@ class Mention:
 
 def acknowledgement() -> str:
     return render("acknowledgement")
-
-
-def user_failure(message: str) -> str:
-    """A concise user-facing failure message."""
-    return message
 
 
 def comment_pointer(comment: Mapping[str, Any], thread_url: str) -> str:
@@ -620,7 +626,7 @@ async def run_turn(
         )
         logger.info(
             "mention model %s/%s wire=%s base=%s restored=%s messages=%s "
-            "thread_followup=%s followup=%s session=%s",
+            "thread_followup=%s followup=%s session=%s rss_mib=%s",
             resolved_provider,
             resolved_model,
             resolved["model"],
@@ -630,6 +636,7 @@ async def run_turn(
             thread_followup,
             followup,
             mention.session_id,
+            _resident_memory_megabytes(),
         )
         await session.set_permission_mode("automatic")
         answer = ""
@@ -644,7 +651,7 @@ async def run_turn(
                     "mention usage session=%s call=%s input=%s output=%s "
                     "cache_read=%s cache_write=%s prefix_reusable=%s "
                     "reusable_prefix=%s shared=%s/%s divergence=%s "
-                    "request_reusable=%s cache_fraction=%s",
+                    "request_reusable=%s cache_fraction=%s rss_mib=%s",
                     mention.session_id,
                     model_call,
                     event.input_tokens,
@@ -658,6 +665,7 @@ async def run_turn(
                     event.divergence,
                     event.cache_request_reusable,
                     event.cache_read_fraction,
+                    _resident_memory_megabytes(),
                 )
             if isinstance(event, CompactionStarted):
                 logger.info(
@@ -671,7 +679,7 @@ async def run_turn(
             if isinstance(event, CompactionDone):
                 logger.info(
                     "mention compaction done session=%s reason=%s ok=%s "
-                    "messages=%s->%s tokens=%s->%s error=%s",
+                    "messages=%s->%s tokens=%s->%s error=%s rss_mib=%s",
                     mention.session_id,
                     event.reason,
                     event.ok,
@@ -680,6 +688,7 @@ async def run_turn(
                     event.tokens_before,
                     event.tokens_after,
                     event.error_code,
+                    _resident_memory_megabytes(),
                 )
             if isinstance(event, Suspended):
                 raise PermissionError(
