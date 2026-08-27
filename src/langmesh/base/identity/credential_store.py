@@ -2,7 +2,7 @@
 
 from models_provider import (
     CredentialStore,
-    MemoryCredentialStore,
+    InMemoryCredentialStore,
     bind_credential_store,
     current_credential_store,
     reset_credential_store,
@@ -14,6 +14,6 @@ def credential_store() -> CredentialStore:
 
 
 __all__ = [
-    "CredentialStore", "MemoryCredentialStore", "bind_credential_store", "credential_store",
+    "CredentialStore", "InMemoryCredentialStore", "bind_credential_store", "credential_store",
     "reset_credential_store",
 ]
