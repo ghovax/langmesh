@@ -70,6 +70,10 @@ class ConfigurationUpdate(BaseModel):
     api_key: str | None = None
 
 
+class AuthenticationStart(BaseModel):
+    model: str = Field(min_length=1)
+
+
 @dataclass(frozen=True)
 class InstallationConfiguration:
     """The selected model and its installation-owned authentication."""
@@ -220,6 +224,7 @@ class Store:
                 provider TEXT NOT NULL,
                 installation_id BIGINT NOT NULL,
                 user_login TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL,
                 code_verifier TEXT NOT NULL,
                 redirect_uri TEXT NOT NULL,
                 expires_at BIGINT NOT NULL
@@ -262,6 +267,15 @@ class Store:
                     await connection.execute(
                         text(
                             "ALTER TABLE langmesh_github_oauth_authorizations ADD COLUMN "
+                            "model TEXT NOT NULL DEFAULT ''"
+                        )
+                    )
+                except Exception:
+                    pass
+                try:
+                    await connection.execute(
+                        text(
+                            "ALTER TABLE langmesh_github_oauth_authorizations ADD COLUMN "
                             "redirect_uri TEXT NOT NULL DEFAULT ''"
                         )
                     )
@@ -284,6 +298,12 @@ class Store:
                     text(
                         "ALTER TABLE langmesh_github_installations ADD COLUMN IF NOT EXISTS "
                         "oauth_tokens TEXT NOT NULL DEFAULT ''"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE langmesh_github_oauth_authorizations ADD COLUMN IF NOT EXISTS "
+                        "model TEXT NOT NULL DEFAULT ''"
                     )
                 )
                 await connection.execute(
@@ -468,6 +488,7 @@ class Store:
         self,
         installation_id: int,
         provider: str,
+        model: str,
         tokens: OAuthTokens,
         authentication: ProviderAuthentication,
     ) -> None:
@@ -486,17 +507,20 @@ class Store:
             )
             existing = result.first()
             same_provider = existing is not None and str(existing[0]) == provider
-            selected_model = str(existing[1]) if same_provider else ""
+            selected_model = model.strip() or (str(existing[1]) if same_provider else "")
+            if not selected_model:
+                raise ValueError("OAuth authentication requires a model")
             if existing is None:
                 await connection.execute(
                     text(
                         "INSERT INTO langmesh_github_installations "
                         "(installation_id, account_login, account_type, provider, model, api_key, oauth_tokens, updated_at) "
-                        "VALUES (:installation_id, '', 'unknown', :provider, '', '', :oauth_tokens, :updated_at)"
+                        "VALUES (:installation_id, '', 'unknown', :provider, :model, '', :oauth_tokens, :updated_at)"
                     ),
                     {
                         "installation_id": installation_id,
                         "provider": provider,
+                        "model": selected_model,
                         "oauth_tokens": encrypted,
                         "updated_at": int(time.time()),
                     },
@@ -523,6 +547,7 @@ class Store:
         installation_id: int,
         user_login: str,
         provider: str,
+        model: str,
         state: str,
         code_verifier: str,
         redirect_uri: str,
@@ -531,14 +556,15 @@ class Store:
             await connection.execute(
                 text(
                     "INSERT INTO langmesh_github_oauth_authorizations "
-                    "(state, provider, installation_id, user_login, code_verifier, redirect_uri, expires_at) "
-                    "VALUES (:state, :provider, :installation_id, :user_login, :code_verifier, :redirect_uri, :expires_at)"
+                    "(state, provider, installation_id, user_login, model, code_verifier, redirect_uri, expires_at) "
+                    "VALUES (:state, :provider, :installation_id, :user_login, :model, :code_verifier, :redirect_uri, :expires_at)"
                 ),
                 {
                     "state": state,
                     "provider": provider,
                     "installation_id": installation_id,
                     "user_login": user_login,
+                    "model": model,
                     "code_verifier": code_verifier,
                     "redirect_uri": redirect_uri,
                     "expires_at": int(time.time()) + 600,
@@ -547,11 +573,11 @@ class Store:
 
     async def oauth_authorization(
         self, provider: str, state: str
-    ) -> tuple[int, str, str, str] | None:
+    ) -> tuple[int, str, str, str, str] | None:
         async with self.engine.connect() as connection:
             result = await connection.execute(
                 text(
-                    "SELECT installation_id, user_login, code_verifier, redirect_uri "
+                    "SELECT installation_id, user_login, model, code_verifier, redirect_uri "
                     "FROM langmesh_github_oauth_authorizations "
                     "WHERE state = :state AND provider = :provider AND expires_at >= :now"
                 ),
@@ -559,9 +585,9 @@ class Store:
             )
             row = result.first()
 
-        return (int(row[0]), str(row[1]), str(row[2]), str(row[3])) if row else None
+        return (int(row[0]), str(row[1]), str(row[2]), str(row[3]), str(row[4])) if row else None
 
-    async def finish_oauth_authorization(self, state: str) -> bool:
+    async def consume_oauth_authorization(self, state: str) -> bool:
         async with self.engine.begin() as connection:
             deleted = await connection.execute(
                 text("DELETE FROM langmesh_github_oauth_authorizations WHERE state = :state"),
@@ -1003,6 +1029,7 @@ class Processor:
                         await self.store.save_oauth_tokens(
                             installation_id,
                             provider,
+                            "",
                             refreshed,
                             self.authentication,
                         )
@@ -1127,12 +1154,34 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             )
         return provider_identifier
 
+    def configuration_response(
+        setup: tuple[int, str], current: InstallationConfiguration | None
+    ) -> dict[str, Any]:
+        configuration = None
+        if current is not None and current.model:
+            configuration = {
+                "provider": current.provider,
+                "model": current.model,
+                "authentication": authentication.profile(current.provider).method,
+            }
+        return {
+            "installation_id": setup[0],
+            "account": setup[1],
+            "configuration": configuration,
+            "ready": bool(current and current.ready),
+        }
+
     @app.post("/github/auth/{provider}/start")
-    async def start_provider_authentication(provider: str, request: Request) -> dict[str, Any]:
+    async def start_provider_authentication(
+        provider: str, payload: AuthenticationStart, request: Request
+    ) -> dict[str, Any]:
         setup = await store.setup(setup_token(request))
         if setup is None:
             raise HTTPException(401, detail="setup token is missing or expired")
         provider_identifier = await require_oauth_provider(provider)
+        model = payload.model.strip()
+        if not model:
+            raise HTTPException(422, detail="model is required")
         try:
             authorization = authentication.authorization_request(
                 provider_identifier,
@@ -1145,12 +1194,14 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             setup[0],
             setup[1],
             provider_identifier,
+            model,
             authorization.state,
             authorization.code_verifier,
             provider_redirect_uri(provider_identifier),
         )
         return {
             "provider": provider_identifier,
+            "model": model,
             "authorize_url": authorization.authorize_url,
             "callback_url": provider_redirect_uri(provider_identifier),
             "completion_url": f"{settings.public_url}/github/auth/{urllib.parse.quote(provider_identifier, safe='')}/complete",
@@ -1165,9 +1216,9 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         if authorization_record is None:
             raise HTTPException(400, detail="OAuth authorization state is missing or expired")
         if error:
-            await store.finish_oauth_authorization(state)
+            await store.consume_oauth_authorization(state)
             raise HTTPException(400, detail=f"OAuth authorization failed: {error}")
-        installation_id, _user_login, code_verifier, redirect_uri = authorization_record
+        installation_id, _user_login, model, code_verifier, redirect_uri = authorization_record
         if redirect_uri and not code.strip():
             raise HTTPException(400, detail="OAuth authorization code is required")
         try:
@@ -1180,15 +1231,16 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             )
             tokens = await authorization.exchange(code)
             await store.save_oauth_tokens(
-                installation_id, provider_identifier, tokens, authentication
+                installation_id, provider_identifier, model, tokens, authentication
             )
-            if not await store.finish_oauth_authorization(state):
+            if not await store.consume_oauth_authorization(state):
                 raise RuntimeError("OAuth authorization was already completed")
         except Exception as error:  # noqa: BLE001 — the callback must return an HTTP error
             raise HTTPException(400, detail=str(error)) from error
         return {
             "authenticated": True,
             "provider": provider_identifier,
+            "model": model,
             "configuration_url": f"{settings.public_url}/github/configuration",
         }
 
@@ -1212,15 +1264,7 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         if setup is None:
             raise HTTPException(401, detail="setup token is missing or expired")
         current = await store.configuration(setup[0])
-        return {
-            "installation_id": setup[0],
-            "account": setup[1],
-            "configured": bool(current and current.ready),
-            "provider": current.provider if current else "",
-            "model": current.model if current else "",
-            "api_key_configured": bool(current and current.api_key),
-            "oauth_configured": bool(current and current.oauth_tokens),
-        }
+        return configuration_response(setup, current)
 
     @app.put("/github/configuration")
     async def save_configuration(payload: ConfigurationUpdate, request: Request) -> dict[str, Any]:
@@ -1252,14 +1296,7 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             await store.save_installation(
                 setup[0], setup[1], "unknown", provider, model, api_key, clear_oauth=True
             )
-        return {
-            "installation_id": setup[0],
-            "configured": True,
-            "provider": provider,
-            "model": model,
-            "api_key_configured": bool(api_key),
-            "oauth_configured": profile.method == "oauth",
-        }
+        return configuration_response(setup, await store.configuration(setup[0]))
 
     @app.post("/github/webhook")
     async def webhook(request: Request) -> Response:
