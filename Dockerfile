@@ -14,7 +14,6 @@ COPY nix ./nix
 RUN nix profile install --accept-flake-config --priority 4 \
     nixpkgs#autoconf \
     nixpkgs#automake \
-    nixpkgs#binutils \
     nixpkgs#bun \
     nixpkgs#cacert \
     nixpkgs#clang \
@@ -26,7 +25,6 @@ RUN nix profile install --accept-flake-config --priority 4 \
     nixpkgs#fd \
     nixpkgs#file \
     nixpkgs#findutils \
-    nixpkgs#gcc \
     nixpkgs#gawk \
     nixpkgs#gh \
     nixpkgs#git \
@@ -55,6 +53,7 @@ RUN nix profile install --accept-flake-config --priority 4 \
     nixpkgs#zip \
     .#render-cli
 RUN nix profile install --accept-flake-config --priority 3 nixpkgs#procps
+RUN nix profile install --accept-flake-config --priority 3 nixpkgs#gcc
 
 COPY . .
 RUN uv sync --frozen --no-dev
