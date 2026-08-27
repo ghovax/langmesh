@@ -98,7 +98,7 @@ class Settings:
     database_url: str
     queue_poll_seconds: float
     public_url: str
-    oauth_client_ids: Mapping[str, str] = field(default_factory=dict)
+    provider_application_ids: Mapping[str, str] = field(default_factory=dict)
     github_api_url: str = "https://api.github.com"
 
     @classmethod
@@ -159,14 +159,14 @@ class Settings:
             queue_poll_seconds=max(0.5, float(queue.get("poll_seconds") or 5)),
             public_url=required(server, "public_url", "server").rstrip("/"),
             github_api_url=str(github.get("api_url") or "https://api.github.com").rstrip("/"),
-            oauth_client_ids={
-                str(provider).strip().lower(): str(client_id).strip()
-                for provider, client_id in (
-                    oauth.get("client_ids", {})
-                    if isinstance(oauth.get("client_ids", {}), Mapping)
+            provider_application_ids={
+                str(provider).strip().lower(): str(application_id).strip()
+                for provider, application_id in (
+                    oauth.get("provider_application_ids", {})
+                    if isinstance(oauth.get("provider_application_ids", {}), Mapping)
                     else {}
                 ).items()
-                if str(provider).strip() and str(client_id).strip()
+                if str(provider).strip() and str(application_id).strip()
             },
         )
 
@@ -1089,7 +1089,7 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         authorization = request.headers.get("authorization", "")
         scheme, _, token = authorization.partition(" ")
         if scheme.lower() != "bearer" or not token.strip():
-            raise HTTPException(401, detail="use Authorization: Bearer SETUP_TOKEN")
+            raise HTTPException(401, detail="use Authorization: Bearer <setup-token>")
         return token.strip()
 
     authentication = ProviderAuthentication()
@@ -1116,7 +1116,7 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             authorization = authentication.authorization_request(
                 provider_identifier,
                 provider_redirect_uri(provider_identifier),
-                client_id=settings.oauth_client_ids.get(provider_identifier, ""),
+                client_id=settings.provider_application_ids.get(provider_identifier, ""),
             )
         except Exception as error:  # noqa: BLE001 — translate provider capability errors
             raise HTTPException(422, detail=str(error)) from error
@@ -1150,7 +1150,7 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             authorization = authentication.authorization_request(
                 provider_identifier,
                 provider_redirect_uri(provider_identifier),
-                client_id=settings.oauth_client_ids.get(provider_identifier, ""),
+                client_id=settings.provider_application_ids.get(provider_identifier, ""),
                 state=state,
                 code_verifier=code_verifier,
             )

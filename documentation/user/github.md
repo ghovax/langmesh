@@ -33,9 +33,9 @@ github:
   oauth:
     client_id: "Iv1...."
     client_secret: "..."
-    client_ids:
-      chatgpt: "app_..."
-      cursor: "..."
+    provider_application_ids:
+      chatgpt: "app_4f8c2d1e7a9b"
+      cursor: "cursor_oauth_8a2f6c1d"
   api_url: "https://api.github.com"
 server:
   public_url: "https://github-agent.example.net"
@@ -104,7 +104,7 @@ the service deployment. They are not installation settings.
 ```json
 {
   "installation_id": 184736295,
-  "setup_token": "7kQ2mN...vR8pL4",
+  "setup_token": "q9vK2mN8pL4xY7cA3sF6wR1tU5zE0hJ",
   "expires_in": 600,
   "configuration_url": "https://github-agent.example.net/github/configuration"
 }
@@ -116,7 +116,7 @@ callback when calling the JSON configuration endpoint:
 ```sh
 curl --fail-with-body --request PUT \
   --url https://langmesh-agent.onrender.com/github/configuration \
-  --header 'Authorization: Bearer 7kQ2mN...vR8pL4' \
+  --header 'Authorization: Bearer q9vK2mN8pL4xY7cA3sF6wR1tU5zE0hJ' \
   --header 'Content-Type: application/json' \
   --data '{
     "provider": "openrouter",
@@ -130,7 +130,7 @@ Read the saved state with the same token:
 ```sh
 curl --fail-with-body \
   --url https://langmesh-agent.onrender.com/github/configuration \
-  --header 'Authorization: Bearer 7kQ2mN...vR8pL4'
+  --header 'Authorization: Bearer q9vK2mN8pL4xY7cA3sF6wR1tU5zE0hJ'
 ```
 
 The response never includes the API key.
@@ -144,7 +144,7 @@ provider identifier:
 ```sh
 curl --fail-with-body --request POST \
   --url https://langmesh-agent.onrender.com/github/auth/chatgpt/start \
-  --header 'Authorization: Bearer SETUP_TOKEN'
+  --header 'Authorization: Bearer q9vK2mN8pL4xY7cA3sF6wR1tU5zE0hJ'
 ```
 
 Open the returned `authorize_url` in a browser. A callback-capable provider redirects to
@@ -156,15 +156,15 @@ encrypted provider token. Select the resulting provider model without an API key
 ```sh
 curl --fail-with-body --request PUT \
   --url https://langmesh-agent.onrender.com/github/configuration \
-  --header 'Authorization: Bearer SETUP_TOKEN' \
+  --header 'Authorization: Bearer q9vK2mN8pL4xY7cA3sF6wR1tU5zE0hJ' \
   --header 'Content-Type: application/json' \
-  --data '{"provider":"chatgpt","model":"SUBSCRIPTION_MODEL_SLUG"}'
+  --data '{"provider":"chatgpt","model":"gpt-5.4"}'
 ```
 
 If a provider needs a deployment-specific client identifier, set it under
-`github.oauth.client_ids`. The flow does not reuse GitHub OAuth, expose provider tokens
-to GitHub, or store them in a repository. Each provider controls its endpoints, token
-shape, refresh behavior, and request headers in models-provider.
+`github.oauth.provider_application_ids`. The flow does not reuse GitHub OAuth, expose
+provider tokens to GitHub, or store them in a repository. Each provider controls its
+endpoints, token shape, refresh behavior, and request headers in models-provider.
 
 After that, opening an issue or same-repository pull request starts an automatic first
 response. Later comments can address the installed bot with `@langmesh`,
