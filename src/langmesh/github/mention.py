@@ -30,7 +30,6 @@ from langmesh.base.confinement import Profile
 from langmesh.base.content.model_routing import resolve_litellm
 from langmesh.base.contracts.ports import Checkpoints
 from langmesh.github.detect import is_mention_turn
-from langmesh.github.reply import GitHubReply
 from langmesh.runtime.features import Feature
 from langmesh.runtime.plugins.background import BackgroundJobs
 from langmesh.runtime.plugins.bash import Bash
@@ -41,7 +40,15 @@ from langmesh.runtime.plugins.compaction import (
 from langmesh.runtime.plugins.continuation import Continuation
 from langmesh.runtime.plugins.permissions import PermissionReview
 from langmesh.runtime.plugins.web import Web
-from langmesh.runtime.turn_events import CompactionDone, CompactionStarted, Done, Suspended, Usage
+from langmesh.runtime.turn_events import (
+    CompactionDone,
+    CompactionStarted,
+    Done,
+    Suspended,
+    TextChunk,
+    ToolCall,
+    Usage,
+)
 
 ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 PROTECTED_BRANCHES = frozenset({"main", "master"})
@@ -97,11 +104,6 @@ class Mention:
 
 def acknowledgement() -> str:
     return render("acknowledgement")
-
-
-def working_comment(text: str) -> str:
-    """The acknowledgement or a progress note."""
-    return (text or acknowledgement()).strip()
 
 
 def user_failure(message: str) -> str:
@@ -480,23 +482,35 @@ def update_comment(repository: str, comment_id: int, text: str, token: str, api:
     )
 
 
-def publish_thread_comment(
+def delivery_marker(delivery_id: str) -> str:
+    return f"<!-- langmesh-delivery:{delivery_id} -->"
+
+
+def comment_body(delivery_id: str, text: str) -> str:
+    return f"{delivery_marker(delivery_id)}\n{text.strip()}".strip()
+
+
+def find_delivery_comment(
     repository: str,
     number: int,
-    text: str,
+    delivery_id: str,
     token: str,
     api: str,
-    *,
-    comment_id: int | None = None,
-) -> int:
-    """Update the acknowledgement in place, or post a new comment if that is not possible."""
-    if comment_id:
-        try:
-            update_comment(repository, comment_id, text, token, api)
-            return comment_id
-        except Exception:
-            logger.exception("could not update acknowledgement comment %s", comment_id)
-    return create_comment(repository, number, text, token, api)
+) -> int | None:
+    """Find the one comment reserved for a delivery, so retries remain idempotent."""
+    raw = _api_request(
+        f"{api}/repos/{repository}/issues/{number}/comments?per_page=100",
+        token,
+    )
+    marker = delivery_marker(delivery_id)
+    comments = raw if isinstance(raw, list) else []
+    for record in comments:
+        if not isinstance(record, Mapping) or marker not in str(record.get("body") or ""):
+            continue
+        comment_id = record.get("id")
+        if comment_id:
+            return int(comment_id)
+    return None
 
 
 class UncommittedChanges(Feature):
@@ -511,8 +525,8 @@ class UncommittedChanges(Feature):
         return render("uncommitted_changes")
 
 
-def mention_features(reply: GitHubReply, workspace: Path) -> list[Feature]:
-    """The plugins one mention session runs, including the comment tool.
+def mention_features(workspace: Path) -> list[Feature]:
+    """The plugins one mention session runs.
 
     The session is ``automatic``: a call that stays inside the box runs, and a call
     that leaves it or matches a destructive bash rule is decided by the reviewer.
@@ -526,7 +540,6 @@ def mention_features(reply: GitHubReply, workspace: Path) -> list[Feature]:
         BackgroundJobs(),
         Bash(),
         Web(),
-        reply,
         UncommittedChanges(workspace),
     ]
 
@@ -534,7 +547,6 @@ def mention_features(reply: GitHubReply, workspace: Path) -> list[Feature]:
 def _session(
     mention: Mention,
     workspace: Path,
-    reply: GitHubReply,
     token: str,
     checkpoints: Checkpoints,
     provider: str,
@@ -558,7 +570,6 @@ def _session(
             "download",
             "set_tasks",
             "update_tasks",
-            "submit_github_comment",
         ],
     )
     return Session(
@@ -570,7 +581,7 @@ def _session(
         providers={provider: key} if key else None,
         components=SessionComponents(
             checkpoints=checkpoints,
-            features=mention_features(reply, workspace),
+            features=mention_features(workspace),
         ),
     )
 
@@ -580,7 +591,7 @@ async def run_turn(
     workspace: Path,
     *,
     checkout: Checkout,
-    publish: Callable[[str], None] | None = None,
+    update_comment: Callable[[str], None] | None = None,
     token: str = "",
     thread_followup: bool = False,
     provider: str,
@@ -588,16 +599,9 @@ async def run_turn(
     api_key: str,
     checkpoints: Checkpoints,
 ) -> str:
-    def publish_working(text: str) -> None:
-        if publish is None:
-            return
-        publish(working_comment(text))
-
-    reply = GitHubReply(publish=publish_working if publish is not None else None)
     async with _session(
         mention,
         workspace,
-        reply,
         token,
         checkpoints,
         provider=provider,
@@ -629,6 +633,7 @@ async def run_turn(
         )
         await session.set_permission_mode("automatic")
         answer = ""
+        response_text = ""
         model_call = 0
         async for event in session.stream(
             prompt_for(mention, checkout=checkout, followup=followup)
@@ -682,6 +687,13 @@ async def run_turn(
                     "call `session.respond(...)` for each interaction, then drive "
                     "`session.resume()`; or supply an approver through SessionComponents."
                 )
+            if isinstance(event, TextChunk):
+                response_text += event.text
+            if isinstance(event, ToolCall):
+                status = response_text.strip()
+                if status and update_comment is not None:
+                    update_comment(status)
+                    response_text = ""
             if isinstance(event, Done):
-                answer = event.text or answer
-        return (reply.comment or "").strip()
+                answer = event.text or response_text or answer
+        return answer.strip()

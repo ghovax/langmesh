@@ -35,11 +35,10 @@ that stays up — typically a small Linux VPS.
    (`permission_mode: automatic` by default). IDLE keeps running while a turn is in
    flight: a follow-up on a live session is steered into that turn; a mail that arrives
    when the session is idle starts a new turn.
-1. The session speaks through `submit_email`, the same idea as `submit_github_comment`
-   on GitHub. `kind` `progress` mails a short status and keeps working. `kind` `reply`
-   mails the answer and ends the turn. The agent writes markdown; it is rendered as HTML
-   and sent as `multipart/alternative` with that HTML as the preferred part. Assistant
-   prose in the transcript is not mailed.
+1. The session speaks through `submit_email`. Progress and final mail remain explicit
+   email operations because email is a separate channel. The agent writes markdown; it
+   is rendered as HTML and sent as `multipart/alternative` with that HTML as the preferred
+   part. Assistant prose in the transcript is not mailed.
 
 Later mail is discovered by IDLE, not by polling from inside a turn. A different thread
 can run at the same time; one IMAP connection fetches only between IDLEs.
