@@ -15,6 +15,7 @@ import logging
 from email.message import Message
 from typing import Any, Callable, Optional
 
+from langmesh.base.identity.providers import resolve_provider_credentials
 from langmesh.base.primitives.errors import log_fields
 from langmeshd.commons.configuration import EmailConfiguration
 from langmeshd.mail import body
@@ -86,7 +87,7 @@ class MailService:
 
         async def run() -> None:
             try:
-                await self._finish_one(http, item, inbox)
+                await self._process_one(http, item, inbox)
             finally:
                 self._inflight.discard(item.id)
 
@@ -366,7 +367,7 @@ class MailService:
             return item
         return self.store.update(item.id, state=SEEN)
 
-    async def finish(self, http, item: MailItem, inbox: Inbox | None) -> None:
+    async def process(self, http, item: MailItem, inbox: Inbox | None) -> None:
         current = self.store.get(item.id) or item
         if current.state in {SEEN, SKIPPED}:
             return
@@ -398,7 +399,7 @@ class MailService:
     async def ingest(self, uidvalidity: int, uid: int, message: Message) -> MailItem | None:
         mailbox = self.configuration.effective_imap_mailbox
         message_id = body.durable_identity(message)
-        if self.store.already_finished(mailbox, uidvalidity, uid, message_id):
+        if self.store.already_completed(mailbox, uidvalidity, uid, message_id):
             existing = self.store.item_by_message_id(message_id) or self.store.item_by_uid(
                 mailbox, uidvalidity, uid
             )
@@ -528,9 +529,9 @@ class MailService:
                     exc_info=True,
                 )
 
-    async def _finish_one(self, http, item: MailItem, inbox: Inbox | None) -> None:
+    async def _process_one(self, http, item: MailItem, inbox: Inbox | None) -> None:
         try:
-            await self.finish(http, item, inbox)
+            await self.process(http, item, inbox)
         except StaleConnection:
             self._stale.set()
             if inbox is not None:
@@ -593,7 +594,6 @@ def _agent_credential_problem(configuration: EmailConfiguration) -> str:
     from langmesh.base.content.models import find_model, list_models
     from langmesh.base.identity.providers import (
         get_provider_definition,
-        resolve_api_key,
         resolve_base_url,
     )
 
@@ -620,12 +620,17 @@ def _agent_credential_problem(configuration: EmailConfiguration) -> str:
     except Exception:  # noqa: BLE001 — an unreadable YAML still allows secret files
         configured = {}
         bases = {}
-    key = resolve_api_key(provider, configured)
+    from langmeshd.daemon.persistence.credentials import file_credential_store
+
+    resolved_credentials = resolve_provider_credentials(
+        provider, configured, credential_store=file_credential_store()
+    )
+    key = resolved_credentials.api_key
     billed = definition
     if definition is not None and definition.credential_identifier:
         billed = get_provider_definition(definition.credential_identifier) or definition
     anonymous = (billed.anonymous_api_key if billed is not None else "") or ""
-    if not key.strip() or key.strip() == anonymous:
+    if not resolved_credentials.available or key.strip() == anonymous:
         credential = provider
         if definition is not None:
             credential = definition.credential_identifier or definition.identifier

@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import httpx
 import litellm
+from models_provider import ProviderAuthentication
 from langchain_core.language_models.chat_models import BaseChatModel
 
 # LiteLLM raises on a parameter a provider does not support, so unsupported ones are dropped rather than sent.
@@ -95,11 +96,16 @@ class ChatLiteLLMModel(BaseChatModel):
     timeout: Optional[float] = 300.0
     default_headers: dict[str, str] = Field(default_factory=dict)
 
+    provider_identifier: str = ""
+    provider_environment_variables: tuple[str, ...] = ()
+
     #: The last request's segment trace, declared rather than merely assigned so Pydantic will hold it.
     _previous_traces: dict[str, RequestTrace] = PrivateAttr(default_factory=dict)
 
     #: The latest attempted prefix and its fallback, retained independently for each lane.
     _cache_anchors: dict[str, tuple[str, ...]] = PrivateAttr(default_factory=dict)
+
+    _authentication: ProviderAuthentication | None = PrivateAttr(default=None)
 
     @property
     def _llm_type(self) -> str:
@@ -410,11 +416,21 @@ class ChatLiteLLMModel(BaseChatModel):
             "model": self._request_model(),
             "temperature": self.temperature,
         }
-        if self.api_key is not None:
+        resolved = None
+        if self._authentication is not None and self.provider_identifier:
+            resolved = self._authentication.resolve(
+                self.provider_identifier,
+                environment_variables=self.provider_environment_variables,
+            )
+        if resolved is not None and resolved.api_key:
+            params["api_key"] = resolved.api_key
+        elif self.api_key is not None:
             unsealed = self.api_key.get_secret_value()
             if unsealed:
                 params["api_key"] = unsealed
-        if self.api_base:
+        if resolved is not None and resolved.api_base:
+            params["api_base"] = resolved.api_base
+        elif self.api_base:
             params["api_base"] = self.api_base
         if self.reasoning_effort:
             params["reasoning_effort"] = self.reasoning_effort
@@ -422,8 +438,11 @@ class ChatLiteLLMModel(BaseChatModel):
             params["max_tokens"] = self.maximum_tokens  # litellm/OpenAI API param name
         if self.timeout is not None:
             params["timeout"] = self.timeout
-        if self.default_headers and not self._opencode_host():
-            params["extra_headers"] = dict(self.default_headers)
+        headers = dict(self.default_headers)
+        if resolved is not None:
+            headers = {**resolved.headers, **headers}
+        if headers and not self._opencode_host():
+            params["extra_headers"] = headers
         if self._route() == self._GATEWAY_ROUTE:
             # A gateway rewrites the request for whichever provider it routes to, so it is the only thing that can place breakpoints.
             params["extra_body"] = {**params.get("extra_body", {}), "gateway": {"caching": "auto"}}

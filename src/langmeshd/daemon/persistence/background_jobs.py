@@ -153,7 +153,7 @@ class BackgroundJobStore:
                 (process_group, job_id, STATUS_RUNNING),
             )
 
-    def record_finished(self, job_id: str, result: str, *, status: str = STATUS_COMPLETED) -> None:
+    def record_completed(self, job_id: str, result: str, *, status: str = STATUS_COMPLETED) -> None:
         """Mark a job completed (or failed — both carry a result payload the model reads)."""
         with self._connect() as connection:
             connection.execute(

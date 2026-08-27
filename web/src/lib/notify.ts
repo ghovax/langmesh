@@ -79,7 +79,7 @@ export async function notifyPermissionRequest({
   const registration = await swRegistration();
   if (notificationTokens.get(requestId) !== notificationToken) return;
   if (registration) {
-    // `actions` is not yet in TS's NotificationOptions (Notification API level 2).
+    // `actions` is not yet included in TypeScript's NotificationOptions typings.
     const options = {
       body,
       tag,

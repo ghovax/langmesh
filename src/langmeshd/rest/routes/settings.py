@@ -5,12 +5,13 @@ from fastapi import APIRouter, HTTPException
 import langmesh.base.confinement as _confinement
 import langmeshd.commons.toolboxes as _toolbox
 import langmesh.base.configuration as _configuration
-from langmesh.base.identity import cursor_subscription
-from langmesh.base.content.models import available_models, list_models, ModelDefinition
-from langmesh.base.identity.subscription import (
-    clear_subscription_models_cache,
-    fetch_subscription_models,
+from models_provider import (
+    clear_chatgpt_models_cache,
+    clear_cursor_models_cache,
+    fetch_chatgpt_models,
+    fetch_cursor_models,
 )
+from langmesh.base.content.models import available_models, list_models, ModelDefinition
 from langmesh.base.identity.providers import PROVIDERS
 import asyncio
 from langmeshd.commons.configuration import AppSettingsUpdateRequest, DictationUpdateRequest
@@ -23,7 +24,7 @@ from langmesh.protocol.dtos import (
     SandboxUpdateRequest,
     UserContextUpdateRequest,
 )
-from langmesh.base.identity.credential_store import bind_credential_store, reset_credential_store
+from models_provider import bind_credential_store, reset_credential_store
 from langmeshd.daemon.persistence.credentials import file_credential_store
 from langmeshd.commons import state
 from langmeshd.commons.services.broadcast import _publish_broadcast
@@ -103,19 +104,23 @@ def _merged_sandbox(current, posted: dict):
 async def list_models_endpoint(refresh: bool = False):
     """The model catalog for the picker: every known model, whether its provider has a credential, and the provider registry."""
     assert state.global_configuration is not None
-    configured_keys = state.global_configuration.configured_provider_keys()
-    available_identifiers = {model.identifier for model in available_models(configured_keys)}
     # A retry re-fetches the live subscription catalogs rather than serving their TTL'd copies.
     if refresh:
-        clear_subscription_models_cache()
-        cursor_subscription.clear_subscription_models_cache()
+        clear_chatgpt_models_cache()
+        clear_cursor_models_cache()
     # Request tasks do not always inherit the daemon's bound store, so bind it for this listing.
-    bound = bind_credential_store(file_credential_store())
+    credential_store = file_credential_store()
+    bound = bind_credential_store(credential_store)
     try:
+        configured_keys = state.global_configuration.configured_provider_keys()
+        available_identifiers = {
+            model.identifier
+            for model in available_models(configured_keys, credential_store=credential_store)
+        }
         # The subscription providers list a static superset, so both accounts' live catalogs are fetched at once to grey the rest.
         live_chatgpt, live_cursor = await asyncio.gather(
-            fetch_subscription_models(),
-            cursor_subscription.fetch_subscription_models(),
+            fetch_chatgpt_models(),
+            fetch_cursor_models(),
         )
     finally:
         reset_credential_store(bound)

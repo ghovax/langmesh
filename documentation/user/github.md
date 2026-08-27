@@ -1,8 +1,13 @@
 # Universal GitHub App
 
-LangMesh Agent is an installation-level GitHub App. A repository only needs the App installed; it does not need a workflow, YAML policy, App ID, provider setting, API key, or GitHub secret.
+LangMesh Agent is an installation-level GitHub App. A repository only needs the App
+installed; it does not need a workflow, YAML policy, App ID, provider setting, API key,
+or GitHub secret.
 
-The service receives `issue_comment` and `pull_request_review_comment` webhooks, creates a repository-scoped installation token, and runs the mention session as the installed App. The App private key belongs only to the service operator. It is never entered by a person configuring an installation and is never stored in a repository.
+The service receives `issue_comment` and `pull_request_review_comment` webhooks, creates
+a repository-scoped installation token, and runs the mention session as the installed
+App. The App private key belongs only to the service operator. It is never entered by a
+person configuring an installation and is never stored in a repository.
 
 ## Service configuration
 
@@ -12,7 +17,9 @@ Run the hosted service outside a repository:
 langmesh github --configuration ~/.config/langmesh/github.yaml
 ```
 
-The configuration file is an operator/deployment file, not a repository file. It points at the App private key, webhook secret, and encryption key. Keep those files in a secret manager or a locked service directory. A complete shape is:
+The configuration file is an operator/deployment file, not a repository file. It points
+at the App private key, webhook secret, and encryption key. Keep those files in a secret
+manager or a locked service directory. A complete shape is:
 
 ```yaml
 github:
@@ -44,7 +51,15 @@ python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 chmod 600 /srv/langmesh/secrets/provider-keys.fernet
 ```
 
-The service stores provider API keys encrypted in the external database, keyed by GitHub installation. The GitHub worker uses the compaction plugin's configured threshold with a direct preparation port. Compaction intentionally invalidates the conversation portion of the provider cache; the stable instructions and tool definitions remain reusable. The delivery queue and session checkpoints use that same database, so another worker can continue after the original worker disappears. Different installations can choose different providers and models. For example, an installation may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like `sk-or-v1-...`.
+The service stores provider API keys encrypted in the external database, keyed by GitHub
+installation. The GitHub worker uses the compaction plugin's configured threshold with a
+direct preparation port. Compaction intentionally invalidates the conversation portion
+of the provider cache; the stable instructions and tool definitions remain reusable. The
+delivery queue and session checkpoints use that same database, so another worker can
+continue after the original worker disappears. Different installations can choose
+different providers and models. For example, an installation may use provider
+`openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like
+`sk-or-v1-...`.
 
 ## GitHub App settings
 
@@ -55,16 +70,20 @@ Register one App for the service owner and set:
 - **Webhook URL:** `https://github-agent.example.net/github/webhook`
 - **Webhook secret:** the same value as `webhook_secret` in the service configuration
 - **Webhook events:** `Installation`, `Issue comment`, and `Pull request review comment`
-- **Repository permissions:** Contents read/write, Issues read/write, Pull requests read/write, and Metadata read-only
+- **Repository permissions:** Contents read/write, Issues read/write, Pull requests
+  read/write, and Metadata read-only
 
-The App owner keeps the App ID, private key, OAuth client secret, and webhook secret in the service deployment. They are not installation settings.
+The App owner keeps the App ID, private key, OAuth client secret, and webhook secret in
+the service deployment. They are not installation settings.
 
 ## Installation and configuration
 
-1. Install the App on a personal account or organization, selecting all or only the repositories it may access.
-2. GitHub opens the service setup URL.
-3. Sign in with GitHub when redirected. The service verifies that this account can access the installation.
-4. The callback returns a JSON object containing a short-lived setup token, for example:
+1. Install the App on a personal account or organization, selecting all or only the
+   repositories it may access.
+1. GitHub opens the service setup URL.
+1. Sign in with GitHub when redirected. The service verifies that this account can
+   access the installation.
+1. The callback returns a JSON object containing a short-lived setup token, for example:
 
 ```json
 {
@@ -75,7 +94,8 @@ The App owner keeps the App ID, private key, OAuth client secret, and webhook se
 }
 ```
 
-The token above is shortened for readability. Copy the complete value returned by your callback when calling the JSON configuration endpoint:
+The token above is shortened for readability. Copy the complete value returned by your
+callback when calling the JSON configuration endpoint:
 
 ```sh
 curl --fail-with-body --request PUT \
@@ -95,14 +115,29 @@ curl --fail-with-body \
 
 The response never includes the API key.
 
-After that, mention the installed bot in an issue or same-repository pull request. The bot identity is the actual App login, such as `@langmesh-agent[bot]`, and its commits use that identity. A webhook is ignored until its installation has a provider/model configuration.
+After that, mention the installed bot in an issue or same-repository pull request. The
+bot identity is the actual App login, such as `@langmesh-agent[bot]`, and its commits
+use that identity. A webhook is ignored until its installation has a provider/model
+configuration.
 
-The setup flow verifies the installer through GitHub before accepting settings; the `installation_id` in a URL is not treated as authorization. Provider keys are encrypted at rest and never written to a checkout.
+The setup flow verifies the installer through GitHub before accepting settings; the
+`installation_id` in a URL is not treated as authorization. Provider keys are encrypted
+at rest and never written to a checkout.
 
-Final `reply` comments address the known author of the triggering comment with a GitHub `@username` mention, and mention other known users when the reply directly addresses them. `progress` comments never use user mentions, so only the final response creates the intended notification. Usernames are never guessed, altered, or copied from untrusted prose.
+Final `reply` comments address the known author of the triggering comment with a GitHub
+`@username` mention, and mention other known users when the reply directly addresses
+them. `progress` comments never use user mentions, so only the final response creates
+the intended notification. Usernames are never guessed, altered, or copied from
+untrusted prose.
 
 ## Repository behavior
 
-The App service keeps its delivery queue, encrypted installation settings, and session checkpoints in the external database. Each delivery gets a temporary checkout on the execution machine, and that checkout is deleted when processing ends; GitHub branches and pull requests remain the durable source for repository changes. It uses installation tokens limited to the installed repositories and creates or updates topic branches and draft pull requests there. No repository file is created to select a model or provider.
+The App service keeps its delivery queue, encrypted installation settings, and session
+checkpoints in the external database. Each delivery gets a temporary checkout on the
+execution machine, and that checkout is deleted when processing ends; GitHub branches
+and pull requests remain the durable source for repository changes. It uses installation
+tokens limited to the installed repositories and creates or updates topic branches and
+draft pull requests there. No repository file is created to select a model or provider.
 
-To change the provider, model, or API key, start the setup flow again and send another JSON `PUT` request. The next mention uses the new configuration.
+To change the provider, model, or API key, start the setup flow again and send another
+JSON `PUT` request. The next mention uses the new configuration.

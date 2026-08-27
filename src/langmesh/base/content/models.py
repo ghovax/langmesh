@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TypedDict
 
 import httpx
+from models_provider import CredentialStore
 
 from langmesh.base.identity.providers import (
     PROVIDERS,
@@ -14,7 +15,7 @@ from langmesh.base.identity.providers import (
     extend_provider_env_vars,
     get_provider_definition,
     register_models_dev_provider,
-    resolve_api_key,
+    resolve_provider_credentials,
     resolve_base_url,
 )
 
@@ -45,6 +46,7 @@ class ResolvedLiteLLM(TypedDict):
     api_key: str
     api_base: str
     headers: dict[str, str]
+    environment: dict[str, str]
 
 
 # Wire-protocol names from models.dev, mapped to the LiteLLM prefix that speaks them.
@@ -269,12 +271,18 @@ def split_model_identifier(model_identifier: str) -> tuple[str, str] | None:
     return provider_identifier, suffix
 
 
-def available_models(configured_keys: dict[str, str]) -> list[ModelDefinition]:
+def available_models(
+    configured_keys: dict[str, str],
+    *,
+    credential_store: CredentialStore | None = None,
+) -> list[ModelDefinition]:
     """Catalog entries whose provider has a resolvable credential, excluding the subscription providers."""
     unlocked_providers = {
         provider.identifier
         for provider in PROVIDERS.values()
-        if resolve_api_key(provider.identifier, configured_keys)
+        if resolve_provider_credentials(
+            provider.identifier, configured_keys, credential_store=credential_store
+        ).available
         # The custom provider has no key of its own; it is selectable on demand.
         or provider.identifier == "custom"
     }
@@ -292,6 +300,8 @@ def resolve_litellm(
     model_identifier: str,
     configured_keys: dict[str, str],
     configured_bases: dict[str, str],
+    *,
+    credential_store: CredentialStore | None = None,
 ) -> ResolvedLiteLLM:
     """Translate a provider-qualified model into LiteLLM call parameters."""
     split = split_model_identifier(model_identifier)
@@ -312,13 +322,17 @@ def resolve_litellm(
         if definition.uses_custom_base_url or definition.openai_compatible
         else ""
     )
+    credentials = resolve_provider_credentials(
+        provider_identifier, configured_keys, credential_store=credential_store
+    )
     return {
         "model": f"{litellm_prefix}/{suffix}",
-        "api_key": resolve_api_key(provider_identifier, configured_keys),
+        "api_key": credentials.api_key,
         "api_base": (
             _gateway_api_base(provider_base_url, litellm_prefix)
             if definition.uses_custom_base_url
             else provider_base_url
         ),
         "headers": definition.default_headers,
+        "environment": dict(credentials.environment),
     }

@@ -123,14 +123,14 @@ async def bash(
             raise
         artifact = None
 
-        async def finish_output():
+        async def close_output():
             nonlocal artifact
             if artifact is None:
                 artifact = await writer.close()
             return artifact
 
         async def read_output() -> str:
-            reference = await finish_output()
+            reference = await close_output()
             content = await artifacts.read(reference.identifier) or b""
             return content.decode(errors="replace")
 
@@ -183,7 +183,7 @@ async def bash(
             }
             return compact(payload)
         except BaseException:
-            await finish_output()
+            await close_output()
             raise
         output = await read_output()
         # A non-zero exit is a failure the model must see, or `exit 7` reads as success.

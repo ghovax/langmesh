@@ -9,20 +9,21 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 
 from fastapi import APIRouter, HTTPException
 
-from langmesh.base.identity.credentials import ChatGPTLoginFlow, clear_tokens, load_tokens
-from langmesh.base.identity.cursor_credentials import CursorLoginFlow
-from langmesh.base.identity.cursor_credentials import clear_tokens as cursor_clear_tokens
-from langmesh.base.identity.cursor_credentials import load_tokens as cursor_load_tokens
-from langmesh.base.identity import cursor_subscription
-from langmesh.base.identity.subscription import (
-    clear_subscription_models_cache,
+from models_provider import (
+    ProviderAuthentication,
+    clear_chatgpt_models_cache,
+    clear_cursor_models_cache,
     clear_usage_snapshot,
+    display_cursor_account,
     get_usage_snapshot,
+    provider_auth_profile,
 )
+
+from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
 from langmeshd.commons import state
 from langmeshd.commons.services.broadcast import _publish_broadcast
 from langmeshd.commons.services.workspaces import _reset_all_runtimes
@@ -33,32 +34,58 @@ router = APIRouter()
 
 @dataclass(frozen=True)
 class _ProviderAuth:
-    """One subscription provider's sign-in: its flow, credential store, and state slot."""
+    """One provider's authentication edge: presentation, persistence, and cache invalidation."""
 
-    flow_kind: Callable[[Any], Any]
-    load: Callable[[Any], Any]
-    clear: Callable[[Any], None]
+    provider_identifier: str
     in_flight: str
     clear_caches: Callable[[], None]
-    account: Callable[[Any], str] = staticmethod(lambda _tokens: "")
 
     @property
     def store(self):
         return file_credential_store()
 
+    def authentication(self) -> ProviderAuthentication:
+        definition = get_provider_definition(self.provider_identifier)
+        if definition is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No provider named {self.provider_identifier!r}.",
+            )
+        profile = provider_auth_profile(
+            self.provider_identifier,
+            environment_variables=provider_env_vars(self.provider_identifier),
+            default_base_url=definition.default_base_url,
+            headers=definition.default_headers,
+            anonymous_api_key=definition.anonymous_api_key,
+            method="oauth" if self.provider_identifier in {"chatgpt", "cursor"} else "api_key",
+            credential_identifier=definition.credential_identifier or self.provider_identifier,
+        )
+        configured_keys = (
+            state.global_configuration.configured_provider_keys()
+            if state.global_configuration is not None
+            else {}
+        )
+        return ProviderAuthentication(
+            {self.provider_identifier: profile},
+            api_keys=configured_keys,
+            store=self.store,
+        )
+
     async def status(self) -> dict:
-        tokens = await asyncio.to_thread(self.load, self.store)
-        account = ""
-        if tokens is not None:
-            if self.flow_kind is CursorLoginFlow:
-                account = await cursor_subscription.display_account(tokens)
-            else:
-                account = self.account(tokens)
+        authentication = self.authentication()
+        current = await asyncio.to_thread(authentication.status, self.provider_identifier)
+        account = current.account
+        if self.provider_identifier == "cursor" and current.signed_in:
+            tokens = await asyncio.to_thread(authentication.token, self.provider_identifier)
+            account = await display_cursor_account(tokens)
         return {
-            "signed_in": tokens is not None,
+            "signed_in": current.signed_in,
+            "expired": current.expired,
+            "method": current.method,
+            "source": current.source,
             "account": account,
             "usage": get_usage_snapshot()
-            if tokens is not None and self.flow_kind is ChatGPTLoginFlow
+            if current.signed_in and self.provider_identifier == "chatgpt"
             else None,
         }
 
@@ -66,7 +93,10 @@ class _ProviderAuth:
         pending = getattr(state, self.in_flight, None)
         if pending is not None:
             await pending.close()
-        flow = self.flow_kind(self.store)
+        try:
+            flow = self.authentication().flow(self.provider_identifier)
+        except Exception as error:  # noqa: BLE001 — the client needs a body, not a dropped CORS 500
+            raise HTTPException(status_code=400, detail=str(error)) from error
         try:
             await flow.start()
         except OSError as error:
@@ -101,62 +131,59 @@ class _ProviderAuth:
         if pending is not None:
             await pending.close()
             setattr(state, self.in_flight, None)
-        await asyncio.to_thread(self.clear, self.store)
+        await asyncio.to_thread(self.authentication().sign_out, self.provider_identifier)
         self.clear_caches()
         await _reset_all_runtimes()
         _publish_broadcast({"type": "settings_changed"})
         return {"ok": True}
 
 
-def _chatgpt_account(tokens: Any) -> str:
-    return tokens.email or ""
-
-
 def _chatgpt_caches() -> None:
-    clear_subscription_models_cache()
+    clear_chatgpt_models_cache()
     clear_usage_snapshot()
 
 
 _PROVIDERS = {
     "chatgpt": _ProviderAuth(
-        flow_kind=ChatGPTLoginFlow,
-        load=load_tokens,
-        clear=clear_tokens,
+        provider_identifier="chatgpt",
         in_flight="chatgpt_login_flow",
         clear_caches=_chatgpt_caches,
-        account=_chatgpt_account,
     ),
     "cursor": _ProviderAuth(
-        flow_kind=CursorLoginFlow,
-        load=cursor_load_tokens,
-        clear=cursor_clear_tokens,
+        provider_identifier="cursor",
         in_flight="cursor_login_flow",
-        clear_caches=cursor_subscription.clear_subscription_models_cache,
-        account=lambda tokens: tokens.account or "",
+        clear_caches=clear_cursor_models_cache,
     ),
 }
 
 
 def _provider(provider: str) -> _ProviderAuth:
-    entry = _PROVIDERS.get(provider)
-    if entry is None:
+    identifier = provider.strip().lower()
+    entry = _PROVIDERS.get(identifier)
+    if entry is not None:
+        return entry
+    if get_provider_definition(identifier) is None:
         raise HTTPException(status_code=404, detail=f"No provider named {provider!r}.")
-    return entry
+    return _ProviderAuth(
+        provider_identifier=identifier,
+        in_flight=f"{identifier}_login_flow",
+        clear_caches=lambda: None,
+    )
 
 
 @router.get("/auth/{provider}")
 async def auth_status(provider: str):
-    """Whether a subscription provider is signed in, and for which account."""
+    """Return the authentication state for a model provider."""
     return await _provider(provider).status()
 
 
 @router.post("/auth/{provider}/start")
 async def auth_start(provider: str):
-    """Begin a provider's OAuth sign-in and return the authorize URL for the client to open."""
+    """Begin a provider's registered sign-in flow and return its URL."""
     return await _provider(provider).start()
 
 
 @router.delete("/auth/{provider}")
 async def auth_signout(provider: str):
-    """Sign out a provider: clear the stored tokens and reset runtimes so it re-locks immediately."""
+    """Clear a provider credential and reset runtimes so it re-locks immediately."""
     return await _provider(provider).signout()

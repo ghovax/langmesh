@@ -366,18 +366,16 @@ class Configuration(Section):
     agent: AgentDefaults = Field(default_factory=AgentDefaults)
 
     def configured_provider_keys(self) -> dict[str, str]:
-        """The non-empty API keys per provider, for credential resolution and for filtering the model picker.
+        """Return only provider keys explicitly supplied in this configuration value.
 
-        Secret files are the configuration. An in-memory value on this object is a
-        caller-supplied Session credential, used only when that file is absent.
+        Secret files and other credential sources are resolved by Models Provider through
+        the runtime's injected credential store.
         """
-        from langmesh.base.secrets import provider_keys_from_files
-
-        keys = provider_keys_from_files()
-        for identifier, credential in self.providers.items():
-            if credential.api_key and identifier not in keys:
-                keys[identifier] = credential.api_key
-        return keys
+        return {
+            identifier: credential.api_key
+            for identifier, credential in self.providers.items()
+            if credential.api_key
+        }
 
     def configured_provider_bases(self) -> dict[str, str]:
         """Configured non-empty base URLs per provider."""

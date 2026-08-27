@@ -14,6 +14,7 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import BaseTool
 from pydantic import SecretStr
+from models_provider import CredentialStore, ModelUsage, ProviderAuthentication, provider_auth_profile
 
 from langmesh.base import confinement as _confinement
 from langmesh.base.configuration import (
@@ -25,6 +26,7 @@ from langmesh.base.configuration import (
 from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base.confinement import Grant, Profile
 from langmesh.base.content.models import find_model, resolve_litellm
+from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
 from langmesh.base.contracts.catalogue import project_catalogue
 from langmesh.base.contracts.ports import Artifacts, MemoryArtifacts, Observation, describe_unmet
 from langmesh.base.primitives.serialization import content_address
@@ -94,6 +96,7 @@ def build_chat_model(
     agent_configuration: AgentConfiguration,
     working_directory: str,
     session_id: str = "",
+    credential_store: CredentialStore | None = None,
 ) -> BaseChatModel:
     """Build the chat model for a ``provider/model`` id: LiteLLM for almost all, and the two OAuth providers apart."""
     provider_identifier, model_suffix = model_identifier.split("/", 1)
@@ -117,10 +120,28 @@ def build_chat_model(
         model_identifier,
         global_configuration.configured_provider_keys(),
         global_configuration.configured_provider_bases(),
+        credential_store=credential_store,
     )
     # The catalogue's window travels with the model, since LiteLLM knows nothing of a gateway's models.
     catalogued = find_model(model_identifier)
-    return ChatLiteLLMModel.model_validate(
+    definition = get_provider_definition(provider_identifier)
+    profile = provider_auth_profile(
+        provider_identifier,
+        environment_variables=provider_env_vars(provider_identifier),
+        default_base_url=definition.default_base_url if definition else "",
+        headers=definition.default_headers if definition else {},
+        anonymous_api_key=definition.anonymous_api_key if definition else "",
+        credential_identifier=(
+            definition.credential_identifier if definition else ""
+        ),
+    )
+    authentication = ProviderAuthentication(
+        {provider_identifier: profile},
+        api_keys=global_configuration.configured_provider_keys(),
+        api_bases=global_configuration.configured_provider_bases(),
+        store=credential_store,
+    )
+    model = ChatLiteLLMModel.model_validate(
         {
             "model": resolved["model"],
             "api_key": SecretStr(resolved["api_key"]) if resolved["api_key"] else None,
@@ -130,8 +151,12 @@ def build_chat_model(
             "context_length": catalogued.context_length if catalogued else 0,
             "temperature": 0,
             "reasoning_effort": agent_configuration.reasoning_effort,
+            "provider_identifier": provider_identifier,
+            "provider_environment_variables": profile.environment_variables,
         }
     )
+    model._authentication = authentication
+    return model
 
 
 def _as_profile(sandbox: Any) -> Profile:
@@ -287,6 +312,7 @@ class AgentRuntime(_RunsTurns):
                 profile.agent,
                 self._working_directory,
                 profile.session_id,
+                credential_store=self._environment.credentials,
             )
         )
 
@@ -705,12 +731,13 @@ class AgentRuntime(_RunsTurns):
         usage = getattr(response, "usage_metadata", None)
         if not usage:
             return None
-        input_tokens = int(usage.get("input_tokens", 0) or 0)
-        output_tokens = int(usage.get("output_tokens", 0) or 0)
-        total_tokens = int(usage.get("total_tokens", 0) or 0) or (input_tokens + output_tokens)
-        cache_read = int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0)
-        cache_write = int((usage.get("input_token_details") or {}).get("cache_creation", 0) or 0)
-        reasoning = int((usage.get("output_token_details") or {}).get("reasoning", 0) or 0)
+        normalized_usage = ModelUsage.from_mapping(usage)
+        input_tokens = normalized_usage.input_tokens
+        output_tokens = normalized_usage.output_tokens
+        total_tokens = normalized_usage.total_tokens
+        cache_read = normalized_usage.cache_read_tokens
+        cache_write = normalized_usage.cache_write_tokens
+        reasoning = normalized_usage.reasoning_tokens
         if not (input_tokens or output_tokens or total_tokens):
             return None
         # What the adapter worked out about this request's prefix, read before the totals below.
