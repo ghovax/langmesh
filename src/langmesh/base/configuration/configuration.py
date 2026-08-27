@@ -158,6 +158,7 @@ class CompactionConfiguration(Section):
     reclaim_at_fraction: float = Field(default=0.85)
     output_reserve_fraction: float = Field(default=0.1)
     recent_working_set_fraction: float = Field(default=0.15)
+    maximum_context_tokens: int = Field(default=0, ge=0)
 
     @field_validator(
         "reclaim_at_fraction",

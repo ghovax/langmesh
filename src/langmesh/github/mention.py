@@ -30,6 +30,7 @@ from langmesh import (
     ToolboxConfiguration,
 )
 from langmesh.base.confinement import Profile, environment_variables
+from langmesh.base.configuration import CompactionConfiguration, TuningConfiguration
 from langmesh.base.content.model_routing import resolve_litellm
 from langmesh.base.contracts.ports import Checkpoints
 from langmesh.github.detect import is_mention_turn
@@ -563,7 +564,15 @@ def _session(
         session_id=mention.session_id,
         permission_mode="automatic",
         sandbox=mention_sandbox(token),
-        configuration=Configuration(toolbox=ToolboxConfiguration(enabled=True)),
+        configuration=Configuration(
+            compaction=CompactionConfiguration(
+                reclaim_at_fraction=0.75,
+                recent_working_set_fraction=0.125,
+                maximum_context_tokens=98_304,
+            ),
+            toolbox=ToolboxConfiguration(enabled=True),
+            tuning=TuningConfiguration(limits={"output_tokens": 4_096}),
+        ),
         providers={provider: key} if key else None,
         components=SessionComponents(
             artifacts=DirectoryArtifacts(workspace.parent / "artifacts"),

@@ -286,6 +286,7 @@ compaction:
   reclaim_at_fraction: 0.85
   output_reserve_fraction: 0.1
   recent_working_set_fraction: 0.15
+  maximum_context_tokens: 0
 ```
 
 When a conversation reaches its recommended preparation threshold, LangMesh appends one
@@ -305,6 +306,8 @@ wait.
 - `reclaim_at_fraction` is the recommended preparation boundary, not a hard cutoff.
 - `recent_working_set_fraction` is how much stays verbatim, measured in tokens rather
   than turns.
+- `maximum_context_tokens` optionally bounds the context used to schedule compaction.
+  Zero uses the model's available context without another bound.
 
 `goal_review` governs how a goal the agent marked is settled. The agent owns its goal's
 `status` through the `update_goal` tool (`active`, `satisfied`, `blocked`, `parked`,
@@ -518,6 +521,7 @@ How conversation history is compacted as it grows.
 | `compaction.reclaim_at_fraction`         | number  | `0.85`  | Recommended preparation boundary. A private local-Bash segment first updates the current observational registry and advances its revision; compaction follows only after validation succeeds. |
 | `compaction.output_reserve_fraction`     | number  | `0.1`   | Share held back as safety space for the preparation segment and the answer.                                                                                                                   |
 | `compaction.recent_working_set_fraction` | number  | `0.15`  | Share of the usable window kept verbatim after older history is discarded. Sized in tokens rather than turns.                                                                                 |
+| `compaction.maximum_context_tokens`      | integer | `0`     | Optional context bound used to schedule compaction and size the recent working set. Zero uses the model's available context.                                                                  |
 
 ### Goal review
 

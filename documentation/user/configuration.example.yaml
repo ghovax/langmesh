@@ -127,6 +127,8 @@ compaction:
   # How much recent conversation stays verbatim. Tokens rather than turns, because an unattended
   # run is one instruction and several hundred tool results.
   recent_working_set_fraction: 0.15
+  # Optional context bound for scheduling compaction. Zero uses the model's available context.
+  maximum_context_tokens: 0
 
 # What a file the person attaches may cost the conversation it rides in
 attachments:
