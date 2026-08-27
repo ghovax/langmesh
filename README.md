@@ -6,7 +6,7 @@
 
 A coding agent needs more than a model. Something has to write the system prompt, give
 the model its tools, decide what it may run without asking, and keep the conversation
-from overflowing. That layer is the harness, and it decides more about the result than
+from overflowing. That work is the harness, and it decides more about the result than
 the model does. In most products it is closed. In LangMesh it is the code you are
 reading, and you can change it.
 
@@ -20,19 +20,19 @@ One conversation with an agent is a **session**. You create one, send it work, a
 answers over its life. That is the only object in LangMesh, and everything below is a
 way of running one.
 
-LangMesh is four layers, and the first three are two packages that ship as one image.
-Each layer uses the one under it and adds a single thing:
+LangMesh has three cooperating parts, delivered through two packages that ship as one
+image. Each part has a distinct responsibility:
 
 1. **The library** — `import langmesh`. `langmesh.Session` runs an agent in your own
    process. You give it the agent, the model, an absolute working directory, and the
    credentials; it performs no implicit user or project discovery, starts no daemon, and
    forces no plugin. Explicit tools operate only when composed, while shipped prompt
-   assets remain package resources. This is the harness itself, and the three layers
-   above are all built on it. See [As a library](documentation/library/index.md).
+   assets remain package resources. This is the harness itself, and the other components
+   use it. See [As a library](documentation/library/index.md).
 1. **The machine loaders and the daemon** — the `langmeshd` package. The machine loaders
    (`langmeshd.daemon.machine`) read your configuration file and the agents in your
    `.agents` directories and turn them into what the library takes. `langmeshd` then
-   hosts every session. This layer knows your home directory exists; the library does
+   hosts every session. The daemon knows your home directory exists; the library does
    not.
 1. **The clients** — the `langmesh` command (`serve` for the interface, `mail` for
    IMAP/SMTP in front of the daemon), the macOS app, and a phone. All talk to the daemon
@@ -47,7 +47,7 @@ message, in its own words.
 
 The harness writes the system prompt, defines the tools, manages context, and sets what
 the agent may do. The same model does different work under different harnesses —
-OpenCode versus Claude Code or Codex, say. LangMesh lets you change that layer:
+OpenCode versus Claude Code or Codex, say. LangMesh lets you change that harness:
 
 - **Any behavior beyond a plain model turn is a plugin.** Goal review, compaction,
   permission gating, autonomous continuation, observational memory, background jobs, and
@@ -79,8 +79,8 @@ See the [Installation guide](documentation/user/installation.md) for both paths 
 
 ## Quickstart
 
-The same harness, reached two ways. Start at the layer you want: an object in your own
-program, or a window.
+The same harness, reached two ways. Start with the entry point you want: an object in
+your own program, or a window.
 
 ### As a library
 
