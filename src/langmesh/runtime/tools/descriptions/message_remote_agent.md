@@ -1,12 +1,9 @@
 Hand a message to an agent on another host, and return its reply.
 
-- The exchange is one-shot: the agent keeps no history between messages, so each stands
-  alone.
-- It cannot read this filesystem: send the content the task needs instead of a path —
-  and only that content, because it leaves this machine.
+- The exchange is one-shot: the agent keeps no history between messages, so each stands alone.
+- It cannot read this filesystem: send the content the task needs instead of a path — and only that content, because it leaves this machine.
 
 Arguments:
 
 - `name` — The registered name of the remote agent, from `list_remote_agents`. Required.
-- `message` — What to send. It leaves this machine, so send the content the task needs
-  and nothing beside it.
+- `message` — What to send. It leaves this machine, so send the content the task needs and nothing beside it.

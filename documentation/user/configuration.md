@@ -1,39 +1,17 @@
 # Configuration
 
-Runtime configuration lives in **`$XDG_CONFIG_HOME/langmesh/configuration.yaml`**
-(`~/.config/langmesh/configuration.yaml` unless you set `XDG_CONFIG_HOME`). The daemon
-creates it on first run from a built-in template
-(`langmeshd/commons/configuration.yaml`) and owns the file thereafter; the library never
-writes it. Every daemon write is validated, synced, and atomically replaced at mode
-`0600`, so a stopped process cannot leave a partial YAML document. It is the source of
-truth for policy: permissions, feature toggles, addresses, and hosts. Credentials are
-separate `0600` files. The repository never contains a filled-in copy.
+Runtime configuration lives in **`$XDG_CONFIG_HOME/langmesh/configuration.yaml`** (`~/.config/langmesh/configuration.yaml` unless you set `XDG_CONFIG_HOME`). The daemon creates it on first run from a built-in template (`langmeshd/commons/configuration.yaml`) and owns the file thereafter; the library never writes it. Every daemon write is validated, synced, and atomically replaced at mode `0600`, so a stopped process cannot leave a partial YAML document. It is the source of truth for policy: permissions, feature toggles, addresses, and hosts. Credentials are separate `0600` files. The repository never contains a filled-in copy.
 
-Two ways to change policy, both writing the same YAML file. Settings also writes secret
-files when you paste a key.
+Two ways to change policy, both writing the same YAML file. Settings also writes secret files when you paste a key.
 
 - **Settings** in the desktop app.
-- **Editing the file directly**, which the daemon watches and the next session build
-  reads.
+- **Editing the file directly**, which the daemon watches and the next session build reads.
 
-> [!IMPORTANT] Credentials live as `0600` files under
-> `$XDG_DATA_HOME/langmesh/secrets/`, one file per value (`providers.anthropic.api_key`,
-> `email.imap.password`). Policy — address, allow-lists, agent names, ports — lives in
-> this YAML document. Never commit a filled secret file on a public repository; see the
-> [security policy](https://github.com/ghovax/langmesh/blob/main/SECURITY.md).
-> Environment variables are not configuration. The hosted GitHub App keeps installation
-> provider keys encrypted in its service database.
+> [!IMPORTANT] Credentials live as `0600` files under `$XDG_DATA_HOME/langmesh/secrets/`, one file per value (`providers.anthropic.api_key`, `email.imap.password`). Policy — address, allow-lists, agent names, ports — lives in this YAML document. Never commit a filled secret file on a public repository; see the [security policy](https://github.com/ghovax/langmesh/blob/main/SECURITY.md). Environment variables are not configuration. The hosted GitHub App keeps installation provider keys encrypted in its service database.
 
-A change applies to whatever starts **next**. A running session keeps the configuration
-it was built with, with a few exceptions the daemon pushes out: configuration, sandbox,
-computer control, and the user-context snapshot each ask live sessions to rebuild.
+A change applies to whatever starts **next**. A running session keeps the configuration it was built with, with a few exceptions the daemon pushes out: configuration, sandbox, computer control, and the user-context snapshot each ask live sessions to rebuild.
 
-Three places say something about a setting, and each says a different thing. **This
-document** is the narrative, for the settings worth explaining at length. The **settings
-panel** reads the daemon's running schema, so it can tell you what _this machine_ is set
-to. A name the schema does not define is **refused**, not ignored. The daemon owns and
-validates the complete application configuration; the `langmesh` library receives only
-explicit runtime values and capabilities.
+Three places say something about a setting, and each says a different thing. **This document** is the narrative, for the settings worth explaining at length. The **settings panel** reads the daemon's running schema, so it can tell you what _this machine_ is set to. A name the schema does not define is **refused**, not ignored. The daemon owns and validates the complete application configuration; the `langmesh` library receives only explicit runtime values and capabilities.
 
 ## Where everything lives
 
@@ -47,22 +25,11 @@ LangMesh follows the XDG Base Directory convention rather than one dot-directory
 | `$XDG_CACHE_HOME/langmesh/`  | caches                                                                                                                                     |
 | `$XDG_RUNTIME_DIR/langmesh/` | the daemon's socket, port, pid, lock, and token                                                                                            |
 
-The runtime directory is `0700`, and its daemon handshake files are `0600`. When
-`XDG_RUNTIME_DIR` is unset, as on macOS, the fallback is a per-user directory under the
-system temporary directory. The OS clears the runtime directory when you log out, so a
-crashed daemon leaves nothing behind. Private values that must survive logout, including
-the session-token master key, Reach pairing token, and secret files, live in the XDG
-data directory and are created atomically with mode `0600`. A container or GitHub Action
-that needs another disk sets `XDG_DATA_HOME`; there is no separate secrets-directory
-variable.
+The runtime directory is `0700`, and its daemon handshake files are `0600`. When `XDG_RUNTIME_DIR` is unset, as on macOS, the fallback is a per-user directory under the system temporary directory. The OS clears the runtime directory when you log out, so a crashed daemon leaves nothing behind. Private values that must survive logout, including the session-token master key, Reach pairing token, and secret files, live in the XDG data directory and are created atomically with mode `0600`. A container or GitHub Action that needs another disk sets `XDG_DATA_HOME`; there is no separate secrets-directory variable.
 
 ## Model providers
 
-Set an `api_key` for the providers you use, as a secret file named
-`providers.<id>.api_key`. Most resolve through LiteLLM's built-in endpoints; any
-OpenAI-compatible provider may also set `base_url` in this YAML file. Mailbox sessions
-use the same map: add any catalogue id under `providers:` and point `email.provider` /
-`email.model` at it (or keep the agent profile's pair).
+Set an `api_key` for the providers you use, as a secret file named `providers.<id>.api_key`. Most resolve through LiteLLM's built-in endpoints; any OpenAI-compatible provider may also set `base_url` in this YAML file. Mailbox sessions use the same map: add any catalogue id under `providers:` and point `email.provider` / `email.model` at it (or keep the agent profile's pair).
 
 ```yaml
 providers:
@@ -79,22 +46,11 @@ providers:
   custom: { api_key: "", base_url: "" }
 ```
 
-`custom` takes any OpenAI-compatible endpoint, which is why it needs a `base_url` as
-well. Around fifty providers are registered (Azure, Alibaba, Vercel, Cerebras, Cohere,
-DeepInfra, Hyperbolic, Hetzner, and more); the registry in
-`langmesh.base.identity.providers` is the full list.
+`custom` takes any OpenAI-compatible endpoint, which is why it needs a `base_url` as well. Around fifty providers are registered (Azure, Alibaba, Vercel, Cerebras, Cohere, DeepInfra, Hyperbolic, Hetzner, and more); the registry in `langmesh.base.identity.providers` is the full list.
 
-You can also **sign in with a ChatGPT or a Cursor subscription** instead of pasting a
-key, in Settings, under Providers. Neither has a key to store: both live as OAuth tokens
-in the data directory's `oauths/` folder, one file per provider, written `0600` inside a
-`0700` directory. They stay out of `configuration.yaml` deliberately, because that file
-is digest-synced and would thrash on every silent token refresh. Which models each plan
-serves is discovered live from the account.
+You can also **sign in with a ChatGPT or a Cursor subscription** instead of pasting a key, in Settings, under Providers. Neither has a key to store: both live as OAuth tokens in the data directory's `oauths/` folder, one file per provider, written `0600` inside a `0700` directory. They stay out of `configuration.yaml` deliberately, because that file is digest-synced and would thrash on every silent token refresh. Which models each plan serves is discovered live from the account.
 
-**Which model a session uses** is not set here; it belongs to the agent profile, in that
-agent's `AGENT.md` frontmatter (`model` and `provider`). See
-[Agent system](agent-system.md#agents). A profile pinned to a provider you have no
-credentials for fails on its first call.
+**Which model a session uses** is not set here; it belongs to the agent profile, in that agent's `AGENT.md` frontmatter (`model` and `provider`). See [Agent system](agent-system.md#agents). A profile pinned to a provider you have no credentials for fails on its first call.
 
 ## Web search and retrieval
 
@@ -119,15 +75,11 @@ web_fetch:
 | `web_fetch.download_timeout_seconds`  | How long a download is given                                     | —                              |
 | `web_fetch.minimum_useful_characters` | Below this a page is a wall or stub, so the next engine is tried | —                              |
 
-`fetch_url` uses a tiered engine: Jina Reader first, then Firecrawl, then a direct
-fetch. Each tier is optional; an unset key skips it. `proxy_url` overrides the standard
-`HTTPS_PROXY` and `ALL_PROXY` for the fetch and download tools only.
+`fetch_url` uses a tiered engine: Jina Reader first, then Firecrawl, then a direct fetch. Each tier is optional; an unset key skips it. `proxy_url` overrides the standard `HTTPS_PROXY` and `ALL_PROXY` for the fetch and download tools only.
 
 ## Hosted integrations
 
-Composio's hosted gateway joins the ordinary set of MCP servers when enabled; it is not
-a second path, and tool gating sees it as another server. `composio` is an app-owned
-section in the same file. The key is the secret file `composio.api_key`.
+Composio's hosted gateway joins the ordinary set of MCP servers when enabled; it is not a second path, and tool gating sees it as another server. `composio` is an app-owned section in the same file. The key is the secret file `composio.api_key`.
 
 ## Execution and permissions
 
@@ -140,46 +92,28 @@ user_context: { enabled: false, refresh_hours: 6 }
 toolbox: { enabled: true }
 ```
 
-`workspace.strategy` is one of `none`, `branch`, or `worktree`. It is resolved once,
-when the session is created. A `worktree` session runs its tools in its own git
-worktree, so parallel sessions on one repository do not tread on each other.
+`workspace.strategy` is one of `none`, `branch`, or `worktree`. It is resolved once, when the session is created. A `worktree` session runs its tools in its own git worktree, so parallel sessions on one repository do not tread on each other.
 
-`agent.permission_mode` is the mode a session gets when none is asked for. It is a
-default, not a ceiling: a session's creation can override it, and a child is clamped
-against its parent either way. The modes are `ask`, `automatic`, and `allow`.
+`agent.permission_mode` is the mode a session gets when none is asked for. It is a default, not a ceiling: a session's creation can override it, and a child is clamped against its parent either way. The modes are `ask`, `automatic`, and `allow`.
 
-`computer_control` turns on the macOS screen tools (`control_screen`); it is opt-in.
-`user_context` puts a snapshot of how you work into the prompt; it is opt-in too.
+`computer_control` turns on the macOS screen tools (`control_screen`); it is opt-in. `user_context` puts a snapshot of how you work into the prompt; it is opt-in too.
 
 ### The session toolbox
 
-What a session may _reach_ is the confinement's question. What a session _has_ is this
-one. Until they were separated they gave the same answer: a missing tool and a forbidden
-path both came back as `Operation not permitted`, so an agent read a gap in its toolkit
-as a boundary and went looking for a way around it.
+What a session may _reach_ is the confinement's question. What a session _has_ is this one. Until they were separated they gave the same answer: a missing tool and a forbidden path both came back as `Operation not permitted`, so an agent read a gap in its toolkit as a boundary and went looking for a way around it.
 
 ```yaml
 toolbox:
   enabled: true
 ```
 
-With it on, each session gets a package profile of its own at the front of its `PATH`,
-and `nix profile add nixpkgs#jq` installs into that profile with no flag and no path.
-The packages come from the shared read-only store; what the session owns is a directory
-of symlinks under `$XDG_STATE_HOME/langmesh/sessions/<id>`
-(`~/.local/state/langmesh/sessions/<id>` by default; the toolbox root), deleted when the
-session is reaped. Your own profile is never written to, and the confinement is
-unchanged. The confinement grants the shared Nix store read and execute access so these
-profile links work as commands; writes remain limited to the session profile.
+With it on, each session gets a package profile of its own at the front of its `PATH`, and `nix profile add nixpkgs#jq` installs into that profile with no flag and no path. The packages come from the shared read-only store; what the session owns is a directory of symlinks under `$XDG_STATE_HOME/langmesh/sessions/<id>` (`~/.local/state/langmesh/sessions/<id>` by default; the toolbox root), deleted when the session is reaped. Your own profile is never written to, and the confinement is unchanged. The confinement grants the shared Nix store read and execute access so these profile links work as commands; writes remain limited to the session profile.
 
-It needs [Nix](https://nixos.org). On a machine without it there is no toolbox, and the
-agent is told nothing about installing anything.
+It needs [Nix](https://nixos.org). On a machine without it there is no toolbox, and the agent is told nothing about installing anything.
 
 ### Confinement
 
-What a session's tool children may do, a `bash` command or a `control_screen` script.
-The operating system enforces this; the harness does not infer it from the text of a
-command.
+What a session's tool children may do, a `bash` command or a `control_screen` script. The operating system enforces this; the harness does not infer it from the text of a command.
 
 ```yaml
 sandbox:
@@ -198,57 +132,25 @@ sandbox:
   nice: 0
 ```
 
-`enforce` is one of `required`, `preferred`, or `off`. `limits` are POSIX rlimits under
-their own names and units; `umask` is `umask(2)` and `nice` is `nice(2)`. Only the
-filesystem and the network have no POSIX spelling, and they are the two that need a
-platform behind them. `network` is **off by default**; turn it on if a tool child may
-reach the network at all.
+`enforce` is one of `required`, `preferred`, or `off`. `limits` are POSIX rlimits under their own names and units; `umask` is `umask(2)` and `nice` is `nice(2)`. Only the filesystem and the network have no POSIX spelling, and they are the two that need a platform behind them. `network` is **off by default**; turn it on if a tool child may reach the network at all.
 
-**The filesystem.** The system stays readable; the lists govern your home, which is
-closed by default. `readable` is the allowlist that keeps toolchains working. `writable`
-is narrower still. `deny` is an opt-in absolute ban that wins over both; nothing decided
-at runtime reaches past it. The shipped defaults keep credential and configuration
-directories readable, including `~/Library/Keychains` so Git's macOS credential helper
-works inside the sandbox. `$WORKSPACE` is the session's own directory.
+**The filesystem.** The system stays readable; the lists govern your home, which is closed by default. `readable` is the allowlist that keeps toolchains working. `writable` is narrower still. `deny` is an opt-in absolute ban that wins over both; nothing decided at runtime reaches past it. The shipped defaults keep credential and configuration directories readable, including `~/Library/Keychains` so Git's macOS credential helper works inside the sandbox. `$WORKSPACE` is the session's own directory.
 
-**Asking for more.** An agent that needs a path outside these lists asks for it, on the
-call that needs it, with `access_request`. That request is the only thing that raises a
-prompt. An approval holds for the rest of that session and never reaches a peer.
-`grantable` lists the paths an agent may be given without a prompt; it is empty by
-default, so every request is asked about.
+**Asking for more.** An agent that needs a path outside these lists asks for it, on the call that needs it, with `access_request`. That request is the only thing that raises a prompt. An approval holds for the rest of that session and never reaches a peer. `grantable` lists the paths an agent may be given without a prompt; it is empty by default, so every request is asked about.
 
-**When a command hits the wall.** A command the operating system refuses is not simply
-failed. Its first run was confined and could not have been otherwise, so whatever it
-managed before the refusal happened inside the box, which makes a second run with more
-reach safe to offer. Under `ask` you are shown the command and what the refusal looked
-like; under `automatic` the reviewer answers. Your `deny` list still holds through it.
+**When a command hits the wall.** A command the operating system refuses is not simply failed. Its first run was confined and could not have been otherwise, so whatever it managed before the refusal happened inside the box, which makes a second run with more reach safe to offer. Under `ask` you are shown the command and what the refusal looked like; under `automatic` the reviewer answers. Your `deny` list still holds through it.
 
-**The backend.** macOS uses
-[`sandbox-exec`](https://keith.github.io/xcode-man-pages/sandbox-exec.1.html) with a
-generated Seatbelt profile; Linux uses
-[Landlock](https://docs.kernel.org/userspace-api/landlock.html) plus a network
-namespace. Apple has deprecated `sandbox-exec` since 10.15, and LangMesh depends on it
-anyway, because nothing else confines a single child process. If Apple removes it, the
-boot-time probe fails and `enforce` decides what happens.
+**The backend.** macOS uses [`sandbox-exec`](https://keith.github.io/xcode-man-pages/sandbox-exec.1.html) with a generated Seatbelt profile; Linux uses [Landlock](https://docs.kernel.org/userspace-api/landlock.html) plus a network namespace. Apple has deprecated `sandbox-exec` since 10.15, and LangMesh depends on it anyway, because nothing else confines a single child process. If Apple removes it, the boot-time probe fails and `enforce` decides what happens.
 
-**`enforce`.** `required` (the default) refuses to create a session when no backend is
-available, naming what is missing. `preferred` runs with the POSIX half only, limits,
-mask, priority, a scoped environment, which is hygiene rather than a boundary. `off`
-does not confine.
+**`enforce`.** `required` (the default) refuses to create a session when no backend is available, naming what is missing. `preferred` runs with the POSIX half only, limits, mask, priority, a scoped environment, which is hygiene rather than a boundary. `off` does not confine.
 
-The harness resolves a session's confinement when it **creates** the session, and
-nothing widens it afterwards. It clamps it against the session that created it: path
-sets intersect, so a peer never gets a wider filesystem than its creator holds. An agent
-profile may narrow it further with its own `sandbox:` block.
+The harness resolves a session's confinement when it **creates** the session, and nothing widens it afterwards. It clamps it against the session that created it: path sets intersect, so a peer never gets a wider filesystem than its creator holds. An agent profile may narrow it further with its own `sandbox:` block.
 
-> [!NOTE] Commands run against a **remote location** are not confined: they execute on
-> another machine, where a boundary drawn by this process has no meaning.
+> [!NOTE] Commands run against a **remote location** are not confined: they execute on another machine, where a boundary drawn by this process has no meaning.
 
 ### Permission modes
 
-A session's mode says **who answers** when a call asks to reach past its confinement. It
-says nothing about what the session may do; that is the `sandbox` block above, enforced
-by the operating system.
+A session's mode says **who answers** when a call asks to reach past its confinement. It says nothing about what the session may do; that is the `sandbox` block above, enforced by the operating system.
 
 | Mode        | Behaviour                                                                                                                                                             |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -256,28 +158,13 @@ by the operating system.
 | `automatic` | A reviewer answers: it allows or refuses the request, and never asks. For work nobody is watching. A refusal reaches the agent as a refused tool call, with a reason. |
 | `allow`     | No gate at all: every call runs as if it had whatever it asked for. The confinement still applies to what a call may touch; only the asking is skipped.               |
 
-A session's mode is chosen when the harness creates it and can be changed afterwards by
-the person running it; a session can never change its own. A session created by another
-is never looser than its parent, and tightening a session tightens the subtree it
-created, so an unattended session (`automatic` or `allow`) can only create sessions that
-also run unattended.
+A session's mode is chosen when the harness creates it and can be changed afterwards by the person running it; a session can never change its own. A session created by another is never looser than its parent, and tightening a session tightens the subtree it created, so an unattended session (`automatic` or `allow`) can only create sessions that also run unattended.
 
-**A read-only session** is not a mode. It is a confinement with nowhere writable:
-created with a `sandbox:` block that lists no `writable` paths. Nothing about a
-command's text decides it, so no spelling of a write gets past.
+**A read-only session** is not a mode. It is a confinement with nowhere writable: created with a `sandbox:` block that lists no `writable` paths. Nothing about a command's text decides it, so no spelling of a write gets past.
 
-Three tools take per-call rules on each agent, the three whose calls can be named:
-`bash` by its command (`sudo *: deny`, `rm -rf *: ask`), `mcp` by `server.tool`
-(`*.delete_*: deny`), and `screen` by the primitive a script reaches for
-(`evaluate: deny`). The longest matching pattern wins. A `deny` refuses the call
-outright in all modes; a reviewer may not overrule a rule you wrote.
+Three tools take per-call rules on each agent, the three whose calls can be named: `bash` by its command (`sudo *: deny`, `rm -rf *: ask`), `mcp` by `server.tool` (`*.delete_*: deny`), and `screen` by the primitive a script reaches for (`evaluate: deny`). The longest matching pattern wins. A `deny` refuses the call outright in all modes; a reviewer may not overrule a rule you wrote.
 
-`bash` ships with a short list of prefixes already set to `ask` or `deny`, because the
-confinement answers "where can this reach" and not "how much of the workspace survives
-this": `rm -rf *`, `rm -fr *`, `rm -r *`, `git reset --hard*`, `git clean -*`,
-`git push --force*`, `sudo *`, `chmod -R *`, `chown -R *`, `dd *` are set to `ask`, and
-`mkfs*`, `shutdown*`, `reboot*` to `deny`. Your own entry at the same pattern replaces
-the shipped one.
+`bash` ships with a short list of prefixes already set to `ask` or `deny`, because the confinement answers "where can this reach" and not "how much of the workspace survives this": `rm -rf *`, `rm -fr *`, `rm -r *`, `git reset --hard*`, `git clean -*`, `git push --force*`, `sudo *`, `chmod -R *`, `chown -R *`, `dd *` are set to `ask`, and `mkfs*`, `shutdown*`, `reboot*` to `deny`. Your own entry at the same pattern replaces the shipped one.
 
 ## Conversation compaction
 
@@ -290,31 +177,14 @@ compaction:
   maximum_context_tokens: 0
 ```
 
-When a conversation reaches its recommended preparation threshold, LangMesh appends one
-private pre-compaction notice inside the reserved context buffer. The segment exposes
-only local Bash. The agent must atomically bring the active workspace's
-`.agents/observations.sqlite` up to date and advance `registry_meta.revision`, including
-a revision-only acknowledgement when nothing durable changed. LangMesh verifies that the
-revision advanced, then asks the model for the summary through
-`submit_compaction_summary`; once collected, the older turns are dropped and the session
-continues with the system prompt, the summary, and the recent working set word for word.
-A summarizer that stops without submitting is reminded until it does — emitting the tool
-call correctly is the model's own responsibility, and only the person's stop ends the
-wait.
+When a conversation reaches its recommended preparation threshold, LangMesh appends one private pre-compaction notice inside the reserved context buffer. The segment exposes only local Bash. The agent must atomically bring the active workspace's `.agents/observations.sqlite` up to date and advance `registry_meta.revision`, including a revision-only acknowledgement when nothing durable changed. LangMesh verifies that the revision advanced, then asks the model for the summary through `submit_compaction_summary`; once collected, the older turns are dropped and the session continues with the system prompt, the summary, and the recent working set word for word. A summarizer that stops without submitting is reminded until it does — emitting the tool call correctly is the model's own responsibility, and only the person's stop ends the wait.
 
-- `output_reserve_fraction` is held back for the answer the model is about to write;
-  everything else here is a share of what remains.
+- `output_reserve_fraction` is held back for the answer the model is about to write; everything else here is a share of what remains.
 - `reclaim_at_fraction` is the recommended preparation boundary, not a hard cutoff.
-- `recent_working_set_fraction` is how much stays verbatim, measured in tokens rather
-  than turns.
-- `maximum_context_tokens` optionally bounds the context used to schedule compaction.
-  Zero uses the model's available context without another bound.
+- `recent_working_set_fraction` is how much stays verbatim, measured in tokens rather than turns.
+- `maximum_context_tokens` optionally bounds the context used to schedule compaction. Zero uses the model's available context without another bound.
 
-`goal_review` governs how a goal the agent marked is settled. The agent owns its goal's
-`status` through the `update_goal` tool (`active`, `satisfied`, `blocked`, `parked`,
-`cleared`). `parked` and `cleared` are administrative and apply directly. A goal left
-`active` and unmarked is simply re-opened with a light continuation reminder until it is
-reached or the person stops it.
+`goal_review` governs how a goal the agent marked is settled. The agent owns its goal's `status` through the `update_goal` tool (`active`, `satisfied`, `blocked`, `parked`, `cleared`). `parked` and `cleared` are administrative and apply directly. A goal left `active` and unmarked is simply re-opened with a light continuation reminder until it is reached or the person stops it.
 
 ```yaml
 goal_review:
@@ -323,24 +193,10 @@ goal_review:
 
 Who settles a `satisfied` or `blocked` mark is `goal_review.settlement`:
 
-- `reviewer` (the default): the mark is not final by itself. After the working turn
-  ends, an independent reviewer inspects the work and either confirms the mark or
-  overrides it (an unsupported `satisfied` becomes `unmet`, sending the goal back to
-  work). The reviewer is asked again until it submits a verdict — modelling correctly is
-  the model's own responsibility, and nothing puts a price on honesty.
-- `agent`: the working agent's mark is final and the session ends. There is no second
-  reviewer session.
+- `reviewer` (the default): the mark is not final by itself. After the working turn ends, an independent reviewer inspects the work and either confirms the mark or overrides it (an unsupported `satisfied` becomes `unmet`, sending the goal back to work). The reviewer is asked again until it submits a verdict — modelling correctly is the model's own responsibility, and nothing puts a price on honesty.
+- `agent`: the working agent's mark is final and the session ends. There is no second reviewer session.
 
-Observations are workspace-owned current state and explicit. Agents retrieve and
-maintain them through Bash using the `observational-memory` skill. The daemon watches
-each active location's registry through native filesystem notifications and shares one
-watcher across its sessions. A committed revision broadcasts a complete validated
-snapshot to the memory panel. The append-only session context receives only
-progressive-disclosure metadata, never observation rows. A registry that is missing or
-no longer matches its schema is itself reported as metadata (`status: missing|broken`
-with a problem message), so an agent hears about the state and repairs it rather than
-silently working without memory; the pre-columnar JSON-schema format is never read or
-migrated.
+Observations are workspace-owned current state and explicit. Agents retrieve and maintain them through Bash using the `observational-memory` skill. The daemon watches each active location's registry through native filesystem notifications and shares one watcher across its sessions. A committed revision broadcasts a complete validated snapshot to the memory panel. The append-only session context receives only progressive-disclosure metadata, never observation rows. A registry that is missing or no longer matches its schema is itself reported as metadata (`status: missing|broken` with a problem message), so an agent hears about the state and repairs it rather than silently working without memory; the pre-columnar JSON-schema format is never read or migrated.
 
 ## Attachments
 
@@ -349,14 +205,11 @@ attachments:
   inline_image_megabytes: 20.0
 ```
 
-`inline_image_megabytes` is the ceiling on an image inlined into a conversation, since a
-huge image would blow up the persisted conversation it is inlined into. Above it, or for
-a model without vision, the model gets the file path instead.
+`inline_image_megabytes` is the ceiling on an image inlined into a conversation, since a huge image would blow up the persisted conversation it is inlined into. Above it, or for a model without vision, the model gets the file path instead.
 
 ## Tool limits
 
-How much output tools may return and how patient they are. Every limit is a plain value
-under `limits`; nothing is scaled or inferred, so what you set is what runs:
+How much output tools may return and how patient they are. Every limit is a plain value under `limits`; nothing is scaled or inferred, so what you set is what runs:
 
 ```yaml
 limits:
@@ -364,15 +217,9 @@ limits:
   web_search_maximum: 16
 ```
 
-The keys are the fields of `langmesh.base.primitives.limits.Limits`. An unknown name is
-an error at load, and the settings panel lists each with its shipped value. See
-[the reference below](#the-limits).
+The keys are the fields of `langmesh.base.primitives.limits.Limits`. An unknown name is an error at load, and the settings panel lists each with its shipped value. See [the reference below](#the-limits).
 
-The settings panel lists every library setting with what it ships at and what this
-machine runs on; app-owned settings use their dedicated panels, and daemon lifecycle
-settings remain file-only. What each setting is _for_ is in the reference below. The
-shipped template (`langmeshd/commons/configuration.yaml`) is the minimal first-run
-document; the schema supplies every omitted default.
+The settings panel lists every library setting with what it ships at and what this machine runs on; app-owned settings use their dedicated panels, and daemon lifecycle settings remain file-only. What each setting is _for_ is in the reference below. The shipped template (`langmeshd/commons/configuration.yaml`) is the minimal first-run document; the schema supplies every omitted default.
 
 ## Screen control
 
@@ -386,17 +233,11 @@ computer_control:
     lexical_gate_long_words: 7
 ```
 
-`enabled` drives native macOS apps and your own Chrome, and it is opt-in. After an
-action, the harness **polls** a surface until it stops changing; it does not sleep for a
-fixed guess. The polling cadence and the retrieval limits live with the other numbers
-under `limits` (`settle_poll_seconds`, `settle_give_up_seconds`, `settle_stable_reads`,
-and the `find_*` family).
+`enabled` drives native macOS apps and your own Chrome, and it is opt-in. After an action, the harness **polls** a surface until it stops changing; it does not sleep for a fixed guess. The polling cadence and the retrieval limits live with the other numbers under `limits` (`settle_poll_seconds`, `settle_give_up_seconds`, `settle_stable_reads`, and the `find_*` family).
 
 ### How a screen is ranked
 
-`find_one` and `find_many` score every element three ways and add the results: two
-static embeddings read what the query means, and a character similarity reads how it is
-spelled.
+`find_one` and `find_many` score every element three ways and add the results: two static embeddings read what the query means, and a character similarity reads how it is spelled.
 
 | Setting                    | What it does                                                                                                |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -405,23 +246,15 @@ spelled.
 | `lexical_gate_short_words` | At or below this, a query is a quoted label and its spelling counts in full.                                |
 | `lexical_gate_long_words`  | At or above this, a query is a description and its spelling is ignored. Linear between the two.             |
 
-The two models are added, not chosen between: used alone the English one is worse on
-native windows, used together they beat either alone. Clearing both leaves BM25.
+The two models are added, not chosen between: used alone the English one is worse on native windows, used together they beat either alone. Clearing both leaves BM25.
 
-The gate keeps the character similarity from doing harm. A short query is a label read
-off the screen, so its spelling is the strongest evidence available. A long query shares
-no spelling with anything, and a character similarity is never silent, so past
-`lexical_gate_long_words` it is dropped.
+The gate keeps the character similarity from doing harm. A short query is a label read off the screen, so its spelling is the strongest evidence available. A long query shares no spelling with anything, and a character similarity is never silent, so past `lexical_gate_long_words` it is dropped.
 
-`find_one`'s willingness to answer at all is separate, under `limits.find_one_margin`,
-and it is fitted against this ranking, so change one and re-fit the other.
+`find_one`'s willingness to answer at all is separate, under `limits.find_one_margin`, and it is fitted against this ranking, so change one and re-fit the other.
 
 ## MCP servers
 
-`mcp.servers` mirrors what `.agents/mcp.json` declares and is normally edited there. See
-[Agent system](agent-system.md#mcp-servers). A folder's own servers join the shared pool
-when a session in that folder starts; the pool only grows, so no other session loses its
-servers.
+`mcp.servers` mirrors what `.agents/mcp.json` declares and is normally edited there. See [Agent system](agent-system.md#mcp-servers). A folder's own servers join the shared pool when a session in that folder starts; the pool only grows, so no other session loses its servers.
 
 ## Remote peers
 
@@ -430,15 +263,11 @@ remote_agents:
   agents: {}
 ```
 
-Agents on other hosts, resolved by their A2A card. Normally registered in
-`~/.agents/remote-agents.json` or from Settings rather than written here. A remote agent
-is not a session: LangMesh does not own its lifecycle, cannot set its permission mode,
-and keeps no transcript of it.
+Agents on other hosts, resolved by their A2A card. Normally registered in `~/.agents/remote-agents.json` or from Settings rather than written here. A remote agent is not a session: LangMesh does not own its lifecycle, cannot set its permission mode, and keeps no transcript of it.
 
 ## Telemetry
 
-Off by default. When enabled, spans and token usage are exported over OTLP to an
-endpoint you choose; LangMesh ships nothing anywhere on its own.
+Off by default. When enabled, spans and token usage are exported over OTLP to an endpoint you choose; LangMesh ships nothing anywhere on its own.
 
 ```yaml
 telemetry:
@@ -447,35 +276,24 @@ telemetry:
   sample_ratio: 1.0
 ```
 
-**There is no default agent setting**, here or anywhere. Every session is created with
-an explicit agent, and no profile is the one to fall back to. Add your own under
-`~/.agents/agents/<id>/` or `.agents/agents/<id>/` in a working directory. See
-[Agent system](agent-system.md).
+**There is no default agent setting**, here or anywhere. Every session is created with an explicit agent, and no profile is the one to fall back to. Add your own under `~/.agents/agents/<id>/` or `.agents/agents/<id>/` in a working directory. See [Agent system](agent-system.md).
 
 ## Configuration reference
 
-Every setting the daemon exposes, with runtime-boundary and plugin settings grouped by
-the component that owns them.
+Every setting the daemon exposes, with runtime-boundary and plugin settings grouped by the component that owns them.
 
-A setting is addressed by its dotted path, and the same path works everywhere: in
-`~/.config/langmesh/configuration.yaml`, and as the key the interface writes. Nothing is
-written to that file until you change it; a setting you never touched follows the
-default.
+A setting is addressed by its dotted path, and the same path works everywhere: in `~/.config/langmesh/configuration.yaml`, and as the key the interface writes. Nothing is written to that file until you change it; a setting you never touched follows the default.
 
-To read or change a setting, edit `~/.config/langmesh/configuration.yaml` (a setting you
-never touched may be absent; omit it and the default applies) or use the interface's
-settings panel, which walks the same schema. To unset a setting, remove its line from
-the file rather than writing the default into it.
+To read or change a setting, edit `~/.config/langmesh/configuration.yaml` (a setting you never touched may be absent; omit it and the default applies) or use the interface's settings panel, which walks the same schema. To unset a setting, remove its line from the file rather than writing the default into it.
 
-For these settings, the panel's names and explanations live in `shared/messages/`, keyed by
-these exact paths.
+For these settings, the panel's names and explanations live in `shared/messages/`, keyed by these exact paths.
 
 ### Agent defaults
 
 What a session runs under when its creator does not say.
 
-| Setting                 | Type                          | Default | What it is for                                                                                                              |
-| ----------------------- | ----------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Setting                 | Type                          | Default | What it is for                                                                   |
+| ----------------------- | ----------------------------- | ------- | -------------------------------------------------------------------------------- |
 | `agent.permission_mode` | `ask` / `automatic` / `allow` | `ask`   | The daemon default when neither the caller nor the agent profile chooses a mode. |
 
 ### Workspaces
@@ -534,14 +352,14 @@ How an agent-marked goal is settled.
 
 These values belong to their plugins and are passed when the daemon composes them.
 
-| Setting | Type | Default | What it is for |
-| --- | --- | --- | --- |
-| `compaction.summary_attempts` | integer | `3` | Maximum summary submissions for one compaction. |
-| `compaction.summary_timeout_seconds` | number | `180.0` | Maximum time for one summary attempt. |
-| `goal_review.review_attempts` | integer | `3` | Maximum verdict submissions for one goal review. |
-| `goal_review.review_timeout_seconds` | number | `180.0` | Maximum time for one goal-review attempt. |
-| `permission_reviewer.attempts` | integer | `4` | Maximum automatic permission verdict attempts. |
-| `titling.attempts` | integer | `4` | Maximum session-title attempts. |
+| Setting                              | Type    | Default | What it is for                                   |
+| ------------------------------------ | ------- | ------- | ------------------------------------------------ |
+| `compaction.summary_attempts`        | integer | `3`     | Maximum summary submissions for one compaction.  |
+| `compaction.summary_timeout_seconds` | number  | `180.0` | Maximum time for one summary attempt.            |
+| `goal_review.review_attempts`        | integer | `3`     | Maximum verdict submissions for one goal review. |
+| `goal_review.review_timeout_seconds` | number  | `180.0` | Maximum time for one goal-review attempt.        |
+| `permission_reviewer.attempts`       | integer | `4`     | Maximum automatic permission verdict attempts.   |
+| `titling.attempts`                   | integer | `4`     | Maximum session-title attempts.                  |
 
 ### Attachments
 
@@ -598,14 +416,7 @@ Process-level timings owned by the daemon and read only from the configuration f
 
 ### Email
 
-IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same file. Off
-until you enable it. The mail process (`langmesh mail`) is a **client** of `langmeshd`.
-`langmesh mail check` proves IMAP and SMTP without IDLEing. `langmesh mail auth` writes
-the OAuth refresh token. Mail sessions speak through `submit_email` (`progress` or
-`reply`); markdown is rendered as HTML in the outbound message. See [Email](email.md).
-Password auth uses `email.imap.password` / `email.smtp.password`. OAuth uses
-`email.oauth.refresh_token` (and optional `email.oauth.client_secret`). The model key is
-`providers.<id>.api_key` for whatever catalogue provider mailbox sessions call.
+IMAP IDLE plus SMTP in front of the daemon. An app-owned section in the same file. Off until you enable it. The mail process (`langmesh mail`) is a **client** of `langmeshd`. `langmesh mail check` proves IMAP and SMTP without IDLEing. `langmesh mail auth` writes the OAuth refresh token. Mail sessions speak through `submit_email` (`progress` or `reply`); markdown is rendered as HTML in the outbound message. See [Email](email.md). Password auth uses `email.imap.password` / `email.smtp.password`. OAuth uses `email.oauth.refresh_token` (and optional `email.oauth.client_secret`). The model key is `providers.<id>.api_key` for whatever catalogue provider mailbox sessions call.
 
 | Setting                      | Type    | Default                          | What it is for                                                                                                                                                                                                                             |
 | ---------------------------- | ------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -645,10 +456,7 @@ Password auth uses `email.imap.password` / `email.smtp.password`. OAuth uses
 
 ### Provision
 
-`packaging/mail/provision.sh` reads this section from
-`packaging/mail/configuration.yaml`. The running daemon and mail client do not. Cloud
-CLIs still take their own tokens (`FLY_API_TOKEN`, `HCLOUD_TOKEN`,
-`DIGITALOCEAN_ACCESS_TOKEN`).
+`packaging/mail/provision.sh` reads this section from `packaging/mail/configuration.yaml`. The running daemon and mail client do not. Cloud CLIs still take their own tokens (`FLY_API_TOKEN`, `HCLOUD_TOKEN`, `DIGITALOCEAN_ACCESS_TOKEN`).
 
 | Setting                          | Type   | Default         | What it is for                                                                               |
 | -------------------------------- | ------ | --------------- | -------------------------------------------------------------------------------------------- |
@@ -716,9 +524,7 @@ CLIs still take their own tokens (`FLY_API_TOKEN`, `HCLOUD_TOKEN`,
 
 ### The limits
 
-How large, how many, and how patient the tools are: the fields of
-`langmesh.base.primitives.limits.Limits`, each addressable under `limits`. Every
-duration is in seconds. The shipped values:
+How large, how many, and how patient the tools are: the fields of `langmesh.base.primitives.limits.Limits`, each addressable under `limits`. Every duration is in seconds. The shipped values:
 
 | Name under `limits`              | Shipped value | What it is for                                                                                                |
 | -------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -780,25 +586,11 @@ duration is in seconds. The shipped values:
 
 A few carry more reasoning than a table row holds.
 
-- **`accessibility_walk_budget`** replaces a depth limit, which guarded the wrong
-  quantity: a window six levels deep can take twice as long as one thirty-five levels
-  deep, because the cost is how quickly the app answers, not how far down. Anything
-  unread when it expires is reported as a region.
-- **`find_anchor_margin`** below its default makes the anchor a guess, and organising a
-  ranking around a guess is worse than not anchoring.
-- **`find_many_ceiling`** exists because an `all=True` escape returned 590 elements and
-  1.5MB on one ordinary page, ending the turn by exceeding the context window. A find is
-  a ranked search; the tail of a ranking is not more answer.
-- **`find_near_weight`** is fitted over anchored cases: relevance alone answers about a
-  fifth and proximity alone about a fifth, while the two together answer most.
-- **`find_one_margin`** is a budget rather than a discovery, and it is fitted against
-  the fused ranking, not the top score. Re-fit it whenever the ranking changes.
-- **`find_relevance_floor`** cuts the noise band and nothing more. Treat an empty result
-  as "nothing scored above the noise", never as proof of absence, and do not raise this
-  hoping to buy absence detection; it would cost real matches first.
-- **`frame_resolve_timeout`** is deliberately well below the action timeout, so a frame
-  that has gone waits out its budget rather than erroring.
-- **`session_idle_sleep_seconds`** is not a limit default; it is a daemon setting (five
-  hours by default): long enough that a working day of on-and-off use never pays a wake,
-  short enough that a machine left overnight is not holding interpreters for
-  conversations nobody returned to.
+- **`accessibility_walk_budget`** replaces a depth limit, which guarded the wrong quantity: a window six levels deep can take twice as long as one thirty-five levels deep, because the cost is how quickly the app answers, not how far down. Anything unread when it expires is reported as a region.
+- **`find_anchor_margin`** below its default makes the anchor a guess, and organising a ranking around a guess is worse than not anchoring.
+- **`find_many_ceiling`** exists because an `all=True` escape returned 590 elements and 1.5MB on one ordinary page, ending the turn by exceeding the context window. A find is a ranked search; the tail of a ranking is not more answer.
+- **`find_near_weight`** is fitted over anchored cases: relevance alone answers about a fifth and proximity alone about a fifth, while the two together answer most.
+- **`find_one_margin`** is a budget rather than a discovery, and it is fitted against the fused ranking, not the top score. Re-fit it whenever the ranking changes.
+- **`find_relevance_floor`** cuts the noise band and nothing more. Treat an empty result as "nothing scored above the noise", never as proof of absence, and do not raise this hoping to buy absence detection; it would cost real matches first.
+- **`frame_resolve_timeout`** is deliberately well below the action timeout, so a frame that has gone waits out its budget rather than erroring.
+- **`session_idle_sleep_seconds`** is not a limit default; it is a daemon setting (five hours by default): long enough that a working day of on-and-off use never pays a wake, short enough that a machine left overnight is not holding interpreters for conversations nobody returned to.
