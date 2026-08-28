@@ -105,7 +105,7 @@ Observational memory is separate. `.agents/observations.sqlite` is current works
 
 ### MCP servers
 
-`.agents/mcp.json` registers [Model Context Protocol](https://modelcontextprotocol.io) servers under `mcpServers`. Both `stdio` and `streamable_http` transports are supported. The bundled set ships `context7` and `semble` enabled, and a disabled `echo` demo that exercises a plain stdio server:
+`.agents/mcp.json` registers [Model Context Protocol](https://modelcontextprotocol.io) servers under `mcpServers`. Both `stdio` and `streamable_http` transports are supported. The bundled set enables `context7` and `semble`. It also contains a disabled `echo` entry for a local example server, but this checkout does not ship the referenced `examples/mcp/echo/server.py`; the enabled portion is:
 
 ```json
 {
@@ -127,7 +127,7 @@ Observational memory is separate. `.agents/observations.sqlite` is current works
 }
 ```
 
-Their tools and resources reach the agent through `call_mcp_server_tool`, `list_mcp_tools`, `list_mcp_resources`, and `read_mcp_resource`. The repository includes a complete [stdio server example](https://github.com/ghovax/langmesh/tree/main/examples/mcp).
+Their tools and resources reach the agent through `call_mcp_server_tool`, `list_mcp_tools`, `list_mcp_resources`, and `read_mcp_resource`. To add a stdio server, provide its executable or script separately and reference it from `mcp.json`.
 
 ## Tools
 
