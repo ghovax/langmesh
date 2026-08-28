@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from itertools import accumulate, takewhile
 from typing import Any, AsyncIterator, Literal, cast
@@ -703,9 +704,16 @@ class Compaction(Feature):
                                 streamed["last_usage"] = _event
 
                 stream_task = asyncio.create_task(_consume())
-                await await_interruptible(
-                    stream_task, self._host.turn.abort_event, summarizer.abort
-                )
+                try:
+                    await await_interruptible(
+                        stream_task, self._host.turn.abort_event, summarizer.abort
+                    )
+                finally:
+                    if not stream_task.done():
+                        summarizer.abort()
+                        stream_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await stream_task
                 last_usage = streamed["last_usage"]
                 if last_usage is not None:
                     logger.info(
