@@ -54,6 +54,7 @@ from langmesh.runtime.turn_events import (
 
 ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 PROTECTED_BRANCHES = frozenset({"main", "master"})
+EXTERNAL_COMMAND_TIMEOUT_SECONDS = 120.0
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
 
@@ -263,17 +264,40 @@ def _run(
     env: Mapping[str, str] | None = None,
     extraheader: str = "",
 ) -> str:
-    """Run a process in ``cwd`` and return stdout. ``extraheader`` is GitHub auth that never hits disk."""
+    """Run a bounded process in ``cwd`` and return stdout.
+
+    ``extraheader`` is GitHub authentication that never reaches disk. Non-interactive
+    Git settings are deliberate: an unattended webhook worker must fail and retry when
+    authentication or the network is unavailable, never wait for terminal input.
+    """
     command = list(arguments)
     if extraheader and command and command[0] == "git":
         command = ["git", "-c", f"{_git_header_key()}={extraheader}", *command[1:]]
     merged = dict(os.environ if env is None else env)
     if command and command[0] == "git":
-        merged.setdefault("GIT_TERMINAL_PROMPT", "0")
-    completed = subprocess.run(command, cwd=cwd, env=merged, capture_output=True, text=True)
+        merged["GIT_TERMINAL_PROMPT"] = "0"
+        merged["GCM_INTERACTIVE"] = "Never"
+    shown = " ".join(arguments)
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            env=merged,
+            capture_output=True,
+            text=True,
+            timeout=EXTERNAL_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        logger.error(
+            "%s timed out after %.1f seconds",
+            shown,
+            EXTERNAL_COMMAND_TIMEOUT_SECONDS,
+        )
+        raise RuntimeError(
+            f"{shown} timed out after {EXTERNAL_COMMAND_TIMEOUT_SECONDS:.1f} seconds"
+        ) from error
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
-        shown = " ".join(arguments)
         logger.error("%s failed: %s", shown, detail or f"exit {completed.returncode}")
         raise RuntimeError(f"{shown} failed: {detail or f'exit {completed.returncode}'}")
     return completed.stdout
@@ -296,7 +320,7 @@ def _git_header(token: str) -> str:
 def mention_sandbox(token: str) -> Profile:
     """Open network, and give tool children the job token so they can git push and use gh."""
     profile = SandboxConfiguration(enforce="required", network=True).to_profile()
-    environment = {"GIT_TERMINAL_PROMPT": "0"}
+    environment = {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "Never"}
     if token:
         environment["GITHUB_TOKEN"] = token
         environment["GH_TOKEN"] = token
@@ -475,7 +499,7 @@ def _api_request(url: str, token: str, *, data: bytes | None = None, method: str
         },
     )
     try:
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request, timeout=30) as response:
             body = response.read()
     except urllib.error.HTTPError as error:
         raise RuntimeError(f"GitHub API {error.code}: {error.read().decode()[:500]}") from error

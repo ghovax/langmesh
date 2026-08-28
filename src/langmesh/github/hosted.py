@@ -15,7 +15,6 @@ import json
 import logging
 import os
 import secrets
-import subprocess
 import tempfile
 import time
 import urllib.parse
@@ -45,7 +44,6 @@ from langmesh.github.detect import is_mention_turn, thread_has_prior_bot_comment
 from langmesh.github.mention import (
     Mention,
     _git_header,
-    _git_header_key,
     _run,
     acknowledgement,
     commits_to_push,
@@ -857,17 +855,14 @@ class Processor:
         workspace.parent.mkdir(parents=True, exist_ok=True)
         if (workspace / ".git").is_dir():
             return
-        workspace.parent.mkdir(parents=True, exist_ok=True)
         header = _git_header(token)
         command = [
             "git",
-            "-c",
-            f"{_git_header_key()}={header}",
             "clone",
             f"https://github.com/{repository}.git",
             str(workspace),
         ]
-        subprocess.run(command, check=True, capture_output=True, text=True)
+        _run(command, cwd=str(workspace.parent), extraheader=header)
 
     def _publish(self, mention: Mention, workspace: Path, token: str, run: Any) -> str:
         branch = current_branch(workspace, run=run)
@@ -1057,29 +1052,31 @@ class Processor:
             mention.session_id,
             ack,
         )
-        try:
+
+        async def process_mention() -> None:
+            active_mention = mention
             await asyncio.to_thread(self._checkout, mention.repository, workspace, token)
             runner = self._runner(token)
-            if mention.kind == "pull" and not mention.head_ref:
+            if active_mention.kind == "pull" and not active_mention.head_ref:
                 pull = await asyncio.to_thread(
                     self.github.request,
-                    f"/repos/{mention.repository}/pulls/{mention.number}",
+                    f"/repos/{active_mention.repository}/pulls/{active_mention.number}",
                     token,
                 )
-                mention = (
+                active_mention = (
                     mention_from_event(
                         event,
                         event_name="pull_request",
-                        repository=mention.repository,
+                        repository=active_mention.repository,
                         pull=pull,
                         known_turn=True,
                         bot_login=f"{slug}[bot]",
                     )
-                    or mention
+                    or active_mention
                 )
             checkout = await asyncio.to_thread(
                 prepare_tree,
-                mention,
+                active_mention,
                 workspace,
                 token=token,
                 app_slug=slug,
@@ -1089,7 +1086,7 @@ class Processor:
             followup = await asyncio.to_thread(
                 thread_has_prior_bot_comment,
                 event,
-                repository=mention.repository,
+                repository=active_mention.repository,
                 token=token,
                 api=self.settings.github_api_url,
                 bot_login=f"{slug}[bot]",
@@ -1097,20 +1094,19 @@ class Processor:
             )
 
             try:
-                async with asyncio.timeout(self.settings.processing_timeout_seconds):
-                    answer = await run_turn(
-                        mention,
-                        workspace,
-                        checkout=checkout,
-                        update_comment=update_existing_comment,
-                        token=token,
-                        thread_followup=followup,
-                        provider=provider,
-                        model=model,
-                        api_key=api_key,
-                        checkpoints=self._checkpoints,
-                        credential_store=credential_store,
-                    )
+                answer = await run_turn(
+                    active_mention,
+                    workspace,
+                    checkout=checkout,
+                    update_comment=update_existing_comment,
+                    token=token,
+                    thread_followup=followup,
+                    provider=provider,
+                    model=model,
+                    api_key=api_key,
+                    checkpoints=self._checkpoints,
+                    credential_store=credential_store,
+                )
             finally:
                 if credential_store is not None:
                     refreshed = credential_store.load(provider)
@@ -1128,7 +1124,7 @@ class Processor:
                     workspace, run=runner
                 ):
                     return ""
-                return self._publish(mention, workspace, token, runner)
+                return self._publish(active_mention, workspace, token, runner)
 
             pull_url = await asyncio.to_thread(publish_if_needed)
             await update_existing_comment(posted_reply(answer, pull_url))
@@ -1136,9 +1132,13 @@ class Processor:
                 "finished GitHub mention delivery id=%s attempt=%s session=%s pull_request=%s",
                 delivery_id,
                 attempt,
-                mention.session_id,
+                active_mention.session_id,
                 bool(pull_url),
             )
+
+        try:
+            async with asyncio.timeout(self.settings.processing_timeout_seconds):
+                await process_mention()
         except asyncio.TimeoutError:
             logger.error(
                 "hosted mention delivery timed out after %.1f seconds id=%s attempt=%s "
