@@ -4,7 +4,7 @@
 # are 0600 files under $XDG_DATA_HOME/langmesh/secrets/. Other settings stay at their schema
 # defaults so they can still improve without being pinned here.
 #
-# To see what there is to change:   read configuration-reference.md, or open Settings
+# To see what there is to change:   read documentation/user/configuration.md, or open Settings
 # To change one:                    edit this file: workspace:
 #                                     strategy: worktree
 # To put it back:                   remove the line, and the default applies
