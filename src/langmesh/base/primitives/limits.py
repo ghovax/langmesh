@@ -1,9 +1,9 @@
 """The plain limits every tool's size, count and timing budget is read from.
 
 No scaling families and no context-window math: a ``Limits`` value holds fixed numbers,
-built once from the configuration the daemon loads. Call sites read the current value
-through ``current_limits()``; the tokenizer-backed text helpers and the surface-settling
-poll live here too.
+built by the host that composes a runtime. Call sites read the current value through
+``current_limits()``; the tokenizer-backed text helpers and the surface-settling poll live
+here too.
 """
 
 from __future__ import annotations
@@ -79,11 +79,6 @@ class Limits:
     find_relevance_floor: float = 0.25
 
     # Other process and identity budgets
-    session_title_attempts: int = 4
-    permission_reviewer_attempts: int = 4
-    compaction_summary_attempts: int = 3
-    goal_review_attempts: int = 3
-    structured_verdict_timeout_seconds: float = 180.0
     model_catalogue_ttl: float = 60.0
     credential_refresh_leeway: float = 300.0
     oauth_poll_interval: float = 1.0
@@ -103,7 +98,7 @@ _bound: contextvars.ContextVar[Limits | None] = contextvars.ContextVar(
 
 
 def set_limits(limits: Limits) -> None:
-    """Adopt the process-wide limits the host configuration asks for."""
+    """Adopt the process-wide limits supplied by the host."""
     global _default
     _default = limits
 
@@ -123,8 +118,8 @@ def current_limits() -> Limits:
     return _bound.get() or _default
 
 
-def limits_from_configuration(policy: object) -> Limits:
-    """The limits a configuration section asks for, with plain overrides by field name."""
+def limits_from_policy(policy: object) -> Limits:
+    """Build limits from a policy value's optional mapping of field overrides."""
     configured = getattr(policy, "limits", None)
     values = (
         {key: value for key, value in configured.items() if hasattr(Limits, key)}
@@ -211,7 +206,7 @@ __all__ = [
     "clip_to_tokens",
     "count_tokens",
     "current_limits",
-    "limits_from_configuration",
+    "limits_from_policy",
     "reset_limits",
     "set_limits",
     "settle",

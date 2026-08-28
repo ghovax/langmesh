@@ -80,7 +80,7 @@ def apply_goal_review(runtime, review):
 
 
 def goal_settlement(runtime) -> str:
-    from langmesh.base.configuration.configuration import GoalReviewConfiguration
+    from langmesh.runtime.plugins.goal_review.configuration import GoalReviewConfiguration
     from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 
     feature = _resolve_feature(runtime, GoalReviewFeature)

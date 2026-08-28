@@ -33,13 +33,13 @@ from langmesh.runtime.plugins.compaction.ports import (
     DirectCompactionPreparation,
     ObservationCompactionPreparation,
 )
+from langmesh.runtime.plugins.compaction.configuration import CompactionConfiguration
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.internals import (
     await_interruptible,
     conversation_tokens,
     message_tokens,
 )
-from langmesh.base.primitives.limits import current_limits
 from langmesh.runtime.turn_events import (
     CompactionDone,
     CompactionStarted,
@@ -167,11 +167,13 @@ class Compaction(Feature):
     def __init__(
         self,
         *,
+        configuration: CompactionConfiguration | None = None,
         strategy: Any = None,
         preparation: Any = None,
         summarizer: Any = None,
     ) -> None:
-        # The caller's strategy and handoff replace only their own step; the fold stays this plugin's.
+        self._configuration = configuration or CompactionConfiguration()
+        # The caller's strategy and handoff replace only their own policy; the fold stays this plugin's.
         self._strategy = strategy
         self._preparation = (
             preparation if preparation is not None else DirectCompactionPreparation()
@@ -238,21 +240,20 @@ class Compaction(Feature):
             return 0
         return max(
             0,
-            window
-            - int(window * self._context.global_configuration.compaction.output_reserve_fraction),
+            window - int(window * self._configuration.output_reserve_fraction),
         )
 
     def managed_context(self) -> int:
         """The context budget that schedules maintenance, optionally bounded by the host."""
         usable = self.usable_context()
-        maximum = self._context.global_configuration.compaction.maximum_context_tokens
+        maximum = self._configuration.maximum_context_tokens
         if maximum <= 0:
             return usable
         return min(usable, maximum) if usable > 0 else maximum
 
     def _recent_working_set(self, reason: str = "automatic", recent: list | None = None) -> int:
         """The tail kept verbatim rather than compacted, as a share of the usable window so it scales with the model."""
-        fraction = self._context.global_configuration.compaction.recent_working_set_fraction
+        fraction = self._configuration.recent_working_set_fraction
         budget = int(self.managed_context() * fraction)
         if budget > 0 and reason != "manual":
             return budget
@@ -307,7 +308,7 @@ class Compaction(Feature):
         """Whether the next request is large enough that compacting is worth its cache invalidation."""
         managed = self.managed_context()
         return managed > 0 and next_request_tokens >= (
-            self._context.global_configuration.compaction.reclaim_at_fraction * managed
+            self._configuration.reclaim_at_fraction * managed
         )
 
     def should_maintain(self, request_tokens: int) -> bool:
@@ -316,7 +317,7 @@ class Compaction(Feature):
             return bool(
                 self._strategy.should_compact(self._compaction_state(context_tokens=request_tokens))
             )
-        compaction = self._context.global_configuration.compaction
+        compaction = self._configuration
         if not compaction.automatic or not self._at_compacting_threshold(request_tokens):
             return False
         return len(self.bounded_tail(self._host.conversation.messages)) < len(
@@ -741,8 +742,8 @@ class Compaction(Feature):
 
             submitted = await drive_verdict_session(
                 run_turn=_run_turn,
-                attempts=current_limits().compaction_summary_attempts,
-                timeout_seconds=current_limits().structured_verdict_timeout_seconds,
+                attempts=self._configuration.summary_attempts,
+                timeout_seconds=self._configuration.summary_timeout_seconds,
                 submitted=_submitted,
                 require_submission=lambda: self._require_summary_submission(summarizer),
                 missing_instruction=lambda: self._prompts.load("compaction_summary_missing", {}),
@@ -769,26 +770,15 @@ class Compaction(Feature):
 
     def _compaction_summarizer_runtime(self, messages_to_summarize: list):
         """The hidden session that produces the compaction summary, mirroring the goal reviewer."""
-        summarizer_configuration = self._context.agent_configuration.model_copy(
+        summarizer_agent = self._context.agent_configuration.model_copy(
             update={"permission_mode": "automatic"}
         )
-        summarizer_global_configuration = self._context.global_configuration.model_copy(
-            update={
-                "toolbox": self._context.global_configuration.toolbox.model_copy(
-                    update={"enabled": False}
-                ),
-                # The hidden session inherits the full conversation, so it must never compact itself.
-                "compaction": self._context.global_configuration.compaction.model_copy(
-                    update={"automatic": False}
-                ),
-            }
-        )
         summarizer_permissions = PermissionEvaluator(
-            summarizer_configuration.model_copy(
+            summarizer_agent.model_copy(
                 update={
-                    "tools": summarizer_configuration.tools.model_copy(
+                    "tools": summarizer_agent.tools.model_copy(
                         update={
-                            "bash": summarizer_configuration.tools.bash.model_copy(
+                            "bash": summarizer_agent.tools.bash.model_copy(
                                 update={"background_allowed": False}
                             )
                         }
@@ -804,8 +794,7 @@ class Compaction(Feature):
         )
         summarizer = AgentRuntime(
             RuntimeProfile(
-                agent=summarizer_configuration,
-                configuration=summarizer_global_configuration,
+                agent=summarizer_agent,
                 session_id=self._context.session_id,
                 working_directory=self._context.working_directory,
                 project_directory=self._context.project_directory,
@@ -822,7 +811,11 @@ class Compaction(Feature):
                 available_tools=(submit_compaction_summary_tool,),
                 tool_gate=self._host.tools.tool_gate,
                 permissions=summarizer_permissions,
-                features=(Compaction(),),
+                features=(
+                    Compaction(
+                        configuration=self._configuration.model_copy(update={"automatic": False})
+                    ),
+                ),
             ),
             conversation=list(messages_to_summarize),
         )

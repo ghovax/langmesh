@@ -20,11 +20,10 @@ from typing import Any, Awaitable, Callable, Literal, Optional
 from pydantic import ValidationError
 
 from langmesh.base.configuration import PermissionEvaluator
-from langmesh.base.configuration.configuration import GoalReviewConfiguration
+from langmesh.runtime.plugins.goal_review.configuration import GoalReviewConfiguration
 from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.contracts.ports import GoalReviewContext, GoalReviewOutcome
 from langmesh.base.primitives.identifiers import new_id
-from langmesh.base.primitives.limits import current_limits
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.internals import await_interruptible
 from langmesh.runtime.cache_trace import cache_lane
@@ -98,7 +97,13 @@ _REVIEWER_TOOLS = frozenset(
 class GoalReviewFeature(Feature):
     """The session's goal and, when configured, the isolated review that decides where it stands."""
 
-    def __init__(self, *, journal: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        configuration: GoalReviewConfiguration | None = None,
+        journal: Any = None,
+    ) -> None:
+        self._configuration = configuration or GoalReviewConfiguration()
         self._journal = journal
         self._goal: Optional[Goal] = None
         self._listener: Optional[Callable[[Optional[Goal]], None]] = None
@@ -134,7 +139,7 @@ class GoalReviewFeature(Feature):
         context = getattr(self, "_context", None)
         if context is None:
             return GoalReviewConfiguration.REVIEWER
-        return context.global_configuration.goal_review.settlement
+        return self._configuration.settlement
 
     def contribute_tools(self) -> list:
         """The goal and review tools this plugin owns."""
@@ -229,13 +234,6 @@ class GoalReviewFeature(Feature):
         reviewer_configuration = self._context.agent_configuration.model_copy(
             update={"permission_mode": "automatic"}
         )
-        reviewer_global_configuration = self._context.global_configuration.model_copy(
-            update={
-                "toolbox": self._context.global_configuration.toolbox.model_copy(
-                    update={"enabled": False}
-                )
-            }
-        )
         reviewer_permissions = PermissionEvaluator(
             reviewer_configuration.model_copy(
                 update={
@@ -269,7 +267,6 @@ class GoalReviewFeature(Feature):
         reviewer = AgentRuntime(
             RuntimeProfile(
                 agent=reviewer_configuration,
-                configuration=reviewer_global_configuration,
                 session_id=self._context.session_id,
                 working_directory=self._context.working_directory,
                 project_directory=self._context.project_directory,
@@ -291,7 +288,7 @@ class GoalReviewFeature(Feature):
                     tool for tool in self._host.tools.model_tools if tool.name in _REVIEWER_TOOLS
                 ),
                 related_turns=self._host.tools.turn_reader,
-                features=(GoalReviewFeature(),),
+                features=(GoalReviewFeature(configuration=self._configuration),),
             ),
             conversation=list(self._host.conversation.messages),
         )
@@ -467,8 +464,8 @@ class GoalReviewFeature(Feature):
 
             review = await drive_verdict_session(
                 run_turn=_run_turn,
-                attempts=current_limits().goal_review_attempts,
-                timeout_seconds=current_limits().structured_verdict_timeout_seconds,
+                attempts=self._configuration.review_attempts,
+                timeout_seconds=self._configuration.review_timeout_seconds,
                 submitted=_submitted,
                 require_submission=lambda: self._require_review_submission(reviewer),
                 missing_instruction=lambda: self._prompts.load("goal_review_missing", {}),

@@ -4,8 +4,8 @@ LangMesh separates three concerns:
 
 | Value               | Owns                                                                                 | Changes while running?                    |
 | ------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------- |
-| `RuntimeProfile`    | Agent, global configuration, identity, directories, confinement, parent              | No                                        |
-| `RuntimeComponents` | Model, replaceable ports, hooks, middleware, supplied tools, features, host services | No; replace the value before construction |
+| `RuntimeProfile`    | Agent, identity, directories, confinement, workspace choice, parent                   | No                                        |
+| `RuntimeComponents` | Model, provider inputs, replaceable ports, hooks, middleware, supplied tools, features, host services | No; replace the value before construction |
 | `SessionComponents` | `RuntimeComponents` plus checkpoints, attachments, credentials, and tracing          | No; `Session` owns their lifetime         |
 
 The daemon uses the same `RuntimeProfile` and `RuntimeComponents` API as an embedder.
@@ -26,11 +26,11 @@ from langmesh import AgentRuntime, MemoryJobStore, MemoryTranscript, RuntimeComp
 
 profile = RuntimeProfile(
     agent=agent,
-    configuration=configuration,
     session_id="session-018f",
     working_directory="/srv/checkout",
     permission_mode="ask",
     sandbox=sandbox_profile,
+    workspace_strategy="none",
 )
 components = RuntimeComponents(
     jobs=MemoryJobStore(),
@@ -62,7 +62,6 @@ components = SessionComponents(
 session = Session(
     agent,
     directory="/srv/checkout",
-    configuration=configuration,
     components=components,
 )
 ```
@@ -75,7 +74,7 @@ change confinement or identity.
 
 | Component           | Port or adopted interface                                                         | Default                                                        |
 | ------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `model`             | LangChain `BaseChatModel`                                                         | Built from the agent and configuration                         |
+| `model`             | LangChain `BaseChatModel`                                                         | Built from the agent and explicit provider inputs              |
 | `catalogue`         | `CatalogueLike`                                                                   | Packaged prompts and caller-supplied values; no machine lookup |
 | `jobs`              | `JobStore`                                                                        | `MemoryJobStore` in `Session`                                  |
 | `observer`          | `Observer`                                                                        | Audit observations dropped                                     |
@@ -294,7 +293,7 @@ placeholder inside it names one layer sitting among the file's own prose. The re
 drops any layer that resolves empty, so a layer is present exactly when its value is
 non-empty:
 
-| Layer placeholder (in order) | What it provides                                                                      |
+| Prompt placeholder (in order) | What it provides                                                                      |
 | ---------------------------- | ------------------------------------------------------------------------------------- |
 | `{{ agent_context }}`        | Stable guidance for an agent whose session can be messaged by peers.                  |
 | `{{ instructions }}`         | The person's recorded instructions.                                                   |
@@ -445,8 +444,8 @@ shared bus and reacts.
 The public surface lives in `langmesh.runtime.features`:
 
 - `Feature` — the hooks a feature implements. Hooks you omit are no-ops.
-- `PluginContext` — what a feature is given to live: identity, configuration, its
-  templates, the bus.
+- `PluginContext` — what a feature is given to live: identity, the agent profile, explicit
+  provider inputs, its templates, and the bus.
 - `PluginBus` — the synchronous channel between features. `subscribe(type, handler)`
   hears an event and `emit(event)` delivers it immediately in subscription order.
 - `Features` — the installed set, reached by concrete type with `by_type(...)` or by

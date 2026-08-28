@@ -24,8 +24,8 @@ from langmeshd.daemon.machine import machine_catalogue
 from langmeshd.commons.toolboxes import toolbox_for
 from langmesh.base.primitives.limits import current_limits
 from langmeshd.daemon.persistence.file_leases import FileLeaseManager
-from langmesh.base.configuration import Configuration
-from langmesh.base.configuration.configuration import GoalReviewConfiguration
+from langmeshd.commons.configuration import ApplicationConfiguration
+from langmesh.runtime.plugins.goal_review.configuration import GoalReviewConfiguration
 from langmeshd.daemon.persistence.background_jobs import get_background_job_store
 from langmesh.base.contracts.ports import JobStore
 from langmeshd.daemon.persistence.worktrees import SessionWorktree
@@ -57,6 +57,7 @@ from langmesh.runtime.session_control import SessionSnapshot
 from langmesh.runtime.features import LocationsCapability
 from langmesh.runtime.turn_events import SuspensionGate
 from langmesh.runtime.values import PermissionAnswer
+from langmesh.runtime.tools.context import ToolContext
 from langmeshd.worker.host import HostServices, NullHostServices
 from langmeshd.worker.peers import PeerSessions
 from langmeshd.worker.turn import _ContextState, _ContinuationPlan, _TurnRunner
@@ -74,7 +75,7 @@ _REMOTE_TOOL_NAMES = frozenset({"list_remote_agents", "message_remote_agent"})
 
 
 def _installed_agent_names(
-    global_configuration: Configuration, working_directory: str
+    application_configuration: ApplicationConfiguration, working_directory: str
 ) -> list[str]:
     """The profiles a peer could be created with, read at build time so a bad name is unrepresentable."""
     directories = agent_directories(working_directory)
@@ -86,7 +87,7 @@ def _installed_agent_names(
 
 def _compose_session_tools(
     configuration: Any,
-    global_configuration: Configuration,
+    application_configuration: ApplicationConfiguration,
     working_directory: str = "",
     *,
     can_reach_peers: bool = False,
@@ -111,14 +112,16 @@ def _compose_session_tools(
             permission_mode is None or cast(Any, permission_mode).asks or permission_mode == "allow"
         ):
             continue
-        if name in _MCP_TOOL_NAMES and not global_configuration.mcp.enabled_servers():
+        if name in _MCP_TOOL_NAMES and not application_configuration.mcp.enabled_servers():
             continue
-        if name in _REMOTE_TOOL_NAMES and not global_configuration.remote_agents.agents:
+        if name in _REMOTE_TOOL_NAMES and not application_configuration.remote_agents.agents:
             continue
         tools.append(schema)
     if can_reach_peers:
-        tools.extend(session_tools(_installed_agent_names(global_configuration, working_directory)))
-        if global_configuration.remote_agents.agents:
+        tools.extend(
+            session_tools(_installed_agent_names(application_configuration, working_directory))
+        )
+        if application_configuration.remote_agents.agents:
             tools.extend(remote_agent_tools())
     return tools
 
@@ -133,7 +136,7 @@ class SessionExecutor(AgentExecutor):
         agent_name: str,
         working_directory: str,
         permission_mode: str,
-        global_configuration: Configuration,
+        application_configuration: ApplicationConfiguration,
         sandbox: Optional[dict] = None,
         runtime_working_directory: str = "",
         workspace_id: str = "",
@@ -166,7 +169,7 @@ class SessionExecutor(AgentExecutor):
         self._workspace_id = workspace_id
         self._parent = parent
         self._token = token
-        self._global_configuration = global_configuration
+        self._application_configuration = application_configuration
 
         # The worker never opens the database: every write goes to the host, which is the sole writer.
         self._turn_store = HostTurnStore(session_id, host=self._host)
@@ -698,7 +701,7 @@ class SessionExecutor(AgentExecutor):
                     "session_id": session_id,
                     "goal": {
                         **goal.public(),
-                        "settlement": self._global_configuration.goal_review.settlement,
+                        "settlement": self._application_configuration.goal_review.settlement,
                         **(
                             {"review_phase": review_phase.value} if review_phase is not None else {}
                         ),
@@ -995,10 +998,10 @@ class SessionExecutor(AgentExecutor):
     ) -> AgentRuntime:
         # A worker serves a person's machine, so it gets the machine's catalogue; a library session gets less.
         catalogue = machine_catalogue(
-            self._global_configuration, project_directory, agent_loader=AgentFileLoader()
+            self._application_configuration, project_directory, agent_loader=AgentFileLoader()
         )
-        configuration = catalogue.agent(self._agent_name)
-        if configuration is None:
+        agent_configuration = catalogue.agent(self._agent_name)
+        if agent_configuration is None:
             raise FileNotFoundError(
                 catalogue.prompt(
                     "agent_configuration_not_found",
@@ -1010,12 +1013,12 @@ class SessionExecutor(AgentExecutor):
             )
         from langmeshd.features import mailbox_agent, mailbox_tools
 
-        configuration = mailbox_agent(configuration, session_id)
+        agent_configuration = mailbox_agent(agent_configuration, session_id)
         runtime_directory = working_directory or project_directory or str(Path.cwd())
         # The host composes the session's tools: the agent profile's declared set, mapped onto the shipped built-ins, plus the settings-gated and peer tools it owns. The library forces nothing; this is the host assembling the toolset. Plugin-owned tools come from the plugins' own contribute_tools, keyed by name.
         composed = _compose_session_tools(
-            configuration,
-            self._global_configuration,
+            agent_configuration,
+            self._application_configuration,
             working_directory,
             can_reach_peers=self._peers is not None,
             permission_mode=self._permission_mode,
@@ -1025,24 +1028,25 @@ class SessionExecutor(AgentExecutor):
             if all(getattr(existing, "name", "") != tool.name for existing in composed):
                 composed.append(tool)
         # The permission evaluator refuses what the profile did not declare, so the declared set is exactly the composed set.
-        configuration = configuration.model_copy(
+        agent_configuration = agent_configuration.model_copy(
             update={"tools_enabled": sorted({tool.name for tool in composed})}
         )
         # The host's plugin bundle: which features run and the ports they need.
-        bundle = self._compose_plugins(session_id, runtime_directory, configuration, catalogue)
-        toolbox = toolbox_for(session_id, enabled=self._global_configuration.toolbox.enabled)
+        bundle = self._compose_plugins(session_id, runtime_directory)
+        toolbox = toolbox_for(session_id, enabled=self._application_configuration.toolbox.enabled)
         if toolbox is not None:
             toolbox.prepare()
         runtime = AgentRuntime(
             RuntimeProfile(
-                agent=configuration,
-                configuration=self._global_configuration,
+                agent=agent_configuration,
                 session_id=session_id,
                 working_directory=runtime_directory,
                 project_directory=project_directory or runtime_directory,
                 parent_session=self._parent,
                 permission_mode=self._permission_mode,
                 sandbox=self._sandbox,
+                workspace_strategy=self._application_configuration.workspace.strategy,
+                inline_image_bytes=self._application_configuration.attachments.inline_image_bytes,
             ),
             RuntimeComponents(
                 catalogue=catalogue,
@@ -1056,6 +1060,9 @@ class SessionExecutor(AgentExecutor):
                 features=(bundle.get("features") or []),
                 services=bundle.get("services"),
                 toolbox=toolbox,
+                tool_context=self._tool_context(),
+                provider_api_keys=self._application_configuration.configured_provider_keys(),
+                provider_base_urls=self._application_configuration.configured_provider_bases(),
                 # The host probes the machine and the user's context; the library never does.
                 machine_snapshot=self._machine_snapshot(),
                 user_context=self._user_context_snapshot(),
@@ -1092,7 +1099,7 @@ class SessionExecutor(AgentExecutor):
 
     def _user_context_snapshot(self) -> dict:
         """The user-context snapshot for this session, probed by the host when it is enabled."""
-        user_context = getattr(self._global_configuration, "user_context", None)
+        user_context = getattr(self._application_configuration, "user_context", None)
         if user_context is None or not user_context.enabled:
             return {}
         from langmeshd.daemon.machine_environment import probe_user_context
@@ -1105,19 +1112,47 @@ class SessionExecutor(AgentExecutor):
             parsed = {}
         return parsed if isinstance(parsed, dict) else {}
 
-    def _compose_plugins(self, session_id: str, runtime_directory: str, configuration, catalogue):
+    def _tool_context(self) -> ToolContext:
+        """Build the daemon-owned web and MCP capabilities passed into the library runtime."""
+        configuration = self._application_configuration
+        exa_client = None
+        if configuration.exa.effective_api_key:
+            from exa_py import Exa
+
+            exa_client = Exa(api_key=configuration.exa.effective_api_key)
+        firecrawl_client = None
+        if configuration.firecrawl.effective_api_key:
+            from firecrawl import AsyncFirecrawl
+
+            api_url = configuration.firecrawl.effective_api_url
+            if api_url:
+                firecrawl_client = AsyncFirecrawl(
+                    api_key=configuration.firecrawl.effective_api_key,
+                    api_url=api_url,
+                )
+            else:
+                firecrawl_client = AsyncFirecrawl(api_key=configuration.firecrawl.effective_api_key)
+        return ToolContext(
+            exa_client=exa_client,
+            firecrawl_client=firecrawl_client,
+            jina_api_key=configuration.jina.effective_api_key,
+            proxy_url=configuration.web_fetch.effective_proxy_url,
+            fetch_timeout_seconds=configuration.web_fetch.timeout_seconds,
+            download_timeout_seconds=configuration.web_fetch.download_timeout_seconds,
+            minimum_useful_characters=configuration.web_fetch.minimum_useful_characters,
+        )
+
+    def _compose_plugins(self, session_id: str, runtime_directory: str):
         """The session's plugin bundle (features and their ports), from the host's injected composer."""
         if self._feature_factory is None:
             return {}
         return self._feature_factory(
             session_id=session_id,
             runtime_directory=runtime_directory,
-            configuration=configuration,
-            catalogue=catalogue,
             job_store=self._job_store,
             goal_listener=lambda goal: self._notify_goal_state(session_id, goal),
             goal_review_journal=self._host.build_goal_review_journal(self._turn_store),
-            global_configuration=self._global_configuration,
+            application_configuration=self._application_configuration,
         )
 
     def _build_turn_reader(self):
@@ -1287,11 +1322,11 @@ class SessionExecutor(AgentExecutor):
 
     async def start(self) -> None:
         """Prepare the session before its socket opens, without building the runtime it may never need."""
-        from langmesh.base.primitives.limits import limits_from_configuration, set_limits
+        from langmesh.base.primitives.limits import limits_from_policy, set_limits
         from langmesh.base.primitives.telemetry import configure as configure_telemetry
 
-        configuration = self._global_configuration
-        set_limits(limits_from_configuration(configuration))
+        configuration = self._application_configuration
+        set_limits(limits_from_policy(configuration))
 
         telemetry = configuration.telemetry
         configure_telemetry(
@@ -1553,7 +1588,7 @@ class SessionExecutor(AgentExecutor):
         from langmesh.protocol.card import build_agent_card
 
         catalogue = machine_catalogue(
-            self._global_configuration, self._working_directory, agent_loader=AgentFileLoader()
+            self._application_configuration, self._working_directory, agent_loader=AgentFileLoader()
         )
         configuration = catalogue.agent(self._agent_name)
         if configuration is None:

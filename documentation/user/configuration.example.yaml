@@ -131,6 +131,13 @@ compaction:
   # Optional context bound for scheduling compaction. Zero uses the model's available context.
   maximum_context_tokens: 0
 
+# The automatic permission reviewer and session titler own their retry budgets.
+permission_reviewer:
+  attempts: 4
+
+titling:
+  attempts: 4
+
 # What a file the person attaches may cost the conversation it rides in
 attachments:
   # The ceiling on an image inlined for a vision model. Above it the path and metadata still reach
@@ -341,12 +348,7 @@ limits:
     find_many_ceiling: 64
     find_relevance_floor: 0.25
 
-    # Other process and identity budgets, in seconds unless named otherwise.
-    session_title_attempts: 4
-    permission_reviewer_attempts: 4
-    compaction_summary_attempts: 3
-    goal_review_attempts: 3
-    structured_verdict_timeout_seconds: 180.0
+    # Other process and identity budgets.
     model_catalogue_ttl: 60.0
     credential_refresh_leeway: 300.0
     oauth_poll_interval: 1.0

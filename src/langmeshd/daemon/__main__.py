@@ -196,9 +196,7 @@ def build_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def _unhandled(_request: Request, error: Exception) -> JSONResponse:
         """JSON inside CORS, because uvicorn's bare 500 is opaque to a browser on another origin."""
-        return JSONResponse(
-            {"detail": str(error) or error.__class__.__name__}, status_code=500
-        )
+        return JSONResponse({"detail": str(error) or error.__class__.__name__}, status_code=500)
 
     # Pure ASGI rather than a decorated middleware, whose response pumping would break this daemon's long-lived streams.
     class Authenticate:
@@ -313,8 +311,8 @@ async def _serve() -> int:
         return await _defer_to_running_daemon()
     _reclaim_socket()
 
-    commons_state.global_configuration = load_configuration()
-    # The app's own configuration sections, read from the same file the library's Configuration reads.
+    commons_state.application_configuration = load_configuration()
+    # App-hosted feature sections are read from the daemon's application configuration file.
     from langmeshd.commons.configuration import (
         ComposioConfiguration,
         DaemonConfiguration,
@@ -335,11 +333,11 @@ async def _serve() -> int:
     commons_state.composio_configuration = ComposioConfiguration.model_validate(
         _document.get("composio") or {}
     )
-    if commons_state.global_configuration.user_context.enabled:
+    if commons_state.application_configuration.user_context.enabled:
         # Built here, in the background, so the first message of a conversation never waits on it.
         from langmeshd.daemon.machine_environment import warm_user_context
 
-        warm_user_context(commons_state.global_configuration.user_context.refresh_hours)
+        warm_user_context(commons_state.application_configuration.user_context.refresh_hours)
     # Ask once at boot whether this machine can enforce a profile, on macOS by running one rather than by looking for the binary.
     confinement_state = confinement.probe()
     if confinement_state["backend"]:
@@ -397,7 +395,7 @@ async def _serve() -> int:
         state.registry,
         state.host,
         state.broadcaster,
-        commons_state.global_configuration,
+        commons_state.application_configuration,
     )
     # The two places a workspace change has a supervision consequence, filled in only where there is a control plane to tell.
     from langmeshd.daemon.pending_input import retire_session

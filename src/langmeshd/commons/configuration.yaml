@@ -61,3 +61,10 @@ compaction:
   reclaim_at_fraction: 0.85
   output_reserve_fraction: 0.1
   recent_working_set_fraction: 0.15
+
+# The automatic permission reviewer and session titler own their retry budgets.
+permission_reviewer:
+  attempts: 4
+
+titling:
+  attempts: 4

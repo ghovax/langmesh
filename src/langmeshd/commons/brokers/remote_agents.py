@@ -9,9 +9,12 @@ from langmeshd.commons.configuration_io import load_configuration
 
 def _remote_agent_dataclasses() -> dict[str, RemoteAgentConfiguration]:
     """Convert the loaded ``remote-agents.json`` configuration into the manager's dataclasses."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     result: dict[str, RemoteAgentConfiguration] = {}
-    for name, configuration in state.global_configuration.remote_agents.enabled_agents().items():
+    for (
+        name,
+        configuration,
+    ) in state.application_configuration.remote_agents.enabled_agents().items():
         auth = configuration.auth
         result[name] = RemoteAgentConfiguration(
             name=name,
@@ -36,9 +39,9 @@ def _remote_agent_dataclasses() -> dict[str, RemoteAgentConfiguration]:
 
 async def _reload_remote_agents() -> None:
     """Re-read remote-agents.json and apply it live, with no server restart."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     async with state.configuration_lock:
-        state.global_configuration.remote_agents = load_configuration(seed=False).remote_agents
+        state.application_configuration.remote_agents = load_configuration(seed=False).remote_agents
         configurations = _remote_agent_dataclasses()
         if state.remote_agent_manager is None:
             state.remote_agent_manager = RemoteAgentManager(configurations)

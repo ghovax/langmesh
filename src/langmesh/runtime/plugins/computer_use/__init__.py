@@ -32,6 +32,7 @@ from langmesh.computer.retrieval import retrieval_policy_from, set_retrieval_pol
 from langmesh.computer.surface import message_loader
 from langmesh.runtime.features import Feature
 from langmesh.runtime.plugins.permissions import MUTATING_SCREEN_PRIMITIVES
+from langmesh.runtime.plugins.computer_use.configuration import ComputerControlConfiguration
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.background import current_tool_call_id
 from langmesh.runtime.tools.execution import current_tool_decision, current_tool_services
@@ -64,6 +65,7 @@ def terminate_control_call(tool_call_id: str) -> bool:
         except ProcessLookupError:
             return False
     return True
+
 
 # What an element id looks like on both surfaces, so one can be told from a description of an element.
 _ELEMENT_ID = re.compile(r"(?:f\d+)?e\d+|req\d+|ws\d+|\d+(?:\.\d+)+")
@@ -483,6 +485,9 @@ async def control_screen(
 class ComputerUse(Feature):
     """Drives the screen: contributes the control_screen tool and the screen context."""
 
+    def __init__(self, configuration: ComputerControlConfiguration | None = None) -> None:
+        self._configuration = configuration or ComputerControlConfiguration()
+
     def attach(self, context, host) -> None:
         self._context = context
         self._host = host
@@ -494,11 +499,7 @@ class ComputerUse(Feature):
                 download_handler=bundle.get("browser_download"),
             )
         self._prompts = context.prompts("computer_use")
-        # Bind which models rank a screen, from the loaded configuration.
-        screen = getattr(context.global_configuration, "computer_control", None)
-        section = getattr(screen, "retrieval", None)
-        if section is not None:
-            set_retrieval_policy(retrieval_policy_from(section))
+        set_retrieval_policy(retrieval_policy_from(self._configuration.retrieval))
 
     @property
     def _enabled(self) -> bool:
@@ -506,8 +507,7 @@ class ComputerUse(Feature):
         context = getattr(self, "_context", None)
         if context is None:
             return False
-        control = getattr(context.global_configuration, "computer_control", None)
-        return bool(control and control.enabled)
+        return self._configuration.enabled
 
     def contribute_tools(self) -> list:
         return [control_screen] if self._enabled else []

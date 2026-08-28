@@ -11,9 +11,7 @@ from langmesh.base.configuration.configuration import AgentConfiguration
 from langmeshd.commons.configuration import EmailConfiguration
 
 
-def apply_email_model(
-    agent: AgentConfiguration, email: EmailConfiguration
-) -> AgentConfiguration:
+def apply_email_model(agent: AgentConfiguration, email: EmailConfiguration) -> AgentConfiguration:
     """Return ``agent`` with the mailbox YAML provider/model overlaid when both are set."""
     provider = email.effective_provider
     model = email.effective_model

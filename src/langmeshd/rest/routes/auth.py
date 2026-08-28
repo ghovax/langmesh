@@ -61,8 +61,8 @@ class _ProviderAuth:
             credential_identifier=definition.credential_identifier or self.provider_identifier,
         )
         configured_keys = (
-            state.global_configuration.configured_provider_keys()
-            if state.global_configuration is not None
+            state.application_configuration.configured_provider_keys()
+            if state.application_configuration is not None
             else {}
         )
         return ProviderAuthentication(

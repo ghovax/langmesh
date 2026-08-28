@@ -56,7 +56,7 @@ class SessionHost:
             if record.id in self._sessions:
                 return True
 
-            configuration = commons_state.global_configuration
+            configuration = commons_state.application_configuration
             assert configuration is not None
             try:
                 executor = SessionExecutor(
@@ -70,7 +70,7 @@ class SessionHost:
                     workspace_id=record.workspace_id,
                     parent=record.parent,
                     token=record.token,
-                    global_configuration=configuration,
+                    application_configuration=configuration,
                     host=DaemonHostServices(),
                     feature_factory=compose_plugins,
                 )

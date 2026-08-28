@@ -152,9 +152,7 @@ class Inbox:
                 token = await access_token(self.configuration)
             except MailOAuthError as error:
                 raise RuntimeError(str(error)) from error
-            login = await self.imap.xoauth2(
-                self.configuration.effective_imap_username, token
-            )
+            login = await self.imap.xoauth2(self.configuration.effective_imap_username, token)
             secret = token
         else:
             login = await self.imap.login(

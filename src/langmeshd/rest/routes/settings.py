@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 import langmesh.base.confinement as _confinement
 import langmeshd.commons.toolboxes as _toolbox
-import langmesh.base.configuration as _configuration
+import langmeshd.commons.configuration as _configuration
 from models_provider import (
     clear_chatgpt_models_cache,
     clear_cursor_models_cache,
@@ -14,7 +14,12 @@ from models_provider import (
 from langmesh.base.content.models import available_models, list_models, ModelDefinition
 from langmesh.base.identity.providers import PROVIDERS
 import asyncio
-from langmeshd.commons.configuration import AppSettingsUpdateRequest, DictationUpdateRequest
+from typing import Any
+from langmeshd.commons.configuration import (
+    AppSettingsUpdateRequest,
+    DictationUpdateRequest,
+    SETTING_SECTION_ORDER,
+)
 from langmesh.protocol.dtos import (
     AttachmentsUpdateRequest,
     CompactionUpdateRequest,
@@ -50,10 +55,14 @@ def _email_settings():
 
 
 def _setting_for(path: str):
-    """Library settings, then app-owned email.* so the file's mail section is editable here."""
+    """Application settings, then daemon-owned email.* so the mail section is editable here."""
     from langmesh.base.configuration.configuration_schema import setting_for
 
-    found = setting_for(path)
+    found = setting_for(
+        _configuration.ApplicationConfiguration,
+        path,
+        section_order=SETTING_SECTION_ORDER,
+    )
     if found is not None:
         return found
     for setting in _email_settings():
@@ -103,16 +112,16 @@ def _merged_sandbox(current, posted: dict):
 @router.get("/models")
 async def list_models_endpoint(refresh: bool = False):
     """The model catalog for the picker: every known model, whether its provider has a credential, and the provider registry."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     # A retry re-fetches the live subscription catalogs rather than serving their TTL'd copies.
     if refresh:
         clear_chatgpt_models_cache()
         clear_cursor_models_cache()
     # Request tasks do not always inherit the daemon's bound store, so bind it for this listing.
-    credential_store = file_credential_store()
+    credential_store: Any = file_credential_store()
     bound = bind_credential_store(credential_store)
     try:
-        configured_keys = state.global_configuration.configured_provider_keys()
+        configured_keys = state.application_configuration.configured_provider_keys()
         available_identifiers = {
             model.identifier
             for model in available_models(configured_keys, credential_store=credential_store)
@@ -204,30 +213,32 @@ async def update_dictation(request: DictationUpdateRequest):
 @router.get("/settings")
 async def get_settings():
     """The stored API credentials, so the settings dialog can pre-fill them."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     # The machine default, used when a caller has not selected an agent-specific mode.
-    permission_mode = _normalize_permission_mode(state.global_configuration.agent.permission_mode)
+    permission_mode = _normalize_permission_mode(
+        state.application_configuration.agent.permission_mode
+    )
     return {
         "permission_mode": permission_mode,
-        "exa_api_key": state.global_configuration.exa.api_key,
+        "exa_api_key": state.application_configuration.exa.api_key,
         "composio_api_key": state.composio_configuration.effective_api_key,
-        "jina_api_key": state.global_configuration.jina.api_key,
-        "firecrawl_api_key": state.global_configuration.firecrawl.api_key,
-        "web_fetch_proxy_url": state.global_configuration.web_fetch.proxy_url,
-        "sandbox": state.global_configuration.sandbox.model_dump(mode="json"),
+        "jina_api_key": state.application_configuration.jina.api_key,
+        "firecrawl_api_key": state.application_configuration.firecrawl.api_key,
+        "web_fetch_proxy_url": state.application_configuration.web_fetch.proxy_url,
+        "sandbox": state.application_configuration.sandbox.model_dump(mode="json"),
         "sandbox_backend": _confinement.probe(),
-        "worktree_strategy": state.global_configuration.workspace.strategy,
-        "compaction": state.global_configuration.compaction.model_dump(),
-        "attachments": state.global_configuration.attachments.model_dump(),
-        "user_context_enabled": state.global_configuration.user_context.enabled,
-        "computer_control_enabled": state.global_configuration.computer_control.enabled,
-        "toolbox_enabled": state.global_configuration.toolbox.enabled,
+        "worktree_strategy": state.application_configuration.workspace.strategy,
+        "compaction": state.application_configuration.compaction.model_dump(),
+        "attachments": state.application_configuration.attachments.model_dump(),
+        "user_context_enabled": state.application_configuration.user_context.enabled,
+        "computer_control_enabled": state.application_configuration.computer_control.enabled,
+        "toolbox_enabled": state.application_configuration.toolbox.enabled,
         # Whether this machine could offer one at all, which the switch being on does not answer.
         "toolbox_available": _toolbox.available(),
         "dictation_enabled": state.dictation_configuration.enabled,
         "providers": {
             identifier: {"api_key": credential.api_key, "base_url": credential.base_url}
-            for identifier, credential in state.global_configuration.providers.items()
+            for identifier, credential in state.application_configuration.providers.items()
         },
     }
 
@@ -235,8 +246,8 @@ async def get_settings():
 @router.post("/settings")
 async def update_settings(request: AppSettingsUpdateRequest):
     """Persist API credentials and apply them live, refreshing the clients and dropping cached runtimes."""
-    assert state.global_configuration is not None
-    configuration = state.global_configuration
+    assert state.application_configuration is not None
+    configuration = state.application_configuration
     async with state.configuration_lock:
         await _persist_configuration(
             exa_api_key=request.exa_api_key,
@@ -305,14 +316,17 @@ async def update_settings(request: AppSettingsUpdateRequest):
 async def settings_schema():
     """Every setting there is, with what it holds and what it is set to, as one endpoint for the whole file."""
     from langmeshd.commons import configuration_file
-    from langmesh.base.configuration.configuration_schema import (
-        KIND_SECTION,
-        settings as all_settings,
-    )
+    from langmesh.base.configuration.configuration_schema import KIND_SECTION, settings
 
     document = await asyncio.to_thread(configuration_file.load)
     sections: dict[str, dict] = {}
-    for setting in [*all_settings(), *_email_settings()]:
+    for setting in [
+        *settings(
+            _configuration.ApplicationConfiguration,
+            section_order=SETTING_SECTION_ORDER,
+        ),
+        *_email_settings(),
+    ]:
         section = setting.path.split(".")[0]
         if setting.kind == KIND_SECTION and "." not in setting.path:
             sections.setdefault(section, {"path": section, "settings": []})
@@ -390,16 +404,16 @@ async def reset_setting(path: str):
 @router.post("/settings/sandbox")
 async def update_sandbox(request: SandboxUpdateRequest):
     """Persist and apply confinement on its own; only sessions created afterwards get the change."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     async with state.configuration_lock:
-        state.global_configuration.sandbox = _merged_sandbox(
-            state.global_configuration.sandbox, request.sandbox
+        state.application_configuration.sandbox = _merged_sandbox(
+            state.application_configuration.sandbox, request.sandbox
         )
         await _persist_configuration(sandbox=request.sandbox)
     _publish_broadcast({"type": "settings_changed"})
     return {
         "status": "saved",
-        "sandbox": state.global_configuration.sandbox.model_dump(mode="json"),
+        "sandbox": state.application_configuration.sandbox.model_dump(mode="json"),
         "sandbox_backend": _confinement.probe(),
     }
 
@@ -407,70 +421,76 @@ async def update_sandbox(request: SandboxUpdateRequest):
 @router.post("/settings/user-context")
 async def update_user_context(request: UserContextUpdateRequest):
     """Persist and apply the user-context toggle, dropping cached runtimes since the snapshot is built into the prompt."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     async with state.configuration_lock:
         await _persist_configuration(user_context_enabled=request.enabled)
-        state.global_configuration.user_context.enabled = request.enabled
+        state.application_configuration.user_context.enabled = request.enabled
         await state.reset_runtimes()
     _publish_broadcast({"type": "settings_changed"})
     return {
         "status": "saved",
-        "user_context_enabled": state.global_configuration.user_context.enabled,
+        "user_context_enabled": state.application_configuration.user_context.enabled,
     }
 
 
 @router.post("/settings/computer-control")
 async def update_computer_control(request: ComputerControlUpdateRequest):
     """Persist and apply the computer-use toggle, dropping cached runtimes since their tool set is fixed at construction."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     async with state.configuration_lock:
         await _persist_configuration(computer_control_enabled=request.enabled)
-        state.global_configuration.computer_control.enabled = request.enabled
+        state.application_configuration.computer_control.enabled = request.enabled
         await state.reset_runtimes()
     _publish_broadcast({"type": "settings_changed"})
     return {
         "status": "saved",
-        "computer_control_enabled": state.global_configuration.computer_control.enabled,
+        "computer_control_enabled": state.application_configuration.computer_control.enabled,
     }
 
 
 @router.post("/settings/toolbox")
 async def update_toolbox(request: ToolboxUpdateRequest):
     """Persist and apply whether sessions may install tools, dropping cached runtimes so the change reaches the next turn."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     async with state.configuration_lock:
         await _persist_configuration(toolbox_enabled=request.enabled)
-        state.global_configuration.toolbox.enabled = request.enabled
+        state.application_configuration.toolbox.enabled = request.enabled
         await state.reset_runtimes()
     _publish_broadcast({"type": "settings_changed"})
-    return {"status": "saved", "toolbox_enabled": state.global_configuration.toolbox.enabled}
+    return {"status": "saved", "toolbox_enabled": state.application_configuration.toolbox.enabled}
 
 
 @router.post("/settings/attachments")
 async def update_attachments(request: AttachmentsUpdateRequest):
     """Persist and apply the attachment limits, which each turn reads live and so needs no runtime reset."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     changes = request.model_dump(exclude_none=True)
     if changes:
         async with state.configuration_lock:
             await _persist_configuration(attachments=changes)
-            state.global_configuration.attachments = (
-                state.global_configuration.attachments.model_copy(update=changes)
+            state.application_configuration.attachments = (
+                state.application_configuration.attachments.model_copy(update=changes)
             )
     _publish_broadcast({"type": "settings_changed"})
-    return {"status": "saved", "attachments": state.global_configuration.attachments.model_dump()}
+    return {
+        "status": "saved",
+        "attachments": state.application_configuration.attachments.model_dump(),
+    }
 
 
 @router.post("/settings/compaction")
 async def update_compaction(request: CompactionUpdateRequest):
     """Persist and apply the compaction settings, which the runtime reads live and so needs no runtime reset."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     changes = request.model_dump(exclude_none=True)
     if changes:
         async with state.configuration_lock:
             await _persist_configuration(compaction=changes)
-            state.global_configuration.compaction = (
-                state.global_configuration.compaction.model_copy(update=changes)
+            state.application_configuration.compaction = (
+                state.application_configuration.compaction.model_copy(update=changes)
             )
     _publish_broadcast({"type": "settings_changed"})
-    return {"status": "saved", "compaction": state.global_configuration.compaction.model_dump()}
+    return {
+        "status": "saved",
+        "compaction": state.application_configuration.compaction.model_dump(),
+    }

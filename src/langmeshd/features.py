@@ -37,16 +37,16 @@ _WORKFLOWS = FilesystemWorkflowCatalogue()
 _SCRATCH_SPACES = FilesystemScratchSpaces(runtime_directory() / "scratch")
 
 
-def _computer_use() -> list:
+def _computer_use(configuration: Any = None) -> list:
     """Screen control when the native surface is importable. A Linux VPS has no AppKit."""
     try:
         from langmesh.runtime.plugins.computer_use import ComputerUse
     except ImportError:
         return []
-    return [ComputerUse()]
+    return [ComputerUse(configuration)]
 
 
-def _compaction_preparation(global_configuration: Any, runtime_directory: str) -> Any:
+def _compaction_preparation(runtime_directory: str) -> Any:
     """The compaction preparation the daemon owns, from the observation store."""
     return ObservationCompactionPreparation(
         SQLiteObservationStore(observation_database(runtime_directory))
@@ -81,35 +81,37 @@ def compose_plugins(
     *,
     session_id: str,
     runtime_directory: str,
-    configuration: Any,
-    catalogue: Any,
     job_store: Any,
     goal_listener: Any,
     goal_review_journal: Any,
-    global_configuration: Any,
+    application_configuration: Any,
 ) -> dict[str, Any]:
     """The plugins a hosted session runs and the ports they need, as one bundle."""
-    preparation = _compaction_preparation(global_configuration, runtime_directory)
+    preparation = _compaction_preparation(runtime_directory)
     locations = _session_locations(session_id)
     features = [
-        GoalReviewFeature(journal=goal_review_journal),
+        GoalReviewFeature(
+            configuration=application_configuration.goal_review,
+            journal=goal_review_journal,
+        ),
         Compaction(
+            configuration=application_configuration.compaction,
             strategy=None,
             preparation=preparation,
             summarizer=None,
         ),
-        PermissionReview(),
+        PermissionReview(application_configuration.permission_reviewer),
         Continuation(policy=None),
         ObservationMemory(),
         BackgroundJobs(store=job_store),
         WorkHabits(_shell_command_usage()),
-        TitleAssignment(),
+        TitleAssignment(application_configuration.titling),
         # The locations plugin is opt-in: it is composed only when the workspace has locations.
         *([Locations()] if locations else []),
         Bash(),
         Web(),
         Interaction(),
-        *_computer_use(),
+        *_computer_use(application_configuration.computer_control),
         EmailReply(),
     ]
     # The goal plugin hears every goal change through the host's listener: that is how the

@@ -1,7 +1,7 @@
 """The daemon's typed configuration loading: reading the file, seeding first run, and persisting settings.
 
-The library's Configuration is a pure model; every read and write of the YAML file happens
-here, in the daemon.
+The daemon owns the application configuration file; every read and write of the YAML file
+happens here.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from pathlib import Path
 
 from models_provider import ProviderAuthentication
 from langmeshd.commons.paths import configuration_file_path
-from langmesh.base.configuration import Configuration
+from langmeshd.commons.configuration import ApplicationConfiguration
 from langmeshd.commons import configuration_file
 from langmeshd.commons.configuration_locations import (
     bundled_agents_root,
@@ -57,22 +57,24 @@ def seed_home_agents() -> list[str]:
     return seeded
 
 
-def load_configuration(*, seed: bool = True) -> Configuration:
+def load_configuration(*, seed: bool = True) -> ApplicationConfiguration:
     """Read the configuration file, seeding it from the packaged template on first run.
 
-    Applies the MCP and remote-agents dotagents-roots enrichment the library once folded
-    into its loader, so every caller gets the same fully-resolved configuration.
+    Applies the daemon's MCP and remote-agent roots enrichment, so every caller gets the
+    same fully resolved application configuration.
     """
     path = configuration_file_path()
     if not path.exists():
         if not seed:
-            return Configuration()
+            return ApplicationConfiguration()
         configuration_file.seed(packaged_configuration_yaml())
     data = configuration_file.load()
     invalid = configuration_file.rejects(data)
     if invalid:
         raise ValueError(f"invalid configuration: {invalid}")
-    configuration = Configuration.model_validate(configuration_file.library_document(data or {}))
+    configuration = ApplicationConfiguration.model_validate(
+        configuration_file.application_document(data or {})
+    )
     from langmesh.base.secrets import EXA_API_KEY, FIRECRAWL_API_KEY, JINA_API_KEY, read_secret
 
     configuration = configuration.model_copy(

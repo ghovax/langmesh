@@ -111,7 +111,9 @@ class _RunsTurns(_DispatchesTools, ABC):
     # `_abort_event`, `_stop_requested`, `_working_directory`) resolve through it.
     _catalogue: Any
     _agent_configuration: Any
-    _global_configuration: Any
+    _workspace_strategy: str
+    _sandbox_enforce: str
+    _components: Any
     _prompt_composer: Any
     _hooks: Any
     _sandbox: Any
@@ -276,7 +278,7 @@ class _RunsTurns(_DispatchesTools, ABC):
                 **({"parent_session": self._parent_session} if self._parent_session else {}),
                 "working_directory": self._working_directory,
                 "project_directory": self._project_directory,
-                "session_worktree_strategy": self._global_configuration.workspace.strategy,
+                "session_worktree_strategy": self._workspace_strategy,
                 "platform": platform.system(),
                 "machine": _maybe_json(cast(Any, self._machine_snapshot())),
             }
@@ -317,8 +319,7 @@ class _RunsTurns(_DispatchesTools, ABC):
         ...
 
     def _user_context_enabled(self) -> bool:
-        user_context = getattr(self._global_configuration, "user_context", None)
-        return user_context is not None and bool(user_context.enabled)
+        return bool(self._components.user_context)
 
     def _child_path(self) -> list[str]:
         """The `PATH` a tool child is actually given, split into entries."""
@@ -329,7 +330,7 @@ class _RunsTurns(_DispatchesTools, ABC):
     def _confinement_summary(self) -> dict:
         """The boundary the operating system will enforce: the configured profile, plus the grants so far, apart."""
         profile = getattr(self._tool_context, "sandbox", None)
-        if profile is None or self._global_configuration.sandbox.enforce == "off":
+        if profile is None or self._sandbox_enforce == "off":
             return {}
         summary = profile.describe(workspace=self._working_directory or "")
         if self._access_grants:

@@ -7,7 +7,13 @@ from functools import lru_cache
 import json
 from typing import Any, cast
 
-from models_provider import ApiKeyCredential, ChatGPTTokens, CursorTokens, OAuthTokens
+from models_provider import (
+    ApiKeyCredential,
+    ChatGPTTokens,
+    CredentialStore,
+    CursorTokens,
+    OAuthTokens,
+)
 from langmesh.base.secrets import provider_api_key_name, read_secret, write_secret
 from langmeshd.commons.paths import oauth_token_path
 from langmeshd.commons.atomic_file import write_text
@@ -16,7 +22,7 @@ from langmeshd.commons.atomic_file import write_text
 _TOKEN_TYPES = {"chatgpt": ChatGPTTokens, "cursor": CursorTokens}
 
 
-class FileCredentialStore:
+class FileCredentialStore(CredentialStore):
     """Stores each provider's tokens in its daemon data file."""
 
     def load(self, provider_identifier: str) -> Any:

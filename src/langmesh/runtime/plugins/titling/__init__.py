@@ -16,7 +16,7 @@ from langmesh.runtime.internals import model_is_authorized
 from langmesh.runtime.models.factory import build_chat_model
 from langmesh.runtime.verdict import collect_structured_call
 
-from langmesh.base.primitives.limits import current_limits
+from langmesh.runtime.plugins.titling.configuration import TitlingConfiguration
 
 
 class SessionTitle(BaseModel):
@@ -28,6 +28,9 @@ class SessionTitle(BaseModel):
 class TitleAssignment(Feature):
     """Give a session its automatic title from its first message."""
 
+    def __init__(self, configuration: TitlingConfiguration | None = None) -> None:
+        self._configuration = configuration or TitlingConfiguration()
+
     def attach(self, context: PluginContext, host: PluginHost | None = None) -> None:
         self._context = context
         self._prompts = context.prompts("titling")
@@ -37,23 +40,24 @@ class TitleAssignment(Feature):
         agent_configuration = self._context.agent_configuration
         model_identifier = agent_configuration.model_identifier
         if not model_identifier or not model_is_authorized(
-            model_identifier, self._context.global_configuration
+            model_identifier, self._context.provider_api_keys
         ):
             return None
         titling_configuration = agent_configuration.model_copy(update={"reasoning_effort": "low"})
         model = build_chat_model(
             model_identifier,
-            self._context.global_configuration,
             titling_configuration,
             self._context.working_directory,
             session_id=self._context.session_id,
+            provider_api_keys=self._context.provider_api_keys,
+            provider_base_urls=self._context.provider_base_urls,
         ).bind_tools([SessionTitle], tool_choice="auto")
         request = [
             SystemMessage(content=self._prompts.load("session_title", {})),
             HumanMessage(content=first_message),
         ]
         # The tool is offered and the prompt insists on it: forcing it, a thinking model behind a gateway refuses.
-        attempts = current_limits().session_title_attempts
+        attempts = self._configuration.attempts
         validated = await collect_structured_call(
             model,
             request,

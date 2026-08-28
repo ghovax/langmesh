@@ -14,8 +14,8 @@ turn_store: Any = None
 # The registry's durable half, on the same terms: the daemon owns it and the services read it.
 session_store: Any = None
 async_engine: Any = None
-global_configuration: Any = None
-# The app's own configuration sections, which the library's Configuration does not model.
+application_configuration: Any = None
+# App-hosted feature settings, kept outside the core library's runtime inputs.
 daemon_configuration: Any = None
 dictation_configuration: Any = None
 composio_configuration: Any = None
@@ -105,7 +105,7 @@ __all__ = [
     "daemon_port",
     "file_lease_manager",
     "file_url_signer",
-    "global_configuration",
+    "application_configuration",
     "last_written_configuration_digest",
     "main_loop",
     "mcp_server_manager",

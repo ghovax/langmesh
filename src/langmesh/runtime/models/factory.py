@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from langchain_core.language_models.chat_models import BaseChatModel
 from models_provider import CredentialStore, ProviderAuthentication, provider_auth_profile
 from pydantic import SecretStr
 
-from langmesh.base.configuration import AgentConfiguration, Configuration
+from langmesh.base.configuration import AgentConfiguration
 from langmesh.base.content.model_routing import resolve_litellm
 from langmesh.base.content.models import find_model
 from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
@@ -14,13 +16,16 @@ from langmesh.base.identity.providers import get_provider_definition, provider_e
 
 def build_chat_model(
     model_identifier: str,
-    global_configuration: Configuration,
     agent_configuration: AgentConfiguration,
     working_directory: str,
     session_id: str = "",
     credential_store: CredentialStore | None = None,
+    provider_api_keys: Mapping[str, str] | None = None,
+    provider_base_urls: Mapping[str, str] | None = None,
 ) -> BaseChatModel:
-    """Build the selected native or LiteLLM-backed chat model."""
+    """Build a model from the profile and explicit provider inputs supplied by its host."""
+    provider_api_keys = dict(provider_api_keys or {})
+    provider_base_urls = dict(provider_base_urls or {})
     provider_identifier, model_suffix = model_identifier.split("/", 1)
     if provider_identifier == "chatgpt":
         from langmesh.runtime.models.codex import ChatCodexModel
@@ -46,8 +51,8 @@ def build_chat_model(
 
     resolved = resolve_litellm(
         model_identifier,
-        global_configuration.configured_provider_keys(),
-        global_configuration.configured_provider_bases(),
+        provider_api_keys,
+        provider_base_urls,
         credential_store=credential_store,
     )
     catalogued = find_model(model_identifier)
@@ -62,8 +67,8 @@ def build_chat_model(
     )
     authentication = ProviderAuthentication(
         {provider_identifier: profile},
-        api_keys=global_configuration.configured_provider_keys(),
-        api_bases=global_configuration.configured_provider_bases(),
+        api_keys=provider_api_keys,
+        api_bases=provider_base_urls,
         store=credential_store,
     )
     model = ChatLiteLLMModel.model_validate(

@@ -21,7 +21,7 @@ router = APIRouter()
 @router.get("/mcp/tools")
 async def mcp_tools(server: str = "", working_directory: str = ""):
     """The configured MCP servers with their tools; disabled ones are returned empty rather than hidden."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     # Servers from the folder's own mcp.json are project-specific; home and Composio are global.
     project_server_names: set[str] = set()
     if working_directory:
@@ -30,7 +30,7 @@ async def mcp_tools(server: str = "", working_directory: str = ""):
         allowed.update(state.composio_servers)
         configured = {
             name: configuration
-            for name, configuration in state.global_configuration.mcp.servers.items()
+            for name, configuration in state.application_configuration.mcp.servers.items()
             if name in allowed
         }
         home_root = home_agents_root().resolve()
@@ -38,7 +38,7 @@ async def mcp_tools(server: str = "", working_directory: str = ""):
         if project_root != home_root:
             project_server_names = set(load_mcp_configuration([project_root]).servers)
     else:
-        configured = state.global_configuration.mcp.servers
+        configured = state.application_configuration.mcp.servers
     tools_by_server: dict[str, list] = {}
     if state.mcp_server_manager is not None:
         # List the enabled servers and filter below: the manager raises for a name it does not hold.

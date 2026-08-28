@@ -26,6 +26,7 @@ from langmesh.runtime.boundary import RULE_ALLOW, RULE_ASK, escape_of, verdict_f
 from langmesh.runtime.locations import PermissionDecision
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.plugins.permission_reviewer import PermissionReviewer
+from langmesh.runtime.plugins.permission_reviewer.configuration import PermissionReviewConfiguration
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +77,8 @@ def _screen_primitive(func: ast.expr) -> str:
 class PermissionReview(Feature):
     """Whether a call runs, is asked about, or is refused, and what approval a session keeps."""
 
-    def __init__(self) -> None:
-        self._reviewer = PermissionReviewer()
+    def __init__(self, configuration: PermissionReviewConfiguration | None = None) -> None:
+        self._reviewer = PermissionReviewer(configuration)
 
     def attach(self, context: PluginContext, host: PluginHost) -> None:
         self._context = context
