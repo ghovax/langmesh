@@ -257,7 +257,7 @@ copies policy and secrets onto `/srv/langmesh/xdg`, then enables them. Pass
   close and reopen. `langmesh mail` must stay up for IDLE, but unfinished jobs are on
   disk and resume when it comes back.
 
-## `@langmesh[bot]` on GitHub
+## `@<app-slug>[bot]` on GitHub
 
 Install the LangMesh GitHub App on a personal account or organization, then configure
 its provider, model, and API key through the App setup page. An issue or pull-request

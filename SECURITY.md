@@ -104,10 +104,9 @@ them to your model, not to me or anyone else.
 
 ### Never commit credentials
 
-API keys and other secrets belong in `~/.config/langmesh/configuration.yaml` (outside
-the repo) or in environment variables — never in a tracked file. `~/.config/langmesh/`
-lives outside the repository for this reason, and the packaged template the harness
-seeds it from carries empty values only.
+API keys and other secrets belong in `~/.local/share/langmesh/secrets/` (the default
+data directory, outside the repo) — never in a tracked file. The configuration file
+contains policy, while the packaged template carries empty values only.
 
 If a key has been exposed, **rotate it at the provider** immediately. Removing it from
 git history does not un-leak a key that was already pushed.

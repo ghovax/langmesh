@@ -24,8 +24,8 @@ once the daemon is running.
 
 ## Ground rules
 
-- **Never commit secrets.** API keys go in `~/.config/langmesh/configuration.yaml` or
-  environment variables, never in a tracked file. See [Security notes](SECURITY.md).
+- **Never commit secrets.** API keys go in `~/.local/share/langmesh/secrets/` (the default
+  data directory), never in a tracked file. See [Security notes](SECURITY.md).
 - **Match the surrounding code.** Follow the existing naming, comment density, and
   structure; don't introduce a new style.
 - **Keep changes focused.** One logical change per pull request, with a clear

@@ -224,8 +224,8 @@ daemon's API. A session composes over that API, not by shelling out to this comm
    find one, then opens the window.
 1. **Add a model key.** Open **Settings**, then **Providers**, and paste a key for any
    provider. You can also sign in with a ChatGPT or Cursor subscription. Then pick a
-   model. Keys live in your LangMesh configuration file — see the
-   [Configuration guide](documentation/user/configuration.md).
+   model. Provider credentials live in secret files under `$XDG_DATA_HOME/langmesh/secrets/`;
+   see the [Configuration guide](documentation/user/configuration.md).
 1. **Start a conversation.** Type a task. Approve tool calls as they come up, or relax
    the [permission mode](documentation/user/configuration.md#permission-modes) once you
    trust a flow.
@@ -286,8 +286,8 @@ agent on a vendor's cloud, use theirs.
 
 LangMesh follows the XDG convention. It does not use a single dot-directory:
 
-- Configuration in `~/.config/langmesh`
-- Durable state in `~/.local/share/langmesh`
+- Configuration in `~/.config/langmesh/configuration.yaml`
+- Durable state and secret files in `~/.local/share/langmesh`
 - Sockets in the runtime directory
 - Logs in `~/.local/state/langmesh`
 - Caches in `~/.cache/langmesh`
@@ -295,10 +295,10 @@ LangMesh follows the XDG convention. It does not use a single dot-directory:
 The OS clears the runtime directory when you log out. A crashed daemon therefore leaves
 nothing behind.
 
-Only the holder of a session's handle can reach it. Creating a session mints a
-capability token (derived, never stored). Every call to a session must present that
-token. The daemon guards its own API the same way, with a token that it writes `0600`
-into the runtime directory.
+Only the holder of a session's handle can reach it. Creating a session derives a
+capability token from the durable session master key; the token itself is not stored. Every
+call to a session must present that token. The daemon guards its own API the same way,
+with a token that it writes `0600` into the runtime directory.
 
 That token does not say _which_ session is calling. A session runs as the same user and
 could read the file. So on the unix socket the daemon asks the kernel for the peer's
