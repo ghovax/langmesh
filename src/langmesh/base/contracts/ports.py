@@ -482,8 +482,8 @@ class CompactionState:
     context_tokens: int
     """What the conversation currently occupies, as the last reply reported it."""
 
-    reason: str = "auto"
-    """``auto`` when the loop asked, ``manual`` when a person did."""
+    reason: str = "automatic"
+    """``automatic`` when the loop asked, ``manual`` when a person did."""
 
 
 @runtime_checkable

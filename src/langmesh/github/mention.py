@@ -678,7 +678,8 @@ async def run_turn(
             if isinstance(event, CompactionDone):
                 logger.info(
                     "mention compaction done session=%s reason=%s ok=%s "
-                    "messages=%s->%s tokens=%s->%s error=%s rss_mib=%s",
+                    "messages_before=%s messages_after=%s "
+                    "tokens_before=%s tokens_after=%s error=%s rss_mib=%s",
                     mention.session_id,
                     event.reason,
                     event.ok,

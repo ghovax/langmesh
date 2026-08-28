@@ -56,7 +56,7 @@ class CompactionControl:
     phase: Literal["none", "waiting", "recorded", "preparation_failed", "compaction_failed"] = (
         "none"
     )
-    reason: Literal["auto", "manual", "overflow"] = "manual"
+    reason: Literal["automatic", "manual", "overflow"] = "manual"
     resume_after: bool = False
     preparation_token: Any = None
     failure: str | None = None
@@ -84,10 +84,10 @@ class CompactionControl:
         return self.phase in {"preparation_failed", "compaction_failed"}
 
     def begin(self, *, reason: str, resume_after: bool) -> None:
-        if reason not in {"auto", "manual", "overflow"}:
+        if reason not in {"automatic", "manual", "overflow"}:
             raise ValueError(f"Invalid compaction reason: {reason}")
         self.phase = "waiting"
-        self.reason = cast(Literal["auto", "manual", "overflow"], reason)
+        self.reason = cast(Literal["automatic", "manual", "overflow"], reason)
         self.resume_after = resume_after
         self.preparation_token = None
         self.failure = None
@@ -131,7 +131,7 @@ class CompactionControl:
             phase=phase
             if phase in {"none", "waiting", "recorded", "preparation_failed", "compaction_failed"}
             else "none",
-            reason=reason if reason in {"auto", "manual", "overflow"} else "manual",
+            reason=reason if reason in {"automatic", "manual", "overflow"} else "manual",
             resume_after=bool(value.get("resume_after", False)),
             preparation_token=value.get("preparation_token"),
             failure=(str(value["failure"]) if value.get("failure") else None),
@@ -272,7 +272,7 @@ class Compaction(Feature):
         return retained
 
     def _compaction_state(
-        self, reason: str = "auto", *, context_tokens: int | None = None
+        self, reason: str = "automatic", *, context_tokens: int | None = None
     ) -> CompactionState:
         """Expose only the durable conversation to a caller-supplied compaction strategy."""
         return CompactionState(

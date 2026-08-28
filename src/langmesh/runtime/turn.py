@@ -661,7 +661,7 @@ class _RunsTurns(_DispatchesTools, ABC):
                     ),
                 )
                 for maintainer in self._features.maintainers(request_tokens):
-                    maintainer.begin_maintenance(reason="auto", resume_after=True)
+                    maintainer.begin_maintenance(reason="automatic", resume_after=True)
             if self._features.active_maintenance():
                 async for maintenance_event in self._features.advance_maintenance():
                     yield maintenance_event
