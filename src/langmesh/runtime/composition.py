@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Sequence
+from typing import Any, Awaitable, Callable, Mapping, Sequence
 
 from langchain_core.tools import BaseTool
 
-from langmesh.base.configuration import AgentConfiguration, Configuration
+from langmesh.base.configuration import AgentConfiguration
 from langmesh.base.contracts.ports import (
     Approvals,
     Artifacts,
@@ -34,13 +34,14 @@ class RuntimeProfile:
     """Immutable facts that define one runtime and its confinement boundary."""
 
     agent: AgentConfiguration
-    configuration: Configuration
     session_id: str
     working_directory: str
     project_directory: str = ""
     permission_mode: str = ""
     sandbox: Any = None
     parent_session: str = ""
+    workspace_strategy: str = "none"
+    inline_image_bytes: int = 20 * 1024 * 1024
 
     def __post_init__(self) -> None:
         if not self.session_id.strip():
@@ -78,6 +79,10 @@ class RuntimeComponents:
     # (journals, preparations, listeners). The core never inspects it; it is carried through
     # so plugins that reach it via services can. None means the host composed no bundle.
     services: Any = None
+    # Host-built tool state. The core consumes this capability but never constructs web or daemon clients.
+    tool_context: Any = None
+    provider_api_keys: Mapping[str, str] = field(default_factory=dict)
+    provider_base_urls: Mapping[str, str] = field(default_factory=dict)
     # The machine snapshot and user context, probed by the host and passed in. None means the
     # library supplies a minimal platform-only snapshot and no personal context.
     machine_snapshot: dict[str, Any] | None = None

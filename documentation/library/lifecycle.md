@@ -189,8 +189,8 @@ session = Session(
 )
 ```
 
-The `providers` mapping is copied into the session's `Configuration`; the caller's value
-is never mutated. Environment variables still take precedence. Account-backed providers
+The `providers` mapping is split into explicit provider credentials and endpoint values; the
+caller's mapping is never mutated. Environment variables still take precedence. Account-backed providers
 (`chatgpt`, `cursor`) use the replaceable `Credentials` port in `SessionComponents`.
 
 ### Supply a model object

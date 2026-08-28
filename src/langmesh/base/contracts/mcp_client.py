@@ -6,23 +6,42 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal
 
 import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.session import RequestResponder
-from pydantic import AnyUrl
-
-
-# How long to wait for one server's handshake at startup before booting without it.
-
-from langmesh.base.configuration import MCPServerConfiguration
+from pydantic import AnyUrl, BaseModel, Field
 
 from langmesh.base.primitives.errors import log_fields
-
 from langmesh.base.primitives.limits import current_limits
+
+
+class MCPServerConfiguration(BaseModel):
+    """Connection data for one MCP server supplied by a host."""
+
+    enabled: bool = True
+    transport: Literal["stdio", "streamable_http"] = "stdio"
+    stateful: bool = True
+    command: str = ""
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    cwd: str = ""
+    url: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
+    timeout_seconds: float = 30
+
+
+class MCPConfiguration(BaseModel):
+    """The MCP servers a host makes available to a runtime."""
+
+    servers: dict[str, MCPServerConfiguration] = Field(default_factory=dict)
+
+    def enabled_servers(self) -> dict[str, MCPServerConfiguration]:
+        return {name: server for name, server in self.servers.items() if server.enabled}
+
 
 logger = logging.getLogger(__name__)
 

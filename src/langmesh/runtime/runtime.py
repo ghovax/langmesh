@@ -17,11 +17,7 @@ from models_provider import (
 )
 
 from langmesh.base import confinement as _confinement
-from langmesh.base.configuration import (
-    Configuration,
-    PermissionEvaluator,
-    SandboxConfiguration,
-)
+from langmesh.base.configuration import PermissionEvaluator, SandboxConfiguration
 from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base.confinement import Grant, Profile
 from langmesh.base.content.models import find_model
@@ -108,66 +104,6 @@ def _as_profile(sandbox: Any) -> Profile:
     )
 
 
-def _build_tool_context(
-    global_configuration: Configuration,
-    *,
-    sandbox,
-    workspace: str,
-    session_id: str = "",
-    session_access: Any = None,
-    conversation_snapshot: Optional[Callable[[], list[dict[str, Any]]]] = None,
-    mcp_server_manager: Any = None,
-    toolbox: Any = None,
-) -> ToolContext:
-    """The session-shaped state this runtime's tools read, derived from configuration rather than installed."""
-    # The session's own tools, and the one widening that goes with them: it cannot install where it may not write.
-    if toolbox is not None:
-        sandbox = sandbox.with_grant(
-            _confinement.approved(
-                _confinement.AccessRequest(mutates=True, writes=(str(toolbox.root),)),
-                by=_confinement.APPROVED_BY_RULE,
-                purpose="the session's own toolbox directory",
-            ),
-            workspace=workspace,
-        )
-
-    exa_client = None
-    exa_key = global_configuration.exa.effective_api_key
-    if exa_key:
-        from exa_py import Exa
-
-        exa_client = Exa(api_key=exa_key)
-
-    firecrawl_client = None
-    firecrawl_key = global_configuration.firecrawl.effective_api_key
-    if firecrawl_key:
-        from firecrawl import AsyncFirecrawl
-
-        api_url = global_configuration.firecrawl.effective_api_url
-        firecrawl_client = (
-            AsyncFirecrawl(api_key=firecrawl_key, api_url=api_url)
-            if api_url
-            else AsyncFirecrawl(api_key=firecrawl_key)
-        )
-
-    return ToolContext(
-        sandbox=sandbox,
-        workspace=workspace,
-        exa_client=exa_client,
-        mcp_server_manager=mcp_server_manager,
-        firecrawl_client=firecrawl_client,
-        jina_api_key=global_configuration.jina.effective_api_key,
-        proxy_url=global_configuration.web_fetch.effective_proxy_url,
-        fetch_timeout_seconds=global_configuration.web_fetch.timeout_seconds,
-        download_timeout_seconds=global_configuration.web_fetch.download_timeout_seconds,
-        minimum_useful_characters=global_configuration.web_fetch.minimum_useful_characters,
-        session_access=session_access,
-        conversation_snapshot=conversation_snapshot,
-        session_id=session_id,
-        toolbox=toolbox,
-    )
-
-
 class _LeaseAccess:
     """The filesystem-lease surface a tool handler may hold across an operation."""
 
@@ -214,9 +150,11 @@ class AgentRuntime(_RunsTurns):
         # Normalised once, because callers hand this three different shapes.
         self._sandbox = _as_profile(profile.sandbox)
         self._agent_configuration = profile.agent
-        self._global_configuration = profile.configuration
         self._working_directory = profile.working_directory
         self._project_directory = profile.project_directory or self._working_directory
+        self._workspace_strategy = profile.workspace_strategy
+        self._inline_image_bytes = max(0, profile.inline_image_bytes)
+        self._sandbox_enforce = self._sandbox.enforce
         # The host already resolved the session mode; a direct library caller falls back to the profile.
         self._permission_mode = PermissionMode.resolve(
             profile.permission_mode, profile.agent.permission_default
@@ -235,11 +173,12 @@ class AgentRuntime(_RunsTurns):
             if components.model is not None
             else build_chat_model(
                 model_identifier or "",
-                profile.configuration,
                 profile.agent,
                 self._working_directory,
                 profile.session_id,
                 credential_store=self._environment.credentials,
+                provider_api_keys=components.provider_api_keys,
+                provider_base_urls=components.provider_base_urls,
             )
         )
 
@@ -352,16 +291,29 @@ class AgentRuntime(_RunsTurns):
         # must come from the terminal error the chain began with, not from the attempt being failed.
         self._turn_failure_root: str | None = None
         # What the module-level tools read at call time, built from this runtime's own configuration and conversation.
-        self._tool_context = _build_tool_context(
-            profile.configuration,
+        self._tool_context = components.tool_context or ToolContext()
+        self._tool_context = dataclasses.replace(
+            self._tool_context,
             sandbox=self._sandbox,
             workspace=self._working_directory,
-            session_id=self._session_id,
             session_access=components.sessions,
             conversation_snapshot=self._peer_conversation_snapshot,
+            session_id=self._session_id,
             mcp_server_manager=components.mcp_servers,
             toolbox=components.toolbox,
         )
+        if components.toolbox is not None:
+            self._tool_context = self._tool_context.with_grants(
+                [
+                    _confinement.approved(
+                        _confinement.AccessRequest(
+                            mutates=True, writes=(str(components.toolbox.root),)
+                        ),
+                        by=_confinement.APPROVED_BY_RULE,
+                        purpose="the session's own toolbox directory",
+                    )
+                ]
+            )
         # What was approved beyond the configured profile. The boundary is the core's; only the permission plugin adds to it, so other plugins never need to know that plugin exists.
         self._access_grants: list[Grant] = []
         # The files the person attached: like a grant, but answering what they handed over rather than what was asked.
@@ -374,7 +326,8 @@ class AgentRuntime(_RunsTurns):
             working_directory=self._working_directory,
             project_directory=self._project_directory,
             agent_configuration=self._agent_configuration,
-            global_configuration=self._global_configuration,
+            provider_api_keys=components.provider_api_keys,
+            provider_base_urls=components.provider_base_urls,
             catalogue=self._catalogue,
             prompts=lambda name: feature_prompts(name, self._catalogue),
             bus=self._plugin_bus,
@@ -502,7 +455,6 @@ class AgentRuntime(_RunsTurns):
                     "schema": model_json_schema() if callable(model_json_schema) else {},
                 }
             )
-        user_context = getattr(self._global_configuration, "user_context", None)
         return content_address(
             {
                 "agent": {
@@ -513,7 +465,7 @@ class AgentRuntime(_RunsTurns):
                 "catalogue": self._catalogue.prompt_revision(),
                 "components": self._components.prompt_revision,
                 "features": self._features.prompt_revision(),
-                "user_context_enabled": bool(user_context and user_context.enabled),
+                "user_context_enabled": bool(self._components.user_context),
                 "prompt_composer": (
                     f"{type(self._prompt_composer).__module__}.{type(self._prompt_composer).__qualname__}"
                     if self._prompt_composer is not None
@@ -709,7 +661,7 @@ class AgentRuntime(_RunsTurns):
     @property
     def inline_image_bytes(self) -> int:
         """The ceiling on an image inlined into this conversation, as the person configured it."""
-        return self._global_configuration.attachments.inline_image_bytes
+        return self._inline_image_bytes
 
     @property
     def model_identifier(self) -> str:

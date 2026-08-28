@@ -16,7 +16,7 @@ def attached_goal(goal: dict | None) -> dict | None:
     """The goal a client sees, with who currently settles a mark laid over the stored snapshot."""
     if not isinstance(goal, dict):
         return None
-    configuration = state.global_configuration
+    configuration = state.application_configuration
     settlement = configuration.goal_review.settlement if configuration is not None else "reviewer"
     return {**goal, "settlement": settlement}
 
@@ -77,8 +77,8 @@ def _ensure_session_workspace(
         WorktreeStrategy,
         requested_strategy
         or (
-            state.global_configuration.workspace.strategy
-            if state.global_configuration is not None
+            state.application_configuration.workspace.strategy
+            if state.application_configuration is not None
             else "none"
         ),
     )

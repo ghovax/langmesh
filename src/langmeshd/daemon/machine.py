@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-from langmesh.base.configuration import Configuration
+from langmeshd.commons.configuration import ApplicationConfiguration
 from langmesh.base.contracts.catalogue import packaged_prompts_directory
 from langmeshd.commons.configuration_io import load_configuration  # noqa: F401 — re-exported for callers of machine.load_configuration
 from langmeshd.commons.agent_files import AgentFileLoader
@@ -69,7 +69,7 @@ def _instruction_files_for(project_directory: Optional[Path]) -> tuple[Path, ...
 
 
 def machine_catalogue(
-    configuration: Configuration,
+    configuration: ApplicationConfiguration,
     working_directory: str = "",
     agent_loader: AgentLoader | None = None,
 ) -> FileCatalogue:
@@ -92,14 +92,14 @@ def machine_catalogue(
     )
 
 
-def load_catalogue(configuration: Configuration, directory: str | Path) -> Any:
+def load_catalogue(configuration: ApplicationConfiguration, directory: str | Path) -> Any:
     """The agents, skills, memories and instructions reachable from `directory`."""
     local = Path(directory).expanduser().resolve()
     return machine_catalogue(configuration, str(local))
 
 
 def load_agent(
-    name: str, directory: str | Path, *, configuration: Configuration | None = None
+    name: str, directory: str | Path, *, configuration: ApplicationConfiguration | None = None
 ) -> Any:
     """One named agent profile from this machine, raising with what is available when the name is unknown."""
     resolved = configuration if configuration is not None else load_configuration(seed=False)

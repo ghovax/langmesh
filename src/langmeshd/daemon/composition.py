@@ -47,8 +47,8 @@ async def open_shared_resources() -> None:
     from langmeshd.daemon.persistence.secrets import ensure_private_value
     from langmeshd.commons.brokers.terminals import TerminalSessionManager
 
-    assert commons_state.global_configuration is not None
-    configuration = commons_state.global_configuration
+    assert commons_state.application_configuration is not None
+    configuration = commons_state.application_configuration
 
     # REST handlers read subscription tokens through the task-local store; without this they
     # see an empty in-memory store even after a successful sign-in wrote the daemon's files.
@@ -169,7 +169,7 @@ async def close_shared_resources() -> None:
 
 def _watched_agent_paths() -> list[str]:
     """Every directory whose contents define what agents and skills exist, watched recursively."""
-    assert commons_state.global_configuration is not None
+    assert commons_state.application_configuration is not None
     candidates = [
         *agents_roots(),
         *agent_directories(),
@@ -268,7 +268,7 @@ def _available_ssh_configuration() -> Path | None:
 
 def known_agent_names() -> list[str]:
     """Every agent profile a session could be created with, from the configured roots."""
-    assert commons_state.global_configuration is not None
+    assert commons_state.application_configuration is not None
     return list_agent_route_names(agent_directories())
 
 

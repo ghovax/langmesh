@@ -30,10 +30,10 @@ computer control, and the user-context snapshot each ask live sessions to rebuil
 
 Three places say something about a setting, and each says a different thing. **This
 document** is the narrative, for the settings worth explaining at length. The **settings
-panel** reads the running schema, so it can tell you what _this machine_ is set to. A
-name the schema does not define is **refused**, not ignored. The daemon validates its
-`daemon`, `dictation`, `composio`, `email`, and `provision` sections separately and
-passes only library-owned sections to `langmesh.Configuration`.
+panel** reads the daemon's running schema, so it can tell you what _this machine_ is set
+to. A name the schema does not define is **refused**, not ignored. The daemon owns and
+validates the complete application configuration; the `langmesh` library receives only
+explicit runtime values and capabilities.
 
 ## Where everything lives
 
@@ -454,8 +454,8 @@ an explicit agent, and no profile is the one to fall back to. Add your own under
 
 ## Configuration reference
 
-Every setting LangMesh has, with library settings in the order the settings panel
-presents them and app-owned settings named separately.
+Every setting the daemon exposes, with runtime-boundary and plugin settings grouped by
+the component that owns them.
 
 A setting is addressed by its dotted path, and the same path works everywhere: in
 `~/.config/langmesh/configuration.yaml`, and as the key the interface writes. Nothing is
@@ -467,8 +467,8 @@ never touched may be absent; omit it and the default applies) or use the interfa
 settings panel, which walks the same schema. To unset a setting, remove its line from
 the file rather than writing the default into it.
 
-For library settings, the panel's names and explanations live in `shared/messages/`,
-keyed by these exact paths.
+For these settings, the panel's names and explanations live in `shared/messages/`, keyed by
+these exact paths.
 
 ### Agent defaults
 
@@ -476,7 +476,7 @@ What a session runs under when its creator does not say.
 
 | Setting                 | Type                          | Default | What it is for                                                                                                              |
 | ----------------------- | ----------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `agent.permission_mode` | `ask` / `automatic` / `allow` | `ask`   | Who answers when a session asks to reach past its confinement when neither the person nor its agent profile chooses a mode. |
+| `agent.permission_mode` | `ask` / `automatic` / `allow` | `ask`   | The daemon default when neither the caller nor the agent profile chooses a mode. |
 
 ### Workspaces
 
@@ -529,6 +529,19 @@ How an agent-marked goal is settled.
 | Setting                  | Type   | Default    | What it is for                                                                                                                                                            |
 | ------------------------ | ------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `goal_review.settlement` | choice | `reviewer` | Who settles a `satisfied` or `blocked` mark: an independent reviewer (`reviewer`), or the working agent (`agent`), in which case that mark is final and the session ends. |
+
+### Plugin retry budgets
+
+These values belong to their plugins and are passed when the daemon composes them.
+
+| Setting | Type | Default | What it is for |
+| --- | --- | --- | --- |
+| `compaction.summary_attempts` | integer | `3` | Maximum summary submissions for one compaction. |
+| `compaction.summary_timeout_seconds` | number | `180.0` | Maximum time for one summary attempt. |
+| `goal_review.review_attempts` | integer | `3` | Maximum verdict submissions for one goal review. |
+| `goal_review.review_timeout_seconds` | number | `180.0` | Maximum time for one goal-review attempt. |
+| `permission_reviewer.attempts` | integer | `4` | Maximum automatic permission verdict attempts. |
+| `titling.attempts` | integer | `4` | Maximum session-title attempts. |
 
 ### Attachments
 
@@ -753,8 +766,6 @@ duration is in seconds. The shipped values:
 | `find_one_margin`                | `0.2`         | How far ahead of the runner-up find_one's best match must score before it answers with one element.           |
 | `find_many_ceiling`              | `64`          | Elements find_many will return however many are asked for.                                                    |
 | `find_relevance_floor`           | `0.25`        | How well an element must match before find_many returns it at all.                                            |
-| `session_title_attempts`         | `4`           | How many times a session asks the model to name itself before giving up.                                      |
-| `permission_reviewer_attempts`   | `4`           | How many times the permission reviewer is asked before its silence counts as a refusal.                       |
 | `model_catalogue_ttl`            | `60.0`        | How long the list of available models is cached.                                                              |
 | `credential_refresh_leeway`      | `300.0`       | How far ahead of its expiry an access token is refreshed.                                                     |
 | `oauth_poll_interval`            | `1.0`         | First pause between asks of whether a browser sign-in has completed; it widens from here.                     |

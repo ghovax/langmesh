@@ -24,18 +24,21 @@ from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.plugins.permission_reviewer.tools import (
     permission_decision as permission_decision_tool,
 )
+from langmesh.runtime.plugins.permission_reviewer.configuration import PermissionReviewConfiguration
 from langmesh.runtime.internals import _PreflightGate
 from langmesh.runtime.locations import PermissionDecision
 from langmesh.runtime.values import PermissionAnswer
 from langmesh.runtime.verdict import collect_structured_call
 
-from langmesh.base.primitives.limits import current_limits
 
 logger = logging.getLogger(__name__)
 
 
 class PermissionReviewer(Feature):
     """The model verdict for one automatic gate, and the evidence recorded about each review."""
+
+    def __init__(self, configuration: PermissionReviewConfiguration | None = None) -> None:
+        self._configuration = configuration or PermissionReviewConfiguration()
 
     def attach(self, context: PluginContext, host: PluginHost) -> None:
         self._context = context
@@ -114,7 +117,7 @@ class PermissionReviewer(Feature):
             tool_choice="auto",
             parallel_tool_calls=False,
         )
-        attempts = current_limits().permission_reviewer_attempts
+        attempts = self._configuration.attempts
         started_at = time.perf_counter()
 
         def _only_permission_call(response: Any) -> Any | None:

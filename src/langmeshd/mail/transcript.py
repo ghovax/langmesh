@@ -36,7 +36,9 @@ def turn_failed(turn: dict[str, Any]) -> bool:
     return turn_state(turn) in _TERMINAL_FAILED
 
 
-def turn_for_client_message(turns: list[dict[str, Any]], client_message_id: str) -> dict[str, Any] | None:
+def turn_for_client_message(
+    turns: list[dict[str, Any]], client_message_id: str
+) -> dict[str, Any] | None:
     if not client_message_id:
         return None
     for turn in turns:
@@ -52,8 +54,10 @@ def turn_for_client_message(turns: list[dict[str, Any]], client_message_id: str)
                 if not isinstance(data, dict):
                     continue
                 kind = str(data.get("kind") or data.get("type") or "")
-                if kind in {"inbound_message", "InboundMessageEvent"} and str(
-                    data.get("message_id") or data.get("messageId") or ""
-                ) == client_message_id:
+                if (
+                    kind in {"inbound_message", "InboundMessageEvent"}
+                    and str(data.get("message_id") or data.get("messageId") or "")
+                    == client_message_id
+                ):
                     return turn
     return None

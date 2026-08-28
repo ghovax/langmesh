@@ -31,8 +31,8 @@ def _persist_app_section(section: str, changes: dict) -> None:
 
 async def _apply_live_credentials() -> None:
     """Re-provision what the daemon itself owns after a configuration change."""
-    assert state.global_configuration is not None
-    configuration = state.global_configuration
+    assert state.application_configuration is not None
+    configuration = state.application_configuration
     state.composio_servers = composio_mcp_servers(state.composio_configuration)
     if state.composio_servers:
         configuration.mcp.servers.update(state.composio_servers)
@@ -78,9 +78,9 @@ async def _persist_configuration(**changes) -> None:
 
 async def _reload_configuration_from_disk() -> None:
     """Re-read the configuration file after a manual edit and apply it live."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     fresh = await asyncio.to_thread(load_configuration)
-    configuration = state.global_configuration
+    configuration = state.application_configuration
     # Every section, from the model rather than from a hand-kept list that fell behind the schema.
     for name in type(fresh).model_fields:
         setattr(configuration, name, getattr(fresh, name))

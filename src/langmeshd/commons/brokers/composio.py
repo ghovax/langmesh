@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from langmeshd.commons.configuration import ComposioConfiguration
-from langmesh.base.configuration import MCPServerConfiguration
+from langmesh.base.contracts.mcp_client import MCPServerConfiguration
 
 logger = logging.getLogger(__name__)
 

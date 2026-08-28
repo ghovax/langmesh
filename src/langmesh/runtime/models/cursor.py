@@ -67,7 +67,6 @@ from langmesh.runtime.models import cursor_wire as wire
 from langmesh.base.primitives.limits import current_limits
 
 
-
 # Everything this client says to a model is a prompt on disk, like every other prompt the harness sends.
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent.parent / "prompts")
 

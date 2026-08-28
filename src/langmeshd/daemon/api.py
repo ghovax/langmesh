@@ -81,7 +81,7 @@ def _assert_agent_exists(agent: str, working_directory: str) -> None:
     """Refuse a session for a profile that is not there, rather than failing on its first message."""
     from langmeshd.commons.services.agents import available_agent_names
 
-    configuration = state.global_configuration
+    configuration = state.application_configuration
     if configuration is None:
         return
     from langmeshd.commons.configuration_locations import agent_directories
@@ -110,7 +110,7 @@ def _resolve_sandbox(agent: str, working_directory: str, parent, read_only: bool
     from langmesh.base import confinement
     from langmeshd.commons.services.agents import _agent_configuration_for_request
 
-    configured = getattr(state.global_configuration, "sandbox", None)
+    configured = getattr(state.application_configuration, "sandbox", None)
     profile = configured.to_profile() if configured is not None else confinement.Profile()
     try:
         _, agent_configuration = _agent_configuration_for_request(agent, working_directory)
@@ -170,7 +170,9 @@ async def _session_create(params: dict) -> dict:
             code="store_unavailable",
         )
 
-    configured = getattr(getattr(state.global_configuration, "agent", None), "permission_mode", "")
+    configured = getattr(
+        getattr(state.application_configuration, "agent", None), "permission_mode", ""
+    )
 
     working_directory = str(params.get("working_directory") or "")
     if parent is not None and not working_directory:
@@ -489,10 +491,10 @@ async def _turn_get(params: dict) -> dict:
 
 async def _remote_list(_params: dict) -> dict:
     """The peers registered on other hosts, listed apart because LangMesh owns neither their lifecycle nor their history."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     manager = state.remote_agent_manager
     agents = []
-    for name, configuration in state.global_configuration.remote_agents.agents.items():
+    for name, configuration in state.application_configuration.remote_agents.agents.items():
         health = (
             manager.health(name) if manager is not None else {"health": "unconfigured", "error": ""}
         )

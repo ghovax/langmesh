@@ -401,9 +401,7 @@ def resolve_provider_credentials(
         api_keys={credential_identifier: configured},
         store=credential_store,
     )
-    return authentication.resolve(
-        identifier, environment_variables=profile.environment_variables
-    )
+    return authentication.resolve(identifier, environment_variables=profile.environment_variables)
 
 
 def resolve_base_url(

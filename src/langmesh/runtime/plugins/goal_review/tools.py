@@ -9,7 +9,7 @@ from typing import Any
 from langchain.tools import tool
 from langchain_core.tools import StructuredTool
 
-from langmesh.base.configuration.configuration import GoalReviewConfiguration
+from langmesh.runtime.plugins.goal_review.configuration import GoalReviewConfiguration
 from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.features import GoalCapability

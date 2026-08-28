@@ -42,7 +42,7 @@ class RemoteAgentInput(BaseModel):
 
 
 def _home_remote_agents_path() -> Path:
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     root = home_agents_root()
     root.mkdir(parents=True, exist_ok=True)
     return root / "remote-agents.json"
@@ -91,8 +91,8 @@ def _entry_from_input(payload: RemoteAgentInput) -> dict:
 @router.get("/remote-agents")
 async def list_remote_agents():
     """The registered external agents with their configuration (never secrets) and live health."""
-    assert state.global_configuration is not None
-    configuration = state.global_configuration.remote_agents
+    assert state.application_configuration is not None
+    configuration = state.application_configuration.remote_agents
     manager = state.remote_agent_manager
     agents = []
     for name, agent in configuration.agents.items():

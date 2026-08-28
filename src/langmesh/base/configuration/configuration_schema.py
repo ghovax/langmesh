@@ -6,7 +6,7 @@ import typing
 from dataclasses import dataclass
 from enum import Enum
 from types import UnionType
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
@@ -195,63 +195,35 @@ def _walk(model: type[BaseModel], prefix: str) -> list[Setting]:
     return settings
 
 
-#: The order a person meets the sections in, from what they decide to what they set.
-SECTION_ORDER = (
-    # What the agent may do, and where.
-    "agent",
-    "workspace",
-    "sandbox",
-    "toolbox",
-    # What it carries between turns, and what it knows about you.
-    "compaction",
-    "user_context",
-    # How an open goal keeps being worked.
-    "goal_review",
-    # The surfaces it can reach for.
-    "computer_control",
-    # Who it talks to, and with what credentials.
-    "providers",
-    "exa",
-    "jina",
-    "firecrawl",
-    "web_fetch",
-    "mcp",
-    "remote_agents",
-    # What is watching, and the numbers underneath everything.
-    "telemetry",
-    "limits",
-)
-
-
-def settings() -> list[Setting]:
-    """Every setting, sections ordered for a reader and each section in the order the schema declares."""
-    from langmesh.base.configuration import Configuration
-
-    walked = _walk(Configuration, "")
-    position = {name: index for index, name in enumerate(SECTION_ORDER)}
+def settings(model: type[BaseModel], *, section_order: Sequence[str] = ()) -> list[Setting]:
+    """Walk a model into settings, optionally using the caller's section order."""
+    walked = _walk(model, "")
+    if not section_order:
+        return walked
+    position = {name: index for index, name in enumerate(section_order)}
     return sorted(
         walked, key=lambda setting: position.get(setting.path.split(".")[0], len(position))
     )
 
 
-def leaf_settings() -> list[Setting]:
+def leaf_settings(model: type[BaseModel], *, section_order: Sequence[str] = ()) -> list[Setting]:
     """Only the settings that hold a value, since a section is a place to put things rather than a thing."""
-    everything = settings()
+    everything = settings(model, section_order=section_order)
     prefixes = {setting.path.rsplit(".", 1)[0] for setting in everything if "." in setting.path}
     return [setting for setting in everything if setting.path not in prefixes or setting.open_ended]
 
 
-def setting_for(path: str) -> Optional[Setting]:
+def setting_for(
+    model: type[BaseModel], path: str, *, section_order: Sequence[str] = ()
+) -> Optional[Setting]:
     """The setting at a dotted path, resolving through an open-ended map to the value model's own field."""
-    for setting in settings():
+    for setting in settings(model, section_order=section_order):
         if setting.path == path:
             return setting
     if path.startswith(LIMITS + "."):
         # Every valid name under it was in the list just searched, so this one is a typo.
         return None
-    from langmesh.base.configuration import Configuration
-
-    return _descend(Configuration, path.split("."), path)
+    return _descend(model, path.split("."), path)
 
 
 def _descend(model: type[BaseModel], segments: list[str], full_path: str) -> Optional[Setting]:

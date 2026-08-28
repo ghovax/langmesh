@@ -8,7 +8,6 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from models_provider import chatgpt_tokens, cursor_tokens
-from langmesh.base.configuration import Configuration
 from langmesh.base.confinement import ApprovedBy, Grant
 from langmesh.runtime.values import ToolStatus, tool_status_from_result
 from langmesh.base.identity.providers import resolve_provider_credentials
@@ -17,7 +16,7 @@ from langmesh.base.content.models import find_model
 from langmesh.runtime.boundary import Escape
 from langmesh.base.primitives.limits import current_limits, clip_to_tokens, count_tokens
 from langchain_core.messages import AIMessageChunk
-from typing import Any, AsyncIterator, Callable, Optional
+from typing import Any, AsyncIterator, Callable, Mapping, Optional
 from langmesh.base.primitives.serialization import compact
 
 
@@ -78,7 +77,7 @@ async def await_interruptible(
 
 def model_is_authorized(
     model_identifier: str,
-    global_configuration: Configuration,
+    provider_api_keys: Mapping[str, str] | None = None,
 ) -> bool:
     """Whether we hold credentials for ``model_identifier``. The one authority, mirroring ``build_chat_model``."""
     provider_identifier = model_identifier.split("/", 1)[0]
@@ -91,7 +90,7 @@ def model_is_authorized(
     # models.dev providers are registered while the catalogue is resolved. Authorization must trigger the same ordered discovery as model construction on a cold worker.
     find_model(model_identifier)
     return resolve_provider_credentials(
-        provider_identifier, global_configuration.configured_provider_keys()
+        provider_identifier, dict(provider_api_keys or {})
     ).available
 
 

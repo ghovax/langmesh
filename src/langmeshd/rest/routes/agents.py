@@ -30,7 +30,7 @@ router = APIRouter()
 @router.get("/agents")
 async def agents(working_directory: str = ""):
     """List agent profiles for the selector, scoped to the selected folder rather than the launch directory."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     directories = agent_directories(working_directory)
     # The bundled agents are always present, and none of them is singled out as a default.
     agent_data = list_agents(directories)
@@ -50,7 +50,7 @@ async def agents(working_directory: str = ""):
 
 @router.get("/agents/{agent_name}/configuration")
 async def agent_configuration(agent_name: str, working_directory: str = ""):
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     try:
         return _agent_configuration_payload(agent_name, working_directory)
     except FileNotFoundError as exception:
@@ -61,7 +61,7 @@ async def agent_configuration(agent_name: str, working_directory: str = ""):
 async def update_agent_configuration(
     agent_name: str, request: AgentConfigurationUpdateRequest, working_directory: str = ""
 ):
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     try:
         agent_markdown_path, configuration = _agent_configuration_for_request(
             agent_name, working_directory
@@ -87,7 +87,7 @@ async def update_agent_configuration(
 @router.get("/agents/cards")
 async def agent_cards(working_directory: str = ""):
     """The full card for every served agent, including the skills the selected folder scopes."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     skill_roots = skill_directories(working_directory)
     all_skills = load_skills(skill_roots)
     skill_titles = {skill.identifier: skill.display_title for skill in all_skills}
@@ -121,7 +121,7 @@ async def agent_cards(working_directory: str = ""):
 @router.get("/skills")
 async def skills(working_directory: str = ""):
     """List the skills available in the selected folder, independent of any agent."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     roots = skill_directories(working_directory)
     all_skills = load_skills(roots)
     from langmeshd.commons.configuration_locations import home_agents_root

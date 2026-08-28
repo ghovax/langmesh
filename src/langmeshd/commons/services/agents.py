@@ -99,7 +99,7 @@ def _recent_models(limit: int = 8) -> list[dict[str, str]]:
 
 def _card_for(agent_name: str, working_directory: str = ""):
     """Build an agent's card from its configuration and the skills scoped to the given working directory."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     configuration = load_agent_configuration(agent_name, agent_directories())
     skill_roots = skill_directories(working_directory)
     all_skills = load_skills(skill_roots)
@@ -112,7 +112,7 @@ def _card_for(agent_name: str, working_directory: str = ""):
 
 
 def _agent_directories_for_request(working_directory: str) -> list[Path]:
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     return agent_directories(working_directory)
 
 
@@ -213,7 +213,7 @@ def _normalized_permissions(permissions: dict[str, str]) -> dict[str, str]:
 
 def _reload_agent_cards() -> None:
     """Recompile the catalogue of profile cards, which is a different thing from the sessions themselves."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     forget_resolved_profiles()
     catalogue = {}
     for agent_name in list_agent_route_names(agent_directories()):

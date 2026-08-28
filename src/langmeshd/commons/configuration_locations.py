@@ -8,9 +8,8 @@ import os
 from pathlib import Path
 import sys
 
-from langmesh.base.configuration import (
-    MCPConfiguration,
-    MCPServerConfiguration,
+from langmesh.base.contracts.mcp_client import MCPConfiguration, MCPServerConfiguration
+from langmeshd.commons.configuration import (
     RemoteAgentsConfiguration,
     RemoteAgentServerConfiguration,
 )

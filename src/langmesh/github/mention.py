@@ -21,15 +21,13 @@ from typing import Any, Awaitable, Callable, Mapping, Protocol
 
 from langmesh import (
     AgentConfiguration,
-    Configuration,
     PackagePromptLoader,
     SandboxConfiguration,
     Session,
     SessionComponents,
-    ToolboxConfiguration,
 )
 from langmesh.base.confinement import Profile, environment_variables
-from langmesh.base.configuration import CompactionConfiguration
+from langmesh.runtime.plugins.compaction.configuration import CompactionConfiguration
 from langmesh.base.content.model_routing import resolve_litellm
 from langmesh.base.contracts.ports import Checkpoints
 from langmesh.base.persistence.artifacts import DirectoryArtifacts
@@ -514,7 +512,11 @@ class UncommittedChanges(Feature):
         return render("uncommitted_changes")
 
 
-def mention_features(workspace: Path) -> list[Feature]:
+def mention_features(
+    workspace: Path,
+    *,
+    compaction_configuration: CompactionConfiguration | None = None,
+) -> list[Feature]:
     """The plugins one mention session runs.
 
     The session is ``automatic``: a call that stays inside the box runs, and a call
@@ -523,7 +525,10 @@ def mention_features(workspace: Path) -> list[Feature]:
     service has already supplied network access and the installation token.
     """
     return [
-        Compaction(preparation=DirectCompactionPreparation()),
+        Compaction(
+            configuration=compaction_configuration,
+            preparation=DirectCompactionPreparation(),
+        ),
         PermissionReview(),
         Continuation(),
         BackgroundJobs(),
@@ -570,19 +575,18 @@ def _session(
         session_id=mention.session_id,
         permission_mode="automatic",
         sandbox=mention_sandbox(token),
-        configuration=Configuration(
-            compaction=CompactionConfiguration(
-                reclaim_at_fraction=0.75,
-                recent_working_set_fraction=0.125,
-                maximum_context_tokens=98_304,
-            ),
-            toolbox=ToolboxConfiguration(enabled=True),
-        ),
         providers={provider: key} if key else None,
         components=SessionComponents(
             artifacts=DirectoryArtifacts(workspace.parent / "artifacts"),
             checkpoints=checkpoints,
-            features=mention_features(workspace),
+            features=mention_features(
+                workspace,
+                compaction_configuration=CompactionConfiguration(
+                    reclaim_at_fraction=0.75,
+                    recent_working_set_fraction=0.125,
+                    maximum_context_tokens=98_304,
+                ),
+            ),
             credential_store=credential_store,
         ),
     )

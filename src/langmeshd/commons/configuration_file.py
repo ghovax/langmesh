@@ -1,7 +1,7 @@
 """Reading and writing the configuration file, addressed by dotted path.
 
-The daemon owns the file: the library's Configuration is a pure model and never touches
-YAML. The schema it validates against stays in the library.
+The daemon owns the file and validates its complete application configuration. The core
+library receives explicit runtime values and never reads this YAML document.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import yaml
 
 from langmeshd.commons.atomic_file import write_text
 from langmeshd.commons.paths import configuration_file_path
-from langmesh.base.configuration import Configuration
+from langmeshd.commons.configuration import ApplicationConfiguration
 
 
 APP_SECTION_MODELS = {
@@ -25,9 +25,11 @@ APP_SECTION_MODELS = {
 }
 
 
-def library_document(data: dict) -> dict:
-    """Return only the sections owned by the library configuration model."""
-    return {name: value for name, value in data.items() if name in Configuration.model_fields}
+def application_document(data: dict) -> dict:
+    """Return the sections represented by the daemon's application configuration."""
+    return {
+        name: value for name, value in data.items() if name in ApplicationConfiguration.model_fields
+    }
 
 
 def load() -> dict:
@@ -124,11 +126,11 @@ def rejects(data: dict) -> str:
 
     from langmeshd.commons import configuration as app_configuration
 
-    unknown = set(data) - set(Configuration.model_fields) - set(APP_SECTION_MODELS)
+    unknown = set(data) - set(ApplicationConfiguration.model_fields) - set(APP_SECTION_MODELS)
     if unknown:
         names = ", ".join(sorted(unknown))
         return f"unknown top-level configuration section: {names}"
-    validations = [("", Configuration, library_document(data))]
+    validations = [("", ApplicationConfiguration, application_document(data))]
     validations.extend(
         (section, getattr(app_configuration, model_name), data.get(section) or {})
         for section, model_name in APP_SECTION_MODELS.items()
@@ -149,7 +151,7 @@ def rejects(data: dict) -> str:
 
 __all__ = [
     "flatten",
-    "library_document",
+    "application_document",
     "load",
     "parse",
     "read",

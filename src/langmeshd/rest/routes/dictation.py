@@ -32,7 +32,7 @@ def _shutdown_transcriber() -> None:
 @router.get("/dictation")
 async def dictation_status(prepare: bool = False):
     """Whether dictation is on, which model it uses, and what that model is doing."""
-    assert state.global_configuration is not None
+    assert state.application_configuration is not None
     dictation = state.dictation_configuration
     from langmeshd.dictation.transcriber import STATE_IDLE
 

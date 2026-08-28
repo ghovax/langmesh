@@ -28,7 +28,7 @@ def html_from_markdown(text: str) -> str:
     body = body.replace("<code>", f'<code style="{_CODE_STYLE}">')
     body = body.replace("<a ", f'<a style="{_LINK_STYLE}" ')
     return (
-        "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1"></head>'
         f'<body style="{_BODY_STYLE}">{body}</body></html>'
     )

@@ -68,7 +68,7 @@ class MailOAuthError(RuntimeError):
 def resolve_endpoints(configuration: EmailConfiguration) -> OAuthEndpoints:
     """Preset or custom token endpoints for this mailbox."""
     issuer = configuration.effective_oauth_issuer
-    tenant = (configuration.oauth.tenant.strip() or "common")
+    tenant = configuration.oauth.tenant.strip() or "common"
     preset = _ISSUERS.get(issuer)
     if preset is None and issuer and issuer != "custom":
         raise MailOAuthError(
@@ -91,9 +91,10 @@ def resolve_endpoints(configuration: EmailConfiguration) -> OAuthEndpoints:
             scopes=scopes,
             extra_authorize={},
         )
-    scopes = tuple(item.strip() for item in configuration.oauth.scopes if item.strip()) or preset[
-        "scopes"
-    ]
+    scopes = (
+        tuple(item.strip() for item in configuration.oauth.scopes if item.strip())
+        or preset["scopes"]
+    )
     return OAuthEndpoints(
         issuer=issuer,
         authorize_url=(
@@ -101,8 +102,7 @@ def resolve_endpoints(configuration: EmailConfiguration) -> OAuthEndpoints:
             or str(preset["authorize_url"]).format(tenant=tenant)
         ),
         token_url=(
-            configuration.oauth.token_url.strip()
-            or str(preset["token_url"]).format(tenant=tenant)
+            configuration.oauth.token_url.strip() or str(preset["token_url"]).format(tenant=tenant)
         ),
         scopes=scopes,
         extra_authorize=dict(preset["extra_authorize"]),
@@ -132,7 +132,9 @@ def oauth_readiness_problem(configuration: EmailConfiguration) -> str:
     return ""
 
 
-def _client(configuration: EmailConfiguration, *, redirect_uri: str = "", scopes: tuple[str, ...] = ()):
+def _client(
+    configuration: EmailConfiguration, *, redirect_uri: str = "", scopes: tuple[str, ...] = ()
+):
     from authlib.integrations.httpx_client import AsyncOAuth2Client
 
     secret = configuration.effective_oauth_client_secret or None

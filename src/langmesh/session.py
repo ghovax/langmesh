@@ -10,9 +10,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Mapping, Sequence
 
 from langmesh.base.configuration import (
     AgentConfiguration,
-    Configuration,
     SandboxConfiguration,
-    ToolboxConfiguration,
 )
 from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base.confinement import Profile
@@ -63,19 +61,21 @@ from langmesh.runtime.turn_events import (
 logger = logging.getLogger(__name__)
 
 
-def _apply_providers(
-    configuration: Configuration, providers: Mapping[str, str | Mapping[str, str]]
-) -> None:
-    """Put caller-supplied provider credentials onto a configuration, accepting the short form as well as the long."""
-    from langmesh.base.configuration import ProviderCredential
-
-    for name, value in providers.items():
-        credential = configuration.providers.get(name) or ProviderCredential()
+def _provider_inputs(
+    providers: Mapping[str, str | Mapping[str, str]] | None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Split caller-supplied provider values into credentials and endpoint overrides."""
+    keys: dict[str, str] = {}
+    bases: dict[str, str] = {}
+    for provider_identifier, value in (providers or {}).items():
         if isinstance(value, str):
-            credential = credential.model_copy(update={"api_key": value})
-        else:
-            credential = credential.model_copy(update=dict(value))
-        configuration.providers[name] = credential
+            keys[provider_identifier] = value
+            continue
+        if value.get("api_key"):
+            keys[provider_identifier] = value["api_key"]
+        if value.get("base_url"):
+            bases[provider_identifier] = value["base_url"]
+    return keys, bases
 
 
 def _require(port: type, candidate: Any, argument: str) -> Any:
@@ -99,11 +99,11 @@ class Session:
         session_id: str = "",
         permission_mode: str = "",
         sandbox: Profile | SandboxConfiguration | Mapping[str, object] | None = None,
-        configuration: Configuration | None = None,
         # Provider credentials in code. Secret files fill empty slots at resolve time.
         providers: Mapping[str, str | Mapping[str, str]] | None = None,
         model_identifier: str = "",
         tools: Sequence[ToolLike] = (),
+        limits: Any = None,
         components: SessionComponents | None = None,
     ) -> None:
         from langmesh.base.primitives.identifiers import new_id
@@ -133,16 +133,8 @@ class Session:
         # Live grants remain caller-owned code and are rebound whenever this session rebuilds its runtime.
         self._granted_tools: dict[str, ToolLike] = {}
         self._mcp_server_manager = components.mcp_servers
-        # Reading configuration must not leave a file in the caller's home directory.
-        if configuration is not None and not isinstance(configuration, Configuration):
-            raise TypeError("configuration must be a Configuration value")
-        self._configuration = (
-            configuration.model_copy(deep=True)
-            if configuration is not None
-            else Configuration(toolbox=ToolboxConfiguration(enabled=False))
-        )
-        if providers:
-            _apply_providers(self._configuration, providers)
+        self._provider_api_keys, self._provider_base_urls = _provider_inputs(providers)
+        self._limits = limits
         self._model_identifier = model_identifier
         self._catalogue = _require(CatalogueLike, components.catalogue, "components.catalogue")
         self._checkpoints = (
@@ -188,7 +180,6 @@ class Session:
     def runtime(self) -> AgentRuntime:
         """The underlying `AgentRuntime`, built on first use and exposed so no non-obvious use needs a fork."""
         if self._runtime is None:
-            from langmesh.base.primitives.limits import limits_from_configuration
             from langmesh.runtime.environment import RuntimeEnvironment
             from langmesh.runtime.runtime import AgentRuntime
 
@@ -196,7 +187,7 @@ class Session:
             if self._tracer_provider is not None:
                 tracer = self._tracer_provider.get_tracer("langmesh")
             environment = RuntimeEnvironment(
-                limits=limits_from_configuration(self._configuration),
+                limits=self._limits,
                 credentials=self._credential_store,
                 tracer=tracer,
             )
@@ -222,12 +213,12 @@ class Session:
                 self._runtime = AgentRuntime(
                     RuntimeProfile(
                         agent=agent_configuration,
-                        configuration=self._configuration,
                         session_id=self._session_id,
                         working_directory=self._directory,
                         project_directory=self._directory,
                         permission_mode=self._permission_mode,
                         sandbox=self._sandbox,
+                        workspace_strategy="none",
                     ),
                     self._components.for_runtime(
                         catalogue=catalogue,
@@ -239,6 +230,8 @@ class Session:
                         mcp_servers=self._mcp_server_manager,
                         features=self._components.features or [],
                         environment=environment,
+                        provider_api_keys=self._provider_api_keys,
+                        provider_base_urls=self._provider_base_urls,
                     ),
                 )
             for tool in self._granted_tools.values():
@@ -394,13 +387,13 @@ class Session:
 
         from langmesh.base.primitives.limits import (
             bind_limits,
-            limits_from_configuration,
+            Limits,
             reset_limits,
         )
         from langmesh.runtime.internals import _cap_model_result_payload
 
         restored_messages = messages_from_dict(list(checkpoint.conversation))
-        limits_token = bind_limits(limits_from_configuration(self._configuration))
+        limits_token = bind_limits(self._limits or Limits())
         try:
             for message in restored_messages:
                 if not isinstance(message, ToolMessage):

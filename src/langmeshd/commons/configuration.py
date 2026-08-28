@@ -1,12 +1,12 @@
-"""The app's own configuration sections: features the daemon hosts but the library never models.
+"""The daemon's application configuration and the settings for its hosted features.
 
-The library's Configuration carries only what the runtime itself reads. Dictation and Composio
-are daemon-hosted features, so their sections live here, read and written straight from the
-shared configuration file.
+The core library receives explicit runtime values and capabilities. It does not own this
+application aggregate or read the daemon's configuration file.
 """
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Literal
 
@@ -14,13 +14,23 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from langmesh.base.secrets import (
     COMPOSIO_API_KEY,
+    EXA_API_KEY,
     EMAIL_IMAP_PASSWORD,
     EMAIL_OAUTH_CLIENT_SECRET,
     EMAIL_OAUTH_REFRESH_TOKEN,
     EMAIL_SMTP_PASSWORD,
+    FIRECRAWL_API_KEY,
+    JINA_API_KEY,
     read_secret,
 )
 from langmesh.protocol.dtos import SettingsUpdateRequest
+from langmesh.base.configuration.configuration import SandboxConfiguration
+from langmesh.base.contracts.mcp_client import MCPConfiguration
+from langmesh.runtime.plugins.compaction.configuration import CompactionConfiguration
+from langmesh.runtime.plugins.computer_use.configuration import ComputerControlConfiguration
+from langmesh.runtime.plugins.goal_review.configuration import GoalReviewConfiguration
+from langmesh.runtime.plugins.permission_reviewer.configuration import PermissionReviewConfiguration
+from langmesh.runtime.plugins.titling.configuration import TitlingConfiguration
 from langmeshd.commons import timing
 
 
@@ -57,6 +67,29 @@ _OAUTH_DOMAINS = {
     "msn.com": "microsoft",
     "yahoo.com": "yahoo",
 }
+
+# The daemon's presentation order; the generic schema walker does not know these names.
+SETTING_SECTION_ORDER = (
+    "agent",
+    "workspace",
+    "sandbox",
+    "toolbox",
+    "compaction",
+    "user_context",
+    "goal_review",
+    "permission_reviewer",
+    "titling",
+    "computer_control",
+    "providers",
+    "exa",
+    "jina",
+    "firecrawl",
+    "web_fetch",
+    "mcp",
+    "remote_agents",
+    "telemetry",
+    "limits",
+)
 
 
 def _domain(address: str) -> str:
@@ -121,8 +154,196 @@ class AppConfigurationSection(BaseModel, extra="forbid"):
     """A daemon-owned configuration section that rejects unknown fields."""
 
 
+class ExaConfiguration(AppConfigurationSection):
+    """The daemon's Exa credential for the web-search plugin."""
+
+    api_key: str = Field(default="", json_schema_extra={"secret": True})
+
+    @property
+    def effective_api_key(self) -> str:
+        return read_secret(EXA_API_KEY)
+
+
+class JinaConfiguration(AppConfigurationSection):
+    """The daemon's Jina credential for the web-fetch plugin."""
+
+    api_key: str = Field(default="", json_schema_extra={"secret": True})
+
+    @property
+    def effective_api_key(self) -> str:
+        return read_secret(JINA_API_KEY)
+
+
+class FirecrawlConfiguration(AppConfigurationSection):
+    """The daemon's optional Firecrawl fallback for the web-fetch plugin."""
+
+    api_key: str = Field(default="", json_schema_extra={"secret": True})
+    api_url: str = ""
+
+    @property
+    def effective_api_key(self) -> str:
+        return read_secret(FIRECRAWL_API_KEY)
+
+    @property
+    def effective_api_url(self) -> str:
+        return self.api_url
+
+
+class WebFetchConfiguration(AppConfigurationSection):
+    """The daemon's HTTP settings for the web-fetch plugin."""
+
+    proxy_url: str = ""
+    timeout_seconds: int = 30
+    download_timeout_seconds: int = 120
+    minimum_useful_characters: int = 64
+
+    @property
+    def effective_proxy_url(self) -> str:
+        return self.proxy_url
+
+
+class WorkspaceConfiguration(AppConfigurationSection):
+    """The daemon's workspace lifecycle choice."""
+
+    strategy: Literal["none", "branch", "worktree"] = "none"
+
+
+class AttachmentsConfiguration(AppConfigurationSection):
+    """The daemon's ceiling for images inlined into a session."""
+
+    inline_image_megabytes: float = 20.0
+
+    @property
+    def inline_image_bytes(self) -> int:
+        return max(0, int(self.inline_image_megabytes * 1024 * 1024))
+
+
+class UserContextConfiguration(AppConfigurationSection):
+    """The daemon's opt-in user-context snapshot settings."""
+
+    enabled: bool = False
+    refresh_hours: float = Field(default=6.0, gt=0)
+
+
+class ToolboxConfiguration(AppConfigurationSection):
+    """Whether the daemon provisions an ephemeral toolbox for a session."""
+
+    enabled: bool = True
+
+
+class ProviderCredential(AppConfigurationSection):
+    """A daemon-owned provider credential reference and optional endpoint."""
+
+    api_key: str = Field(default="", json_schema_extra={"secret": True})
+    base_url: str = ""
+
+
+class AgentDefaults(AppConfigurationSection):
+    """Defaults applied by the daemon when a session omits a choice."""
+
+    permission_mode: Literal["ask", "automatic", "allow"] = "ask"
+
+
+class TelemetryExporterConfiguration(AppConfigurationSection):
+    """The daemon's OTLP destination."""
+
+    endpoint: str = ""
+    protocol: Literal["http/protobuf", "grpc"] = "http/protobuf"
+    headers: dict[str, str] = Field(default_factory=dict)
+
+
+class TelemetryConfiguration(AppConfigurationSection):
+    """The daemon's optional telemetry export."""
+
+    enabled: bool = False
+    exporter: TelemetryExporterConfiguration = Field(default_factory=TelemetryExporterConfiguration)
+    sample_ratio: float = 1.0
+
+    def resolved_headers(self) -> dict[str, str]:
+        return {key: os.path.expandvars(value) for key, value in self.exporter.headers.items()}
+
+
+class RemoteAgentAuthConfiguration(BaseModel):
+    """Credentials for one remote agent configured by the daemon."""
+
+    type: Literal["none", "bearer", "api_key", "oauth2"] = "none"
+    token: str = ""
+    header: str = "Authorization"
+    scheme_prefix: str = "Bearer"
+    token_url: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+    scopes: list[str] = Field(default_factory=list)
+
+
+class RemoteAgentServerConfiguration(BaseModel):
+    """One remote agent endpoint and its daemon-side access policy."""
+
+    enabled: bool = True
+    card_url: str = ""
+    auth: RemoteAgentAuthConfiguration = Field(default_factory=RemoteAgentAuthConfiguration)
+    card_ttl_seconds: int = 3600
+    allowed_hosts: list[str] = Field(default_factory=list)
+    allow_private: bool = False
+    allowed_profiles: list[str] = Field(default_factory=list)
+
+
+class RemoteAgentsConfiguration(AppConfigurationSection):
+    """Remote agents configured outside the core runtime."""
+
+    agents: dict[str, RemoteAgentServerConfiguration] = Field(default_factory=dict)
+
+    def enabled_agents(self) -> dict[str, RemoteAgentServerConfiguration]:
+        return {
+            name: agent for name, agent in self.agents.items() if agent.enabled and agent.card_url
+        }
+
+
+class ApplicationConfiguration(AppConfigurationSection):
+    """The daemon's complete file-backed configuration, never imported by ``langmesh``."""
+
+    providers: dict[str, ProviderCredential] = Field(default_factory=dict)
+    exa: ExaConfiguration = Field(default_factory=ExaConfiguration)
+    jina: JinaConfiguration = Field(default_factory=JinaConfiguration)
+    firecrawl: FirecrawlConfiguration = Field(default_factory=FirecrawlConfiguration)
+    web_fetch: WebFetchConfiguration = Field(default_factory=WebFetchConfiguration)
+    sandbox: SandboxConfiguration = Field(default_factory=SandboxConfiguration)
+    workspace: WorkspaceConfiguration = Field(default_factory=WorkspaceConfiguration)
+    compaction: CompactionConfiguration = Field(default_factory=CompactionConfiguration)
+    goal_review: GoalReviewConfiguration = Field(default_factory=GoalReviewConfiguration)
+    permission_reviewer: PermissionReviewConfiguration = Field(
+        default_factory=PermissionReviewConfiguration
+    )
+    titling: TitlingConfiguration = Field(default_factory=TitlingConfiguration)
+    attachments: AttachmentsConfiguration = Field(default_factory=AttachmentsConfiguration)
+    user_context: UserContextConfiguration = Field(default_factory=UserContextConfiguration)
+    computer_control: ComputerControlConfiguration = Field(
+        default_factory=ComputerControlConfiguration
+    )
+    toolbox: ToolboxConfiguration = Field(default_factory=ToolboxConfiguration)
+    limits: dict[str, int | float] = Field(default_factory=dict)
+    mcp: MCPConfiguration = Field(default_factory=MCPConfiguration)
+    remote_agents: RemoteAgentsConfiguration = Field(default_factory=RemoteAgentsConfiguration)
+    telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)
+    agent: AgentDefaults = Field(default_factory=AgentDefaults)
+
+    def configured_provider_keys(self) -> dict[str, str]:
+        return {
+            identifier: credential.api_key
+            for identifier, credential in self.providers.items()
+            if credential.api_key
+        }
+
+    def configured_provider_bases(self) -> dict[str, str]:
+        return {
+            identifier: credential.base_url
+            for identifier, credential in self.providers.items()
+            if credential.base_url
+        }
+
+
 class AppSettingsUpdateRequest(SettingsUpdateRequest):
-    """The library's settings request, plus the app-owned Composio key."""
+    """The daemon's settings request, plus the daemon-owned Composio key."""
 
     composio_api_key: str | None = None
 
