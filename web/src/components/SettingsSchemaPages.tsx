@@ -59,7 +59,7 @@ const SECTION_ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
   mcp: LuServer,
   remote_agents: LuUsers,
   telemetry: LuActivity,
-  tuning: LuSlidersHorizontal,
+  limits: LuSlidersHorizontal,
 };
 
 /** A translator taking a path resolved at runtime, since the key is the setting's own dotted path. */

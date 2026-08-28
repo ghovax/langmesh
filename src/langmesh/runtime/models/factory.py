@@ -10,9 +10,6 @@ from langmesh.base.configuration import AgentConfiguration, Configuration
 from langmesh.base.content.model_routing import resolve_litellm
 from langmesh.base.content.models import find_model
 from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
-from langmesh.runtime.models.codex import ChatCodexModel
-from langmesh.runtime.models.cursor import ChatCursorModel
-from langmesh.runtime.models.litellm import ChatLiteLLMModel
 
 
 def build_chat_model(
@@ -26,6 +23,8 @@ def build_chat_model(
     """Build the selected native or LiteLLM-backed chat model."""
     provider_identifier, model_suffix = model_identifier.split("/", 1)
     if provider_identifier == "chatgpt":
+        from langmesh.runtime.models.codex import ChatCodexModel
+
         catalog_entry = find_model(model_identifier)
         return ChatCodexModel(
             model=model_suffix,
@@ -34,12 +33,16 @@ def build_chat_model(
             session_id=session_id,
         )
     if provider_identifier == "cursor":
+        from langmesh.runtime.models.cursor import ChatCursorModel
+
         catalog_entry = find_model(model_identifier)
         return ChatCursorModel(
             model=model_suffix,
             workspace=working_directory,
             context_length=catalog_entry.context_length if catalog_entry else 0,
         )
+
+    from langmesh.runtime.models.litellm import ChatLiteLLMModel
 
     resolved = resolve_litellm(
         model_identifier,

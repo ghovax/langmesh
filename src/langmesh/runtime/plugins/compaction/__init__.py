@@ -234,10 +234,18 @@ class Compaction(Feature):
             - int(window * self._context.global_configuration.compaction.output_reserve_fraction),
         )
 
+    def managed_context(self) -> int:
+        """The context budget that schedules maintenance, optionally bounded by the host."""
+        usable = self.usable_context()
+        maximum = self._context.global_configuration.compaction.maximum_context_tokens
+        if maximum <= 0:
+            return usable
+        return min(usable, maximum) if usable > 0 else maximum
+
     def _recent_working_set(self, reason: str = "automatic", recent: list | None = None) -> int:
         """The tail kept verbatim rather than compacted, as a share of the usable window so it scales with the model."""
         fraction = self._context.global_configuration.compaction.recent_working_set_fraction
-        budget = int(self.usable_context() * fraction)
+        budget = int(self.managed_context() * fraction)
         if budget > 0 and reason != "manual":
             return budget
         # Manual and overflow compaction must remain effective even if a provider failed to report its window. The current conversation is still an honest upper bound.
@@ -289,9 +297,9 @@ class Compaction(Feature):
 
     def _at_compacting_threshold(self, next_request_tokens: int) -> bool:
         """Whether the next request is large enough that compacting is worth its cache invalidation."""
-        usable = self.usable_context()
-        return usable > 0 and next_request_tokens >= (
-            self._context.global_configuration.compaction.reclaim_at_fraction * usable
+        managed = self.managed_context()
+        return managed > 0 and next_request_tokens >= (
+            self._context.global_configuration.compaction.reclaim_at_fraction * managed
         )
 
     def should_maintain(self, request_tokens: int) -> bool:
@@ -805,6 +813,5 @@ __all__ = [
     "CompactionControl",
     "CompactionSummary",
     "DirectCompactionPreparation",
-    "KeepRecentTurns",
     "ObservationCompactionPreparation",
 ]

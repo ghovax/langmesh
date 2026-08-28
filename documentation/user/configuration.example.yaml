@@ -127,6 +127,8 @@ compaction:
   # How much recent conversation stays verbatim. Tokens rather than turns, because an unattended
   # run is one instruction and several hundred tool results.
   recent_working_set_fraction: 0.15
+  # Optional context bound for scheduling compaction. Zero uses the model's available context.
+  maximum_context_tokens: 0
 
 # What a file the person attaches may cost the conversation it rides in
 attachments:
@@ -279,9 +281,8 @@ telemetry:
 # Tool budgets and timing
 # Every limit ships as a plain value; nothing scales with the live window, so what you set is what runs.
 
-tuning:
-  # `limits` sets one field of langmesh.base.primitives.limits.Limits by its own name and unit; an unknown name is an error.
-  limits:
+limits:
+  # Each key sets one field of langmesh.base.primitives.limits.Limits by its own name and unit; an unknown name is an error.
 
     # Text budgets, in tokens (powers of two).
     output_tokens: 16384

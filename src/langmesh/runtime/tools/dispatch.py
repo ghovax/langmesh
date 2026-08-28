@@ -26,7 +26,6 @@ from langmesh.runtime.internals import (
     _cap_model_result_payload,
     _coerce_mcp_arguments,
     _coerce_structured_arguments,
-    _maybe_json,
     _model_result_status,
     _ResolvedToolDecision,
     _tool_timing_metadata,
@@ -358,9 +357,7 @@ class _DispatchesTools:
             except ValidationError as exception:
                 try:
                     schema_json = (
-                        schema.model_json_schema()
-                        if hasattr(schema, "model_json_schema")
-                        else {}
+                        schema.model_json_schema() if hasattr(schema, "model_json_schema") else {}
                     )
                     detail = self._prompt_loader.load(
                         "invalid_tool_schema",
@@ -417,7 +414,6 @@ class _DispatchesTools:
                         "metadata": metadata,
                         "status": result_status,
                         "code": result_code,
-                        "result": _maybe_json(content),
                     },
                 )
             )

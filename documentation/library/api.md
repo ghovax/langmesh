@@ -2,7 +2,9 @@
 
 ## Session and state
 
-::: langmesh.Session options: members: true
+::: langmesh.Session
+    options:
+      members: true
 
 ::: langmesh.runtime.session_control.SessionState
 
@@ -18,7 +20,9 @@
 
 ::: langmesh.runtime.composition.SessionComponents
 
-::: langmesh.runtime.runtime.AgentRuntime options: members: true
+::: langmesh.runtime.runtime.AgentRuntime
+    options:
+      members: true
 
 ## Tool grants
 
@@ -31,7 +35,10 @@ changes the next request's schema. See
 
 ## Extension ports
 
-::: langmesh.base.contracts.ports options: members: true show_root_heading: false
+::: langmesh.base.contracts.ports
+    options:
+      members: true
+      show_root_heading: false
 
 `PromptComposer` receives `PromptLayer` values only when the static prompt is
 constructed. The public hook surface cannot rewrite the final provider message list.
@@ -60,11 +67,11 @@ constructed. The public hook surface cannot rewrite the final provider message l
 
 ::: langmesh.base.contracts.ports.MemoryArtifacts
 
-::: langmesh.base.persistence.checkpoints.SQLiteCheckpoints options: members: true
+::: langmesh.base.persistence.checkpoints.SQLiteCheckpoints
+    options:
+      members: true
 
 ## Compaction, continuation, and hooks
-
-::: langmesh.runtime.plugins.compaction.KeepRecentTurns
 
 ::: langmesh.runtime.plugins.compaction.ObservationCompactionPreparation
 

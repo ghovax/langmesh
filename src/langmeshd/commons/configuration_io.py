@@ -74,11 +74,14 @@ def load_configuration(*, seed: bool = True) -> Configuration:
         raise ValueError(f"invalid configuration: {invalid}")
     configuration = Configuration.model_validate(configuration_file.library_document(data or {}))
     from langmesh.base.secrets import EXA_API_KEY, FIRECRAWL_API_KEY, JINA_API_KEY, read_secret
+
     configuration = configuration.model_copy(
         update={"exa": configuration.exa.model_copy(update={"api_key": read_secret(EXA_API_KEY)})}
     )
     configuration = configuration.model_copy(
-        update={"jina": configuration.jina.model_copy(update={"api_key": read_secret(JINA_API_KEY)})}
+        update={
+            "jina": configuration.jina.model_copy(update={"api_key": read_secret(JINA_API_KEY)})
+        }
     )
     configuration = configuration.model_copy(
         update={
@@ -106,7 +109,7 @@ def save_configuration_changes(
     user_context_enabled: bool | None = None,
     computer_control_enabled: bool | None = None,
     toolbox_enabled: bool | None = None,
-    tuning_limits: dict | None = None,
+    limits: dict | None = None,
     provider_keys: dict[str, str] | None = None,
     provider_base_urls: dict[str, str] | None = None,
 ) -> None:
@@ -138,8 +141,8 @@ def save_configuration_changes(
         data.setdefault("attachments", {}).update(attachments)
     if compaction is not None:
         data.setdefault("compaction", {}).update(compaction)
-    if tuning_limits is not None:
-        data.setdefault("tuning", {})["limits"] = tuning_limits
+    if limits is not None:
+        data["limits"] = limits
     if user_context_enabled is not None:
         data.setdefault("user_context", {})["enabled"] = user_context_enabled
     if computer_control_enabled is not None:

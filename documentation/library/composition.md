@@ -110,12 +110,10 @@ There is no `compaction`, `compaction_preparation`, `continuations`, or
 `features`, and any ports they need through `services` or a constructor argument:
 
 ```python
-from langmesh.runtime.plugins.compaction import Compaction, KeepRecentTurns
+from langmesh.runtime.plugins.compaction import Compaction
 
 components = SessionComponents(
-    features=[
-        Compaction(strategy=KeepRecentTurns(24), preparation=None, summarizer=None),
-    ],
+    features=[Compaction()],
 )
 ```
 
@@ -493,7 +491,7 @@ leave out simply is not there.
 
 ```python
 from langmesh import Session, SessionComponents
-from langmesh.runtime.plugins.compaction import Compaction, KeepRecentTurns
+from langmesh.runtime.plugins.compaction import Compaction
 from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 
 session = Session(
@@ -502,7 +500,7 @@ session = Session(
     components=SessionComponents(
         features=[
             GoalReviewFeature(journal=goal_review_journal),
-            Compaction(strategy=KeepRecentTurns(24)),
+            Compaction(),
         ],
     ),
 )

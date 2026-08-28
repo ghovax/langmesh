@@ -32,6 +32,7 @@ from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import Field, PrivateAttr, SecretStr
 
+from langmesh.base.content.model_errors import ContextWindowExceeded
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.cache_trace import (
     INSTRUCTIONS,
@@ -67,6 +68,15 @@ _ALWAYS_REASONING_ROUTES = ("deepseek",)
 
 #: Providers whose reasoning is only recoverable through the Responses API rather than Chat Completions.
 _RESPONSES_ROUTES = ("openai", "azure")
+
+
+def _context_window_error(model: str, context_window: int) -> ContextWindowExceeded:
+    """Translate LiteLLM's route-specific overflow into the runtime's provider-neutral failure."""
+    return ContextWindowExceeded(
+        "The provider rejected the assembled request as larger than its context window.",
+        model=model,
+        context_window=context_window,
+    )
 
 
 @dataclass(frozen=True)
@@ -733,21 +743,24 @@ class ChatLiteLLMModel(BaseChatModel):
                     generation_chunk.message.additional_kwargs["cache_trace"] = diagnosis
                 yield generation_chunk
             return
-        stream = cast(AsyncIterator[Any], await litellm.acompletion(messages=sent, **params))
-        async for chunk in stream:
-            generation_chunk = self._litellm_chunk_to_generation_chunk(chunk, block)
-            if generation_chunk is not None:
-                usage = getattr(generation_chunk.message, "usage_metadata", None)
-                # Attached to the chunk carrying usage, so the diagnosis travels with the figure it explains.
-                if usage and not reported:
-                    reported = True
-                    # The byte verdict was made before the call; the response's cache figure corrects it.
-                    reconcile(
-                        diagnosis,
-                        int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0),
-                    )
-                    generation_chunk.message.additional_kwargs["cache_trace"] = diagnosis
-                yield generation_chunk
+        try:
+            stream = cast(AsyncIterator[Any], await litellm.acompletion(messages=sent, **params))
+            async for chunk in stream:
+                generation_chunk = self._litellm_chunk_to_generation_chunk(chunk, block)
+                if generation_chunk is not None:
+                    usage = getattr(generation_chunk.message, "usage_metadata", None)
+                    # Attached to the chunk carrying usage, so the diagnosis travels with the figure it explains.
+                    if usage and not reported:
+                        reported = True
+                        # The byte verdict was made before the call; the response's cache figure corrects it.
+                        reconcile(
+                            diagnosis,
+                            int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0),
+                        )
+                        generation_chunk.message.additional_kwargs["cache_trace"] = diagnosis
+                    yield generation_chunk
+        except litellm.exceptions.ContextWindowExceededError as error:
+            raise _context_window_error(self.model, self.context_window()) from error
 
     @staticmethod
     def _usage_metadata(usage: Any) -> Optional[UsageMetadata]:
@@ -901,10 +914,13 @@ class ChatLiteLLMModel(BaseChatModel):
             payload = self._opencode_payload(sent, params, stream=False)
             response = self._namespace(await self._opencode_completion(payload))
         else:
-            response = await litellm.acompletion(
-                messages=sent,
-                **params,
-            )
+            try:
+                response = await litellm.acompletion(
+                    messages=sent,
+                    **params,
+                )
+            except litellm.exceptions.ContextWindowExceededError as error:
+                raise _context_window_error(self.model, self.context_window()) from error
         # The byte verdict was made before the call; the response's cache figure corrects it.
         reported_usage = self._usage_metadata(getattr(response, "usage", None)) or {}
         reconcile(
@@ -935,7 +951,10 @@ class ChatLiteLLMModel(BaseChatModel):
             payload = self._opencode_payload(sent, params, stream=False)
             response = self._namespace(self._opencode_completion_sync(payload))
         else:
-            response = litellm.completion(messages=sent, **params)
+            try:
+                response = litellm.completion(messages=sent, **params)
+            except litellm.exceptions.ContextWindowExceededError as error:
+                raise _context_window_error(self.model, self.context_window()) from error
         reported_usage = self._usage_metadata(getattr(response, "usage", None)) or {}
         reconcile(
             diagnosis,

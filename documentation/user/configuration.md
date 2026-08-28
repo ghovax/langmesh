@@ -286,6 +286,7 @@ compaction:
   reclaim_at_fraction: 0.85
   output_reserve_fraction: 0.1
   recent_working_set_fraction: 0.15
+  maximum_context_tokens: 0
 ```
 
 When a conversation reaches its recommended preparation threshold, LangMesh appends one
@@ -305,6 +306,8 @@ wait.
 - `reclaim_at_fraction` is the recommended preparation boundary, not a hard cutoff.
 - `recent_working_set_fraction` is how much stays verbatim, measured in tokens rather
   than turns.
+- `maximum_context_tokens` optionally bounds the context used to schedule compaction.
+  Zero uses the model's available context without another bound.
 
 `goal_review` governs how a goal the agent marked is settled. The agent owns its goal's
 `status` through the `update_goal` tool (`active`, `satisfied`, `blocked`, `parked`,
@@ -352,18 +355,17 @@ a model without vision, the model gets the file path instead.
 ## Tool limits
 
 How much output tools may return and how patient they are. Every limit is a plain value
-under `tuning.limits`; nothing is scaled or inferred, so what you set is what runs:
+under `limits`; nothing is scaled or inferred, so what you set is what runs:
 
 ```yaml
-tuning:
-  limits:
-    output_tokens: 16384
-    web_search_maximum: 16
+limits:
+  output_tokens: 16384
+  web_search_maximum: 16
 ```
 
 The keys are the fields of `langmesh.base.primitives.limits.Limits`. An unknown name is
 an error at load, and the settings panel lists each with its shipped value. See
-[the reference below](#the-tuneables).
+[the reference below](#the-limits).
 
 The settings panel lists every library setting with what it ships at and what this
 machine runs on; app-owned settings use their dedicated panels, and daemon lifecycle
@@ -385,8 +387,8 @@ computer_control:
 
 `enabled` drives native macOS apps and your own Chrome, and it is opt-in. After an
 action, the harness **polls** a surface until it stops changing; it does not sleep for a
-fixed guess. The polling cadence and the retrieval tuning live with the other numbers
-under `tuning.limits` (`settle_poll_seconds`, `settle_give_up_seconds`,
+fixed guess. The polling cadence and the retrieval limits live with the other numbers
+under `limits` (`settle_poll_seconds`, `settle_give_up_seconds`,
 `settle_stable_reads`, and the `find_*` family).
 
 ### How a screen is ranked
@@ -411,7 +413,7 @@ no spelling with anything, and a character similarity is never silent, so past
 `lexical_gate_long_words` it is dropped.
 
 `find_one`'s willingness to answer at all is separate, under
-`tuning.limits.find_one_margin`, and it is fitted against this ranking, so change one
+`limits.find_one_margin`, and it is fitted against this ranking, so change one
 and re-fit the other.
 
 ## MCP servers
@@ -518,6 +520,7 @@ How conversation history is compacted as it grows.
 | `compaction.reclaim_at_fraction`         | number  | `0.85`  | Recommended preparation boundary. A private local-Bash segment first updates the current observational registry and advances its revision; compaction follows only after validation succeeds. |
 | `compaction.output_reserve_fraction`     | number  | `0.1`   | Share held back as safety space for the preparation segment and the answer.                                                                                                                   |
 | `compaction.recent_working_set_fraction` | number  | `0.15`  | Share of the usable window kept verbatim after older history is discarded. Sized in tokens rather than turns.                                                                                 |
+| `compaction.maximum_context_tokens`      | integer | `0`     | Optional context bound used to schedule compaction and size the recent working set. Zero uses the model's available context.                                                                  |
 
 ### Goal review
 
@@ -698,13 +701,13 @@ CLIs still take their own tokens (`FLY_API_TOKEN`, `HCLOUD_TOKEN`,
 | `telemetry.exporter.headers`  | map                      | —               | Headers sent with every export, for a collector that authenticates. |
 | `telemetry.sample_ratio`      | number                   | `1.0`           | Share of traces exported. `1.0` exports every one.                  |
 
-### The tuneables
+### The limits
 
 How large, how many, and how patient the tools are: the fields of
-`langmesh.base.primitives.limits.Limits`, each addressable under `tuning.limits`. Every
+`langmesh.base.primitives.limits.Limits`, each addressable under `limits`. Every
 duration is in seconds. The shipped values:
 
-| Name under `tuning.limits`       | Shipped value | What it is for                                                                                                |
+| Name under `limits`              | Shipped value | What it is for                                                                                                |
 | -------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
 | `output_tokens`                  | `16384`       | Tokens of inline output one tool may return before the rest overflows to a file.                              |
 | `fetch_tokens`                   | `32768`       | Tokens of a fetched web page's text kept inline.                                                              |
@@ -784,7 +787,7 @@ A few carry more reasoning than a table row holds.
   hoping to buy absence detection; it would cost real matches first.
 - **`frame_resolve_timeout`** is deliberately well below the action timeout, so a frame
   that has gone waits out its budget rather than erroring.
-- **`session_idle_sleep_seconds`** is not a tuning default; it is a daemon setting (five
+- **`session_idle_sleep_seconds`** is not a limit default; it is a daemon setting (five
   hours by default): long enough that a working day of on-and-off use never pays a wake,
   short enough that a machine left overnight is not holding interpreters for
   conversations nobody returned to.

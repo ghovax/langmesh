@@ -56,7 +56,6 @@ from langmesh.github.mention import (
     prepare_tree,
     run_turn,
     tree_is_dirty,
-    user_failure,
     update_comment,
 )
 
@@ -344,7 +343,7 @@ class Store:
         async with self.engine.begin() as connection:
             result = await connection.execute(
                 text(
-                    "SELECT delivery_id, event_name, installation_id, payload, attempts "
+                    "SELECT delivery_id, event_name, installation_id, payload, status, attempts "
                     "FROM langmesh_github_deliveries "
                     "WHERE (status = 'queued' AND next_attempt_at <= :now) "
                     "OR (status = 'processing' AND claimed_at < :stale_at) "
@@ -362,7 +361,10 @@ class Store:
                 ),
                 {"claimed_at": now, "delivery_id": row["delivery_id"]},
             )
-        return dict(row)
+        claimed = dict(row)
+        claimed["recovered"] = claimed["status"] == "processing"
+        claimed["attempts"] = int(claimed["attempts"]) + 1
+        return claimed
 
     async def complete(self, delivery_id: str) -> None:
         async with self.engine.begin() as connection:
@@ -506,8 +508,10 @@ class Store:
                 {"installation_id": installation_id},
             )
             existing = result.first()
-            same_provider = existing is not None and str(existing[0]) == provider
-            selected_model = model.strip() or (str(existing[1]) if same_provider else "")
+            existing_model = (
+                str(existing[1]) if existing is not None and str(existing[0]) == provider else ""
+            )
+            selected_model = model.strip() or existing_model
             if not selected_model:
                 raise ValueError("OAuth authentication requires a model")
             if existing is None:
@@ -747,14 +751,16 @@ class Processor:
                 continue
             delivery_id = str(delivery["delivery_id"])
             attempts = int(delivery.get("attempts") or 1)
+            recovered = bool(delivery.get("recovered"))
             event_name = str(delivery["event_name"])
             installation_id = int(delivery["installation_id"])
             logger.info(
-                "claimed GitHub delivery id=%s event=%s installation=%s attempt=%s",
+                "claimed GitHub delivery id=%s event=%s installation=%s attempt=%s recovered=%s",
                 delivery_id,
                 event_name,
                 installation_id,
                 attempts,
+                recovered,
             )
             try:
                 await self.process(
@@ -763,6 +769,7 @@ class Processor:
                     installation_id,
                     delivery_id=delivery_id,
                     attempt=attempts,
+                    recovered=recovered,
                 )
             except Exception as error:
                 logger.exception("GitHub delivery %s failed", delivery_id)
@@ -856,6 +863,7 @@ class Processor:
         *,
         delivery_id: str = "",
         attempt: int = 0,
+        recovered: bool = False,
     ) -> None:
         configuration = await self.store.configuration(installation_id)
         if configuration is None or not configuration.ready:
@@ -879,10 +887,11 @@ class Processor:
             "pull_request_review_comment",
         }:
             return
-        token = self.github.installation_token(installation_id)
-        slug = self.github.app_slug()
+        token = await asyncio.to_thread(self.github.installation_token, installation_id)
+        slug = await asyncio.to_thread(self.github.app_slug)
         bot_login = f"{slug}[bot]"
-        if not is_mention_turn(
+        if not await asyncio.to_thread(
+            is_mention_turn,
             event,
             event_name=event_name,
             repository=repository,
@@ -928,6 +937,7 @@ class Processor:
                     installation_id,
                     delivery_id=delivery_id,
                     attempt=attempt,
+                    recovered=recovered,
                 )
 
     async def _process_locked(
@@ -945,25 +955,12 @@ class Processor:
         *,
         delivery_id: str,
         attempt: int,
+        recovered: bool,
     ) -> None:
-        self._checkout(mention.repository, workspace, token)
-        runner = self._runner(token)
-        if mention.kind == "pull" and not mention.head_ref:
-            pull = self.github.request(f"/repos/{mention.repository}/pulls/{mention.number}", token)
-            mention = (
-                mention_from_event(
-                    event,
-                    event_name="pull_request",
-                    repository=mention.repository,
-                    pull=pull,
-                    known_turn=True,
-                    bot_login=f"{slug}[bot]",
-                )
-                or mention
-            )
         ack = await self.store.comment_id_for_delivery(delivery_id)
         if ack is None:
-            ack = create_comment(
+            ack = await asyncio.to_thread(
+                create_comment,
                 mention.repository,
                 mention.number,
                 acknowledgement(),
@@ -971,6 +968,28 @@ class Processor:
                 self.settings.github_api_url,
             )
             await self.store.remember_comment_id(delivery_id, ack)
+
+        async def update_existing_comment(message: str) -> None:
+            try:
+                await asyncio.to_thread(
+                    update_comment,
+                    mention.repository,
+                    ack,
+                    message.strip(),
+                    token,
+                    self.settings.github_api_url,
+                )
+            except Exception:
+                logger.exception("could not update GitHub comment %s", ack)
+
+        if recovered:
+            await update_existing_comment(
+                "The worker was interrupted before it could finish. It recovered the saved "
+                "session and is retrying now."
+            )
+        elif attempt > 1:
+            await update_existing_comment("The worker is retrying after an earlier failure.")
+
         logger.info(
             "started GitHub mention delivery id=%s attempt=%s session=%s acknowledgement=%s",
             delivery_id,
@@ -979,7 +998,27 @@ class Processor:
             ack,
         )
         try:
-            checkout = prepare_tree(
+            await asyncio.to_thread(self._checkout, mention.repository, workspace, token)
+            runner = self._runner(token)
+            if mention.kind == "pull" and not mention.head_ref:
+                pull = await asyncio.to_thread(
+                    self.github.request,
+                    f"/repos/{mention.repository}/pulls/{mention.number}",
+                    token,
+                )
+                mention = (
+                    mention_from_event(
+                        event,
+                        event_name="pull_request",
+                        repository=mention.repository,
+                        pull=pull,
+                        known_turn=True,
+                        bot_login=f"{slug}[bot]",
+                    )
+                    or mention
+                )
+            checkout = await asyncio.to_thread(
+                prepare_tree,
                 mention,
                 workspace,
                 token=token,
@@ -987,7 +1026,8 @@ class Processor:
                 app_id=self.settings.app_id,
                 run=runner,
             )
-            followup = thread_has_prior_bot_comment(
+            followup = await asyncio.to_thread(
+                thread_has_prior_bot_comment,
                 event,
                 repository=mention.repository,
                 token=token,
@@ -995,18 +1035,6 @@ class Processor:
                 bot_login=f"{slug}[bot]",
                 ignore_ids=(ack,),
             )
-
-            def update_existing_comment(text: str) -> None:
-                try:
-                    update_comment(
-                        mention.repository,
-                        ack,
-                        text.strip(),
-                        token,
-                        self.settings.github_api_url,
-                    )
-                except Exception:
-                    logger.exception("could not update GitHub comment %s", ack)
 
             try:
                 answer = await run_turn(
@@ -1033,12 +1061,16 @@ class Processor:
                             refreshed,
                             self.authentication,
                         )
-            pull_url = (
-                self._publish(mention, workspace, token, runner)
-                if tree_is_dirty(workspace, run=runner) or commits_to_push(workspace, run=runner)
-                else ""
-            )
-            update_existing_comment(posted_reply(answer, pull_url))
+
+            def publish_if_needed() -> str:
+                if not tree_is_dirty(workspace, run=runner) and not commits_to_push(
+                    workspace, run=runner
+                ):
+                    return ""
+                return self._publish(mention, workspace, token, runner)
+
+            pull_url = await asyncio.to_thread(publish_if_needed)
+            await update_existing_comment(posted_reply(answer, pull_url))
             logger.info(
                 "finished GitHub mention delivery id=%s attempt=%s session=%s pull_request=%s",
                 delivery_id,
@@ -1055,16 +1087,11 @@ class Processor:
                 mention.repository,
                 mention.number,
             )
-            try:
-                update_comment(
-                    mention.repository,
-                    ack,
-                    user_failure("Something went wrong while I was working on this."),
-                    token,
-                    self.settings.github_api_url,
-                )
-            except Exception:
-                logger.exception("could not update failed GitHub comment %s", ack)
+            await update_existing_comment(
+                "The worker encountered a failure. It will retry shortly and keep this "
+                "comment updated."
+            )
+            raise
 
 
 def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> FastAPI:
@@ -1115,12 +1142,12 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
     @app.get("/github/setup/callback")
     async def setup_callback(code: str, state: str) -> dict[str, Any]:
         try:
-            oauth = github.oauth_token(code)
-            user = github.user(oauth)
+            oauth = await asyncio.to_thread(github.oauth_token, code)
+            user = await asyncio.to_thread(github.user, oauth)
             installation_id = await store.authenticate_setup(state, str(user.get("login") or ""))
             if installation_id is None:
                 raise RuntimeError("setup session expired")
-            record = github.verify_installation(installation_id[0], oauth)
+            record = await asyncio.to_thread(github.verify_installation, installation_id[0], oauth)
             if not record.get("repositories") and record.get("total_count") == 0:
                 raise RuntimeError("your GitHub account cannot access this installation")
         except Exception as error:
@@ -1209,15 +1236,18 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         }
 
     async def complete_provider_authentication(
-        provider: str, *, code: str, state: str, error: str
+        provider: str, *, code: str, state: str, authorization_error: str
     ) -> dict[str, Any]:
         provider_identifier = await require_oauth_provider(provider)
         authorization_record = await store.oauth_authorization(provider_identifier, state)
         if authorization_record is None:
             raise HTTPException(400, detail="OAuth authorization state is missing or expired")
-        if error:
+        if authorization_error:
             await store.consume_oauth_authorization(state)
-            raise HTTPException(400, detail=f"OAuth authorization failed: {error}")
+            raise HTTPException(
+                400,
+                detail=f"OAuth authorization failed: {authorization_error}",
+            )
         installation_id, _user_login, model, code_verifier, redirect_uri = authorization_record
         if redirect_uri and not code.strip():
             raise HTTPException(400, detail="OAuth authorization code is required")
@@ -1250,13 +1280,23 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
     ) -> dict[str, Any]:
         if not code.strip() and not error:
             raise HTTPException(400, detail="OAuth authorization returned no code")
-        return await complete_provider_authentication(provider, code=code, state=state, error=error)
+        return await complete_provider_authentication(
+            provider,
+            code=code,
+            state=state,
+            authorization_error=error,
+        )
 
     @app.get("/github/auth/{provider}/complete")
     async def complete_provider_browser_authentication(
         provider: str, code: str = "", state: str = "", error: str = ""
     ) -> dict[str, Any]:
-        return await complete_provider_authentication(provider, code=code, state=state, error=error)
+        return await complete_provider_authentication(
+            provider,
+            code=code,
+            state=state,
+            authorization_error=error,
+        )
 
     @app.get("/github/configuration")
     async def configuration_page(request: Request) -> dict[str, Any]:

@@ -49,6 +49,9 @@ nix profile add nixpkgs#<package>
 - Use `RENDER_API_KEY` only when the service explicitly provides it.
 - Never install into a user or system profile, print credentials, or invent a missing
   key.
+- Keep command output focused. Search before reading, select only relevant paths and
+  lines, and split broad investigations into targeted queries. If output is marked as
+  truncated, narrow the command instead of repeating it unchanged.
 
 # Git and branches
 

@@ -84,11 +84,11 @@ observational memory, background jobs, screen control, session naming, asking yo
 questions — is the same `Feature` seam. See
 [Composition](composition.md#composing-a-sessions-features).
 
-Hooks, middleware, and a compaction strategy ride the same value:
+Hooks, middleware, and compaction ride the same value:
 
 ```python
 from langmesh import MaximumToolCalls, Session, SessionComponents
-from langmesh.runtime.plugins.compaction import Compaction, KeepRecentTurns
+from langmesh.runtime.plugins.compaction import Compaction
 
 
 class BlockDetachedShell:
@@ -100,7 +100,7 @@ class BlockDetachedShell:
 
 components = SessionComponents(
     hooks=(MaximumToolCalls(30), BlockDetachedShell()),
-    features=[Compaction(strategy=KeepRecentTurns(24))],
+    features=[Compaction()],
 )
 
 session = Session(agent, directory="/srv/checkout", components=components)

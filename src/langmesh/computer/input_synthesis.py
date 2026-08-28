@@ -6,7 +6,7 @@ import time
 
 import Quartz
 
-# The pacing an operating system needs for a synthesized gesture to register lives in the central tuning policy.
+# The pacing an operating system needs for a synthesized gesture to register lives in the central limits policy.
 from langmesh.base.primitives.limits import current_limits
 
 # Virtual key codes for the named non-printing keys, which map to a fixed physical key on any layout.

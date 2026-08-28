@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Awaitable, Callable, Mapping, Protocol
 
 from langmesh import (
     AgentConfiguration,
@@ -29,8 +29,10 @@ from langmesh import (
     ToolboxConfiguration,
 )
 from langmesh.base.confinement import Profile, environment_variables
+from langmesh.base.configuration import CompactionConfiguration
 from langmesh.base.content.model_routing import resolve_litellm
 from langmesh.base.contracts.ports import Checkpoints
+from langmesh.base.persistence.artifacts import DirectoryArtifacts
 from langmesh.github.detect import is_mention_turn
 from langmesh.runtime.features import Feature
 from langmesh.runtime.plugins.background import BackgroundJobs
@@ -56,6 +58,17 @@ ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
+
+
+def _resident_memory_megabytes() -> float:
+    """Current process RSS on Linux, or zero when the host does not expose it."""
+    try:
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith("VmRSS:"):
+                return round(int(line.split()[1]) / 1024, 1)
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0.0
 
 
 class Run(Protocol):
@@ -106,11 +119,6 @@ class Mention:
 
 def acknowledgement() -> str:
     return render("acknowledgement")
-
-
-def user_failure(message: str) -> str:
-    """A concise user-facing failure message."""
-    return message
 
 
 def comment_pointer(comment: Mapping[str, Any], thread_url: str) -> str:
@@ -562,9 +570,17 @@ def _session(
         session_id=mention.session_id,
         permission_mode="automatic",
         sandbox=mention_sandbox(token),
-        configuration=Configuration(toolbox=ToolboxConfiguration(enabled=True)),
+        configuration=Configuration(
+            compaction=CompactionConfiguration(
+                reclaim_at_fraction=0.75,
+                recent_working_set_fraction=0.125,
+                maximum_context_tokens=98_304,
+            ),
+            toolbox=ToolboxConfiguration(enabled=True),
+        ),
         providers={provider: key} if key else None,
         components=SessionComponents(
+            artifacts=DirectoryArtifacts(workspace.parent / "artifacts"),
             checkpoints=checkpoints,
             features=mention_features(workspace),
             credential_store=credential_store,
@@ -577,7 +593,7 @@ async def run_turn(
     workspace: Path,
     *,
     checkout: Checkout,
-    update_comment: Callable[[str], None] | None = None,
+    update_comment: Callable[[str], Awaitable[None]] | None = None,
     token: str = "",
     thread_followup: bool = False,
     provider: str,
@@ -609,7 +625,7 @@ async def run_turn(
         )
         logger.info(
             "mention model %s/%s wire=%s base=%s restored=%s messages=%s "
-            "thread_followup=%s followup=%s session=%s",
+            "thread_followup=%s followup=%s session=%s rss_mib=%s",
             resolved_provider,
             resolved_model,
             resolved["model"],
@@ -619,6 +635,7 @@ async def run_turn(
             thread_followup,
             followup,
             mention.session_id,
+            _resident_memory_megabytes(),
         )
         await session.set_permission_mode("automatic")
         answer = ""
@@ -633,7 +650,7 @@ async def run_turn(
                     "mention usage session=%s call=%s input=%s output=%s "
                     "cache_read=%s cache_write=%s prefix_reusable=%s "
                     "reusable_prefix=%s shared=%s/%s divergence=%s "
-                    "request_reusable=%s cache_fraction=%s",
+                    "request_reusable=%s cache_fraction=%s rss_mib=%s",
                     mention.session_id,
                     model_call,
                     event.input_tokens,
@@ -647,6 +664,7 @@ async def run_turn(
                     event.divergence,
                     event.cache_request_reusable,
                     event.cache_read_fraction,
+                    _resident_memory_megabytes(),
                 )
             if isinstance(event, CompactionStarted):
                 logger.info(
@@ -660,7 +678,7 @@ async def run_turn(
             if isinstance(event, CompactionDone):
                 logger.info(
                     "mention compaction done session=%s reason=%s ok=%s "
-                    "messages=%s->%s tokens=%s->%s error=%s",
+                    "messages=%s->%s tokens=%s->%s error=%s rss_mib=%s",
                     mention.session_id,
                     event.reason,
                     event.ok,
@@ -669,6 +687,7 @@ async def run_turn(
                     event.tokens_before,
                     event.tokens_after,
                     event.error_code,
+                    _resident_memory_megabytes(),
                 )
             if isinstance(event, Suspended):
                 raise PermissionError(
@@ -681,7 +700,7 @@ async def run_turn(
             if isinstance(event, ToolCall):
                 status = response_text.strip()
                 if status and update_comment is not None:
-                    update_comment(status)
+                    await update_comment(status)
                     response_text = ""
             if isinstance(event, Done):
                 answer = event.text or response_text or answer

@@ -194,8 +194,8 @@ while the daemon you are talking to stays the one you chose above.
 **How a pairing door leaves the machine.** `--reach` binds loopback and gates every
 request with a pairing token. What carries that door off the machine is a transport you
 choose — Tailscale `serve`, an SSH tunnel, or any other TLS front. Tailscale is one
-documented way, not a product type: see [installation](../user/installation.md) and
-[SECURITY.md](../../SECURITY.md).
+documented way, not a product type: see [installation](../user/installation.md) and the
+[security policy](https://github.com/ghovax/langmesh/blob/main/SECURITY.md).
 
 Keeping them apart serves one goal: **put the compute, the files, and the credentials
 wherever they belong, and keep the interface native.**
