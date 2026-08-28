@@ -27,8 +27,6 @@ from langmesh.runtime.plugins.bash import bash as bash_tool
 from langmesh.runtime.plugins.compaction.tools import (
     submit_compaction_summary as submit_compaction_summary_tool,
 )
-from langmesh.runtime.plugins.continuation import Continuation
-from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 from langmesh.runtime.plugins.compaction.ports import (
     CompactionSummary,
     DirectCompactionPreparation,
@@ -784,12 +782,7 @@ class Compaction(Feature):
                 available_tools=(submit_compaction_summary_tool,),
                 tool_gate=self._host.tools.tool_gate,
                 permissions=summarizer_permissions,
-                features=[
-                    feature_class()
-                    for feature_class in self._host.turn.feature_classes(
-                        GoalReviewFeature, Continuation
-                    )
-                ],
+                features=(Compaction(),),
             ),
             conversation=list(self._host.conversation.messages),
         )

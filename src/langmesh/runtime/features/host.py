@@ -63,7 +63,9 @@ class WindowView:
     """The context-window accounting the loop keeps."""
 
     context_window: int  #: The model's advertised window, or 0 when unknown.
-    _latest_context_tokens: Callable[[], int]  #: Reads how full the context is from the last reported call.
+    _latest_context_tokens: Callable[
+        [], int
+    ]  #: Reads how full the context is from the last reported call.
     set_latest_context_tokens: Callable[[int], None]  #: Adopts a new context estimate.
     refresh_cached_prompt: Callable[[], None]  #: Invalidates the cached static prompt.
 
@@ -83,9 +85,6 @@ class TurnView:
     refuse_if_over_window: Callable[[list], None]  #: Raises before an oversized request leaves.
     reminder_message: Callable[..., Any]  #: A harness note to the model.
     maintenance_active: Callable[[], bool]  #: Whether any feature is currently holding the loop.
-    feature_classes: Callable[
-        ..., list[type]
-    ]  #: The installed features' classes, minus exclusions, for sub-sessions.
 
 
 @dataclass(frozen=True)

@@ -46,7 +46,13 @@ storage:
     key_path: "/srv/langmesh/secrets/provider-keys.fernet"
   queue:
     poll_seconds: 5
+    maximum_delivery_attempts: 5
 ```
+
+Each delivery is attempted at most `maximum_delivery_attempts` times. After the last
+failure, the service stores the delivery as failed and stops scheduling it; the existing
+acknowledgement comment is updated instead of creating another comment. The default is
+five attempts when this value is omitted.
 
 `storage.encryption.key_path` must contain a Fernet key. Generate one once with:
 

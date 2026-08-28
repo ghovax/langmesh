@@ -37,7 +37,6 @@ from langmesh.runtime.turn_events import (
 )
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.features import BackgroundCapability
-from langmesh.runtime.plugins.continuation import Continuation
 from langmesh.runtime.plugins.goal_review.models import GoalReview
 from langmesh.runtime.plugins.goal_review.tools import (
     described_update_goal,
@@ -291,10 +290,7 @@ class GoalReviewFeature(Feature):
                     tool for tool in self._host.tools.model_tools if tool.name in _REVIEWER_TOOLS
                 ),
                 related_turns=self._host.tools.turn_reader,
-                features=[
-                    feature_class()
-                    for feature_class in self._host.turn.feature_classes(Continuation)
-                ],
+                features=(GoalReviewFeature(),),
             ),
             conversation=list(self._host.conversation.messages),
         )
@@ -455,7 +451,7 @@ class GoalReviewFeature(Feature):
                 return ran
 
             def _submitted():
-                feature = reviewer._features.by_type(GoalReview)
+                feature = reviewer._features.by_type(GoalReviewFeature)
                 return feature.submitted if feature is not None else None
 
             async def _on_success(review):
