@@ -462,7 +462,7 @@ async def update_toolbox(request: ToolboxUpdateRequest):
 
 @router.post("/settings/attachments")
 async def update_attachments(request: AttachmentsUpdateRequest):
-    """Persist and apply the attachment limits, which each turn reads live and so needs no runtime reset."""
+    """Persist and apply attachment limits to new and existing session runtimes."""
     assert state.application_configuration is not None
     changes = request.model_dump(exclude_none=True)
     if changes:
@@ -471,6 +471,7 @@ async def update_attachments(request: AttachmentsUpdateRequest):
             state.application_configuration.attachments = (
                 state.application_configuration.attachments.model_copy(update=changes)
             )
+            await state.reset_runtimes()
     _publish_broadcast({"type": "settings_changed"})
     return {
         "status": "saved",
@@ -480,7 +481,7 @@ async def update_attachments(request: AttachmentsUpdateRequest):
 
 @router.post("/settings/compaction")
 async def update_compaction(request: CompactionUpdateRequest):
-    """Persist and apply the compaction settings, which the runtime reads live and so needs no runtime reset."""
+    """Persist and apply compaction settings to new and existing session runtimes."""
     assert state.application_configuration is not None
     changes = request.model_dump(exclude_none=True)
     if changes:
@@ -489,6 +490,7 @@ async def update_compaction(request: CompactionUpdateRequest):
             state.application_configuration.compaction = (
                 state.application_configuration.compaction.model_copy(update=changes)
             )
+            await state.reset_runtimes()
     _publish_broadcast({"type": "settings_changed"})
     return {
         "status": "saved",
