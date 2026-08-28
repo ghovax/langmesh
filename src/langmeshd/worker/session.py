@@ -1291,7 +1291,7 @@ class SessionExecutor(AgentExecutor):
         from langmesh.base.primitives.telemetry import configure as configure_telemetry
 
         configuration = self._global_configuration
-        set_limits(limits_from_configuration(configuration.tuning))
+        set_limits(limits_from_configuration(configuration))
 
         telemetry = configuration.telemetry
         configure_telemetry(

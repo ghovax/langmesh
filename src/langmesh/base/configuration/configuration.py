@@ -201,24 +201,6 @@ class AttachmentsConfiguration(Section):
         return max(0, int(self.inline_image_megabytes * 1024 * 1024))
 
 
-class TuningConfiguration(Section):
-    """Explicit size, count, and timing limits for tools."""
-
-    limits: dict[str, int | float] = Field(default_factory=dict)
-
-    @field_validator("limits")
-    @classmethod
-    def _known_limits(cls, value: dict[str, int | float]) -> dict[str, int | float]:
-        from langmesh.base.primitives.limits import Limits
-
-        unknown = sorted(name for name in value if not hasattr(Limits, name))
-        if unknown:
-            raise ValueError(
-                f"unknown limit(s): {', '.join(unknown)}. The names that exist are the fields of `langmesh.base.primitives.limits.Limits`; the settings panel lists them with their shipped values."
-            )
-        return value
-
-
 class UserContextConfiguration(Section):
     """Opt-in snapshot of how the user works on this machine, appended as session context."""
 
@@ -361,11 +343,23 @@ class Configuration(Section):
         default_factory=ComputerControlConfiguration
     )
     toolbox: ToolboxConfiguration = Field(default_factory=ToolboxConfiguration)
-    tuning: TuningConfiguration = Field(default_factory=TuningConfiguration)
+    limits: dict[str, int | float] = Field(default_factory=dict)
     mcp: MCPConfiguration = Field(default_factory=MCPConfiguration)
     remote_agents: RemoteAgentsConfiguration = Field(default_factory=RemoteAgentsConfiguration)
     telemetry: TelemetryConfiguration = Field(default_factory=TelemetryConfiguration)
     agent: AgentDefaults = Field(default_factory=AgentDefaults)
+
+    @field_validator("limits")
+    @classmethod
+    def _known_limits(cls, value: dict[str, int | float]) -> dict[str, int | float]:
+        from langmesh.base.primitives.limits import Limits
+
+        unknown = sorted(name for name in value if not hasattr(Limits, name))
+        if unknown:
+            raise ValueError(
+                f"unknown limit(s): {', '.join(unknown)}. The names that exist are the fields of `langmesh.base.primitives.limits.Limits`; the settings panel lists them with their shipped values."
+            )
+        return value
 
     def configured_provider_keys(self) -> dict[str, str]:
         """Return only provider keys explicitly supplied in this configuration value.

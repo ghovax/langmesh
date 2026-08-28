@@ -131,10 +131,10 @@ def _kind_of(annotation: Any, default: Any) -> tuple[str, tuple[str, ...], bool]
 
 
 # The one map whose keys come from a dataclass rather than a model or the user.
-TUNING_LIMITS = "tuning.limits"
+LIMITS = "limits"
 
 
-def _tuning_limits(prefix: str) -> list[Setting]:
+def _limits(prefix: str) -> list[Setting]:
     """Expand the individual limits whose keys come from `Limits`."""
     from langmesh.base.primitives.limits import Limits
 
@@ -162,9 +162,9 @@ def _walk(model: type[BaseModel], prefix: str) -> list[Setting]:
     for name, field in model.model_fields.items():
         path = f"{prefix}.{name}" if prefix else name
         annotation = field.annotation
-        if path == TUNING_LIMITS:
+        if path == LIMITS:
             settings.append(Setting(path=path, default={}, open_ended=True, kind=KIND_SECTION))
-            settings.extend(_tuning_limits(path))
+            settings.extend(_limits(path))
             continue
         if _is_open_ended_map(annotation):
             settings.append(
@@ -195,7 +195,7 @@ def _walk(model: type[BaseModel], prefix: str) -> list[Setting]:
     return settings
 
 
-#: The order a person meets the sections in, from what they decide to what they tune.
+#: The order a person meets the sections in, from what they decide to what they set.
 SECTION_ORDER = (
     # What the agent may do, and where.
     "agent",
@@ -219,7 +219,7 @@ SECTION_ORDER = (
     "remote_agents",
     # What is watching, and the numbers underneath everything.
     "telemetry",
-    "tuning",
+    "limits",
 )
 
 
@@ -246,7 +246,7 @@ def setting_for(path: str) -> Optional[Setting]:
     for setting in settings():
         if setting.path == path:
             return setting
-    if path.startswith(TUNING_LIMITS + "."):
+    if path.startswith(LIMITS + "."):
         # Every valid name under it was in the list just searched, so this one is a typo.
         return None
     from langmesh.base.configuration import Configuration

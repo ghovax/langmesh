@@ -42,7 +42,7 @@ _policy = RetrievalPolicy()
 
 
 def set_retrieval_policy(policy: RetrievalPolicy) -> None:
-    """Bind the ranking policy for this process. Called from configuration load, like tuning."""
+    """Bind the ranking policy for this process. Called from configuration load, like limits."""
     global _policy
     _policy = policy
 

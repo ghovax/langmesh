@@ -55,7 +55,7 @@ OpenCode versus Claude Code or Codex, say. LangMesh lets you change that harness
   names none of them. A bare library session has no features at all. The product
   composes its own set; you compose yours. See
   [Composition](documentation/library/composition.md).
-- **Tune the guardrails.** Permission modes and per-command rules are configuration, and
+- **Set the guardrails.** Permission modes and per-command rules are configuration, and
   the engine that enforces them is open code. When the settings are not enough, you can
   change how permissioning works
   ([Permissions](documentation/user/configuration.md#permission-modes)).

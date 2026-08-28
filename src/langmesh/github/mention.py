@@ -29,7 +29,7 @@ from langmesh import (
     ToolboxConfiguration,
 )
 from langmesh.base.confinement import Profile, environment_variables
-from langmesh.base.configuration import CompactionConfiguration, TuningConfiguration
+from langmesh.base.configuration import CompactionConfiguration
 from langmesh.base.content.model_routing import resolve_litellm
 from langmesh.base.contracts.ports import Checkpoints
 from langmesh.base.persistence.artifacts import DirectoryArtifacts
@@ -577,7 +577,6 @@ def _session(
                 maximum_context_tokens=98_304,
             ),
             toolbox=ToolboxConfiguration(enabled=True),
-            tuning=TuningConfiguration(limits={"output_tokens": 4_096}),
         ),
         providers={provider: key} if key else None,
         components=SessionComponents(

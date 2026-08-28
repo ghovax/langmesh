@@ -196,7 +196,7 @@ class Session:
             if self._tracer_provider is not None:
                 tracer = self._tracer_provider.get_tracer("langmesh")
             environment = RuntimeEnvironment(
-                limits=limits_from_configuration(self._configuration.tuning),
+                limits=limits_from_configuration(self._configuration),
                 credentials=self._credential_store,
                 tracer=tracer,
             )
@@ -400,7 +400,7 @@ class Session:
         from langmesh.runtime.internals import _cap_model_result_payload
 
         restored_messages = messages_from_dict(list(checkpoint.conversation))
-        limits_token = bind_limits(limits_from_configuration(self._configuration.tuning))
+        limits_token = bind_limits(limits_from_configuration(self._configuration))
         try:
             for message in restored_messages:
                 if not isinstance(message, ToolMessage):
