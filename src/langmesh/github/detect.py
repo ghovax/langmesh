@@ -45,7 +45,7 @@ def _get(url: str, token: str) -> Any:
         },
     )
     try:
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request, timeout=30) as response:
             body = response.read()
     except urllib.error.HTTPError as error:
         raise RuntimeError(f"GitHub API {error.code}: {error.read().decode()[:500]}") from error
