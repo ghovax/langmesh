@@ -100,6 +100,7 @@ class Settings:
     encryption_key_path: Path
     database_url: str
     queue_poll_seconds: float
+    maximum_delivery_attempts: int
     public_url: str
     provider_application_ids: Mapping[str, str] = field(default_factory=dict)
     github_api_url: str = "https://api.github.com"
@@ -149,6 +150,18 @@ class Settings:
         database = section_from(storage, "database", configuration_path)
         encryption = section_from(storage, "encryption", configuration_path)
         queue = section_from(storage, "queue", configuration_path)
+        try:
+            maximum_delivery_attempts = int(queue.get("maximum_delivery_attempts", 5))
+        except (TypeError, ValueError) as error:
+            raise RuntimeError(
+                "GitHub App configuration needs storage.queue.maximum_delivery_attempts "
+                f"to be a positive integer: {configuration_path}"
+            ) from error
+        if maximum_delivery_attempts < 1:
+            raise RuntimeError(
+                "GitHub App configuration needs storage.queue.maximum_delivery_attempts "
+                f"to be a positive integer: {configuration_path}"
+            )
         return cls(
             app_id=required(app, "id", "github.app"),
             private_key_path=Path(required(app, "private_key_path", "github.app")).expanduser(),
@@ -160,6 +173,7 @@ class Settings:
             ).expanduser(),
             database_url=required(database, "url", "storage.database"),
             queue_poll_seconds=max(0.5, float(queue.get("poll_seconds") or 5)),
+            maximum_delivery_attempts=maximum_delivery_attempts,
             public_url=required(server, "public_url", "server").rstrip("/"),
             github_api_url=str(github.get("api_url") or "https://api.github.com").rstrip("/"),
             provider_application_ids={
@@ -375,7 +389,7 @@ class Store:
                 {"delivery_id": delivery_id},
             )
 
-    async def retry(self, delivery_id: str, error: str, delay: int) -> None:
+    async def schedule_retry(self, delivery_id: str, error: str, delay: int) -> None:
         async with self.engine.begin() as connection:
             await connection.execute(
                 text(
@@ -388,6 +402,16 @@ class Store:
                     "error": error[:4000],
                     "next_attempt_at": int(time.time()) + max(1, delay),
                 },
+            )
+
+    async def mark_failed(self, delivery_id: str, error: str) -> None:
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "UPDATE langmesh_github_deliveries SET status = 'failed', claimed_at = NULL, "
+                    "next_attempt_at = 0, last_error = :error WHERE delivery_id = :delivery_id"
+                ),
+                {"delivery_id": delivery_id, "error": error[:4000]},
             )
 
     async def comment_id_for_delivery(self, delivery_id: str) -> int | None:
@@ -762,6 +786,17 @@ class Processor:
                 attempts,
                 recovered,
             )
+            if attempts > self.settings.maximum_delivery_attempts:
+                await self.store.mark_failed(
+                    delivery_id,
+                    "delivery exceeded the configured attempt limit",
+                )
+                logger.error(
+                    "discarded GitHub delivery id=%s beyond the %s-attempt limit",
+                    delivery_id,
+                    self.settings.maximum_delivery_attempts,
+                )
+                continue
             try:
                 await self.process(
                     event_name,
@@ -773,7 +808,17 @@ class Processor:
                 )
             except Exception as error:
                 logger.exception("GitHub delivery %s failed", delivery_id)
-                await self.store.retry(delivery_id, str(error), min(300, 2 ** min(attempts, 8)))
+                if attempts >= self.settings.maximum_delivery_attempts:
+                    await self.store.mark_failed(delivery_id, str(error))
+                    logger.error(
+                        "stopped GitHub delivery id=%s after %s attempts",
+                        delivery_id,
+                        attempts,
+                    )
+                else:
+                    await self.store.schedule_retry(
+                        delivery_id, str(error), min(300, 2 ** min(attempts, 8))
+                    )
             else:
                 await self.store.complete(delivery_id)
                 logger.info("completed GitHub delivery id=%s", delivery_id)
@@ -1087,10 +1132,15 @@ class Processor:
                 mention.repository,
                 mention.number,
             )
-            await update_existing_comment(
-                "The worker encountered a failure. It will retry shortly and keep this "
-                "comment updated."
-            )
+            if attempt >= self.settings.maximum_delivery_attempts:
+                await update_existing_comment(
+                    "The worker stopped after reaching the delivery attempt limit."
+                )
+            else:
+                await update_existing_comment(
+                    "The worker encountered a failure. It will retry shortly and keep this "
+                    "comment updated."
+                )
             raise
 
 
