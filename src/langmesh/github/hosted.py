@@ -61,6 +61,7 @@ from langmesh.github.mention import (
 
 logger = logging.getLogger("langmesh.github.hosted")
 DEFAULT_CONFIGURATION_PATH = Path.home() / ".config" / "langmesh" / "github.yaml"
+DELIVERY_RECOVERY_SECONDS = 900
 
 
 class ConfigurationUpdate(BaseModel):
@@ -101,6 +102,7 @@ class Settings:
     database_url: str
     queue_poll_seconds: float
     maximum_delivery_attempts: int
+    processing_timeout_seconds: float
     public_url: str
     provider_application_ids: Mapping[str, str] = field(default_factory=dict)
     github_api_url: str = "https://api.github.com"
@@ -162,6 +164,18 @@ class Settings:
                 "GitHub App configuration needs storage.queue.maximum_delivery_attempts "
                 f"to be a positive integer: {configuration_path}"
             )
+        try:
+            processing_timeout_seconds = float(queue.get("processing_timeout_seconds", 600))
+        except (TypeError, ValueError) as error:
+            raise RuntimeError(
+                "GitHub App configuration needs storage.queue.processing_timeout_seconds "
+                f"to be a positive number: {configuration_path}"
+            ) from error
+        if not 0 < processing_timeout_seconds < DELIVERY_RECOVERY_SECONDS:
+            raise RuntimeError(
+                "GitHub App configuration needs storage.queue.processing_timeout_seconds "
+                f"between 0 and {DELIVERY_RECOVERY_SECONDS} seconds: {configuration_path}"
+            )
         return cls(
             app_id=required(app, "id", "github.app"),
             private_key_path=Path(required(app, "private_key_path", "github.app")).expanduser(),
@@ -174,6 +188,7 @@ class Settings:
             database_url=required(database, "url", "storage.database"),
             queue_poll_seconds=max(0.5, float(queue.get("poll_seconds") or 5)),
             maximum_delivery_attempts=maximum_delivery_attempts,
+            processing_timeout_seconds=processing_timeout_seconds,
             public_url=required(server, "public_url", "server").rstrip("/"),
             github_api_url=str(github.get("api_url") or "https://api.github.com").rstrip("/"),
             provider_application_ids={
@@ -1082,19 +1097,20 @@ class Processor:
             )
 
             try:
-                answer = await run_turn(
-                    mention,
-                    workspace,
-                    checkout=checkout,
-                    update_comment=update_existing_comment,
-                    token=token,
-                    thread_followup=followup,
-                    provider=provider,
-                    model=model,
-                    api_key=api_key,
-                    checkpoints=self._checkpoints,
-                    credential_store=credential_store,
-                )
+                async with asyncio.timeout(self.settings.processing_timeout_seconds):
+                    answer = await run_turn(
+                        mention,
+                        workspace,
+                        checkout=checkout,
+                        update_comment=update_existing_comment,
+                        token=token,
+                        thread_followup=followup,
+                        provider=provider,
+                        model=model,
+                        api_key=api_key,
+                        checkpoints=self._checkpoints,
+                        credential_store=credential_store,
+                    )
             finally:
                 if credential_store is not None:
                     refreshed = credential_store.load(provider)
@@ -1123,6 +1139,27 @@ class Processor:
                 mention.session_id,
                 bool(pull_url),
             )
+        except asyncio.TimeoutError:
+            logger.error(
+                "hosted mention delivery timed out after %.1f seconds id=%s attempt=%s "
+                "session=%s for %s#%s",
+                self.settings.processing_timeout_seconds,
+                delivery_id,
+                attempt,
+                mention.session_id,
+                mention.repository,
+                mention.number,
+            )
+            if attempt >= self.settings.maximum_delivery_attempts:
+                await update_existing_comment(
+                    "The worker timed out and stopped after reaching the delivery attempt limit."
+                )
+            else:
+                await update_existing_comment(
+                    "The worker timed out while processing this request. It will retry shortly "
+                    "and keep this comment updated."
+                )
+            raise
         except Exception:
             logger.exception(
                 "hosted mention delivery failed id=%s attempt=%s session=%s for %s#%s",

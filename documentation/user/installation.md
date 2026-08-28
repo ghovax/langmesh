@@ -1,16 +1,21 @@
 # Installation
 
-LangMesh targets **macOS on Apple Silicon (`aarch64`)**. The screen-control tools (`control_screen`) and the packaged app are macOS-specific. The harness itself is portable Python, but the desktop experience is built for the Mac.
+LangMesh targets **macOS on Apple Silicon (`aarch64`)**. The screen-control tools
+(`control_screen`) and the packaged app are macOS-specific. The harness itself is
+portable Python, but the desktop experience is built for the Mac.
 
 ## Option 1: download the app
 
-1. Open the [**Releases**](https://github.com/ghovax/langmesh/releases) page and download the latest `LANGMESH_<version>_aarch64.dmg`.
+1. Open the [**Releases**](https://github.com/ghovax/langmesh/releases) page and
+   download the latest `LANGMESH_<version>_aarch64.dmg`.
 1. Open the `.dmg` and drag **LangMesh** into **Applications**.
 1. Launch it.
 
 ### Gatekeeper
 
-The app is **self-signed, not Apple-notarized**, so macOS Gatekeeper refuses the first launch with an "unidentified developer" or "damaged" message. This is expected. Clear it once, either way:
+The app is **self-signed, not Apple-notarized**, so macOS Gatekeeper refuses the first
+launch with an "unidentified developer" or "damaged" message. This is expected. Clear it
+once, either way:
 
 - Right-click `LangMesh.app`, choose **Open**, then **Open** again in the dialog, or
 
@@ -24,16 +29,25 @@ Notarized builds are planned. Until then this one-time step is required.
 
 ### Permissions the app may ask for
 
-- **Accessibility** is required for the screen-control tools (`control_screen`) to read and act on native apps. LangMesh prompts you and deep-links to the right settings pane. Grant it to LangMesh.
-- **Chrome remote debugging** is required for the screen-control tools to drive your own Chrome. LangMesh shows a one-click prompt that opens `chrome://inspect`. Enable the remote-debugging toggle once.
+- **Accessibility** is required for the screen-control tools (`control_screen`) to read
+  and act on native apps. LangMesh prompts you and deep-links to the right settings
+  pane. Grant it to LangMesh.
+- **Chrome remote debugging** is required for the screen-control tools to drive your own
+  Chrome. LangMesh shows a one-click prompt that opens `chrome://inspect`. Enable the
+  remote-debugging toggle once.
 
 Neither is needed for plain chat or the file, shell, and web tools.
 
 ## Option 2: build from source
 
-LangMesh is **two artifacts**, built independently, because the app is a *client* of the daemon rather than its container. The daemon bundle carries the harness, the `langmesh` command, and `langmeshd` — the one binary entered two ways — in one signed image. The app is a window that finds a daemon and talks to it. Build them in either order; neither build triggers the other.
+LangMesh is **two artifacts**, built independently, because the app is a *client* of the
+daemon rather than its container. The daemon bundle carries the harness, the `langmesh`
+command, and `langmeshd` — the one binary entered two ways — in one signed image. The
+app is a window that finds a daemon and talks to it. Build them in either order; neither
+build triggers the other.
 
-You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv` included) and optionally [direnv](https://direnv.net).
+You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv`
+included) and optionally [direnv](https://direnv.net).
 
 ### Build checklist
 
@@ -64,13 +78,20 @@ You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv`
 | `ln -sf … /usr/local/bin/langmesh` is denied                                     | `/usr/local/bin` is root-owned                                                                                                        | `sudo ln -sf …`, or symlink into `~/.local/bin` and put that on `PATH`                                                  |
 | `packaging/build-daemon.sh` says "daemon up to date" after you changed something | The freshness guard decided nothing that goes into the freeze had changed                                                             | `FORCE=1 packaging/build-daemon.sh`                                                                                     |
 
-The certificate and signing commands are optional for a build that only runs. They are necessary for a **stable Accessibility grant**: without it, every rebuild is a new code identity and macOS asks again.
+The certificate and signing commands are optional for a build that only runs. They are
+necessary for a **stable Accessibility grant**: without it, every rebuild is a new code
+identity and macOS asks again.
 
-Both artifacts carry the same `CFBundleName` and identifier, so one certificate over both keeps them a single **LangMesh** row. See the [Development guide](../internal/development.md#building-and-signing).
+Both artifacts carry the same `CFBundleName` and identifier, so one certificate over
+both keeps them a single **LangMesh** row. See the
+[Development guide](../internal/development.md#building-and-signing).
 
 ## The `langmesh` command
 
-`langmesh` has two long-running clients: **serve** makes the interface available over HTTP with the daemon behind it, and **mail** IDLEs a mailbox and drives the same daemon as a client. Everything else a person does with the harness happens in the interface (the desktop app, or the browser the serve command exposes) or over the daemon's API.
+`langmesh` has two long-running clients: **serve** makes the interface available over
+HTTP with the daemon behind it, and **mail** IDLEs a mailbox and drives the same daemon
+as a client. Everything else a person does with the harness happens in the interface
+(the desktop app, or the browser the serve command exposes) or over the daemon's API.
 
 ```shell
 langmesh serve
@@ -78,7 +99,8 @@ langmesh mail
 langmesh mail check
 ```
 
-`mail check` proves configuration and secret files, IMAP login, and SMTP auth without IDLEing or starting the daemon. See [Email](email.md).
+`mail check` proves configuration and secret files, IMAP login, and SMTP auth without
+IDLEing or starting the daemon. See [Email](email.md).
 
 | Flag           | What it does                                                                                                                                                                 |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -87,21 +109,43 @@ langmesh mail check
 | `--open`       | Also open a browser at the served address. Off by default.                                                                                                                   |
 | `--reach`      | Serve the paired door: a durable pairing token, a `langmesh://pair#…` link to scan, and every request gated by the token. For your own devices, over a transport you choose. |
 
-This serves the same interface the desktop app embeds, so a browser is a client like any other. It **proxies** the daemon rather than pointing the browser at it: the page never sees the daemon's capability token, and there is no CORS to configure. `serve` starts the daemon if it is not running, and stops a daemon it started when it exits; a daemon someone else was already running is left alone.
+This serves the same interface the desktop app embeds, so a browser is a client like any
+other. It **proxies** the daemon rather than pointing the browser at it: the page never
+sees the daemon's capability token, and there is no CORS to configure. `serve` starts
+the daemon if it is not running, and stops a daemon it started when it exits; a daemon
+someone else was already running is left alone.
 
-> [!WARNING] Whatever can reach this address can drive the daemon, because this server holds the token. It binds `127.0.0.1` for that reason. `--host` exists for tunnelling deliberately; if you use it, put authentication in front.
+> [!WARNING] Whatever can reach this address can drive the daemon, because this server
+> holds the token. It binds `127.0.0.1` for that reason. `--host` exists for tunnelling
+> deliberately; if you use it, put authentication in front.
 
-**The paired door (`--reach`) is for your devices only.** It prints a `langmesh://pair#…` link carrying the address and a durable token; a phone scans or pastes it and is then the only thing the door answers to. What carries the door off the machine is a transport you choose — `tailscale serve` terminates TLS at your `*.ts.net` name and proxies to the loopback port; an SSH tunnel is the other common path — so the outer path is yours and the pairing token the inner one. Nothing binds past loopback, and deleting the pairing token unpairs every device.
+**The paired door (`--reach`) is for your devices only.** It prints a
+`langmesh://pair#…` link carrying the address and a durable token; a phone scans or
+pastes it and is then the only thing the door answers to. What carries the door off the
+machine is a transport you choose — `tailscale serve` terminates TLS at your `*.ts.net`
+name and proxies to the loopback port; an SSH tunnel is the other common path — so the
+outer path is yours and the pairing token the inner one. Nothing binds past loopback,
+and deleting the pairing token unpairs every device.
 
-Needs the interface to have been built (`cd web && bun run build` in a checkout). The packaged build carries it.
+Needs the interface to have been built (`cd web && bun run build` in a checkout). The
+packaged build carries it.
 
 ### The daemon
 
-The daemon itself is `langmeshd` — the same binary as `langmesh`, entered by its first argument. It is a separate process the interface talks to. `serve` and the desktop app start it when needed; it keeps running when the interface window or serve process goes away. Its status and endpoint are reported by the interface, or read from the files it publishes into the runtime directory (`port`, `token`, `pid`, and the unix `socket`).
+The daemon itself is `langmeshd` — the same binary as `langmesh`, entered by its first
+argument. It is a separate process the interface talks to. `serve` and the desktop app
+start it when needed; it keeps running when the interface window or serve process goes
+away. Its status and endpoint are reported by the interface, or read from the files it
+publishes into the runtime directory (`port`, `token`, `pid`, and the unix `socket`).
 
 ### What is not here
 
-There are no session, configuration, or account verbs. Creating and messaging sessions, answering permission requests, recurring work, remote agents, configuration, and sign-in all happen in the interface, or programmatically against the daemon's API — except `mail`, which is the IMAP/SMTP client described in [Email](email.md). A session composes with its peers through [tools](agent-system.md), over the same control plane; it does not shell out to this command.
+There are no session, configuration, or account verbs. Creating and messaging sessions,
+answering permission requests, recurring work, remote agents, configuration, and sign-in
+all happen in the interface, or programmatically against the daemon's API — except
+`mail`, which is the IMAP/SMTP client described in [Email](email.md). A session composes
+with its peers through [tools](agent-system.md), over the same control plane; it does
+not shell out to this command.
 
 ### Output and exit codes
 
@@ -116,13 +160,21 @@ Diagnostics go to stderr; the exit code carries the outcome.
 
 ## Run LangMesh on a server
 
-The harness is a Python library plus a daemon; nothing about the daemon requires the machine it runs on to have a screen. `langmeshd` will run headless on a low-end Linux VPS — a single core and a gigabyte of RAM is plenty — and that is how you give real, always-on cloud agents a home: the compute, the files, and the credentials live on the VPS, and your desktop stays a client.
+The harness is a Python library plus a daemon; nothing about the daemon requires the
+machine it runs on to have a screen. `langmeshd` will run headless on a low-end Linux
+VPS — a single core and a gigabyte of RAM is plenty — and that is how you give real,
+always-on cloud agents a home: the compute, the files, and the credentials live on the
+VPS, and your desktop stays a client.
 
-What does **not** work on a headless Linux box are the macOS-only parts: the desktop app, and the screen-control tools. Everything an agent does with a shell, the filesystem, the network, MCP servers, peer sessions, goals, and its durable history is fully supported.
+What does **not** work on a headless Linux box are the macOS-only parts: the desktop
+app, and the screen-control tools. Everything an agent does with a shell, the
+filesystem, the network, MCP servers, peer sessions, goals, and its durable history is
+fully supported.
 
 ### Install
 
-Python 3.13 and `uv` are the only requirements. Build from source on the server, since the packaged bundles are macOS images:
+Python 3.13 and `uv` are the only requirements. Build from source on the server, since
+the packaged bundles are macOS images:
 
 ```sh
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -130,7 +182,8 @@ git clone https://github.com/ghovax/langmesh.git && cd langmesh
 uv sync
 ```
 
-That installs `langmesh` (the CLI, which only serves) and `langmeshd` (the daemon) into the project's `.venv`.
+That installs `langmesh` (the CLI, which only serves) and `langmeshd` (the daemon) into
+the project's `.venv`.
 
 ### Run it as a service
 
@@ -158,33 +211,57 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now langmeshd
 ```
 
-On first boot the daemon seeds `~/.config/langmesh/configuration.yaml`. Add a provider key as a secret file under `$XDG_DATA_HOME/langmesh/secrets/`, and give the server's user the `.agents/` tree your agents and skills live in.
+On first boot the daemon seeds `~/.config/langmesh/configuration.yaml`. Add a provider
+key as a secret file under `$XDG_DATA_HOME/langmesh/secrets/`, and give the server's
+user the `.agents/` tree your agents and skills live in.
 
 ### Reach it
 
-The daemon binds loopback and guards itself with a capability token. Carry it off the machine with a transport you choose:
+The daemon binds loopback and guards itself with a capability token. Carry it off the
+machine with a transport you choose:
 
-- **SSH tunnel.** Forward the daemon's port to your laptop. The port the daemon publishes is written under its runtime directory; the token sits beside it.
-- **Tailscale.** Install Tailscale on the VPS and on your laptop, then pair from **Settings, then Connection** using the `langmesh://pair#…` link `langmesh serve --reach` prints at the machine's tailnet address.
+- **SSH tunnel.** Forward the daemon's port to your laptop. The port the daemon
+  publishes is written under its runtime directory; the token sits beside it.
+- **Tailscale.** Install Tailscale on the VPS and on your laptop, then pair from
+  **Settings, then Connection** using the `langmesh://pair#…` link
+  `langmesh serve --reach` prints at the machine's tailnet address.
 
-A remote agent created on the server is a normal session: it keeps its transcript, its goals, and its approvals, and it is reachable from anywhere you can reach the daemon.
+A remote agent created on the server is a normal session: it keeps its transcript, its
+goals, and its approvals, and it is reachable from anywhere you can reach the daemon.
 
 ### Email in front of the daemon
 
-Mail is a second long-running client, not a second daemon. `langmesh mail` IDLEs an allowlisted mailbox, strips quoted reply history, and drives `session.create` / `session.send` on loopback. Replies go out over SMTP in the same thread. See [Email](email.md). Fill `configuration.yaml` (`email.address`, `email.machine`, `email.allow_from`) and the secret files, run `uv run langmesh mail check` until it prints `ready`, then either `uv run langmesh mail` on this machine or, on a VPS, install both systemd units so the mail client comes back with the daemon. A new thread is addressed to `local+machine@domain`, not the untagged mailbox.
+Mail is a second long-running client, not a second daemon. `langmesh mail` IDLEs an
+allowlisted mailbox, strips quoted reply history, and drives `session.create` /
+`session.send` on loopback. Replies go out over SMTP in the same thread. See
+[Email](email.md). Fill `configuration.yaml` (`email.address`, `email.machine`,
+`email.allow_from`) and the secret files, run `uv run langmesh mail check` until it
+prints `ready`, then either `uv run langmesh mail` on this machine or, on a VPS, install
+both systemd units so the mail client comes back with the daemon. A new thread is
+addressed to `local+machine@domain`, not the untagged mailbox.
 
 ```sh
 sudo packaging/mail/install.sh
 ```
 
-The script writes `/etc/systemd/system/langmeshd.service` and `langmesh-mail.service`, copies policy and secrets onto `/srv/langmesh/xdg`, then enables them. Pass `--prefix DIR` to install somewhere other than `/srv/langmesh`.
+The script writes `/etc/systemd/system/langmeshd.service` and `langmesh-mail.service`,
+copies policy and secrets onto `/srv/langmesh/xdg`, then enables them. Pass
+`--prefix DIR` to install somewhere other than `/srv/langmesh`.
 
 ### Keep it small
 
-- The daemon owns one `sqlite` database and the conversation history; a low-end VPS has room for thousands of sessions.
+- The daemon owns one `sqlite` database and the conversation history; a low-end VPS has
+  room for thousands of sessions.
 - Set the XDG directories if you want them under `/srv` rather than `/root`.
-- The daemon is the process sessions live in; the app and `serve` are clients you can close and reopen. `langmesh mail` must stay up for IDLE, but unfinished jobs are on disk and resume when it comes back.
+- The daemon is the process sessions live in; the app and `serve` are clients you can
+  close and reopen. `langmesh mail` must stay up for IDLE, but unfinished jobs are on
+  disk and resume when it comes back.
 
 ## `@<app-slug>[bot]` on GitHub
 
-Install the LangMesh GitHub App on a personal account or organization, then configure its provider, model, and API key through the App setup page. An issue or pull-request comment that mentions `@<app-slug>[bot]`, or a reply to the bot, starts the service. Repositories need no workflow, YAML policy, App ID, provider setting, API key, or secret. On an issue it can open a draft pull request; on a pull request it updates that branch. See [Universal GitHub App](github.md).
+Install the LangMesh GitHub App on a personal account or organization, then configure
+its provider, model, and API key through the App setup page. An issue or pull-request
+comment that mentions `@<app-slug>[bot]`, or a reply to the bot, starts the service.
+Repositories need no workflow, YAML policy, App ID, provider setting, API key, or
+secret. On an issue it can open a draft pull request; on a pull request it updates that
+branch. See [Universal GitHub App](github.md).

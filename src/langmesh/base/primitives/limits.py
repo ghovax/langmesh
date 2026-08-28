@@ -81,6 +81,9 @@ class Limits:
     # Other process and identity budgets
     session_title_attempts: int = 4
     permission_reviewer_attempts: int = 4
+    compaction_summary_attempts: int = 3
+    goal_review_attempts: int = 3
+    structured_verdict_timeout_seconds: float = 180.0
     model_catalogue_ttl: float = 60.0
     credential_refresh_leeway: float = 300.0
     oauth_poll_interval: float = 1.0

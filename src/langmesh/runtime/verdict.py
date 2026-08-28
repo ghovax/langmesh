@@ -3,12 +3,13 @@
 Two places need the same answer: the goal reviewer and the compaction summarizer each drive a
 hidden session until it submits its one verdict tool; the permission reviewer and the session
 titler each ask a single call for a structured tool call. Both shapes live here once, so no
-caller reimplements the loop. A driven session is asked again until it submits — emitting the
-verdict correctly is the model's own job, so nothing caps how often it may be reminded.
+caller reimplements the loop. A driven session receives explicit attempt and time budgets, so a
+malformed or stalled model response cannot hold the parent session forever.
 """
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from typing import Any, Awaitable, Callable
@@ -82,6 +83,8 @@ def _first_arguments(response: Any, tool_name: str) -> Any:
 async def drive_verdict_session(
     *,
     run_turn: Callable[[str], Awaitable[bool]],
+    attempts: int,
+    timeout_seconds: float,
     submitted: Callable[[], Any],
     require_submission: Callable[[], None],
     missing_instruction: Callable[[], str],
@@ -90,23 +93,36 @@ async def drive_verdict_session(
     on_empty: Callable[[int], Any] | None = None,
     on_success: Callable[[Any], Any] | None = None,
 ) -> Any | None:
-    """Drive a hidden session until it submits its one verdict tool.
+    """Drive a hidden session until it submits its one verdict tool or its budget ends.
 
     Each attempt streams the session's turn with the current instruction, which starts at
     ``initial_instruction`` and is replaced by ``missing_instruction`` after each empty turn.
     A turn that ends without a submission is one empty attempt: ``require_submission``
-    constrains the session down to its verdict tool, and it is asked again — there is no cap,
-    because emitting the verdict correctly is the model's own job. A cancelled or aborted
-    turn returns ``None`` immediately. ``on_empty`` receives the attempt number. The
-    callbacks may be synchronous or awaitable.
+    constrains the session down to its verdict tool, and it is asked again until ``attempts``
+    or ``timeout_seconds`` ends the operation. A cancelled, aborted, or timed-out turn returns
+    ``None`` immediately. ``on_empty`` receives the attempt number. The callbacks may be
+    synchronous or awaitable.
     """
+    if attempts < 1:
+        raise ValueError("verdict attempts must be positive")
+    if timeout_seconds <= 0:
+        raise ValueError("verdict timeout must be positive")
     instruction = initial_instruction
-    attempt = 0
-    while True:
-        attempt += 1
+    for attempt in range(1, attempts + 1):
         if aborted():
             return None
-        if not await _maybe_await(run_turn(instruction)):
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                ran = await _maybe_await(run_turn(instruction))
+        except TimeoutError:
+            logger.warning(
+                "structured verdict timed out (attempt %d of %d after %.1fs)",
+                attempt,
+                attempts,
+                timeout_seconds,
+            )
+            return None
+        if not ran:
             return None
         verdict = submitted()
         if verdict is not None:
@@ -115,8 +131,12 @@ async def drive_verdict_session(
             return verdict
         if on_empty is not None:
             await _maybe_await(on_empty(attempt))
+        if attempt == attempts:
+            logger.warning("structured verdict exhausted %d attempts", attempts)
+            return None
         require_submission()
         instruction = missing_instruction()
+    return None
 
 
 async def _maybe_await(value: Any) -> Any:
