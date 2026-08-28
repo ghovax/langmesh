@@ -135,7 +135,7 @@ already run and stand down, and the probe would then find that daemon's socket
 answering, a green result for a binary the probe never exercised.
 
 For the complete procedure with expected output, see
-[Installation](../user/installation.md#every-step-and-what-you-should-see).
+[Installation](../user/installation.md#build-checklist).
 
 ### Stable code-signing
 
