@@ -130,7 +130,7 @@ git clone https://github.com/ghovax/langmesh.git && cd langmesh
 uv sync
 ```
 
-That installs `langmesh` (the CLI, which only serves) and `langmeshd` (the daemon) into the project's `.venv`.
+That installs `langmesh` (the CLI for `serve` and `mail`, plus the deployment-specific `github` service) and `langmeshd` (the daemon) into the project's `.venv`.
 
 ### Run it as a service
 
