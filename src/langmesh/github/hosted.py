@@ -37,6 +37,7 @@ from models_provider import (
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.exc import IntegrityError
 
 from langmesh import SQLAlchemyCheckpoints
 from langmesh.base.contracts.ports import Checkpoints
@@ -201,6 +202,38 @@ class Settings:
         )
 
 
+def delivery_session_id(event_name: str, payload: str) -> str:
+    """Return the durable conversation key carried by a GitHub event."""
+    try:
+        event = json.loads(payload)
+    except (TypeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(event, Mapping):
+        return ""
+    repository_data = event.get("repository") or {}
+    issue = event.get("issue") or {}
+    pull_request = event.get("pull_request") or {}
+    if not isinstance(repository_data, Mapping):
+        return ""
+    if not isinstance(issue, Mapping):
+        issue = {}
+    if not isinstance(pull_request, Mapping):
+        pull_request = {}
+    repository = str(repository_data.get("full_name") or "").strip()
+    number = issue.get("number") or pull_request.get("number")
+    if not repository or not number:
+        return ""
+    try:
+        number = int(number)
+    except (TypeError, ValueError):
+        return ""
+    is_pull_request = event_name in {"pull_request", "pull_request_review_comment"} or bool(
+        issue.get("pull_request")
+    )
+    kind = "pull" if is_pull_request else "issue"
+    return f"github:{repository}:{kind}:{int(number)}"
+
+
 class Store:
     """Durable GitHub service state in a caller-owned external SQL database."""
 
@@ -234,6 +267,13 @@ class Store:
                 attempts BIGINT NOT NULL DEFAULT 0,
                 last_error TEXT NOT NULL DEFAULT '',
                 comment_id BIGINT
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS langmesh_github_session_fences (
+                session_id TEXT PRIMARY KEY,
+                last_sequence BIGINT NOT NULL DEFAULT 0,
+                completed_sequence BIGINT NOT NULL DEFAULT 0
             )
             """,
             """
@@ -283,6 +323,24 @@ class Store:
                 try:
                     await connection.execute(
                         text(
+                            "ALTER TABLE langmesh_github_deliveries ADD COLUMN "
+                            "session_id TEXT NOT NULL DEFAULT ''"
+                        )
+                    )
+                except Exception:
+                    pass
+                try:
+                    await connection.execute(
+                        text(
+                            "ALTER TABLE langmesh_github_deliveries ADD COLUMN "
+                            "session_sequence BIGINT NOT NULL DEFAULT 0"
+                        )
+                    )
+                except Exception:
+                    pass
+                try:
+                    await connection.execute(
+                        text(
                             "ALTER TABLE langmesh_github_installations ADD COLUMN "
                             "oauth_tokens TEXT NOT NULL DEFAULT ''"
                         )
@@ -322,6 +380,18 @@ class Store:
                 )
                 await connection.execute(
                     text(
+                        "ALTER TABLE langmesh_github_deliveries ADD COLUMN IF NOT EXISTS "
+                        "session_id TEXT NOT NULL DEFAULT ''"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "ALTER TABLE langmesh_github_deliveries ADD COLUMN IF NOT EXISTS "
+                        "session_sequence BIGINT NOT NULL DEFAULT 0"
+                    )
+                )
+                await connection.execute(
+                    text(
                         "ALTER TABLE langmesh_github_installations ADD COLUMN IF NOT EXISTS "
                         "oauth_tokens TEXT NOT NULL DEFAULT ''"
                     )
@@ -338,6 +408,97 @@ class Store:
                         "redirect_uri TEXT NOT NULL DEFAULT ''"
                     )
                 )
+            await connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS langmesh_github_deliveries_session_order "
+                    "ON langmesh_github_deliveries (session_id, session_sequence, status)"
+                )
+            )
+            await self._backfill_delivery_order(connection)
+
+    async def _backfill_delivery_order(self, connection) -> None:
+        """Assign durable session order to rows created before ordering was persisted."""
+        result = await connection.execute(
+            text(
+                "SELECT delivery_id, event_name, payload, status, received_at, session_id, "
+                "session_sequence FROM langmesh_github_deliveries "
+                "ORDER BY received_at, delivery_id"
+            )
+        )
+        rows = result.mappings().all()
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            session_id = str(row["session_id"] or "") or delivery_session_id(
+                str(row["event_name"]), str(row["payload"])
+            )
+            if session_id:
+                grouped.setdefault(session_id, []).append({**row, "session_id": session_id})
+
+        for session_id, session_rows in grouped.items():
+            has_unassigned_sequence = any(
+                int(row["session_sequence"] or 0) <= 0 for row in session_rows
+            )
+            next_sequence = 0
+            for sequence_index, row in enumerate(session_rows, start=1):
+                sequence = (
+                    sequence_index if has_unassigned_sequence else int(row["session_sequence"])
+                )
+                next_sequence = max(next_sequence, sequence)
+                if row["session_id"] != session_id or int(row["session_sequence"] or 0) != sequence:
+                    row["session_sequence"] = sequence
+                    await connection.execute(
+                        text(
+                            "UPDATE langmesh_github_deliveries SET session_id = :session_id, "
+                            "session_sequence = :session_sequence WHERE delivery_id = :delivery_id"
+                        ),
+                        {
+                            "session_id": session_id,
+                            "session_sequence": sequence,
+                            "delivery_id": row["delivery_id"],
+                        },
+                    )
+            completed_sequence = max(
+                (
+                    int(row["session_sequence"] or 0)
+                    for row in session_rows
+                    if row["status"] in {"completed", "superseded"}
+                ),
+                default=0,
+            )
+            fence = (
+                await connection.execute(
+                    text(
+                        "SELECT last_sequence, completed_sequence "
+                        "FROM langmesh_github_session_fences WHERE session_id = :session_id"
+                    ),
+                    {"session_id": session_id},
+                )
+            ).first()
+            if fence is None:
+                await connection.execute(
+                    text(
+                        "INSERT INTO langmesh_github_session_fences "
+                        "(session_id, last_sequence, completed_sequence) "
+                        "VALUES (:session_id, :last_sequence, :completed_sequence)"
+                    ),
+                    {
+                        "session_id": session_id,
+                        "last_sequence": next_sequence,
+                        "completed_sequence": completed_sequence,
+                    },
+                )
+            else:
+                await connection.execute(
+                    text(
+                        "UPDATE langmesh_github_session_fences SET last_sequence = :last_sequence, "
+                        "completed_sequence = :completed_sequence WHERE session_id = :session_id"
+                    ),
+                    {
+                        "session_id": session_id,
+                        "last_sequence": max(int(fence[0]), next_sequence),
+                        "completed_sequence": max(int(fence[1]), completed_sequence),
+                    },
+                )
 
     async def close(self) -> None:
         await self.engine.dispose()
@@ -347,60 +508,167 @@ class Store:
     ) -> bool:
         if not delivery_id:
             return False
+        session_id = delivery_session_id(event_name, payload)
         async with self.engine.begin() as connection:
-            result = await connection.execute(
-                text(
-                    "INSERT INTO langmesh_github_deliveries "
-                    "(delivery_id, event_name, installation_id, payload, status, received_at) "
-                    "VALUES (:delivery_id, :event_name, :installation_id, :payload, 'queued', :received_at) "
-                    "ON CONFLICT (delivery_id) DO NOTHING RETURNING delivery_id"
-                ),
-                {
-                    "delivery_id": delivery_id,
-                    "event_name": event_name,
-                    "installation_id": installation_id,
-                    "payload": payload,
-                    "received_at": int(time.time()),
-                },
+            existing = await connection.execute(
+                text("SELECT 1 FROM langmesh_github_deliveries WHERE delivery_id = :delivery_id"),
+                {"delivery_id": delivery_id},
             )
+            if existing.first() is not None:
+                return False
+            session_sequence = 0
+            if session_id:
+                fence = (
+                    await connection.execute(
+                        text(
+                            "INSERT INTO langmesh_github_session_fences "
+                            "(session_id, last_sequence, completed_sequence) VALUES "
+                            "(:session_id, 1, 0) ON CONFLICT (session_id) DO UPDATE SET "
+                            "last_sequence = langmesh_github_session_fences.last_sequence + 1 "
+                            "RETURNING last_sequence"
+                        ),
+                        {"session_id": session_id},
+                    )
+                ).scalar_one()
+                session_sequence = int(fence)
+            try:
+                async with connection.begin_nested():
+                    result = await connection.execute(
+                        text(
+                            "INSERT INTO langmesh_github_deliveries "
+                            "(delivery_id, event_name, installation_id, payload, status, received_at, "
+                            "session_id, session_sequence) "
+                            "VALUES (:delivery_id, :event_name, :installation_id, :payload, 'queued', "
+                            ":received_at, :session_id, :session_sequence) RETURNING delivery_id"
+                        ),
+                        {
+                            "delivery_id": delivery_id,
+                            "event_name": event_name,
+                            "installation_id": installation_id,
+                            "payload": payload,
+                            "received_at": int(time.time()),
+                            "session_id": session_id,
+                            "session_sequence": session_sequence,
+                        },
+                    )
+            except IntegrityError:
+                return False
         return result.scalar_one_or_none() is not None
 
     async def claim(self, stale_after: int = 900) -> dict[str, Any] | None:
         now = int(time.time())
-        async with self.engine.begin() as connection:
-            result = await connection.execute(
-                text(
-                    "SELECT delivery_id, event_name, installation_id, payload, status, attempts "
-                    "FROM langmesh_github_deliveries "
-                    "WHERE (status = 'queued' AND next_attempt_at <= :now) "
-                    "OR (status = 'processing' AND claimed_at < :stale_at) "
-                    "ORDER BY received_at LIMIT 1 FOR UPDATE SKIP LOCKED"
-                ),
-                {"now": now, "stale_at": now - stale_after},
-            )
-            row = result.mappings().first()
-            if row is None:
-                return None
-            await connection.execute(
-                text(
-                    "UPDATE langmesh_github_deliveries SET status = 'processing', claimed_at = :claimed_at, "
-                    "attempts = attempts + 1 WHERE delivery_id = :delivery_id"
-                ),
-                {"claimed_at": now, "delivery_id": row["delivery_id"]},
-            )
-        claimed = dict(row)
-        claimed["recovered"] = claimed["status"] == "processing"
-        claimed["attempts"] = int(claimed["attempts"]) + 1
-        return claimed
+        lock_clause = " FOR UPDATE SKIP LOCKED" if self.engine.dialect.name != "sqlite" else ""
+        while True:
+            superseded = False
+            async with self.engine.begin() as connection:
+                result = await connection.execute(
+                    text(
+                        "SELECT candidate.delivery_id, candidate.event_name, "
+                        "candidate.installation_id, candidate.payload, candidate.status, "
+                        "candidate.attempts, candidate.session_id, candidate.session_sequence "
+                        "FROM langmesh_github_deliveries AS candidate "
+                        "WHERE ((candidate.status = 'queued' AND candidate.next_attempt_at <= :now) "
+                        "OR (candidate.status = 'processing' AND candidate.claimed_at < :stale_at)) "
+                        "AND (candidate.session_id = '' OR NOT EXISTS ("
+                        "SELECT 1 FROM langmesh_github_deliveries AS prior "
+                        "WHERE prior.session_id = candidate.session_id "
+                        "AND prior.session_sequence < candidate.session_sequence "
+                        "AND prior.status IN ('queued', 'processing'))) "
+                        "ORDER BY candidate.received_at, candidate.delivery_id LIMIT 1"
+                        f"{lock_clause}"
+                    ),
+                    {"now": now, "stale_at": now - stale_after},
+                )
+                row = result.mappings().first()
+                if row is None:
+                    return None
+                session_id = str(row["session_id"] or "")
+                sequence = int(row["session_sequence"] or 0)
+                if session_id and sequence:
+                    fence = (
+                        await connection.execute(
+                            text(
+                                "SELECT completed_sequence FROM langmesh_github_session_fences "
+                                "WHERE session_id = :session_id" + lock_clause
+                            ),
+                            {"session_id": session_id},
+                        )
+                    ).first()
+                    if fence is not None and sequence <= int(fence[0]):
+                        completed_sequence = int(fence[0])
+                        await connection.execute(
+                            text(
+                                "UPDATE langmesh_github_deliveries SET status = 'superseded', "
+                                "claimed_at = NULL, next_attempt_at = 0, "
+                                "last_error = 'superseded by a newer completed session delivery' "
+                                "WHERE delivery_id = :delivery_id"
+                            ),
+                            {"delivery_id": row["delivery_id"]},
+                        )
+                        logger.info(
+                            "superseded GitHub delivery id=%s session=%s sequence=%s "
+                            "completed_sequence=%s",
+                            row["delivery_id"],
+                            session_id,
+                            sequence,
+                            completed_sequence,
+                        )
+                        superseded = True
+                    else:
+                        await connection.execute(
+                            text(
+                                "UPDATE langmesh_github_deliveries SET status = 'processing', "
+                                "claimed_at = :claimed_at, attempts = attempts + 1 "
+                                "WHERE delivery_id = :delivery_id"
+                            ),
+                            {"claimed_at": now, "delivery_id": row["delivery_id"]},
+                        )
+                else:
+                    await connection.execute(
+                        text(
+                            "UPDATE langmesh_github_deliveries SET status = 'processing', "
+                            "claimed_at = :claimed_at, attempts = attempts + 1 "
+                            "WHERE delivery_id = :delivery_id"
+                        ),
+                        {"claimed_at": now, "delivery_id": row["delivery_id"]},
+                    )
+            if superseded:
+                continue
+            claimed = dict(row)
+            claimed["recovered"] = claimed["status"] == "processing"
+            claimed["attempts"] = int(claimed["attempts"]) + 1
+            return claimed
 
     async def complete(self, delivery_id: str) -> None:
         async with self.engine.begin() as connection:
+            lock_clause = "" if connection.dialect.name == "sqlite" else " FOR UPDATE"
+            delivery = (
+                await connection.execute(
+                    text(
+                        "SELECT session_id, session_sequence FROM langmesh_github_deliveries "
+                        "WHERE delivery_id = :delivery_id" + lock_clause
+                    ),
+                    {"delivery_id": delivery_id},
+                )
+            ).first()
             await connection.execute(
                 text(
                     "UPDATE langmesh_github_deliveries SET status = 'completed' WHERE delivery_id = :delivery_id"
                 ),
                 {"delivery_id": delivery_id},
             )
+            if delivery is not None and delivery[0] and delivery[1]:
+                await connection.execute(
+                    text(
+                        "UPDATE langmesh_github_session_fences SET completed_sequence = "
+                        "CASE WHEN completed_sequence < :sequence THEN :sequence "
+                        "ELSE completed_sequence END WHERE session_id = :session_id"
+                    ),
+                    {
+                        "session_id": delivery[0],
+                        "sequence": int(delivery[1]),
+                    },
+                )
 
     async def schedule_retry(self, delivery_id: str, error: str, delay: int) -> None:
         async with self.engine.begin() as connection:
