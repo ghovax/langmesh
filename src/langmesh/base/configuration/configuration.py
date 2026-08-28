@@ -357,7 +357,10 @@ class Configuration(Section):
         unknown = sorted(name for name in value if not hasattr(Limits, name))
         if unknown:
             raise ValueError(
-                f"unknown limit(s): {', '.join(unknown)}. The names that exist are the fields of `langmesh.base.primitives.limits.Limits`; the settings panel lists them with their shipped values."
+                f"unknown limit(s): {', '.join(unknown)}. "
+                "The names that exist are the fields of "
+                "`langmesh.base.primitives.limits.Limits`; the settings panel "
+                "lists them with their shipped values."
             )
         return value
 
