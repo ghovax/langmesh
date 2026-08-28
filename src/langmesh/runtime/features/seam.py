@@ -97,7 +97,9 @@ class Feature:
         """Whether this feature is currently holding the loop."""
         return False
 
-    def begin_maintenance(self, *, reason: str, resume_after: bool) -> None:
+    def begin_maintenance(
+        self, *, reason: str, resume_after: bool, context_tokens: int = 0
+    ) -> None:
         """Start holding the loop, preparing the durable handoff the fold needs."""
 
     def advance_maintenance(self) -> AsyncIterator[TurnEventUnion]:

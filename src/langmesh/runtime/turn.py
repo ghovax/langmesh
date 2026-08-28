@@ -661,7 +661,11 @@ class _RunsTurns(_DispatchesTools, ABC):
                     ),
                 )
                 for maintainer in self._features.maintainers(request_tokens):
-                    maintainer.begin_maintenance(reason="automatic", resume_after=True)
+                    maintainer.begin_maintenance(
+                        reason="automatic",
+                        resume_after=True,
+                        context_tokens=request_tokens,
+                    )
             if self._features.active_maintenance():
                 async for maintenance_event in self._features.advance_maintenance():
                     yield maintenance_event
@@ -715,7 +719,11 @@ class _RunsTurns(_DispatchesTools, ABC):
                     )
                 if not self._features.active_maintenance():
                     for feature in self._features.instances:
-                        feature.begin_maintenance(reason="overflow", resume_after=True)
+                        feature.begin_maintenance(
+                            reason="overflow",
+                            resume_after=True,
+                            context_tokens=self._latest_context_tokens,
+                        )
                     async for maintenance_event in self._features.advance_maintenance():
                         yield maintenance_event
                 if not self._features.maintenance_ready():

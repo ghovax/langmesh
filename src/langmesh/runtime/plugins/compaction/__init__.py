@@ -57,6 +57,7 @@ class CompactionControl:
         "none"
     )
     reason: Literal["automatic", "manual", "overflow"] = "manual"
+    context_tokens: int = 0
     resume_after: bool = False
     preparation_token: Any = None
     failure: str | None = None
@@ -83,11 +84,12 @@ class CompactionControl:
     def failed(self) -> bool:
         return self.phase in {"preparation_failed", "compaction_failed"}
 
-    def begin(self, *, reason: str, resume_after: bool) -> None:
+    def begin(self, *, reason: str, resume_after: bool, context_tokens: int = 0) -> None:
         if reason not in {"automatic", "manual", "overflow"}:
             raise ValueError(f"Invalid compaction reason: {reason}")
         self.phase = "waiting"
         self.reason = cast(Literal["automatic", "manual", "overflow"], reason)
+        self.context_tokens = max(0, context_tokens)
         self.resume_after = resume_after
         self.preparation_token = None
         self.failure = None
@@ -115,6 +117,7 @@ class CompactionControl:
     def clear(self) -> None:
         self.phase = "none"
         self.reason = "manual"
+        self.context_tokens = 0
         self.resume_after = False
         self.preparation_token = None
         self.failure = None
@@ -127,11 +130,16 @@ class CompactionControl:
             return cls()
         phase = value.get("phase")
         reason = value.get("reason")
+        try:
+            context_tokens = max(0, int(value.get("context_tokens") or 0))
+        except (TypeError, ValueError):
+            context_tokens = 0
         return cls(
             phase=phase
             if phase in {"none", "waiting", "recorded", "preparation_failed", "compaction_failed"}
             else "none",
             reason=reason if reason in {"automatic", "manual", "overflow"} else "manual",
+            context_tokens=context_tokens,
             resume_after=bool(value.get("resume_after", False)),
             preparation_token=value.get("preparation_token"),
             failure=(str(value["failure"]) if value.get("failure") else None),
@@ -317,8 +325,12 @@ class Compaction(Feature):
         """Whether this plugin is currently holding the loop to reclaim context."""
         return bool(self._control.active)
 
-    def begin_maintenance(self, *, reason: str, resume_after: bool) -> None:
-        self.begin_preparation(reason=reason, resume_after=resume_after)
+    def begin_maintenance(
+        self, *, reason: str, resume_after: bool, context_tokens: int = 0
+    ) -> None:
+        self.begin_preparation(
+            reason=reason, resume_after=resume_after, context_tokens=context_tokens
+        )
 
     def maintenance_ready(self) -> bool:
         return bool(self._control.recorded)
@@ -369,7 +381,11 @@ class Compaction(Feature):
             yield CompactionStarted(
                 reason=self._control.reason,
                 messages_before=len(self.without_preparation(self._host.conversation.messages)),
-                tokens_before=conversation_tokens(self._host.conversation.messages),
+                tokens_before=(
+                    self._control.context_tokens
+                    or self._host.window.latest_context_tokens
+                    or conversation_tokens(self._host.conversation.messages)
+                ),
             )
 
     async def run_maintenance(self, *, reason: str):
@@ -384,9 +400,11 @@ class Compaction(Feature):
         async for event in self.compact(reason):
             yield event
 
-    def begin_preparation(self, *, reason: str, resume_after: bool) -> None:
+    def begin_preparation(
+        self, *, reason: str, resume_after: bool, context_tokens: int = 0
+    ) -> None:
         """Begin the configured durable handoff before compacting."""
-        self._control.begin(reason=reason, resume_after=resume_after)
+        self._control.begin(reason=reason, resume_after=resume_after, context_tokens=context_tokens)
         instruction = self._preparation.instruction(self._prompts.load("prepare_compaction", {}))
         if instruction is None:
             self._control.record()
@@ -418,6 +436,7 @@ class Compaction(Feature):
         self.begin_preparation(
             reason=self._control.reason,
             resume_after=self._control.resume_after,
+            context_tokens=self._control.context_tokens,
         )
         return "prepare"
 
@@ -502,7 +521,11 @@ class Compaction(Feature):
         if self._strategy is not None:
             state = self._compaction_state(reason)
             messages_before = len(state.messages)
-            tokens_before = self._host.window.latest_context_tokens
+            tokens_before = (
+                self._control.context_tokens
+                or self._host.window.latest_context_tokens
+                or conversation_tokens(state.messages)
+            )
             original = list(self._host.conversation.messages)
             yield CompactionStarted(
                 reason=reason,
@@ -547,7 +570,11 @@ class Compaction(Feature):
         original = list(self._host.conversation.messages)
         compactable = self.without_preparation(original)
         messages_before = len(compactable)
-        tokens_before = self._host.window.latest_context_tokens
+        tokens_before = (
+            self._control.context_tokens
+            or self._host.window.latest_context_tokens
+            or conversation_tokens(compactable)
+        )
         yield CompactionStarted(
             reason=reason, messages_before=messages_before, tokens_before=tokens_before
         )
@@ -586,8 +613,12 @@ class Compaction(Feature):
                 error_code=error_code,
             )
             return
-        older = compactable[: len(compactable) - len(kept)]
-        summary = await self._summarize_compacted(older, compactable) if older else None
+        messages_to_summarize = compactable[: len(compactable) - len(kept)]
+        summary = (
+            await self._summarize_compacted(messages_to_summarize)
+            if messages_to_summarize
+            else None
+        )
         if self._host.turn.abort_event.is_set():
             # The person stopped the fold mid-summary; report a terminal, non-blocking cancellation.
             yield CompactionDone(
@@ -640,10 +671,10 @@ class Compaction(Feature):
             additional_kwargs={"reminder": True, "summary": True},
         )
 
-    async def _summarize_compacted(self, older: list, conversation: list) -> str | None:
+    async def _summarize_compacted(self, messages_to_summarize: list) -> str | None:
         """Ask the model to distil the conversation before compacting, preserving its cache prefix."""
         state = CompactionSummaryState(
-            messages=tuple(older),
+            messages=tuple(messages_to_summarize),
             system_prompt=self._host.turn.build_static_system_prompt(),
         )
         if self._summarizer is not None:
@@ -655,7 +686,7 @@ class Compaction(Feature):
                 return None
             return str(summary or "").strip() or None
         instruction = self._prompts.load("compaction_summary", {})
-        summarizer = self._compaction_summarizer_runtime()
+        summarizer = self._compaction_summarizer_runtime(messages_to_summarize)
         try:
             from langmesh.runtime.verdict import drive_verdict_session
 
@@ -727,7 +758,7 @@ class Compaction(Feature):
         )
         summarizer.retain_tools([summary_tool])
 
-    def _compaction_summarizer_runtime(self):
+    def _compaction_summarizer_runtime(self, messages_to_summarize: list):
         """The hidden session that produces the compaction summary, mirroring the goal reviewer."""
         summarizer_configuration = self._context.agent_configuration.model_copy(
             update={"permission_mode": "automatic"}
@@ -784,7 +815,7 @@ class Compaction(Feature):
                 permissions=summarizer_permissions,
                 features=(Compaction(),),
             ),
-            conversation=list(self._host.conversation.messages),
+            conversation=list(messages_to_summarize),
         )
         summarizer._tool_context = replace(summarizer._tool_context, toolbox=None)
         summarizer.restore_session(self._host.bookkeeping.session_snapshot())
