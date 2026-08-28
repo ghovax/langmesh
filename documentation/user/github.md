@@ -38,9 +38,12 @@ storage:
   queue:
     poll_seconds: 5
     maximum_delivery_attempts: 5
+    processing_timeout_seconds: 600
 ```
 
 Each delivery is attempted at most `maximum_delivery_attempts` times. After the last failure, the service stores the delivery as failed and stops scheduling it; the existing acknowledgement comment is updated instead of creating another comment. The default is five attempts when this value is omitted.
+
+`processing_timeout_seconds` bounds one hosted turn, including compaction and hidden review calls. It must remain below the delivery recovery interval so an interrupted worker can be reclaimed; the default is 600 seconds.
 
 `storage.encryption.key_path` must contain a Fernet key. Generate one once with:
 

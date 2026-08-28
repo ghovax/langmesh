@@ -38,6 +38,7 @@ from langmesh.runtime.internals import (
     conversation_tokens,
     message_tokens,
 )
+from langmesh.base.primitives.limits import current_limits
 from langmesh.runtime.turn_events import (
     CompactionDone,
     CompactionStarted,
@@ -730,10 +731,10 @@ class Compaction(Feature):
                     attempt,
                 )
 
-            # No cap: the summarizer is reminded until it submits, and emitting the tool call
-            # correctly is the model's own job. Only a person's stop ends the wait.
             submitted = await drive_verdict_session(
                 run_turn=_run_turn,
+                attempts=current_limits().compaction_summary_attempts,
+                timeout_seconds=current_limits().structured_verdict_timeout_seconds,
                 submitted=_submitted,
                 require_submission=lambda: self._require_summary_submission(summarizer),
                 missing_instruction=lambda: self._prompts.load("compaction_summary_missing", {}),

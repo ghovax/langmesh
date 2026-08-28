@@ -344,6 +344,9 @@ limits:
     # Other process and identity budgets, in seconds unless named otherwise.
     session_title_attempts: 4
     permission_reviewer_attempts: 4
+    compaction_summary_attempts: 3
+    goal_review_attempts: 3
+    structured_verdict_timeout_seconds: 180.0
     model_catalogue_ttl: 60.0
     credential_refresh_leeway: 300.0
     oauth_poll_interval: 1.0

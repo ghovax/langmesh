@@ -24,6 +24,7 @@ from langmesh.base.configuration.configuration import GoalReviewConfiguration
 from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.contracts.ports import GoalReviewContext, GoalReviewOutcome
 from langmesh.base.primitives.identifiers import new_id
+from langmesh.base.primitives.limits import current_limits
 from langmesh.base.primitives.serialization import compact
 from langmesh.runtime.internals import await_interruptible
 from langmesh.runtime.cache_trace import cache_lane
@@ -464,10 +465,10 @@ class GoalReviewFeature(Feature):
                     attempt,
                 )
 
-            # No cap: the reviewer is asked again until it submits correctly, which is the model's
-            # own job — a hard limit on how often it may get it wrong only sets a price on honesty.
             review = await drive_verdict_session(
                 run_turn=_run_turn,
+                attempts=current_limits().goal_review_attempts,
+                timeout_seconds=current_limits().structured_verdict_timeout_seconds,
                 submitted=_submitted,
                 require_submission=lambda: self._require_review_submission(reviewer),
                 missing_instruction=lambda: self._prompts.load("goal_review_missing", {}),
