@@ -669,7 +669,6 @@ async def run_turn(
         answer = ""
         response_text = ""
         model_call = 0
-        compaction_started = False
         async for event in session.stream(
             prompt_for(mention, checkout=checkout, followup=followup)
         ):
@@ -696,9 +695,6 @@ async def run_turn(
                     _resident_memory_megabytes(),
                 )
             if isinstance(event, CompactionStarted):
-                if not compaction_started and update_comment is not None:
-                    await update_comment("Compacting the conversation before continuing.")
-                compaction_started = True
                 logger.info(
                     "mention compaction started session=%s reason=%s "
                     "messages_before=%s tokens_before=%s",
@@ -708,14 +704,6 @@ async def run_turn(
                     event.tokens_before,
                 )
             if isinstance(event, CompactionDone):
-                if update_comment is not None:
-                    status = (
-                        "Compaction complete. Continuing."
-                        if event.ok
-                        else "Compaction did not complete; the turn cannot continue automatically."
-                    )
-                    await update_comment(status)
-                compaction_started = False
                 logger.info(
                     "mention compaction done session=%s reason=%s ok=%s "
                     "messages_before=%s messages_after=%s "
