@@ -15,6 +15,9 @@ wheels/
 .direnv/
 /mail.env
 /secrets/
+/deployment/provider-keys.fernet
+/deployment/github.yaml
+/deployment/*.pem
 
 # Editor
 .DS_Store

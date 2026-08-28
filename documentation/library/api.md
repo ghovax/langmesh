@@ -28,10 +28,7 @@
 
 ::: langmesh.base.contracts.tools
 
-`Session(..., tools=[...])` binds ordinary LangChain tools into the initial stable
-provider schema; `Session.grant_tool(...)` adds or replaces one later and intentionally
-changes the next request's schema. See
-[Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
+`Session(..., tools=[...])` binds ordinary LangChain tools into the initial stable provider schema; `Session.grant_tool(...)` adds or replaces one later and intentionally changes the next request's schema. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 
 ## Extension ports
 
@@ -40,8 +37,7 @@ changes the next request's schema. See
       members: true
       show_root_heading: false
 
-`PromptComposer` receives `PromptLayer` values only when the static prompt is
-constructed. The public hook surface cannot rewrite the final provider message list.
+`PromptComposer` receives `PromptLayer` values only when the static prompt is constructed. The public hook surface cannot rewrite the final provider message list.
 
 ## The plugin seam
 

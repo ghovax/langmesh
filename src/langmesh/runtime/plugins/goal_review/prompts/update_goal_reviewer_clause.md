@@ -1,2 +1,1 @@
-- A `satisfied` or `blocked` mark is checked by an independent secondary review before
-  it is final.
+- A `satisfied` or `blocked` mark is checked by an independent secondary review before it is final.

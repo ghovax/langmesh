@@ -1,5 +1,4 @@
-The session configuration denies access to these paths, and approval cannot widen that
-boundary.
+The session configuration denies access to these paths, and approval cannot widen that boundary.
 
 **Denied paths:** {{ paths }}
 
