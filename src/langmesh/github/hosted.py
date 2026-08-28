@@ -887,10 +887,11 @@ class Processor:
             "pull_request_review_comment",
         }:
             return
-        token = self.github.installation_token(installation_id)
-        slug = self.github.app_slug()
+        token = await asyncio.to_thread(self.github.installation_token, installation_id)
+        slug = await asyncio.to_thread(self.github.app_slug)
         bot_login = f"{slug}[bot]"
-        if not is_mention_turn(
+        if not await asyncio.to_thread(
+            is_mention_turn,
             event,
             event_name=event_name,
             repository=repository,
@@ -958,7 +959,8 @@ class Processor:
     ) -> None:
         ack = await self.store.comment_id_for_delivery(delivery_id)
         if ack is None:
-            ack = create_comment(
+            ack = await asyncio.to_thread(
+                create_comment,
                 mention.repository,
                 mention.number,
                 acknowledgement(),
@@ -967,9 +969,10 @@ class Processor:
             )
             await self.store.remember_comment_id(delivery_id, ack)
 
-        def update_existing_comment(message: str) -> None:
+        async def update_existing_comment(message: str) -> None:
             try:
-                update_comment(
+                await asyncio.to_thread(
+                    update_comment,
                     mention.repository,
                     ack,
                     message.strip(),
@@ -980,12 +983,12 @@ class Processor:
                 logger.exception("could not update GitHub comment %s", ack)
 
         if recovered:
-            update_existing_comment(
+            await update_existing_comment(
                 "The worker was interrupted before it could finish. It recovered the saved "
                 "session and is retrying now."
             )
         elif attempt > 1:
-            update_existing_comment("The worker is retrying after an earlier failure.")
+            await update_existing_comment("The worker is retrying after an earlier failure.")
 
         logger.info(
             "started GitHub mention delivery id=%s attempt=%s session=%s acknowledgement=%s",
@@ -995,11 +998,13 @@ class Processor:
             ack,
         )
         try:
-            self._checkout(mention.repository, workspace, token)
+            await asyncio.to_thread(self._checkout, mention.repository, workspace, token)
             runner = self._runner(token)
             if mention.kind == "pull" and not mention.head_ref:
-                pull = self.github.request(
-                    f"/repos/{mention.repository}/pulls/{mention.number}", token
+                pull = await asyncio.to_thread(
+                    self.github.request,
+                    f"/repos/{mention.repository}/pulls/{mention.number}",
+                    token,
                 )
                 mention = (
                     mention_from_event(
@@ -1012,7 +1017,8 @@ class Processor:
                     )
                     or mention
                 )
-            checkout = prepare_tree(
+            checkout = await asyncio.to_thread(
+                prepare_tree,
                 mention,
                 workspace,
                 token=token,
@@ -1020,7 +1026,8 @@ class Processor:
                 app_id=self.settings.app_id,
                 run=runner,
             )
-            followup = thread_has_prior_bot_comment(
+            followup = await asyncio.to_thread(
+                thread_has_prior_bot_comment,
                 event,
                 repository=mention.repository,
                 token=token,
@@ -1054,12 +1061,16 @@ class Processor:
                             refreshed,
                             self.authentication,
                         )
-            pull_url = (
-                self._publish(mention, workspace, token, runner)
-                if tree_is_dirty(workspace, run=runner) or commits_to_push(workspace, run=runner)
-                else ""
-            )
-            update_existing_comment(posted_reply(answer, pull_url))
+
+            def publish_if_needed() -> str:
+                if not tree_is_dirty(workspace, run=runner) and not commits_to_push(
+                    workspace, run=runner
+                ):
+                    return ""
+                return self._publish(mention, workspace, token, runner)
+
+            pull_url = await asyncio.to_thread(publish_if_needed)
+            await update_existing_comment(posted_reply(answer, pull_url))
             logger.info(
                 "finished GitHub mention delivery id=%s attempt=%s session=%s pull_request=%s",
                 delivery_id,
@@ -1076,7 +1087,7 @@ class Processor:
                 mention.repository,
                 mention.number,
             )
-            update_existing_comment(
+            await update_existing_comment(
                 "The worker encountered a failure. It will retry shortly and keep this "
                 "comment updated."
             )
@@ -1131,12 +1142,12 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
     @app.get("/github/setup/callback")
     async def setup_callback(code: str, state: str) -> dict[str, Any]:
         try:
-            oauth = github.oauth_token(code)
-            user = github.user(oauth)
+            oauth = await asyncio.to_thread(github.oauth_token, code)
+            user = await asyncio.to_thread(github.user, oauth)
             installation_id = await store.authenticate_setup(state, str(user.get("login") or ""))
             if installation_id is None:
                 raise RuntimeError("setup session expired")
-            record = github.verify_installation(installation_id[0], oauth)
+            record = await asyncio.to_thread(github.verify_installation, installation_id[0], oauth)
             if not record.get("repositories") and record.get("total_count") == 0:
                 raise RuntimeError("your GitHub account cannot access this installation")
         except Exception as error:

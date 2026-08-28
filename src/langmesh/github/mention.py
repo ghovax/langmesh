@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Awaitable, Callable, Mapping, Protocol
 
 from langmesh import (
     AgentConfiguration,
@@ -594,7 +594,7 @@ async def run_turn(
     workspace: Path,
     *,
     checkout: Checkout,
-    update_comment: Callable[[str], None] | None = None,
+    update_comment: Callable[[str], Awaitable[None]] | None = None,
     token: str = "",
     thread_followup: bool = False,
     provider: str,
@@ -701,7 +701,7 @@ async def run_turn(
             if isinstance(event, ToolCall):
                 status = response_text.strip()
                 if status and update_comment is not None:
-                    update_comment(status)
+                    await update_comment(status)
                     response_text = ""
             if isinstance(event, Done):
                 answer = event.text or response_text or answer
