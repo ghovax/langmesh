@@ -275,8 +275,8 @@ def _run(
         command = ["git", "-c", f"{_git_header_key()}={extraheader}", *command[1:]]
     merged = dict(os.environ if env is None else env)
     if command and command[0] == "git":
-        merged.setdefault("GIT_TERMINAL_PROMPT", "0")
-        merged.setdefault("GCM_INTERACTIVE", "Never")
+        merged["GIT_TERMINAL_PROMPT"] = "0"
+        merged["GCM_INTERACTIVE"] = "Never"
     shown = " ".join(arguments)
     try:
         completed = subprocess.run(
