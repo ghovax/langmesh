@@ -18,10 +18,13 @@ import urllib.request
 from typing import Any, Mapping
 
 
+PUBLIC_HANDLES = frozenset({"@langmesh", "@langmesh[bot]", "@langmesh-bot", "@bot"})
+
+
 def mentioned(body: str, *, bot_login: str) -> bool:
     """Whether the text addresses the installed bot or one of its public aliases."""
     text = body.lower()
-    handles = {f"@{bot_login}".lower(), "@langmesh", "@langmesh[bot]"}
+    handles = {f"@{bot_login}".lower(), *(handle.lower() for handle in PUBLIC_HANDLES)}
     return any(re.search(re.escape(handle) + r"(?![\w-])", text) for handle in handles)
 
 
