@@ -18,16 +18,16 @@ import urllib.request
 from typing import Any, Mapping
 
 
-PUBLIC_HANDLES = frozenset({"@langmesh", "@langmesh[bot]", "@langmesh-bot", "@bot"})
-TRIGGER_WORDS = frozenset({"agent", "bot", "clanker"})
+TRIGGER_WORDS = frozenset({"agent", "bot"})
 
 
-def mentioned(body: str, *, bot_login: str) -> bool:
-    """Whether the text addresses the installed bot or one of its public aliases."""
+def mentioned(body: str) -> bool:
+    """Whether the text contains one of the exact public trigger words."""
     text = body.casefold()
-    handles = {f"@{bot_login}".lower(), *(handle.lower() for handle in PUBLIC_HANDLES)}
-    targets = (*handles, *TRIGGER_WORDS)
-    return any(re.search(rf"(?<![\w-]){re.escape(target)}(?![\w-])", text) for target in targets)
+    return any(
+        re.search(rf"(?<![\w\-\[\]]){re.escape(trigger)}(?![\w\-\[\]])", text)
+        for trigger in TRIGGER_WORDS
+    )
 
 
 def mention_bot_login(login: str, *, bot_login: str) -> bool:
@@ -196,6 +196,6 @@ def is_mention_turn(
     if str((comment.get("user") or {}).get("login") or "").endswith("[bot]"):
         return False
     body = str(comment.get("body") or "")
-    return mentioned(body, bot_login=bot_login) or reply_to_mention_bot(
+    return mentioned(body) or reply_to_mention_bot(
         event, repository=repository, token=token, api=api, bot_login=bot_login
     )
