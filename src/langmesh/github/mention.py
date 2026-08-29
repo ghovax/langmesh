@@ -19,6 +19,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 
+from models_provider import bind_credential_store, fetch_chatgpt_models, reset_credential_store
+
 from langmesh import (
     AgentConfiguration,
     PackagePromptLoader,
@@ -611,7 +613,7 @@ def _session(
                     reclaim_at_fraction=0.9,
                     output_reserve_fraction=0.1,
                     recent_working_set_fraction=0.15,
-                    maximum_context_tokens=98_304,
+                    maximum_context_tokens=1_000_000,
                 ),
             ),
             credential_store=credential_store,
@@ -634,6 +636,14 @@ async def run_turn(
     credential_store: Any = None,
     compaction_configuration: CompactionConfiguration | None = None,
 ) -> str:
+    if provider.strip().lower() == "chatgpt" and credential_store is not None:
+        credential_binding = bind_credential_store(credential_store)
+        try:
+            # OAuth supplies the subscription credential; the live catalogue supplies the
+            # model's current context window before the runtime chooses its compaction budget.
+            await fetch_chatgpt_models()
+        finally:
+            reset_credential_store(credential_binding)
     async with _session(
         mention,
         workspace,

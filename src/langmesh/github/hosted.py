@@ -139,7 +139,7 @@ class Settings:
             "reclaim_at_fraction": 0.9,
             "output_reserve_fraction": 0.1,
             "recent_working_set_fraction": 0.15,
-            "maximum_context_tokens": 98_304,
+            "maximum_context_tokens": 1_000_000,
         }
         compaction_values.update(raw_compaction)
         try:
