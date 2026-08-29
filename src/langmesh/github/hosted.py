@@ -416,18 +416,6 @@ class Processor:
         attempt: int = 0,
         recovered: bool = False,
     ) -> None:
-        configuration = await self.store.configuration(installation_id)
-        if configuration is None or not configuration.ready:
-            raise RuntimeError(
-                f"GitHub installation {installation_id} has no usable provider configuration"
-            )
-            return
-        provider, model, api_key = (
-            configuration.provider,
-            configuration.model,
-            configuration.api_key,
-        )
-        credential_store = self._credential_store(configuration)
         repository = str((event.get("repository") or {}).get("full_name") or "")
         if not repository or event_name not in {
             "issues",
@@ -436,6 +424,17 @@ class Processor:
             "pull_request_review_comment",
         }:
             return
+        configuration = await self.store.configuration(installation_id)
+        if configuration is None or not configuration.ready:
+            raise RuntimeError(
+                f"GitHub installation {installation_id} has no usable provider configuration"
+            )
+        provider, model, api_key = (
+            configuration.provider,
+            configuration.model,
+            configuration.api_key,
+        )
+        credential_store = self._credential_store(configuration)
         token = await asyncio.to_thread(self.github.installation_token, installation_id)
         slug = await asyncio.to_thread(self.github.app_slug)
         bot_login = f"{slug}[bot]"
