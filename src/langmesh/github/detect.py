@@ -18,15 +18,19 @@ import urllib.request
 from typing import Any, Mapping
 
 
-TRIGGER_WORDS = frozenset({"agent", "bot"})
+TRIGGER = "@claude"
 
 
 def mentioned(body: str) -> bool:
-    """Whether the text contains one of the exact public trigger words."""
-    text = body.casefold()
-    return any(
-        re.search(rf"(?<![\w\-\[\]]){re.escape(trigger)}(?![\w\-\[\]])", text)
-        for trigger in TRIGGER_WORDS
+    """Whether the text contains the standalone, case-insensitive ``@claude`` trigger."""
+    escaped_trigger = re.escape(TRIGGER)
+    return (
+        re.search(
+            rf"(?<![\w\-\[\]]){escaped_trigger}(?![\w\-\[\]])",
+            body,
+            re.IGNORECASE,
+        )
+        is not None
     )
 
 

@@ -185,6 +185,6 @@ The script writes `/etc/systemd/system/langmeshd.service` and `langmesh-mail.ser
 - Set the XDG directories if you want them under `/srv` rather than `/root`.
 - The daemon is the process sessions live in; the app and `serve` are clients you can close and reopen. `langmesh mail` must stay up for IDLE, but unfinished jobs are on disk and resume when it comes back.
 
-## `@<app-slug>[bot]` on GitHub
+## `@claude` on GitHub
 
-Install the LangMesh GitHub App on a personal account or organization, then configure its provider, model, and API key through the App setup page. An issue or pull-request comment that mentions `@<app-slug>[bot]`, or a reply to the bot, starts the service. Repositories need no workflow, YAML policy, App ID, provider setting, API key, or secret. On an issue it can open a draft pull request; on a pull request it updates that branch. See [Universal GitHub App](github.md).
+Install the LangMesh GitHub App on a personal account or organization, then configure its provider, model, and API key through the App setup page. Opening an issue or pull request starts the first response; later comments trigger a response only when they contain the standalone mention `@claude`, regardless of casing, or reply to the bot. Other words, names, aliases, and App logins are ignored. Repositories need no workflow, YAML policy, App ID, provider setting, API key, or secret. On an issue it can open a draft pull request; on a pull request it updates that branch. See [Universal GitHub App](github.md).
