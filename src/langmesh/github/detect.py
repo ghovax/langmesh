@@ -19,7 +19,7 @@ from typing import Any, Mapping
 
 
 PUBLIC_HANDLES = frozenset({"@langmesh", "@langmesh[bot]", "@langmesh-bot", "@bot"})
-TRIGGER_WORDS = frozenset({"bot", "clanker"})
+TRIGGER_WORDS = frozenset({"agent", "bot", "clanker"})
 
 
 def mentioned(body: str, *, bot_login: str) -> bool:
