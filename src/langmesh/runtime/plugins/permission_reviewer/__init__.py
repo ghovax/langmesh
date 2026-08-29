@@ -132,7 +132,6 @@ class PermissionReviewer(Feature):
             tool_name="permission_decision",
             schema=PermissionDecision,
             attempts=attempts,
-            timeout_seconds=self._configuration.timeout_seconds,
             cache_lane_name=f"permission-review/{gate.request_id}",
             reason=f"the permission reviewer for {gate.request_id}",
             select=_only_permission_call,

@@ -139,10 +139,6 @@ class Feature:
     def record_maintenance_handoff(self) -> None:
         """The model declined to act during the hold; the feature records its handoff."""
 
-    def retry_maintenance(self) -> str | None:
-        """Reopen this feature's failed maintenance phase, or return ``None``."""
-        return None
-
     def maintenance_tool_schemas(self) -> dict:
         """The tool schemas a held loop accepts, keyed by name, merged for validation."""
         return {}
@@ -369,13 +365,6 @@ class Features:
         for feature in self.active_maintenance():
             async for event in feature.run_maintenance(reason=reason):
                 yield event
-
-    def retry_maintenance(self) -> str | None:
-        for feature in self._instances:
-            operation = feature.retry_maintenance()
-            if operation is not None:
-                return operation
-        return None
 
     # Tool gating.
 

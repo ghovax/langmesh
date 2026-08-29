@@ -8,15 +8,23 @@ from typing import Any
 from langchain_core.tools import StructuredTool
 
 from langmesh.base.content.prompts import PackagePromptLoader
+from langmesh.base.primitives.serialization import compact
+from langmesh.runtime.features import CompactionCapability
 from langmesh.runtime.plugins.compaction.ports import CompactionSummary
+from langmesh.runtime.tools.execution import current_tool_services
+from langmesh.runtime.values import ToolStatus
 
 #: The tool's model-facing description, read from this plugin's own prompts directory.
 _DESCRIPTIONS = PackagePromptLoader(Path(__file__).parent / "prompts")
 
 
 async def _submit_compaction_summary(**arguments: Any) -> str:
-    """Validate the model-facing schema if a tool runner invokes the bound declaration."""
-    return CompactionSummary.model_validate(arguments).summary
+    services = current_tool_services()
+    services.features.require(CompactionCapability).submit_summary(
+        CompactionSummary.model_validate(arguments)
+    )
+    services.abort_event.set()
+    return compact({"code": "compaction_summary_submitted", "status": ToolStatus.OK.value})
 
 
 submit_compaction_summary = StructuredTool.from_function(

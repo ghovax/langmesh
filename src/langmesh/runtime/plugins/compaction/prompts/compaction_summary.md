@@ -4,8 +4,7 @@ This instruction is the current request. Every earlier message is the material y
 
 ## Carry everything that still matters
 
-- **User requests** — every explicit user request, with its intent, acceptance criteria, and scope or constraints. Quote or closely paraphrase exact boundaries when authority matters.
-- **Agent interpretations** — plans, assumptions, inferred scope, and review framing created by the agent. Keep these separate from user requests and never promote them into user requirements.
+- **Tasks** — every user request, stated or implied, with its intent, acceptance criteria, and scope or constraints.
 - **Decisions** — every decision made and why: the approach chosen, rejected alternatives, and accepted tradeoffs.
 - **Preferences** — the user's style, format, language, tone, and review expectations. Interpret the intention behind their instructions, not their wording.
 - **Constraints** — hard rules, boundaries, exclusions, and commitments: what must not be done, what was promised, and what is out of scope.
@@ -27,8 +26,7 @@ Keep names, paths, identifiers, and values exact. Preserve causal links and cond
 - **Do not invent** — mark uncertain facts as uncertain and say what would confirm them.
 - **Do not flatten nuance** — preserve conditions, exceptions, warnings, and unfinished threads.
 - **Do not strip the negative** — failed attempts, rejected options, and closed doors are information.
-- **Preserve authority** — explicit user instructions, corrections, and preferences are the highest-priority content. A later explicit user instruction overrides an earlier conflict. Agent interpretations never narrow or overrule a later user request.
-- **Preserve provenance** — distinguish user statements, assistant claims, tool evidence, and your own uncertainty. Never describe an agent inference as something the user requested.
+- **Do not drop the user's voice** — their instructions, corrections, and preferences are the highest-priority content.
 - **Never include secrets** — name a secret only by what it protects, never its value.
 - **Do not pad** — every line must carry information another model could act on.
 - **Erase what is dead** — once the summary exists, finished bookkeeping that cannot affect a future turn may be omitted.

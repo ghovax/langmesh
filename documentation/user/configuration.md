@@ -177,7 +177,7 @@ compaction:
   maximum_context_tokens: 0
 ```
 
-When a conversation reaches its recommended preparation threshold, LangMesh appends one private pre-compaction notice inside the reserved context buffer. The segment exposes only local Bash. The agent must atomically bring the active workspace's `.agents/observations.sqlite` up to date and advance `registry_meta.revision`, including a revision-only acknowledgement when nothing durable changed. LangMesh verifies that the revision advanced, then asks the model for the summary through `submit_compaction_summary`. The summary call has one total attempt and time budget. If it cannot return a valid non-empty summary, LangMesh preserves the original conversation and blocks new input until compaction is retried; it never discards history without a summary. Once collected, the older turns are dropped and the session continues with the system prompt, a provenance-labelled model summary, and the recent working set word for word.
+When a conversation reaches its recommended preparation threshold, LangMesh appends one private pre-compaction notice inside the reserved context buffer. The segment exposes only local Bash. The agent must atomically bring the active workspace's `.agents/observations.sqlite` up to date and advance `registry_meta.revision`, including a revision-only acknowledgement when nothing durable changed. LangMesh verifies that the revision advanced, then asks the model for the summary through `submit_compaction_summary`; once collected, the older turns are dropped and the session continues with the system prompt, the summary, and the recent working set word for word. A summarizer that stops without submitting is reminded until it does — emitting the tool call correctly is the model's own responsibility, and only the person's stop ends the wait.
 
 - `output_reserve_fraction` is held back for the answer the model is about to write; everything else here is a share of what remains.
 - `reclaim_at_fraction` is the recommended preparation boundary, not a hard cutoff.
@@ -352,16 +352,14 @@ How an agent-marked goal is settled.
 
 These values belong to their plugins and are passed when the daemon composes them.
 
-| Setting                               | Type    | Default | What it is for                                   |
-| ------------------------------------- | ------- | ------- | ------------------------------------------------ |
-| `compaction.summary_attempts`         | integer | `3`     | Maximum summary submissions for one compaction.  |
-| `compaction.summary_timeout_seconds`  | number  | `180.0` | Total time allowed for one compaction summary.   |
-| `goal_review.review_attempts`         | integer | `3`     | Maximum verdict submissions for one goal review. |
-| `goal_review.review_timeout_seconds`  | number  | `180.0` | Total time allowed for one goal review.          |
-| `permission_reviewer.attempts`        | integer | `4`     | Maximum automatic permission verdict attempts.  |
-| `permission_reviewer.timeout_seconds` | number  | `30.0`  | Total time allowed for one permission verdict.   |
-| `titling.attempts`                    | integer | `4`     | Maximum session-title attempts.                  |
-| `titling.timeout_seconds`             | number  | `30.0`  | Total time allowed to name a session.            |
+| Setting                              | Type    | Default | What it is for                                   |
+| ------------------------------------ | ------- | ------- | ------------------------------------------------ |
+| `compaction.summary_attempts`        | integer | `3`     | Maximum summary submissions for one compaction.  |
+| `compaction.summary_timeout_seconds` | number  | `180.0` | Maximum time for one summary attempt.            |
+| `goal_review.review_attempts`        | integer | `3`     | Maximum verdict submissions for one goal review. |
+| `goal_review.review_timeout_seconds` | number  | `180.0` | Maximum time for one goal-review attempt.        |
+| `permission_reviewer.attempts`       | integer | `4`     | Maximum automatic permission verdict attempts.   |
+| `titling.attempts`                   | integer | `4`     | Maximum session-title attempts.                  |
 
 ### Attachments
 
@@ -553,7 +551,6 @@ How large, how many, and how patient the tools are: the fields of `langmesh.base
 | `surface_guard_margin`           | `30.0`        | How far above the script's own limit the machinery waiting on it sits.                                        |
 | `open_url`                       | `5.0`         | How long handing a URL to the system browser waits.                                                           |
 | `model_silence_give_up`          | `180.0`       | How long a model stream may make no meaningful progress before the turn fails.                                |
-| `maximum_protocol_reminders`     | `2`           | Consecutive corrections allowed for malformed tool calls or unfinished plugin requirements.                  |
 | `settle_poll_seconds`            | `0.05`        | How often a surface is re-checked until it stops changing.                                                    |
 | `settle_give_up_seconds`         | `1.5`         | The longest to wait before reading it anyway.                                                                 |
 | `settle_stable_reads`            | `2`           | Identical consecutive reads that count a surface as having stopped changing.                                  |

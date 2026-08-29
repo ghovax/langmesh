@@ -26,7 +26,6 @@ async def collect_structured_call(
     tool_name: str,
     schema: Any,
     attempts: int,
-    timeout_seconds: float,
     cache_lane_name: str,
     reason: str,
     select: Callable[[Any], Any] | None = None,
@@ -34,59 +33,42 @@ async def collect_structured_call(
     on_success: Callable[[Any, Any, int], None] | None = None,
     retry_reminder: Callable[[Any], Any | None] | None = None,
 ) -> Any | None:
-    """The structured answer one model call must return within one total budget.
+    """The structured answer one model call must return, retried up to ``attempts`` times.
 
     Each attempt asks the bound model once. A response that lacks ``tool_name``, that
     ``select`` (default: the first such call) rejects, that does not validate against
     ``schema``, or that ``accept`` rejects is one failed attempt. ``retry_reminder``
     may return a message appended before the next attempt, so the model learns why its
     last answer was rejected. Returns the validated value of the first accepted call,
-    or ``None`` when the attempt or time budget runs out.
+    or ``None`` when the attempts run out.
     """
-    if attempts < 1:
-        raise ValueError("structured-call attempts must be positive")
-    if timeout_seconds <= 0:
-        raise ValueError("structured-call timeout must be positive")
     select = select or (lambda response: _first_arguments(response, tool_name))
-    try:
-        async with asyncio.timeout(timeout_seconds):
-            with cache_lane(cache_lane_name):
-                for attempt in range(1, attempts + 1):
-                    try:
-                        response = await model.ainvoke(request)
-                    except Exception as error:  # noqa: BLE001 — one dropped call is not an answer
-                        logger.warning(
-                            "%s failed (attempt %d of %d): %s",
-                            reason,
-                            attempt,
-                            attempts,
-                            error,
-                        )
-                        continue
-                    arguments = select(response)
+    with cache_lane(cache_lane_name):
+        for attempt in range(1, attempts + 1):
+            try:
+                response = await model.ainvoke(request)
+            except Exception as error:  # noqa: BLE001 — one dropped call is not an answer
+                logger.warning("%s failed (attempt %d of %d): %s", reason, attempt, attempts, error)
+                continue
+            arguments = select(response)
+            validated = None
+            if arguments is not None:
+                try:
+                    validated = schema.model_validate(arguments)
+                except Exception:  # noqa: BLE001 — a malformed answer is a failed attempt
                     validated = None
-                    if arguments is not None:
-                        try:
-                            validated = schema.model_validate(arguments)
-                        except Exception:  # noqa: BLE001 — a malformed answer is a failed attempt
-                            validated = None
-                    if validated is None or (accept is not None and not accept(validated)):
-                        logger.warning(
-                            "%s returned no usable answer (attempt %d of %d)",
-                            reason,
-                            attempt,
-                            attempts,
-                        )
-                        if retry_reminder is not None:
-                            reminder = retry_reminder(response)
-                            if reminder is not None:
-                                request = [*request, reminder]
-                        continue
-                    if on_success is not None:
-                        on_success(validated, response, attempt)
-                    return validated
-    except TimeoutError:
-        logger.warning("%s timed out after %.1fs", reason, timeout_seconds)
+            if validated is None or (accept is not None and not accept(validated)):
+                logger.warning(
+                    "%s returned no usable answer (attempt %d of %d)", reason, attempt, attempts
+                )
+                if retry_reminder is not None:
+                    reminder = retry_reminder(response)
+                    if reminder is not None:
+                        request = [*request, reminder]
+                continue
+            if on_success is not None:
+                on_success(validated, response, attempt)
+            return validated
     return None
 
 
@@ -126,28 +108,34 @@ async def drive_verdict_session(
     if timeout_seconds <= 0:
         raise ValueError("verdict timeout must be positive")
     instruction = initial_instruction
-    try:
-        async with asyncio.timeout(timeout_seconds):
-            for attempt in range(1, attempts + 1):
-                if aborted():
-                    return None
+    for attempt in range(1, attempts + 1):
+        if aborted():
+            return None
+        try:
+            async with asyncio.timeout(timeout_seconds):
                 ran = await _maybe_await(run_turn(instruction))
-                if not ran:
-                    return None
-                verdict = submitted()
-                if verdict is not None:
-                    if on_success is not None:
-                        await _maybe_await(on_success(verdict))
-                    return verdict
-                if on_empty is not None:
-                    await _maybe_await(on_empty(attempt))
-                if attempt == attempts:
-                    logger.warning("structured verdict exhausted %d attempts", attempts)
-                    return None
-                require_submission()
-                instruction = missing_instruction()
-    except TimeoutError:
-        logger.warning("structured verdict timed out after %.1fs", timeout_seconds)
+        except TimeoutError:
+            logger.warning(
+                "structured verdict timed out (attempt %d of %d after %.1fs)",
+                attempt,
+                attempts,
+                timeout_seconds,
+            )
+            return None
+        if not ran:
+            return None
+        verdict = submitted()
+        if verdict is not None:
+            if on_success is not None:
+                await _maybe_await(on_success(verdict))
+            return verdict
+        if on_empty is not None:
+            await _maybe_await(on_empty(attempt))
+        if attempt == attempts:
+            logger.warning("structured verdict exhausted %d attempts", attempts)
+            return None
+        require_submission()
+        instruction = missing_instruction()
     return None
 
 

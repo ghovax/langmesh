@@ -162,7 +162,7 @@ def retry_compaction(runtime):
     from langmesh.runtime.plugins.compaction import Compaction
 
     feature = _resolve_feature(runtime, Compaction)
-    return feature.retry_maintenance() if feature is not None else None
+    return feature.retry() if feature is not None else None
 
 
 def begin_compaction_preparation(runtime) -> bool:

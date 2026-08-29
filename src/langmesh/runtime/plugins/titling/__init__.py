@@ -64,7 +64,6 @@ class TitleAssignment(Feature):
             tool_name="SessionTitle",
             schema=SessionTitle,
             attempts=attempts,
-            timeout_seconds=self._configuration.timeout_seconds,
             cache_lane_name="session-title",
             reason=f"naming session {self._context.session_id}",
             accept=lambda value: bool(value.title.strip()),

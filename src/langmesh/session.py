@@ -614,28 +614,6 @@ class Session:
                 await self._save()
                 self._phase = SessionPhase.IDLE
 
-    async def retry_maintenance(self) -> AsyncIterator[TurnEventUnion]:
-        """Retry failed context maintenance without accepting another user message."""
-        async with self._turn_lock:
-            self.runtime.clear_stop()
-            if not self._restored:
-                await self._restore()
-            if self._pending is not None:
-                raise RuntimeError(
-                    "A suspended turn must be resumed or cancelled before retrying maintenance."
-                )
-            if self.runtime.features.retry_maintenance() is None:
-                raise RuntimeError("This session has no failed maintenance to retry.")
-            self._phase = SessionPhase.COMPACTING
-            try:
-                async for event in self.runtime.prepare_maintenance_stream():
-                    if isinstance(event, Checkpoint):
-                        await self._save()
-                    yield event
-            finally:
-                await self._save()
-                self._phase = SessionPhase.IDLE
-
     @property
     def conversation(self) -> tuple[Any, ...]:
         """A fixed sequence snapshot of the model-facing messages accumulated across turns."""
