@@ -155,7 +155,7 @@ After that, opening an issue or same-repository pull request starts an automatic
 
 The setup flow verifies the installer through GitHub before accepting settings; the `installation_id` in a URL is not treated as authorization. Provider keys and OAuth tokens are encrypted at rest and never written to a checkout.
 
-Each turn creates one acknowledgement comment and updates that same comment with useful status and the final response. A failed update never creates a replacement comment, and the service ignores edited or deleted comment events. The final response addresses the known author of the triggering comment with a GitHub `@username` mention when appropriate. Usernames are never guessed, altered, or copied from untrusted prose.
+Each turn creates one acknowledgement comment and updates that same comment with useful status and the final response. While the turn is active, the acknowledgement and each status update include the repository-hosted progress spinner; the final response removes it. A failed update never creates a replacement comment, and the service ignores edited or deleted comment events. The final response addresses the known author of the triggering comment with a GitHub `@username` mention when appropriate. Usernames are never guessed, altered, or copied from untrusted prose.
 
 ## Repository behavior
 
