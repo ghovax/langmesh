@@ -1013,7 +1013,7 @@ const DEFAULT_ATTACHMENTS: AttachmentSettings = { inline_image_megabytes: 20 };
 
 const DEFAULT_COMPACTION: CompactionSettings = {
   automatic: true,
-  reclaim_at_fraction: 0.85,
+  reclaim_at_fraction: 0.9,
   output_reserve_fraction: 0.1,
   recent_working_set_fraction: 0.15,
 };

@@ -9,7 +9,7 @@ from langchain_core.tools import StructuredTool
 
 from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.serialization import compact
-from langmesh.runtime.features import CompactionCapability
+from langmesh.runtime.plugins.compaction.capability import CompactionCapability
 from langmesh.runtime.plugins.compaction.ports import CompactionSummary
 from langmesh.runtime.tools.execution import current_tool_services
 from langmesh.runtime.values import ToolStatus

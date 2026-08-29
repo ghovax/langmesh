@@ -30,6 +30,12 @@ github:
   api_url: "https://api.github.com"
 server:
   public_url: "https://github-agent.example.net"
+compaction:
+  automatic: true
+  reclaim_at_fraction: 0.9
+  output_reserve_fraction: 0.1
+  recent_working_set_fraction: 0.15
+  maximum_context_tokens: 98304
 storage:
   database:
     url: "postgresql+asyncpg://postgres:...@db.qxwzjvkrmno.supabase.co:5432/postgres?ssl=require"
@@ -52,7 +58,7 @@ python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 chmod 600 /srv/langmesh/secrets/provider-keys.fernet
 ```
 
-The service stores provider API keys and OAuth tokens encrypted in the external database, keyed by GitHub installation. The GitHub worker uses the compaction plugin's configured threshold with a direct preparation port. Compaction intentionally invalidates the conversation portion of the provider cache; the stable instructions and tool definitions remain reusable. The delivery queue and session checkpoints use that same database, so another worker can continue after the original worker disappears. Different installations can choose different providers and models. For example, an installation may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like `sk-or-v1-...`.
+The service stores provider API keys and OAuth tokens encrypted in the external database, keyed by GitHub installation. The GitHub worker uses the compaction settings from this operator file with a direct preparation port. Compaction intentionally invalidates the conversation portion of the provider cache; the stable instructions and tool definitions remain reusable. The delivery queue and session checkpoints use that same database, so another worker can continue after the original worker disappears. Different installations can choose different providers and models. For example, an installation may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like `sk-or-v1-...`.
 
 GitHub mention sessions have a private Nix package profile. The service image already contains Nix, Git, `gh`, the Render CLI, `curl`, `jq`, `ripgrep`, `fd`, archive tools, the Python/uv runtime, Ruff, GCC/G++, Clang/LLVM, Make, CMake, Ninja, pkg-config, Rust, Node.js, and Bun. The agent can install another package into its private profile with `nix profile add nixpkgs#<package>`. The LangMesh checkout also contains the reproducible Render CLI package, available as `nix profile add github:ghovax/langmesh#render-cli`. The GitHub service supplies `GH_TOKEN` for repository operations. Render commands require an explicitly configured `RENDER_API_KEY`; the agent must never fabricate or print it.
 

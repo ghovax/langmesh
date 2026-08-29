@@ -571,6 +571,7 @@ def _session(
     model: str,
     api_key: str,
     credential_store: Any = None,
+    compaction_configuration: CompactionConfiguration | None = None,
 ) -> Session:
     provider, model, key = provider.strip().lower(), model.strip(), api_key.strip()
     if not provider or not model:
@@ -605,9 +606,11 @@ def _session(
             checkpoints=checkpoints,
             features=mention_features(
                 workspace,
-                compaction_configuration=CompactionConfiguration(
-                    reclaim_at_fraction=0.75,
-                    recent_working_set_fraction=0.125,
+                compaction_configuration=compaction_configuration
+                or CompactionConfiguration(
+                    reclaim_at_fraction=0.9,
+                    output_reserve_fraction=0.1,
+                    recent_working_set_fraction=0.15,
                     maximum_context_tokens=98_304,
                 ),
             ),
@@ -629,6 +632,7 @@ async def run_turn(
     api_key: str,
     checkpoints: Checkpoints,
     credential_store: Any = None,
+    compaction_configuration: CompactionConfiguration | None = None,
 ) -> str:
     async with _session(
         mention,
@@ -639,6 +643,7 @@ async def run_turn(
         model=model,
         api_key=api_key,
         credential_store=credential_store,
+        compaction_configuration=compaction_configuration,
     ) as session:
         restored = await session.restore()
         followup = restored or thread_followup

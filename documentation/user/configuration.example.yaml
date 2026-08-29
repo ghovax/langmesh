@@ -122,7 +122,7 @@ workspace:
 compaction:
   automatic: true
   # Recommended preparation boundary. Late on purpose, with reserved room for the registry checkpoint.
-  reclaim_at_fraction: 0.85
+  reclaim_at_fraction: 0.9
   # Safety space for the preparation segment and answer. Every other fraction is a share of what remains.
   output_reserve_fraction: 0.1
   # How much recent conversation stays verbatim. Tokens rather than turns, because an unattended

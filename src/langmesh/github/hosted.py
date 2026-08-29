@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 from langmesh import SQLAlchemyCheckpoints
 from langmesh.base.contracts.ports import Checkpoints
 from langmesh.github.detect import is_mention_turn, thread_has_prior_bot_comment
+from langmesh.runtime.plugins.compaction.configuration import CompactionConfiguration
 from langmesh.github.mention import (
     Mention,
     _git_header,
@@ -79,6 +80,7 @@ class Settings:
     queue_poll_seconds: float
     maximum_delivery_attempts: int
     public_url: str
+    compaction: CompactionConfiguration
     provider_application_ids: Mapping[str, str] = field(default_factory=dict)
     github_api_url: str = "https://api.github.com"
 
@@ -127,6 +129,25 @@ class Settings:
         database = section_from(storage, "database", configuration_path)
         encryption = section_from(storage, "encryption", configuration_path)
         queue = section_from(storage, "queue", configuration_path)
+        raw_compaction = values.get("compaction", {})
+        if not isinstance(raw_compaction, Mapping):
+            raise RuntimeError(
+                f"GitHub App configuration needs a compaction mapping: {configuration_path}"
+            )
+        compaction_values: dict[str, Any] = {
+            "automatic": True,
+            "reclaim_at_fraction": 0.9,
+            "output_reserve_fraction": 0.1,
+            "recent_working_set_fraction": 0.15,
+            "maximum_context_tokens": 98_304,
+        }
+        compaction_values.update(raw_compaction)
+        try:
+            compaction = CompactionConfiguration.model_validate(compaction_values)
+        except ValueError as error:
+            raise RuntimeError(
+                f"GitHub App configuration has invalid compaction settings: {configuration_path}"
+            ) from error
         try:
             maximum_delivery_attempts = int(queue.get("maximum_delivery_attempts", 5))
         except (TypeError, ValueError) as error:
@@ -152,6 +173,7 @@ class Settings:
             queue_poll_seconds=max(0.5, float(queue.get("poll_seconds") or 5)),
             maximum_delivery_attempts=maximum_delivery_attempts,
             public_url=required(server, "public_url", "server").rstrip("/"),
+            compaction=compaction,
             github_api_url=str(github.get("api_url") or "https://api.github.com").rstrip("/"),
             provider_application_ids={
                 str(provider).strip().lower(): str(application_id).strip()
@@ -588,7 +610,7 @@ class Processor:
                     api_key=api_key,
                     checkpoints=self._checkpoints,
                     credential_store=credential_store,
-                    retry_failed_turn=recovered,
+                    compaction_configuration=self.settings.compaction,
                 )
             finally:
                 if credential_store is not None:
