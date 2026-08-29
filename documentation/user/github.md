@@ -45,7 +45,7 @@ storage:
     maximum_delivery_attempts: 5
 ```
 
-Each delivery is attempted at most `maximum_delivery_attempts` times. After the last failure, the service stores the delivery as failed and stops scheduling it; the existing acknowledgement comment is updated instead of creating another comment. The default is five attempts when this value is omitted.
+Each delivery is attempted at most `maximum_delivery_attempts` times. After the last failure, the service stores the delivery as failed and stops scheduling it; the existing acknowledgement comment is updated instead of creating another comment. A delivery that cannot yet load its installation configuration remains retryable and is never marked completed as if it had been handled. The default is five attempts when this value is omitted.
 
 The hosted processor does not impose a wall-clock deadline on a whole turn. Model verdict calls and protocol loops carry their own attempt and time budgets, command tools enforce their own limits, and a worker restart recovers a failed delivery from its durable checkpoint. This lets long but productive work finish without permitting an unbounded model retry loop.
 
