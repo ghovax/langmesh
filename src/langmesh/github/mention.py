@@ -61,6 +61,7 @@ PROGRESS_IMAGE_URL = (
     "https://raw.githubusercontent.com/ghovax/langmesh/main/"
     "documentation/assets/progress-spinner.gif"
 )
+PROGRESS_IMAGE_MARKUP = f'<img src="{PROGRESS_IMAGE_URL}" width="20" height="20" alt="Working">'
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
 
@@ -131,7 +132,7 @@ def working_comment(message: str) -> str:
     text = message.strip() or "Working on this."
     return f"""{text}
 
-![Working]({PROGRESS_IMAGE_URL})"""
+{PROGRESS_IMAGE_MARKUP}"""
 
 
 def comment_pointer(comment: Mapping[str, Any], thread_url: str) -> str:
