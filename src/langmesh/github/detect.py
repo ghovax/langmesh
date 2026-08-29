@@ -19,13 +19,15 @@ from typing import Any, Mapping
 
 
 PUBLIC_HANDLES = frozenset({"@langmesh", "@langmesh[bot]", "@langmesh-bot", "@bot"})
+TRIGGER_WORDS = frozenset({"agent", "bot", "clanker"})
 
 
 def mentioned(body: str, *, bot_login: str) -> bool:
     """Whether the text addresses the installed bot or one of its public aliases."""
-    text = body.lower()
+    text = body.casefold()
     handles = {f"@{bot_login}".lower(), *(handle.lower() for handle in PUBLIC_HANDLES)}
-    return any(re.search(re.escape(handle) + r"(?![\w-])", text) for handle in handles)
+    targets = (*handles, *TRIGGER_WORDS)
+    return any(re.search(rf"(?<![\w-]){re.escape(target)}(?![\w-])", text) for target in targets)
 
 
 def mention_bot_login(login: str, *, bot_login: str) -> bool:
