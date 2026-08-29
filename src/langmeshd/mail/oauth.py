@@ -134,7 +134,7 @@ def oauth_readiness_problem(configuration: EmailConfiguration) -> str:
 
 def _client(
     configuration: EmailConfiguration, *, redirect_uri: str = "", scopes: tuple[str, ...] = ()
-):
+) -> Any:
     from authlib.integrations.httpx_client import AsyncOAuth2Client
 
     secret = configuration.effective_oauth_client_secret or None

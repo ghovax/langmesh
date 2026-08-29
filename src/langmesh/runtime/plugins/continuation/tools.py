@@ -9,7 +9,7 @@ from langchain.tools import tool
 
 from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.serialization import compact
-from langmesh.runtime.features import TasksCapability
+from langmesh.runtime.plugins.continuation.capability import TasksCapability
 from langmesh.runtime.tools.execution import current_tool_services
 
 #: The tools' model-facing descriptions, read from this plugin's own prompts directory.

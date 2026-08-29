@@ -62,10 +62,6 @@ from langmesh.runtime.cache_trace import (
 from langmesh.base.primitives.serialization import compact, upstream_detail
 
 
-# What the endpoint serves before its catalogue is fetched, deliberately the conservative figure.
-COLD_START_WINDOW = 272_000
-
-
 @dataclass(frozen=True)
 class CodexCacheState:
     """The request baselines retained for one Codex model route."""
@@ -106,16 +102,12 @@ class ChatCodexModel(BaseChatModel):
         return "codex"
 
     def context_window(self) -> int:
-        # The live subscription catalog is authoritative for the real Codex budget.
+        # The live subscription catalogue is authoritative when it is available.
         live = cached_chatgpt_models().get(self.model)
         if live and live.get("context"):
             return int(live["context"])
-        # Until the catalogue is warm, models.dev's figure is wrong in the direction that does harm, since Codex serves less.
-        return (
-            min(self.context_length, COLD_START_WINDOW)
-            if self.context_length
-            else COLD_START_WINDOW
-        )
+        # Before OAuth metadata is available, use the advertised models.dev context.
+        return max(0, int(self.context_length or 0))
 
     @property
     def _identifying_params(self) -> dict[str, Any]:

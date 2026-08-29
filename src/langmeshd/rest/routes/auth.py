@@ -14,6 +14,7 @@ from typing import Callable
 from fastapi import APIRouter, HTTPException
 
 from models_provider import (
+    CursorTokens,
     ProviderAuthentication,
     clear_chatgpt_models_cache,
     clear_cursor_models_cache,
@@ -57,7 +58,6 @@ class _ProviderAuth:
             default_base_url=definition.default_base_url,
             headers=definition.default_headers,
             anonymous_api_key=definition.anonymous_api_key,
-            method="oauth" if self.provider_identifier in {"chatgpt", "cursor"} else "api_key",
             credential_identifier=definition.credential_identifier or self.provider_identifier,
         )
         configured_keys = (
@@ -77,6 +77,8 @@ class _ProviderAuth:
         account = current.account
         if self.provider_identifier == "cursor" and current.signed_in:
             tokens = await asyncio.to_thread(authentication.token, self.provider_identifier)
+            if not isinstance(tokens, CursorTokens):
+                raise RuntimeError("Stored Cursor credentials have an invalid token type.")
             account = await display_cursor_account(tokens)
         return {
             "signed_in": current.signed_in,

@@ -9,7 +9,7 @@ class CompactionConfiguration(Section):
     """Thresholds and reserve ratios used only by conversation compaction."""
 
     automatic: bool = True
-    reclaim_at_fraction: float = 0.85
+    reclaim_at_fraction: float = 0.9
     output_reserve_fraction: float = 0.1
     recent_working_set_fraction: float = 0.15
     maximum_context_tokens: int = Field(default=0, ge=0)

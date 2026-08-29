@@ -27,14 +27,12 @@ from langmesh.base.primitives.serialization import content_address
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.features import (
-    BackgroundCapability,
     BookkeepingView,
     BoundaryView,
     ConversationView,
     PluginBus,
     PluginContext,
     PluginHost,
-    LocationsCapability,
     ToolsView,
     TurnView,
     WindowView,
@@ -554,18 +552,9 @@ class AgentRuntime(_RunsTurns):
         """The installed features, which a composer reaches through ``by_type`` to orchestrate."""
         return self._features
 
-    @property
-    def _background(self):
-        """This runtime's background-job runner, owned by whatever plugin answers for it."""
-        capability = self._features.capability(BackgroundCapability)
-        return capability.runner if capability is not None else None
-
     def _resolve_execution(self, tool_name: str, arguments: dict) -> Any:
-        """Resolve a feature-owned execution target without naming the feature that owns it."""
-        capability = self._features.capability(LocationsCapability)
-        return (
-            capability.resolve_execution(tool_name, arguments) if capability is not None else None
-        )
+        """Ask installed features whether a call has an execution target."""
+        return self._features.resolve_execution(tool_name, arguments)
 
     def constrained_tool_named(self, tool_name: str):
         """One tool of a given name from the executable set, for a sub-session being bound down to its verdict tool."""
@@ -689,9 +678,7 @@ class AgentRuntime(_RunsTurns):
         self.discard_pending_steering()
         self._stop_requested = True
         self._abort_event.set()
-        runner = self._background
-        if runner is not None:
-            runner.cancel_foreground()
+        self._features.interrupt(restarting=False)
         for task in list(self._active_tool_tasks.values()):
             task.cancel()
 
@@ -708,9 +695,7 @@ class AgentRuntime(_RunsTurns):
         """Stop live work while leaving its durable job records for startup recovery."""
         self._stop_requested = True
         self._abort_event.set()
-        runner = self._background
-        if runner is not None:
-            runner.cancel_all()
+        self._features.interrupt(restarting=True)
         for task in list(self._active_tool_tasks.values()):
             task.cancel()
 
@@ -720,9 +705,6 @@ class AgentRuntime(_RunsTurns):
         task = self._active_tool_tasks.get(tool_call_identifier)
         if task is not None and not task.done():
             task.cancel()
-            handled = True
-        runner = self._background
-        if runner is not None and runner.cancel_by_tool_call(tool_call_identifier):
             handled = True
         return handled
 

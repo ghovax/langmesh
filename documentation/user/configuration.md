@@ -171,7 +171,7 @@ Three tools take per-call rules on each agent, the three whose calls can be name
 ```yaml
 compaction:
   automatic: true
-  reclaim_at_fraction: 0.85
+  reclaim_at_fraction: 0.9
   output_reserve_fraction: 0.1
   recent_working_set_fraction: 0.15
   maximum_context_tokens: 0
@@ -335,7 +335,7 @@ How conversation history is compacted as it grows.
 | Setting                                  | Type    | Default | What it is for                                                                                                                                                                                |
 | ---------------------------------------- | ------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `compaction.automatic`                   | boolean | `true`  | Reclaim context on its own as it fills. Manual compaction works either way.                                                                                                                   |
-| `compaction.reclaim_at_fraction`         | number  | `0.85`  | Recommended preparation boundary. A private local-Bash segment first updates the current observational registry and advances its revision; compaction follows only after validation succeeds. |
+| `compaction.reclaim_at_fraction`         | number  | `0.9`   | Recommended preparation boundary. A private local-Bash segment first updates the current observational registry and advances its revision; compaction follows only after validation succeeds. |
 | `compaction.output_reserve_fraction`     | number  | `0.1`   | Share held back as safety space for the preparation segment and the answer.                                                                                                                   |
 | `compaction.recent_working_set_fraction` | number  | `0.15`  | Share of the usable window kept verbatim after older history is discarded. Sized in tokens rather than turns.                                                                                 |
 | `compaction.maximum_context_tokens`      | integer | `0`     | Optional context bound used to schedule compaction and size the recent working set. Zero uses the model's available context.                                                                  |

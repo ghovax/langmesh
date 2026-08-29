@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from langmesh.runtime.features import BackgroundCapability, Feature
+from langmesh.runtime.features import Feature
+from langmesh.runtime.plugins.background.capability import BackgroundCapability
 from langmesh.runtime.plugins.bash.handlers import handle_bash
 from langmesh.runtime.plugins.bash.tools import bash, terminate_bash_call
 

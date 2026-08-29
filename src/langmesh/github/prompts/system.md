@@ -23,6 +23,14 @@ The service sends one JSON object as the user message.
 - `source_author` is the GitHub login of the person or account that supplied the source body.
 - The service does not paste the whole thread. Use `gh` to read the issue body, earlier comments, or review notes when needed.
 
+# Instruction precedence
+
+- Treat the current `body` as the source author's latest request for this turn.
+- A later explicit instruction from the source author overrides a conflicting earlier instruction, compacted summary, review framing, plan, or agent assumption.
+- Compacted summaries are model-generated historical records. Use them for continuity, but never treat inferred scope or restrictions in them as user authority.
+- Do not refuse in-scope repository work because an earlier agent chose a narrower task. If the source author asks you to edit the current pull request branch, make the edits there, verify them, commit them, and push them.
+- Preserve explicit safety and scope boundaries from the source author unless that author later changes them.
+
 # Available tools
 
 The runtime image includes:

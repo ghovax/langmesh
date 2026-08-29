@@ -38,7 +38,6 @@ from langmesh.base.contracts.ports import (
 )
 from langmesh.base.contracts.tools import ToolLike
 from langmesh.runtime.composition import RuntimeProfile, SessionComponents
-from langmesh.runtime.features import PermissionsCapability
 from langmesh.runtime.session_control import (
     PendingTurn,
     SessionCheckpoint,
@@ -341,9 +340,8 @@ class Session:
                 pending = self._pending
                 if pending is None:
                     return self.state
-                permissions = runtime.features.require(PermissionsCapability)
                 for gate in pending.remaining:
-                    verdict = await permissions.reconsider_gate(gate)
+                    verdict = await runtime.features.reconsider_gate(gate)
                     if not verdict:
                         continue
                     if gate.kind == "question":

@@ -30,6 +30,11 @@ github:
   api_url: "https://api.github.com"
 server:
   public_url: "https://github-agent.example.net"
+compaction:
+  automatic: true
+  reclaim_at_fraction: 0.9
+  output_reserve_fraction: 0.1
+  recent_working_set_fraction: 0.15
 storage:
   database:
     url: "postgresql+asyncpg://postgres:...@db.qxwzjvkrmno.supabase.co:5432/postgres?ssl=require"
@@ -38,12 +43,13 @@ storage:
   queue:
     poll_seconds: 5
     maximum_delivery_attempts: 5
-    processing_timeout_seconds: 600
 ```
 
 Each delivery is attempted at most `maximum_delivery_attempts` times. After the last failure, the service stores the delivery as failed and stops scheduling it; the existing acknowledgement comment is updated instead of creating another comment. The default is five attempts when this value is omitted.
 
-`processing_timeout_seconds` bounds one hosted turn, including compaction and hidden review calls. It must remain below the delivery recovery interval so an interrupted worker can be reclaimed; the default is 600 seconds.
+The hosted processor does not impose a wall-clock deadline on a whole turn. Model verdict calls and protocol loops carry their own attempt and time budgets, command tools enforce their own limits, and a worker restart recovers a failed delivery from its durable checkpoint. This lets long but productive work finish without permitting an unbounded model retry loop.
+
+Compaction uses the selected model's advertised context window from models.dev. For an OAuth-backed model, the live provider catalogue takes precedence when available; `maximum_context_tokens` is left unset so the service does not impose an unrelated context ceiling.
 
 `storage.encryption.key_path` must contain a Fernet key. Generate one once with:
 
@@ -53,7 +59,7 @@ python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 chmod 600 /srv/langmesh/secrets/provider-keys.fernet
 ```
 
-The service stores provider API keys and OAuth tokens encrypted in the external database, keyed by GitHub installation. The GitHub worker uses the compaction plugin's configured threshold with a direct preparation port. Compaction intentionally invalidates the conversation portion of the provider cache; the stable instructions and tool definitions remain reusable. The delivery queue and session checkpoints use that same database, so another worker can continue after the original worker disappears. Different installations can choose different providers and models. For example, an installation may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like `sk-or-v1-...`.
+The service stores provider API keys and OAuth tokens encrypted in the external database, keyed by GitHub installation. The GitHub worker uses the compaction settings from this operator file with a direct preparation port. For a ChatGPT OAuth installation, it refreshes the authenticated live model catalogue before building the session, so the model's reported context window is used automatically; when that catalogue is unavailable, the models.dev value remains the fallback. Compaction intentionally invalidates the conversation portion of the provider cache; the stable instructions and tool definitions remain reusable. The delivery queue and session checkpoints use that same database, so another worker can continue after the original worker disappears. Different installations can choose different providers and models. For example, an installation may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like `sk-or-v1-...`.
 
 GitHub mention sessions have a private Nix package profile. The service image already contains Nix, Git, `gh`, the Render CLI, `curl`, `jq`, `ripgrep`, `fd`, archive tools, the Python/uv runtime, Ruff, GCC/G++, Clang/LLVM, Make, CMake, Ninja, pkg-config, Rust, Node.js, and Bun. The agent can install another package into its private profile with `nix profile add nixpkgs#<package>`. The LangMesh checkout also contains the reproducible Render CLI package, available as `nix profile add github:ghovax/langmesh#render-cli`. The GitHub service supplies `GH_TOKEN` for repository operations. Render commands require an explicitly configured `RENDER_API_KEY`; the agent must never fabricate or print it.
 

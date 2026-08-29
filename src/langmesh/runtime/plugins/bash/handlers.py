@@ -27,7 +27,8 @@ from langmesh.runtime.background import (
     unbind_background_jobs,
     unbind_tool_call_id,
 )
-from langmesh.runtime.features import BackgroundCapability, PermissionsCapability
+from langmesh.runtime.plugins.background.capability import BackgroundCapability
+from langmesh.runtime.plugins.permissions.capability import PermissionsCapability
 from langmesh.runtime.plugins.bash.tools import bash as bash_tool
 from langmesh.runtime.internals import _maybe_json
 from langmesh.runtime.tools import context as tool_context

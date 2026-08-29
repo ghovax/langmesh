@@ -198,7 +198,7 @@ The peer starts with a copy of its parent's model-facing conversation, while kee
 
 **The hidden verdict tools**
 
-Three tools exist only in internal lanes and never in a working session's roster: `submit_goal_review` for the goal reviewer, `submit_compaction_summary` for the compaction summarizer, and `permission_decision` for the automatic permission reviewer. Each is bound only in its hidden session, so outside that instruction there is nothing to call and no inert verdict to enforce.
+Three tools exist only in internal model calls and never in a working session's roster: `submit_goal_review` for the goal reviewer, `submit_compaction_summary` for the compaction summarizer, and `permission_decision` for the automatic permission reviewer. Each is bound only for the request that consumes it, so outside that instruction there is nothing to call and no inert verdict to enforce.
 
 ### Where the definitions live
 

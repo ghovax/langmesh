@@ -12,7 +12,7 @@ from langchain_core.tools import StructuredTool
 from langmesh.runtime.plugins.goal_review.configuration import GoalReviewConfiguration
 from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.primitives.serialization import compact
-from langmesh.runtime.features import GoalCapability
+from langmesh.runtime.plugins.goal_review.capability import GoalCapability
 from langmesh.runtime.plugins.goal_review.models import GoalReview
 from langmesh.runtime.plugins.goal_review.goal import Goal
 from langmesh.runtime.tools.execution import current_tool_services

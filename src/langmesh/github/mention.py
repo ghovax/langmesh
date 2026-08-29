@@ -19,6 +19,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 
+from models_provider import bind_credential_store, fetch_chatgpt_models, reset_credential_store
+
 from langmesh import (
     AgentConfiguration,
     PackagePromptLoader,
@@ -571,6 +573,7 @@ def _session(
     model: str,
     api_key: str,
     credential_store: Any = None,
+    compaction_configuration: CompactionConfiguration | None = None,
 ) -> Session:
     provider, model, key = provider.strip().lower(), model.strip(), api_key.strip()
     if not provider or not model:
@@ -605,11 +608,7 @@ def _session(
             checkpoints=checkpoints,
             features=mention_features(
                 workspace,
-                compaction_configuration=CompactionConfiguration(
-                    reclaim_at_fraction=0.75,
-                    recent_working_set_fraction=0.125,
-                    maximum_context_tokens=98_304,
-                ),
+                compaction_configuration=compaction_configuration or CompactionConfiguration(),
             ),
             credential_store=credential_store,
         ),
@@ -629,7 +628,16 @@ async def run_turn(
     api_key: str,
     checkpoints: Checkpoints,
     credential_store: Any = None,
+    compaction_configuration: CompactionConfiguration | None = None,
 ) -> str:
+    if provider.strip().lower() == "chatgpt" and credential_store is not None:
+        credential_binding = bind_credential_store(credential_store)
+        try:
+            # OAuth supplies the subscription credential; the live catalogue supplies the
+            # model's current context window before the runtime chooses its compaction budget.
+            await fetch_chatgpt_models()
+        finally:
+            reset_credential_store(credential_binding)
     async with _session(
         mention,
         workspace,
@@ -639,6 +647,7 @@ async def run_turn(
         model=model,
         api_key=api_key,
         credential_store=credential_store,
+        compaction_configuration=compaction_configuration,
     ) as session:
         restored = await session.restore()
         followup = restored or thread_followup

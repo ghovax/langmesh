@@ -16,6 +16,8 @@ from langmesh.runtime.background import (
     BackgroundJobs as BackgroundRunner,
     background_completion_event,
     background_include_result,
+    bind_background_jobs,
+    unbind_background_jobs,
 )
 from langmesh.runtime.internals import (
     _cap_model_result_payload,
@@ -73,6 +75,20 @@ class BackgroundJobs(Feature):
     def bind_tool_call(self, job_id: str, tool_call_id: str) -> None:
         """Associate a detached job with the tool call that started it."""
         self._runner.bind_tool_call(job_id, tool_call_id)
+
+    def bind_detached_tool(self, job_id: str, tool_call_id: str) -> bool:
+        self.bind_tool_call(job_id, tool_call_id)
+        return True
+
+    def bind_tool_context(self):
+        token = bind_background_jobs(self._runner)
+        return lambda: unbind_background_jobs(token)
+
+    def interrupt(self, *, restarting: bool) -> None:
+        if restarting:
+            self._runner.cancel_all()
+        else:
+            self._runner.cancel_foreground()
 
     def compose_context(self, context: dict) -> None:
         """The in-flight jobs the turn context groups by kind."""

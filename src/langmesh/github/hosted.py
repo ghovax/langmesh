@@ -14,7 +14,6 @@ import hmac
 import json
 import logging
 import os
-import secrets
 import tempfile
 import time
 import urllib.parse
@@ -26,7 +25,6 @@ from typing import Any, Mapping
 
 import jwt
 import yaml
-from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from models_provider import (
@@ -35,12 +33,10 @@ from models_provider import (
     ProviderAuthentication,
 )
 from pydantic import BaseModel, Field
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-
 from langmesh import SQLAlchemyCheckpoints
 from langmesh.base.contracts.ports import Checkpoints
 from langmesh.github.detect import is_mention_turn, thread_has_prior_bot_comment
+from langmesh.runtime.plugins.compaction.configuration import CompactionConfiguration
 from langmesh.github.mention import (
     Mention,
     _git_header,
@@ -56,10 +52,10 @@ from langmesh.github.mention import (
     tree_is_dirty,
     update_comment,
 )
+from langmesh.github.storage import InstallationConfiguration, Store
 
 logger = logging.getLogger("langmesh.github.hosted")
 DEFAULT_CONFIGURATION_PATH = Path.home() / ".config" / "langmesh" / "github.yaml"
-DELIVERY_RECOVERY_SECONDS = 900
 
 
 class ConfigurationUpdate(BaseModel):
@@ -73,23 +69,6 @@ class AuthenticationStart(BaseModel):
 
 
 @dataclass(frozen=True)
-class InstallationConfiguration:
-    """The selected model and its installation-owned authentication."""
-
-    provider: str
-    model: str
-    api_key: str
-    oauth_tokens: Mapping[str, Any] | None
-
-    @property
-    def ready(self) -> bool:
-        if not self.model:
-            return False
-        profile = ProviderAuthentication().profile(self.provider)
-        return bool(self.oauth_tokens) if profile.method == "oauth" else bool(self.api_key)
-
-
-@dataclass(frozen=True)
 class Settings:
     app_id: str
     private_key_path: Path
@@ -100,8 +79,8 @@ class Settings:
     database_url: str
     queue_poll_seconds: float
     maximum_delivery_attempts: int
-    processing_timeout_seconds: float
     public_url: str
+    compaction: CompactionConfiguration
     provider_application_ids: Mapping[str, str] = field(default_factory=dict)
     github_api_url: str = "https://api.github.com"
 
@@ -150,6 +129,17 @@ class Settings:
         database = section_from(storage, "database", configuration_path)
         encryption = section_from(storage, "encryption", configuration_path)
         queue = section_from(storage, "queue", configuration_path)
+        raw_compaction = values.get("compaction", {})
+        if not isinstance(raw_compaction, Mapping):
+            raise RuntimeError(
+                f"GitHub App configuration needs a compaction mapping: {configuration_path}"
+            )
+        try:
+            compaction = CompactionConfiguration.model_validate(raw_compaction)
+        except ValueError as error:
+            raise RuntimeError(
+                f"GitHub App configuration has invalid compaction settings: {configuration_path}"
+            ) from error
         try:
             maximum_delivery_attempts = int(queue.get("maximum_delivery_attempts", 5))
         except (TypeError, ValueError) as error:
@@ -161,18 +151,6 @@ class Settings:
             raise RuntimeError(
                 "GitHub App configuration needs storage.queue.maximum_delivery_attempts "
                 f"to be a positive integer: {configuration_path}"
-            )
-        try:
-            processing_timeout_seconds = float(queue.get("processing_timeout_seconds", 600))
-        except (TypeError, ValueError) as error:
-            raise RuntimeError(
-                "GitHub App configuration needs storage.queue.processing_timeout_seconds "
-                f"to be a positive number: {configuration_path}"
-            ) from error
-        if not 0 < processing_timeout_seconds < DELIVERY_RECOVERY_SECONDS:
-            raise RuntimeError(
-                "GitHub App configuration needs storage.queue.processing_timeout_seconds "
-                f"between 0 and {DELIVERY_RECOVERY_SECONDS} seconds: {configuration_path}"
             )
         return cls(
             app_id=required(app, "id", "github.app"),
@@ -186,8 +164,8 @@ class Settings:
             database_url=required(database, "url", "storage.database"),
             queue_poll_seconds=max(0.5, float(queue.get("poll_seconds") or 5)),
             maximum_delivery_attempts=maximum_delivery_attempts,
-            processing_timeout_seconds=processing_timeout_seconds,
             public_url=required(server, "public_url", "server").rstrip("/"),
+            compaction=compaction,
             github_api_url=str(github.get("api_url") or "https://api.github.com").rstrip("/"),
             provider_application_ids={
                 str(provider).strip().lower(): str(application_id).strip()
@@ -199,490 +177,6 @@ class Settings:
                 if str(provider).strip() and str(application_id).strip()
             },
         )
-
-
-class Store:
-    """Durable GitHub service state in a caller-owned external SQL database."""
-
-    def __init__(self, settings: Settings) -> None:
-        self._cipher = Fernet(settings.encryption_key_path.read_bytes().strip())
-        self.engine: AsyncEngine = create_async_engine(settings.database_url, pool_pre_ping=True)
-
-    async def initialize(self) -> None:
-        statements = (
-            """
-            CREATE TABLE IF NOT EXISTS langmesh_github_installations (
-                installation_id BIGINT PRIMARY KEY,
-                account_login TEXT NOT NULL,
-                account_type TEXT NOT NULL,
-                provider TEXT NOT NULL DEFAULT '',
-                model TEXT NOT NULL DEFAULT '',
-                api_key TEXT NOT NULL DEFAULT '',
-                oauth_tokens TEXT NOT NULL DEFAULT '',
-                updated_at BIGINT NOT NULL
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS langmesh_github_deliveries (
-                delivery_id TEXT PRIMARY KEY,
-                event_name TEXT NOT NULL,
-                installation_id BIGINT NOT NULL,
-                payload TEXT NOT NULL,
-                status TEXT NOT NULL,
-                received_at BIGINT NOT NULL,
-                claimed_at BIGINT,
-                attempts BIGINT NOT NULL DEFAULT 0,
-                last_error TEXT NOT NULL DEFAULT '',
-                comment_id BIGINT
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS langmesh_github_setup_sessions (
-                token TEXT PRIMARY KEY,
-                installation_id BIGINT NOT NULL,
-                user_login TEXT NOT NULL DEFAULT '',
-                expires_at BIGINT NOT NULL
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS langmesh_github_oauth_authorizations (
-                state TEXT PRIMARY KEY,
-                provider TEXT NOT NULL,
-                installation_id BIGINT NOT NULL,
-                user_login TEXT NOT NULL DEFAULT '',
-                model TEXT NOT NULL,
-                code_verifier TEXT NOT NULL,
-                redirect_uri TEXT NOT NULL,
-                expires_at BIGINT NOT NULL
-            )
-            """,
-            "CREATE INDEX IF NOT EXISTS langmesh_github_deliveries_ready ON langmesh_github_deliveries (status, received_at)",
-            "CREATE INDEX IF NOT EXISTS langmesh_github_setup_sessions_expiry ON langmesh_github_setup_sessions (expires_at)",
-            "CREATE INDEX IF NOT EXISTS langmesh_github_oauth_authorizations_expiry ON langmesh_github_oauth_authorizations (expires_at)",
-            "DROP TABLE IF EXISTS langmesh_github_chatgpt_authorizations",
-        )
-        async with self.engine.begin() as connection:
-            for statement in statements:
-                await connection.execute(text(statement))
-            if connection.dialect.name == "sqlite":
-                try:
-                    await connection.execute(
-                        text(
-                            "ALTER TABLE langmesh_github_deliveries ADD COLUMN "
-                            "next_attempt_at BIGINT NOT NULL DEFAULT 0"
-                        )
-                    )
-                except Exception:
-                    pass
-                try:
-                    await connection.execute(
-                        text("ALTER TABLE langmesh_github_deliveries ADD COLUMN comment_id BIGINT")
-                    )
-                except Exception:
-                    pass
-                try:
-                    await connection.execute(
-                        text(
-                            "ALTER TABLE langmesh_github_installations ADD COLUMN "
-                            "oauth_tokens TEXT NOT NULL DEFAULT ''"
-                        )
-                    )
-                except Exception:
-                    pass
-                try:
-                    await connection.execute(
-                        text(
-                            "ALTER TABLE langmesh_github_oauth_authorizations ADD COLUMN "
-                            "model TEXT NOT NULL DEFAULT ''"
-                        )
-                    )
-                except Exception:
-                    pass
-                try:
-                    await connection.execute(
-                        text(
-                            "ALTER TABLE langmesh_github_oauth_authorizations ADD COLUMN "
-                            "redirect_uri TEXT NOT NULL DEFAULT ''"
-                        )
-                    )
-                except Exception:
-                    pass
-            else:
-                await connection.execute(
-                    text(
-                        "ALTER TABLE langmesh_github_deliveries ADD COLUMN IF NOT EXISTS "
-                        "next_attempt_at BIGINT NOT NULL DEFAULT 0"
-                    )
-                )
-                await connection.execute(
-                    text(
-                        "ALTER TABLE langmesh_github_deliveries ADD COLUMN IF NOT EXISTS "
-                        "comment_id BIGINT"
-                    )
-                )
-                await connection.execute(
-                    text(
-                        "ALTER TABLE langmesh_github_installations ADD COLUMN IF NOT EXISTS "
-                        "oauth_tokens TEXT NOT NULL DEFAULT ''"
-                    )
-                )
-                await connection.execute(
-                    text(
-                        "ALTER TABLE langmesh_github_oauth_authorizations ADD COLUMN IF NOT EXISTS "
-                        "model TEXT NOT NULL DEFAULT ''"
-                    )
-                )
-                await connection.execute(
-                    text(
-                        "ALTER TABLE langmesh_github_oauth_authorizations ADD COLUMN IF NOT EXISTS "
-                        "redirect_uri TEXT NOT NULL DEFAULT ''"
-                    )
-                )
-
-    async def close(self) -> None:
-        await self.engine.dispose()
-
-    async def enqueue(
-        self, delivery_id: str, event_name: str, installation_id: int, payload: str
-    ) -> bool:
-        if not delivery_id:
-            return False
-        async with self.engine.begin() as connection:
-            result = await connection.execute(
-                text(
-                    "INSERT INTO langmesh_github_deliveries "
-                    "(delivery_id, event_name, installation_id, payload, status, received_at) "
-                    "VALUES (:delivery_id, :event_name, :installation_id, :payload, 'queued', :received_at) "
-                    "ON CONFLICT (delivery_id) DO NOTHING RETURNING delivery_id"
-                ),
-                {
-                    "delivery_id": delivery_id,
-                    "event_name": event_name,
-                    "installation_id": installation_id,
-                    "payload": payload,
-                    "received_at": int(time.time()),
-                },
-            )
-        return result.scalar_one_or_none() is not None
-
-    async def claim(self, stale_after: int = 900) -> dict[str, Any] | None:
-        now = int(time.time())
-        async with self.engine.begin() as connection:
-            result = await connection.execute(
-                text(
-                    "SELECT delivery_id, event_name, installation_id, payload, status, attempts "
-                    "FROM langmesh_github_deliveries "
-                    "WHERE (status = 'queued' AND next_attempt_at <= :now) "
-                    "OR (status = 'processing' AND claimed_at < :stale_at) "
-                    "ORDER BY received_at LIMIT 1 FOR UPDATE SKIP LOCKED"
-                ),
-                {"now": now, "stale_at": now - stale_after},
-            )
-            row = result.mappings().first()
-            if row is None:
-                return None
-            await connection.execute(
-                text(
-                    "UPDATE langmesh_github_deliveries SET status = 'processing', claimed_at = :claimed_at, "
-                    "attempts = attempts + 1 WHERE delivery_id = :delivery_id"
-                ),
-                {"claimed_at": now, "delivery_id": row["delivery_id"]},
-            )
-        claimed = dict(row)
-        claimed["recovered"] = claimed["status"] == "processing"
-        claimed["attempts"] = int(claimed["attempts"]) + 1
-        return claimed
-
-    async def complete(self, delivery_id: str) -> None:
-        async with self.engine.begin() as connection:
-            await connection.execute(
-                text(
-                    "UPDATE langmesh_github_deliveries SET status = 'completed' WHERE delivery_id = :delivery_id"
-                ),
-                {"delivery_id": delivery_id},
-            )
-
-    async def schedule_retry(self, delivery_id: str, error: str, delay: int) -> None:
-        async with self.engine.begin() as connection:
-            await connection.execute(
-                text(
-                    "UPDATE langmesh_github_deliveries SET status = 'queued', claimed_at = NULL, "
-                    "next_attempt_at = :next_attempt_at, last_error = :error "
-                    "WHERE delivery_id = :delivery_id"
-                ),
-                {
-                    "delivery_id": delivery_id,
-                    "error": error[:4000],
-                    "next_attempt_at": int(time.time()) + max(1, delay),
-                },
-            )
-
-    async def mark_failed(self, delivery_id: str, error: str) -> None:
-        async with self.engine.begin() as connection:
-            await connection.execute(
-                text(
-                    "UPDATE langmesh_github_deliveries SET status = 'failed', claimed_at = NULL, "
-                    "next_attempt_at = 0, last_error = :error WHERE delivery_id = :delivery_id"
-                ),
-                {"delivery_id": delivery_id, "error": error[:4000]},
-            )
-
-    async def comment_id_for_delivery(self, delivery_id: str) -> int | None:
-        async with self.engine.connect() as connection:
-            result = await connection.execute(
-                text(
-                    "SELECT comment_id FROM langmesh_github_deliveries "
-                    "WHERE delivery_id = :delivery_id"
-                ),
-                {"delivery_id": delivery_id},
-            )
-            value = result.scalar_one_or_none()
-        return int(value) if value is not None else None
-
-    async def remember_comment_id(self, delivery_id: str, comment_id: int) -> None:
-        async with self.engine.begin() as connection:
-            await connection.execute(
-                text(
-                    "UPDATE langmesh_github_deliveries SET comment_id = :comment_id "
-                    "WHERE delivery_id = :delivery_id"
-                ),
-                {"delivery_id": delivery_id, "comment_id": comment_id},
-            )
-
-    async def configuration(self, installation_id: int) -> InstallationConfiguration | None:
-        async with self.engine.connect() as connection:
-            result = await connection.execute(
-                text(
-                    "SELECT provider, model, api_key, oauth_tokens FROM langmesh_github_installations "
-                    "WHERE installation_id = :installation_id"
-                ),
-                {"installation_id": installation_id},
-            )
-            row = result.first()
-        if not row or not row[0]:
-            return None
-        key = self._cipher.decrypt(str(row[2]).encode()).decode() if row[2] else ""
-        oauth_tokens: Mapping[str, Any] | None = None
-        if row[3]:
-            try:
-                decoded = json.loads(self._cipher.decrypt(str(row[3]).encode()).decode())
-            except (json.JSONDecodeError, TypeError, ValueError) as error:
-                raise RuntimeError("Stored OAuth credentials are invalid") from error
-            if not isinstance(decoded, Mapping):
-                raise RuntimeError("Stored OAuth credentials are invalid")
-            oauth_tokens = dict(decoded)
-        return InstallationConfiguration(str(row[0]), str(row[1]), key, oauth_tokens)
-
-    async def save_installation(
-        self,
-        installation_id: int,
-        account_login: str,
-        account_type: str,
-        provider: str,
-        model: str,
-        api_key: str | None,
-        *,
-        clear_oauth: bool = False,
-    ) -> None:
-        encrypted = self._cipher.encrypt(api_key.encode()).decode() if api_key else ""
-        async with self.engine.begin() as connection:
-            result = await connection.execute(
-                text(
-                    "SELECT api_key, oauth_tokens FROM langmesh_github_installations "
-                    "WHERE installation_id = :installation_id"
-                ),
-                {"installation_id": installation_id},
-            )
-            row = result.first()
-            if api_key is None:
-                encrypted = str(row[0]) if row and row[0] else ""
-            existing_oauth = str(row[1]) if row and row[1] else ""
-            if clear_oauth:
-                existing_oauth = ""
-            await connection.execute(
-                text(
-                    "INSERT INTO langmesh_github_installations "
-                    "(installation_id, account_login, account_type, provider, model, api_key, oauth_tokens, updated_at) "
-                    "VALUES (:installation_id, :account_login, :account_type, :provider, :model, :api_key, :oauth_tokens, :updated_at) "
-                    "ON CONFLICT (installation_id) DO UPDATE SET account_login = EXCLUDED.account_login, "
-                    "account_type = EXCLUDED.account_type, provider = EXCLUDED.provider, model = EXCLUDED.model, "
-                    "api_key = EXCLUDED.api_key, "
-                    "oauth_tokens = CASE WHEN :clear_oauth THEN '' ELSE EXCLUDED.oauth_tokens END, "
-                    "updated_at = EXCLUDED.updated_at"
-                ),
-                {
-                    "installation_id": installation_id,
-                    "account_login": account_login,
-                    "account_type": account_type,
-                    "provider": provider,
-                    "model": model,
-                    "api_key": encrypted,
-                    "oauth_tokens": existing_oauth,
-                    "clear_oauth": clear_oauth,
-                    "updated_at": int(time.time()),
-                },
-            )
-
-    async def save_oauth_tokens(
-        self,
-        installation_id: int,
-        provider: str,
-        model: str,
-        tokens: OAuthTokens,
-        authentication: ProviderAuthentication,
-    ) -> None:
-        encrypted = self._cipher.encrypt(
-            json.dumps(
-                authentication.serialize_token(provider, tokens), separators=(",", ":")
-            ).encode()
-        ).decode()
-        async with self.engine.begin() as connection:
-            result = await connection.execute(
-                text(
-                    "SELECT provider, model FROM langmesh_github_installations "
-                    "WHERE installation_id = :installation_id"
-                ),
-                {"installation_id": installation_id},
-            )
-            existing = result.first()
-            existing_model = (
-                str(existing[1]) if existing is not None and str(existing[0]) == provider else ""
-            )
-            selected_model = model.strip() or existing_model
-            if not selected_model:
-                raise ValueError("OAuth authentication requires a model")
-            if existing is None:
-                await connection.execute(
-                    text(
-                        "INSERT INTO langmesh_github_installations "
-                        "(installation_id, account_login, account_type, provider, model, api_key, oauth_tokens, updated_at) "
-                        "VALUES (:installation_id, '', 'unknown', :provider, :model, '', :oauth_tokens, :updated_at)"
-                    ),
-                    {
-                        "installation_id": installation_id,
-                        "provider": provider,
-                        "model": selected_model,
-                        "oauth_tokens": encrypted,
-                        "updated_at": int(time.time()),
-                    },
-                )
-            else:
-                await connection.execute(
-                    text(
-                        "UPDATE langmesh_github_installations SET provider = :provider, "
-                        "model = :model, "
-                        "api_key = '', oauth_tokens = :oauth_tokens, updated_at = :updated_at "
-                        "WHERE installation_id = :installation_id"
-                    ),
-                    {
-                        "installation_id": installation_id,
-                        "provider": provider,
-                        "model": selected_model,
-                        "oauth_tokens": encrypted,
-                        "updated_at": int(time.time()),
-                    },
-                )
-
-    async def begin_oauth_authorization(
-        self,
-        installation_id: int,
-        user_login: str,
-        provider: str,
-        model: str,
-        state: str,
-        code_verifier: str,
-        redirect_uri: str,
-    ) -> None:
-        async with self.engine.begin() as connection:
-            await connection.execute(
-                text(
-                    "INSERT INTO langmesh_github_oauth_authorizations "
-                    "(state, provider, installation_id, user_login, model, code_verifier, redirect_uri, expires_at) "
-                    "VALUES (:state, :provider, :installation_id, :user_login, :model, :code_verifier, :redirect_uri, :expires_at)"
-                ),
-                {
-                    "state": state,
-                    "provider": provider,
-                    "installation_id": installation_id,
-                    "user_login": user_login,
-                    "model": model,
-                    "code_verifier": code_verifier,
-                    "redirect_uri": redirect_uri,
-                    "expires_at": int(time.time()) + 600,
-                },
-            )
-
-    async def oauth_authorization(
-        self, provider: str, state: str
-    ) -> tuple[int, str, str, str, str] | None:
-        async with self.engine.connect() as connection:
-            result = await connection.execute(
-                text(
-                    "SELECT installation_id, user_login, model, code_verifier, redirect_uri "
-                    "FROM langmesh_github_oauth_authorizations "
-                    "WHERE state = :state AND provider = :provider AND expires_at >= :now"
-                ),
-                {"state": state, "provider": provider, "now": int(time.time())},
-            )
-            row = result.first()
-
-        return (int(row[0]), str(row[1]), str(row[2]), str(row[3]), str(row[4])) if row else None
-
-    async def consume_oauth_authorization(self, state: str) -> bool:
-        async with self.engine.begin() as connection:
-            deleted = await connection.execute(
-                text("DELETE FROM langmesh_github_oauth_authorizations WHERE state = :state"),
-                {"state": state},
-            )
-        return deleted.rowcount == 1
-
-    async def begin_setup(self, installation_id: int) -> str:
-        token = secrets.token_urlsafe(32)
-        async with self.engine.begin() as connection:
-            await connection.execute(
-                text(
-                    "INSERT INTO langmesh_github_setup_sessions "
-                    "(token, installation_id, expires_at) VALUES (:token, :installation_id, :expires_at)"
-                ),
-                {
-                    "token": token,
-                    "installation_id": installation_id,
-                    "expires_at": int(time.time()) + 600,
-                },
-            )
-        return token
-
-    async def authenticate_setup(self, token: str, user_login: str) -> tuple[int, str] | None:
-        async with self.engine.begin() as connection:
-            result = await connection.execute(
-                text(
-                    "SELECT installation_id FROM langmesh_github_setup_sessions "
-                    "WHERE token = :token AND expires_at >= :now"
-                ),
-                {"token": token, "now": int(time.time())},
-            )
-            row = result.first()
-            if row is None:
-                return None
-            await connection.execute(
-                text(
-                    "UPDATE langmesh_github_setup_sessions SET user_login = :user_login WHERE token = :token"
-                ),
-                {"user_login": user_login, "token": token},
-            )
-        return int(row[0]), user_login
-
-    async def setup(self, token: str) -> tuple[int, str] | None:
-        async with self.engine.connect() as connection:
-            result = await connection.execute(
-                text(
-                    "SELECT installation_id, user_login FROM langmesh_github_setup_sessions "
-                    "WHERE token = :token AND expires_at >= :now AND user_login != ''"
-                ),
-                {"token": token, "now": int(time.time())},
-            )
-            row = result.first()
-        return (int(row[0]), str(row[1])) if row else None
 
 
 class GitHub:
@@ -772,7 +266,9 @@ class Processor:
     def __init__(self, settings: Settings, store: Store, github: GitHub) -> None:
         self.settings, self.store, self.github = settings, store, github
         self.authentication = ProviderAuthentication()
-        self._checkpoints: Checkpoints = SQLAlchemyCheckpoints(store.engine)
+        self._checkpoints: Checkpoints = SQLAlchemyCheckpoints(
+            store.engine, table="github_session_checkpoints"
+        )
         self._locks: dict[str, asyncio.Lock] = {}
 
     async def initialize(self) -> None:
@@ -1106,6 +602,7 @@ class Processor:
                     api_key=api_key,
                     checkpoints=self._checkpoints,
                     credential_store=credential_store,
+                    compaction_configuration=self.settings.compaction,
                 )
             finally:
                 if credential_store is not None:
@@ -1137,29 +634,7 @@ class Processor:
             )
 
         try:
-            async with asyncio.timeout(self.settings.processing_timeout_seconds):
-                await process_mention()
-        except asyncio.TimeoutError:
-            logger.error(
-                "hosted mention delivery timed out after %.1f seconds id=%s attempt=%s "
-                "session=%s for %s#%s",
-                self.settings.processing_timeout_seconds,
-                delivery_id,
-                attempt,
-                mention.session_id,
-                mention.repository,
-                mention.number,
-            )
-            if attempt >= self.settings.maximum_delivery_attempts:
-                await update_existing_comment(
-                    "The worker timed out and stopped after reaching the delivery attempt limit."
-                )
-            else:
-                await update_existing_comment(
-                    "The worker timed out while processing this request. It will retry shortly "
-                    "and keep this comment updated."
-                )
-            raise
+            await process_mention()
         except Exception:
             logger.exception(
                 "hosted mention delivery failed id=%s attempt=%s session=%s for %s#%s",
@@ -1183,7 +658,7 @@ class Processor:
 
 def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> FastAPI:
     settings = Settings.load(configuration_path)
-    store = Store(settings)
+    store = Store(settings.database_url, settings.encryption_key_path)
     github = GitHub(settings)
     processor = Processor(settings, store, github)
     worker: asyncio.Task[None] | None = None

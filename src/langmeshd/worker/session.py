@@ -54,7 +54,7 @@ from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.session_control import SessionSnapshot
-from langmesh.runtime.features import LocationsCapability
+from langmesh.runtime.plugins.locations import Locations
 from langmesh.runtime.turn_events import SuspensionGate
 from langmesh.runtime.values import PermissionAnswer
 from langmesh.runtime.tools.context import ToolContext
@@ -794,9 +794,9 @@ class SessionExecutor(AgentExecutor):
         for state in self._contexts.values():
             if state.runtime is not None:
                 # The locations plugin owns the map; a session without the plugin ignores this.
-                capability = state.runtime.features.capability(LocationsCapability)
-                if capability is not None:
-                    capability.set_locations(resolved_locations)
+                locations_feature = state.runtime.features.by_type(Locations)
+                if locations_feature is not None:
+                    locations_feature.set_locations(resolved_locations)
         return len(resolved_locations or [])
 
     async def set_permission_mode(self, mode: str) -> str:
