@@ -51,6 +51,7 @@ from langmesh.github.mention import (
     run_turn,
     tree_is_dirty,
     update_comment,
+    working_comment,
 )
 from langmesh.github.storage import InstallationConfiguration, Store
 
@@ -517,13 +518,14 @@ class Processor:
             )
             await self.store.remember_comment_id(delivery_id, ack)
 
-        async def update_existing_comment(message: str) -> None:
+        async def update_existing_comment(message: str, *, working: bool = True) -> None:
+            comment_body = working_comment(message) if working else message.strip()
             try:
                 await asyncio.to_thread(
                     update_comment,
                     mention.repository,
                     ack,
-                    message.strip(),
+                    comment_body,
                     token,
                     self.settings.github_api_url,
                 )
@@ -621,7 +623,7 @@ class Processor:
                 return self._publish(active_mention, workspace, token, runner)
 
             pull_url = await asyncio.to_thread(publish_if_needed)
-            await update_existing_comment(posted_reply(answer, pull_url))
+            await update_existing_comment(posted_reply(answer, pull_url), working=False)
             logger.info(
                 "finished GitHub mention delivery id=%s attempt=%s session=%s pull_request=%s",
                 delivery_id,

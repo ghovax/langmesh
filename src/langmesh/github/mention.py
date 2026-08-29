@@ -57,6 +57,10 @@ from langmesh.runtime.turn_events import (
 ALLOWED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 EXTERNAL_COMMAND_TIMEOUT_SECONDS = 120.0
+PROGRESS_IMAGE_URL = (
+    "https://raw.githubusercontent.com/ghovax/langmesh/main/"
+    "documentation/assets/progress-spinner.gif"
+)
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
 
@@ -119,7 +123,15 @@ class Mention:
 
 
 def acknowledgement() -> str:
-    return render("acknowledgement")
+    return working_comment(render("acknowledgement"))
+
+
+def working_comment(message: str) -> str:
+    """Add the shared progress image to an in-progress GitHub comment."""
+    text = message.strip() or "Working on this."
+    return f"""{text}
+
+![Working]({PROGRESS_IMAGE_URL})"""
 
 
 def comment_pointer(comment: Mapping[str, Any], thread_url: str) -> str:

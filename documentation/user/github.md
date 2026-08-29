@@ -151,11 +151,11 @@ curl --fail-with-body --request PUT \
 
 If a provider needs a deployment-specific client identifier, set it under `github.oauth.provider_application_ids`. The flow does not reuse GitHub OAuth, expose provider tokens to GitHub, or store them in a repository. Each provider controls its endpoints, token shape, refresh behavior, and request headers in models-provider.
 
-After that, opening an issue or same-repository pull request starts an automatic first response. Later comments can address the installed bot with `@langmesh`, `@langmesh[bot]`, or its actual App login, such as `@langmesh-agent[bot]`; replies to the bot are also handled. Its commits use the App identity. A webhook is ignored until its installation has a provider/model configuration.
+After that, opening an issue or same-repository pull request starts an automatic first response. Later comments can address the installed bot with `@langmesh`, `@langmesh[bot]`, `@langmesh-bot`, `@bot`, or its actual App login, such as `@langmesh-agent[bot]`; replies to the bot are also handled. Its commits use the App identity. A webhook is ignored until its installation has a provider/model configuration.
 
 The setup flow verifies the installer through GitHub before accepting settings; the `installation_id` in a URL is not treated as authorization. Provider keys and OAuth tokens are encrypted at rest and never written to a checkout.
 
-Each turn creates one acknowledgement comment and updates that same comment with useful status and the final response. A failed update never creates a replacement comment, and the service ignores edited or deleted comment events. The final response addresses the known author of the triggering comment with a GitHub `@username` mention when appropriate. Usernames are never guessed, altered, or copied from untrusted prose.
+Each turn creates one acknowledgement comment and updates that same comment with useful status and the final response. While the turn is active, the acknowledgement and each status update include the repository-hosted progress spinner; the final response removes it. A failed update never creates a replacement comment, and the service ignores edited or deleted comment events. The final response addresses the known author of the triggering comment with a GitHub `@username` mention when appropriate. Usernames are never guessed, altered, or copied from untrusted prose.
 
 ## Repository behavior
 
