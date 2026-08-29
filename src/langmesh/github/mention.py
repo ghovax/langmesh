@@ -61,7 +61,7 @@ PROGRESS_IMAGE_URL = (
     "https://raw.githubusercontent.com/ghovax/langmesh/main/"
     "documentation/assets/progress-spinner.gif"
 )
-PROGRESS_IMAGE_MARKUP = f'<img src="{PROGRESS_IMAGE_URL}" width="20" height="20" alt="Working">'
+PROGRESS_IMAGE_MARKUP = f'<img src="{PROGRESS_IMAGE_URL}" width="24" height="24" alt="Working">'
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
 
