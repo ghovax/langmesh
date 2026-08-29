@@ -418,10 +418,8 @@ class Processor:
     ) -> None:
         configuration = await self.store.configuration(installation_id)
         if configuration is None or not configuration.ready:
-            logger.info(
-                "ignoring delivery id=%s installation=%s: no provider configuration",
-                delivery_id,
-                installation_id,
+            raise RuntimeError(
+                f"GitHub installation {installation_id} has no usable provider configuration"
             )
             return
         provider, model, api_key = (
