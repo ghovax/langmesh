@@ -59,7 +59,7 @@ PROTECTED_BRANCHES = frozenset({"main", "master"})
 EXTERNAL_COMMAND_TIMEOUT_SECONDS = 120.0
 PROGRESS_IMAGE_URL = (
     "https://raw.githubusercontent.com/ghovax/langmesh/main/"
-    "documentation/assets/langmesh-progress-spinner.gif"
+    "documentation/assets/progress-spinner.gif"
 )
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent / "prompts")
 logger = logging.getLogger("langmesh.github")
