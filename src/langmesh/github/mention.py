@@ -608,13 +608,7 @@ def _session(
             checkpoints=checkpoints,
             features=mention_features(
                 workspace,
-                compaction_configuration=compaction_configuration
-                or CompactionConfiguration(
-                    reclaim_at_fraction=0.9,
-                    output_reserve_fraction=0.1,
-                    recent_working_set_fraction=0.15,
-                    maximum_context_tokens=1_000_000,
-                ),
+                compaction_configuration=compaction_configuration or CompactionConfiguration(),
             ),
             credential_store=credential_store,
         ),

@@ -134,16 +134,8 @@ class Settings:
             raise RuntimeError(
                 f"GitHub App configuration needs a compaction mapping: {configuration_path}"
             )
-        compaction_values: dict[str, Any] = {
-            "automatic": True,
-            "reclaim_at_fraction": 0.9,
-            "output_reserve_fraction": 0.1,
-            "recent_working_set_fraction": 0.15,
-            "maximum_context_tokens": 1_000_000,
-        }
-        compaction_values.update(raw_compaction)
         try:
-            compaction = CompactionConfiguration.model_validate(compaction_values)
+            compaction = CompactionConfiguration.model_validate(raw_compaction)
         except ValueError as error:
             raise RuntimeError(
                 f"GitHub App configuration has invalid compaction settings: {configuration_path}"
