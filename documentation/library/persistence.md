@@ -44,11 +44,11 @@ class KeepDecisions:
 
 The `Compaction` feature rejects a strategy that reclaims no messages, restores the original conversation on failure, emits `CompactionDone(ok=False)`, and blocks later input until the fold succeeds.
 
-With the built-in strategy, the runtime appends one private compaction instruction to the existing conversation and asks the model to answer with a `submit_compaction_summary` tool call. That request is the system prompt, the whole existing conversation, and one appended instruction, so the provider-cache prefix is preserved and only the new tail is uncached. The collected summary then continues the session as the system prompt, the summary, and the newest turns in that order. The summary sits as the first message after the system prompt, becomes part of the cached leading block, and is never a user-visible chat row.
+With the built-in strategy, the runtime asks the model to answer with a `submit_compaction_summary` tool call. That request is the system prompt, the compacted conversation, and one appended instruction, so the provider-cache prefix is preserved and only the new tail is uncached. The call has one total attempt and time budget. A missing or invalid summary leaves the original conversation intact and makes compaction a durable blocker rather than discarding unrepresented history. A valid summary continues the session as the system prompt, a provenance-labelled model-generated history record, and the newest turns in that order. The summary becomes part of the cached leading block and is never a user-visible chat row.
 
-The verdict tool exists only in the summarizer's lane and is bound into that hidden session's provider schema, so the working session never carries a no-op verdict tool. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
+The verdict tool is bound only to the summarizer request, so the working session never carries an internal verdict tool. See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 
-The summary is best-effort by construction. A provider error, an empty reply, or a model that writes prose instead of calling the tool falls back to the plain tail compaction, which never blocks the session. Supply your own distillation through the `Compaction` feature's `summarizer` port to replace the model call:
+Supply your own required distillation through the `Compaction` feature's `summarizer` port to replace the model call. The same safety contract applies: an exception or empty summary preserves the original history and blocks the fold for retry.
 
 ```python
 from langchain_core.messages import SystemMessage

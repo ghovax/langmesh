@@ -32,7 +32,6 @@ from langmesh.runtime.internals import (
     _utc_timestamp,
 )
 from langmesh.runtime.background import bind_tool_call_id, unbind_tool_call_id
-from langmesh.runtime.features import BackgroundCapability, LocationsCapability
 from langmesh.runtime.locations import CallExecutionPolicy, ExecutionTarget
 from langmesh.runtime.tools import context as tool_context
 from langmesh.runtime.tools.execution import (
@@ -431,8 +430,10 @@ class _DispatchesTools:
                 )
             background_job_id = outcome.get("background_job_id")
             if background_job_id:
-                background = self._features.require(BackgroundCapability)
-                background.bind_tool_call(background_job_id, tool_call_identifier)
+                if not self._features.bind_detached_tool(background_job_id, tool_call_identifier):
+                    raise RuntimeError(
+                        "A tool detached work without an installed feature to own it."
+                    )
             denied_commands = outcome.get("denied_commands", [])
             if denied_commands:
                 guidance_notes.append(
@@ -529,12 +530,7 @@ class _DispatchesTools:
         # Resolve the call's execution target: a feature answers with an opaque call site, or `None` for local.
         call_site = None
         try:
-            locations = self._features.capability(LocationsCapability)
-            call_site = (
-                locations.resolve_execution(tool_name, tool_arguments)
-                if locations is not None
-                else None
-            )
+            call_site = self._features.resolve_execution(tool_name, tool_arguments)
         except ValueError as exception:
             yield Error(
                 id=tool_call_identifier,

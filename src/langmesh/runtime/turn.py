@@ -80,6 +80,14 @@ from langmesh.runtime.values import PermissionAnswer, TurnContext
 logger = logging.getLogger(__name__)
 
 
+def _record_protocol_reminder(counts: dict[str, int], key: str, failure: str) -> None:
+    """Consume one bounded protocol correction or fail the turn for durable retry."""
+    count = counts.get(key, 0) + 1
+    counts[key] = count
+    if count > max(0, current_limits().maximum_protocol_reminders):
+        raise RuntimeError(failure)
+
+
 def _chunk_advances_model_response(chunk: Any) -> bool:
     message = getattr(chunk, "message", chunk)
     if not isinstance(message, AIMessageChunk):
@@ -567,6 +575,7 @@ class _RunsTurns(_DispatchesTools, ABC):
         self._abort_event.clear()
         # A turn's own bookkeeping: the no-op nudge happens once, and the start time feeds the transcript.
         response_nudged: list[bool] = [False]
+        protocol_reminders: dict[str, int] = {}
         # The person's words are held until the request is assembled, so every part sent with them reads first.
         pending_user_message = None
         # A turn runs until the model is done or the user interrupts.
@@ -682,7 +691,9 @@ class _RunsTurns(_DispatchesTools, ABC):
                         pending_user_message = None
                         self._pending_input = None
                         self._note_session_changed()
-                    return
+                    raise MaintenanceBlockedError(
+                        self._features.blocked_reason() or "Maintenance failed."
+                    )
                 if stop_after_maintenance:
                     return
                 continue
@@ -736,7 +747,9 @@ class _RunsTurns(_DispatchesTools, ABC):
                 async for fold_event in self._features.run_maintenance(reason="overflow"):
                     yield fold_event
                 if self._features.blocked_reason():
-                    return
+                    raise MaintenanceBlockedError(
+                        self._features.blocked_reason() or "Maintenance failed."
+                    ) from overflow
                 # The same accepted turn retries against the newly compacted conversation; asking the user to resend would duplicate it in frontend and backend state.
                 continue
             if call.cancelled:
@@ -782,6 +795,7 @@ class _RunsTurns(_DispatchesTools, ABC):
                     step,
                     turn_started_at,
                     response_nudged,
+                    protocol_reminders,
                 ):
                     yield event
                 if self._features.blocked_reason():
@@ -790,7 +804,9 @@ class _RunsTurns(_DispatchesTools, ABC):
                         pending_user_message = None
                         self._pending_input = None
                         self._note_session_changed()
-                    return
+                    raise MaintenanceBlockedError(
+                        self._features.blocked_reason() or "Maintenance failed."
+                    )
                 if step.directive == _STOP:
                     return
                 continue
@@ -834,7 +850,9 @@ class _RunsTurns(_DispatchesTools, ABC):
                     pending_user_message = None
                     self._pending_input = None
                     self._note_session_changed()
-                return
+                raise MaintenanceBlockedError(
+                    self._features.blocked_reason() or "Maintenance failed."
+                )
             if self._features.maintenance_ready():
                 # The successful recording call is the terminal action of this model segment. The next loop iteration folds and resumes the already-accepted work.
                 continue
@@ -1055,9 +1073,15 @@ class _RunsTurns(_DispatchesTools, ABC):
         step: _StepOutcome,
         started_at: datetime,
         nudged: list[bool],
+        protocol_reminders: dict[str, int],
     ) -> AsyncIterator[TurnEventUnion]:
         """Handle a response with no tool calls: retry a malformed batch, deliver agent messages, or finish."""
         if response.invalid_tool_calls:
+            _record_protocol_reminder(
+                protocol_reminders,
+                "invalid_tool_call",
+                "The model repeatedly returned malformed tool calls and exhausted the correction budget.",
+            )
             # Only malformed calls: a ToolMessage would be orphaned, so they are corrected by a reminder.
             if response.content:
                 self._conversation.append(response)
@@ -1082,6 +1106,11 @@ class _RunsTurns(_DispatchesTools, ABC):
         self._conversation.append(response)
         reminder = self._features.incomplete_reminder()
         if reminder:
+            _record_protocol_reminder(
+                protocol_reminders,
+                reminder,
+                "The model repeatedly stopped before completing required feature work and exhausted the reminder budget.",
+            )
             self._conversation.append(self._reminder_message(reminder))
             step.directive = _CONTINUE
             return

@@ -165,7 +165,7 @@ session.grant_tool(current_incident)
 
 `grant_tool` works at any moment, including after turns have run. Because providers only emit structured calls for tools in the request schema, a mid-session grant rebinds the real schema instead of pretending prose can declare a function. That next call is an intentional cache divergence at the `tools` segment; subsequent calls reuse the new prefix. The `Session` retains the caller-owned tool object when it releases and rebuilds its runtime. A new process must reconstruct code capabilities at composition, while the data checkpoint restores conversation and runtime state. Supply predictable tools at construction when cache continuity matters.
 
-The same binding mechanism powers the internal reviewers. The goal reviewer receives `submit_goal_review`, the compaction summarizer receives `submit_compaction_summary`, and the automatic permission reviewer receives `permission_decision`; the working session never carries any of them, so no tool is ever a no-op that exists only to be inert.
+The same binding mechanism powers internal structured calls. The goal reviewer receives `submit_goal_review`, the compaction summarizer receives `submit_compaction_summary`, and the automatic permission reviewer receives `permission_decision`; the working session never carries any of them, so no internal verdict tool leaks into the agent's ordinary tool roster.
 
 ### Permission policy
 
@@ -365,6 +365,8 @@ The hooks are the points in the turn where a feature can act. The full set a `Fe
 | `snapshot()` / `restore(snapshot)`                                                                                                                                                                                                                                                 | durable session state beside the checkpoint                                                                     |
 
 `compose_prompt` is the home for stable model guidance because it runs when the cached system prompt is built. `prepare_request` cannot receive or replace the outgoing list; it may only append through the conversation capability, after which the runtime checkpoints before calling the provider. This makes a transient prefix rewrite impossible by construction.
+
+The core accepts up to `limits.maximum_protocol_reminders` consecutive corrections for an invalid tool call or an unfinished feature requirement; the shipped value is two. Exhaustion fails the turn into its durable retry state instead of allowing a plugin reminder to produce an endless model loop. Hidden structured calls, including permission review, titling, goal review, and compaction summaries, have their own total attempt and time budgets.
 
 ### Composing a session's features
 

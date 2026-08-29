@@ -134,9 +134,11 @@ compaction:
 # The automatic permission reviewer and session titler own their retry budgets.
 permission_reviewer:
   attempts: 4
+  timeout_seconds: 30.0
 
 titling:
   attempts: 4
+  timeout_seconds: 30.0
 
 # What a file the person attaches may cost the conversation it rides in
 attachments:
@@ -320,6 +322,9 @@ limits:
     surface_guard_margin: 30.0
     open_url: 5.0
     model_silence_give_up: 180.0
+
+    # Model protocol correction budgets.
+    maximum_protocol_reminders: 2
 
     # Surface settling, in seconds and reads.
     settle_poll_seconds: 0.05

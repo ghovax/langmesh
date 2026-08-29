@@ -36,7 +36,7 @@ from langmesh.runtime.turn_events import (
     TurnEvent,
 )
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
-from langmesh.runtime.features import BackgroundCapability
+from langmesh.runtime.plugins.background.capability import BackgroundCapability
 from langmesh.runtime.plugins.goal_review.models import GoalReview
 from langmesh.runtime.plugins.goal_review.tools import (
     described_update_goal,

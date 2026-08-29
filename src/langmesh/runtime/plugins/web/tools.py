@@ -13,7 +13,7 @@ from langmesh.base.primitives.identifiers import new_id
 from langmesh.base.primitives.serialization import compact
 from langmesh.base.primitives.limits import current_limits
 from langmesh.runtime.background import current_background_jobs, current_tool_call_id
-from langmesh.runtime.features import BackgroundCapability
+from langmesh.runtime.plugins.background.capability import BackgroundCapability
 from langmesh.runtime.tools import context as tool_context, fetching
 from langmesh.runtime.tools.execution import current_tool_services
 

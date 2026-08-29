@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from langmesh.runtime.features import BackgroundCapability, Feature, PluginContext
+from langmesh.runtime.features import Feature, PluginContext
+from langmesh.runtime.plugins.background.capability import BackgroundCapability
 from langmesh.runtime.plugins.web.tools import download, fetch_url, search_web
 
 

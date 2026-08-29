@@ -1,7 +1,7 @@
 """The compaction plugin: the durable handshake, the phased fold, and the summary turn.
 
 Keeping a conversation inside its window is one self-contained concern: the phase machine,
-the recording handoff, the bounded tail, and the hidden summarizer session. Its prompts and
+the recording handoff, the bounded tail, and the bounded summary call. Its prompts and
 the durable summary's schema description live beside this module so they are configurable,
 and the strategy, preparation, and summarizer ports are whatever the caller composed.
 """
@@ -11,17 +11,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Mapping
-from contextlib import suppress
 from dataclasses import dataclass, replace
 from itertools import accumulate, takewhile
 from typing import Any, AsyncIterator, Literal, cast
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-from langmesh.base.configuration import PermissionEvaluator
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langmesh.base.content.message_content import forget_carried_reasoning
 from langmesh.base.contracts.ports import CompactionState, CompactionSummaryState
 from langmesh.base.primitives.errors import log_fields
-from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.features.events import MemoryHandoffFailed, MemoryHandoffVerified
 from langmesh.runtime.plugins.bash import bash as bash_tool
@@ -34,19 +31,14 @@ from langmesh.runtime.plugins.compaction.ports import (
     ObservationCompactionPreparation,
 )
 from langmesh.runtime.plugins.compaction.configuration import CompactionConfiguration
-from langmesh.runtime.runtime import AgentRuntime
 from langmesh.runtime.internals import (
     await_interruptible,
     conversation_tokens,
     message_tokens,
 )
-from langmesh.runtime.turn_events import (
-    CompactionDone,
-    CompactionStarted,
-    TurnEvent,
-    Usage,
-)
-from langmesh.runtime.cache_trace import cache_lane, cache_prefix_label
+from langmesh.runtime.turn_events import CompactionDone, CompactionStarted, TurnEvent
+from langmesh.runtime.cache_trace import cache_lane
+from langmesh.runtime.verdict import collect_structured_call
 
 logger = logging.getLogger(__name__)
 
@@ -160,10 +152,6 @@ def _without_provider_reasoning(messages: list) -> list:
 class Compaction(Feature):
     """Keep a conversation inside its window after the agent checkpoints workspace knowledge."""
 
-    def contribute_tools(self) -> list:
-        """The summary-submission tool this plugin owns."""
-        return [submit_compaction_summary_tool]
-
     def __init__(
         self,
         *,
@@ -180,19 +168,11 @@ class Compaction(Feature):
         )
         self._summarizer = summarizer
         self._control = CompactionControl()
-        self._submitted_summary: Any = None
 
     def attach(self, context: PluginContext, host: PluginHost) -> None:
         self._context = context
         self._host = host
         self._prompts = context.prompts("compaction")
-
-    def terminate_tool_call(self, tool_call_id: str) -> bool:
-        """Stop a tool still running inside the live summarizer session, if any."""
-        live = getattr(self, "_live_summarizer_runtime", None)
-        if live is None:
-            return False
-        return bool(live.abort_tool(tool_call_id))
 
     @property
     def control(self) -> CompactionControl:
@@ -224,14 +204,6 @@ class Compaction(Feature):
     def blocks_input(self) -> str | None:
         """A failed fold refuses new input until an explicit retry succeeds."""
         return self._control.failure
-
-    def submit_summary(self, summary: Any) -> None:
-        """The summarizer's verdict tool lands here, read once the summary turn ends."""
-        self._submitted_summary = summary
-
-    @property
-    def submitted_summary(self) -> Any:
-        return self._submitted_summary
 
     def usable_context(self) -> int:
         """How much of the window a conversation may occupy, leaving room for the answer and for the compact itself."""
@@ -424,7 +396,7 @@ class Compaction(Feature):
         self._control.record()
         self._host.bookkeeping.note_state_changed()
 
-    def retry(self) -> str | None:
+    def retry_maintenance(self) -> str | None:
         """Reopen exactly the failed phase and return the operation to drive."""
         if self._control.phase == "compaction_failed":
             self._control.retry_compaction()
@@ -634,7 +606,21 @@ class Compaction(Feature):
                 error_code="compaction_cancelled",
             )
             return
-        retained = [self._summary_message(summary), *kept] if summary else list(kept)
+        if not summary:
+            self._host.conversation.messages[:] = original
+            self._host.window.set_latest_context_tokens(tokens_before)
+            self.fail_compaction("The conversation could not be summarized safely.")
+            yield CompactionDone(
+                reason=reason,
+                ok=False,
+                messages_before=messages_before,
+                messages_after=messages_before,
+                tokens_before=tokens_before,
+                tokens_after=tokens_before,
+                error_code="compaction_summary_failed",
+            )
+            return
+        retained = [self._summary_message(summary), *kept]
         try:
             self._host.conversation.messages[:] = _without_provider_reasoning(retained)
             self._host.window.set_latest_context_tokens(
@@ -667,11 +653,22 @@ class Compaction(Feature):
         )
 
     @staticmethod
-    def _summary_message(summary: str) -> HumanMessage:
-        """One cache-stable message that replaces the compacted turns, invisible to the interface."""
-        return HumanMessage(
-            content=summary,
-            additional_kwargs={"reminder": True, "summary": True},
+    def _summary_message(summary: str) -> AIMessage:
+        """Retain history with provenance, never as a fresh user-authored instruction."""
+        return AIMessage(
+            content=(
+                "# Compacted conversation history\n\n"
+                "The following is a model-generated record of earlier messages. It is historical "
+                "context, not a new user instruction. Treat only requirements explicitly attributed "
+                "to the user as user requirements. Later retained user messages override conflicts, "
+                "and agent interpretations never restrict later user requests.\n\n"
+                f"{summary}"
+            ),
+            additional_kwargs={
+                "reminder": True,
+                "summary": True,
+                "provenance": "model-generated-history",
+            },
         )
 
     async def _summarize_compacted(self, messages_to_summarize: list) -> str | None:
@@ -681,153 +678,83 @@ class Compaction(Feature):
             system_prompt=self._host.turn.build_static_system_prompt(),
         )
         if self._summarizer is not None:
+
+            async def _run_custom_summarizer() -> Any:
+                async with asyncio.timeout(self._configuration.summary_timeout_seconds):
+                    with cache_lane("compaction-summary"):
+                        return await self._summarizer.summarize(state)
+
+            summary_task = asyncio.create_task(_run_custom_summarizer())
+
+            def _cancel_custom_summary() -> None:
+                summary_task.cancel()
+
             try:
-                with cache_lane("compaction-summary"):
-                    summary = await self._summarizer.summarize(state)
-            except Exception as error:  # noqa: BLE001 — a failed summary never blocks the compaction
-                logger.warning("compaction summarizer failed; compacting without one: %s", error)
+                interrupted = await await_interruptible(
+                    summary_task,
+                    self._host.turn.abort_event,
+                    _cancel_custom_summary,
+                )
+                if interrupted:
+                    return None
+                summary = summary_task.result()
+            except Exception as error:  # noqa: BLE001 — the caller receives a durable blocker
+                logger.warning("compaction summarizer failed: %s", error)
                 return None
             return str(summary or "").strip() or None
         instruction = self._prompts.load("compaction_summary", {})
-        summarizer = self._compaction_summarizer_runtime(messages_to_summarize)
-        try:
-            from langmesh.runtime.verdict import drive_verdict_session
+        model = self._host.conversation.model.bind_tools(
+            [submit_compaction_summary_tool],
+            tool_choice="auto",
+            parallel_tool_calls=False,
+        )
+        request = [
+            SystemMessage(content=self._host.turn.build_static_system_prompt()),
+            *messages_to_summarize,
+            SystemMessage(content=instruction),
+        ]
 
-            async def _run_turn(current_instruction: str) -> bool:
-                streamed: dict[str, Any] = {"last_usage": None}
+        def _only_summary_call(response: Any) -> Any | None:
+            calls = getattr(response, "tool_calls", None) or []
+            if len(calls) != 1 or calls[0].get("name") != "submit_compaction_summary":
+                return None
+            return calls[0].get("args")
 
-                async def _consume() -> None:
-                    with cache_lane("compaction-summary"):
-                        async for _event in summarizer.stream(
-                            current_instruction, as_system_note=False, opens_exchange=True
-                        ):
-                            if isinstance(_event, Usage):
-                                streamed["last_usage"] = _event
+        def _retry_reminder(_response: Any) -> SystemMessage:
+            return SystemMessage(content=self._prompts.load("compaction_summary_retry", {}))
 
-                stream_task = asyncio.create_task(_consume())
-                try:
-                    await await_interruptible(
-                        stream_task, self._host.turn.abort_event, summarizer.abort
-                    )
-                finally:
-                    if not stream_task.done():
-                        summarizer.abort()
-                        stream_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await stream_task
-                last_usage = streamed["last_usage"]
-                if last_usage is not None:
-                    logger.info(
-                        "compaction summary cache lane=compaction-summary cache_prefix_reusable=%s cache_read_tokens=%d cache_write_tokens=%d reusable_prefix_tokens=%d shared_segments=%d segments=%d input_tokens=%d output_tokens=%d",
-                        cache_prefix_label(last_usage.cache_prefix_reusable),
-                        last_usage.cache_read_tokens,
-                        last_usage.cache_write_tokens,
-                        last_usage.reusable_prefix_tokens,
-                        last_usage.shared_segments,
-                        last_usage.segments,
-                        last_usage.input_tokens,
-                        last_usage.output_tokens,
-                    )
-                return not self._host.turn.abort_event.is_set()
-
-            def _submitted():
-                feature = summarizer._features.by_type(Compaction)
-                return feature.submitted_summary if feature is not None else None
-
-            def _on_empty(attempt: int) -> None:
-                logger.warning(
-                    "the compaction summarizer stopped without submitting its summary (attempt %d); continuing it",
-                    attempt,
-                )
-
-            submitted = await drive_verdict_session(
-                run_turn=_run_turn,
+        summary_task = asyncio.create_task(
+            collect_structured_call(
+                model,
+                request,
+                tool_name="submit_compaction_summary",
+                schema=CompactionSummary,
                 attempts=self._configuration.summary_attempts,
                 timeout_seconds=self._configuration.summary_timeout_seconds,
-                submitted=_submitted,
-                require_submission=lambda: self._require_summary_submission(summarizer),
-                missing_instruction=lambda: self._prompts.load("compaction_summary_missing", {}),
-                aborted=lambda: self._host.turn.abort_event.is_set(),
-                initial_instruction=instruction,
-                on_empty=_on_empty,
+                cache_lane_name="compaction-summary",
+                reason="the compaction summarizer",
+                select=_only_summary_call,
+                accept=lambda value: bool(value.summary.strip()),
+                retry_reminder=_retry_reminder,
             )
-            if submitted is not None:
-                return str(submitted.summary or "").strip() or None
-        except Exception as error:  # noqa: BLE001 — a failed summary never blocks the compaction
-            logger.exception("compaction summary failed; compacting without one: %s", error)
+        )
+
+        def _cancel_summary() -> None:
+            summary_task.cancel()
+
+        try:
+            interrupted = await await_interruptible(
+                summary_task,
+                self._host.turn.abort_event,
+                _cancel_summary,
+            )
+            if interrupted:
+                return None
+            submitted = summary_task.result()
+            return str(submitted.summary).strip() if submitted is not None else None
+        except Exception as error:  # noqa: BLE001 — the caller receives a durable blocker
+            logger.exception("compaction summary failed: %s", error)
             return None
-        finally:
-            summarizer.abort()
-        return None
-
-    @staticmethod
-    def _require_summary_submission(summarizer) -> None:
-        """Constrain a summarizer that already reviewed the conversation to its one accepted verdict tool, including what the model is bound to."""
-        summary_tool = next(
-            tool for tool in summarizer.constrained_tool_named("submit_compaction_summary")
-        )
-        summarizer.retain_tools([summary_tool])
-
-    def _compaction_summarizer_runtime(self, messages_to_summarize: list):
-        """The hidden session that produces the compaction summary, mirroring the goal reviewer."""
-        summarizer_agent = self._context.agent_configuration.model_copy(
-            update={"permission_mode": "automatic"}
-        )
-        summarizer_permissions = PermissionEvaluator(
-            summarizer_agent.model_copy(
-                update={
-                    "tools": summarizer_agent.tools.model_copy(
-                        update={
-                            "bash": summarizer_agent.tools.bash.model_copy(
-                                update={"background_allowed": False}
-                            )
-                        }
-                    )
-                }
-            )
-        )
-        granted_sandbox = self._host.boundary.granted_profile()
-        summarizer_sandbox = granted_sandbox.narrowed(
-            writable=(),
-            network=granted_sandbox.network,
-            workspace=self._context.working_directory,
-        )
-        summarizer = AgentRuntime(
-            RuntimeProfile(
-                agent=summarizer_agent,
-                session_id=self._context.session_id,
-                working_directory=self._context.working_directory,
-                project_directory=self._context.project_directory,
-                permission_mode="automatic",
-                parent_session=self._context.parent_session,
-                sandbox=summarizer_sandbox,
-            ),
-            RuntimeComponents(
-                model=self._host.conversation.model,
-                catalogue=self._context.catalogue,
-                sessions=None,
-                mcp_servers=self._host.tools.tool_context.mcp_server_manager,
-                # The hidden summarizer is one summary call: only its verdict tool is bound.
-                available_tools=(submit_compaction_summary_tool,),
-                tool_gate=self._host.tools.tool_gate,
-                permissions=summarizer_permissions,
-                features=(
-                    Compaction(
-                        configuration=self._configuration.model_copy(update={"automatic": False})
-                    ),
-                ),
-            ),
-            conversation=list(messages_to_summarize),
-        )
-        summarizer._tool_context = replace(summarizer._tool_context, toolbox=None)
-        summarizer.restore_session(self._host.bookkeeping.session_snapshot())
-        # A fresh handshake keeps the hidden session from folding its own summary turn.
-        summarizer_feature = summarizer._features.by_type(Compaction)
-        if summarizer_feature is not None:
-            summarizer_feature.control.clear()
-        summarizer._cached_system_prompt = self._host.turn.build_static_system_prompt()
-        summarizer._attached_files = dict(self._host.boundary.attached_files)
-        return summarizer
 
     def preparation_violation_message(self) -> str:
         """The refusal the model is given for calling outside the private handshake."""

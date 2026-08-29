@@ -9,7 +9,7 @@ import sqlite3
 from collections.abc import Callable
 from typing import TypeVar
 
-from sqlalchemy import text
+from sqlalchemy import Column, DateTime, MetaData, String, Table, Text, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from langmesh.runtime.session_control import SessionCheckpoint
@@ -25,7 +25,7 @@ class SQLiteCheckpoints:
         self,
         connection: sqlite3.Connection,
         *,
-        table: str = "langmesh_checkpoints",
+        table: str = "checkpoints",
     ) -> None:
         if not isinstance(connection, sqlite3.Connection):
             raise TypeError("connection must be a sqlite3.Connection")
@@ -85,22 +85,26 @@ class SQLiteCheckpoints:
 class SQLAlchemyCheckpoints:
     """Session checkpoints in a caller-owned SQLAlchemy async engine."""
 
-    def __init__(self, engine: AsyncEngine, *, table: str = "langmesh_session_checkpoints") -> None:
+    def __init__(self, engine: AsyncEngine, *, table: str = "session_checkpoints") -> None:
         if not isinstance(engine, AsyncEngine):
             raise TypeError("engine must be a sqlalchemy.ext.asyncio.AsyncEngine")
         if not _IDENTIFIER.fullmatch(table):
             raise ValueError("table must be a plain SQL identifier")
         self._engine = engine
-        self._table = table
+        self._metadata = MetaData()
+        self._table = Table(
+            table,
+            self._metadata,
+            Column("session_id", String, primary_key=True),
+            Column("checkpoint", Text, nullable=False),
+            Column(
+                "updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()
+            ),
+        )
 
     async def initialize(self) -> None:
         async with self._engine.begin() as connection:
-            await connection.execute(
-                text(
-                    f"CREATE TABLE IF NOT EXISTS {self._table} ("
-                    "session_id TEXT PRIMARY KEY, checkpoint TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-                )
-            )
+            await connection.run_sync(self._metadata.create_all)
 
     async def save(self, session_id: str, checkpoint: SessionCheckpoint) -> None:
         if not session_id:
@@ -109,21 +113,40 @@ class SQLAlchemyCheckpoints:
             raise TypeError("checkpoint must be a SessionCheckpoint value")
         payload = json.dumps(checkpoint.to_data(), ensure_ascii=False, separators=(",", ":"))
         async with self._engine.begin() as connection:
-            await connection.execute(
-                text(
-                    f"INSERT INTO {self._table} (session_id, checkpoint) VALUES (:session_id, :checkpoint) "
-                    "ON CONFLICT (session_id) DO UPDATE SET checkpoint = EXCLUDED.checkpoint, updated_at = CURRENT_TIMESTAMP"
-                ),
-                {"session_id": session_id, "checkpoint": payload},
-            )
+            values = {"session_id": session_id, "checkpoint": payload}
+            if connection.dialect.name == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert
+
+                statement = insert(self._table).values(**values)
+                statement = statement.on_conflict_do_update(
+                    index_elements=[self._table.c.session_id],
+                    set_={"checkpoint": payload, "updated_at": func.now()},
+                )
+                await connection.execute(statement)
+            elif connection.dialect.name == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert
+
+                statement = insert(self._table).values(**values)
+                statement = statement.on_conflict_do_update(
+                    index_elements=[self._table.c.session_id],
+                    set_={"checkpoint": payload, "updated_at": func.now()},
+                )
+                await connection.execute(statement)
+            else:
+                changed = await connection.execute(
+                    update(self._table)
+                    .where(self._table.c.session_id == session_id)
+                    .values(checkpoint=payload, updated_at=func.now())
+                )
+                if not changed.rowcount:
+                    await connection.execute(self._table.insert().values(**values))
 
     async def load(self, session_id: str) -> SessionCheckpoint | None:
         if not session_id:
             raise ValueError("session_id must not be empty")
         async with self._engine.connect() as connection:
             result = await connection.execute(
-                text(f"SELECT checkpoint FROM {self._table} WHERE session_id = :session_id"),
-                {"session_id": session_id},
+                select(self._table.c.checkpoint).where(self._table.c.session_id == session_id)
             )
             row = result.first()
         if row is None:

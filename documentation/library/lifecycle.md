@@ -79,7 +79,14 @@ except Exception:
         ...  # Continue the saved conversation tail.
 ```
 
-`Session.retryable_turn` says whether the last failed turn can continue. Compaction is driven by the compaction feature, not by `Session`; a blocked compaction must succeed before new user work is accepted.
+A failed compaction preserves the original history and makes the turn retryable, but its blocker must be cleared first. Drive `retry_maintenance()` without adding another user message, then drive `retry()` to continue the accepted turn:
+
+```python
+async for event in session.retry_maintenance():
+    ...  # Re-run only the failed fold.
+async for event in session.retry():
+    ...  # Continue the original accepted turn.
+```
 
 ## Session close
 
@@ -87,7 +94,7 @@ except Exception:
 
 ## Events and driving patterns
 
-`Session.stream()`, `resume()`, and `retry()` yield a closed `TurnEventUnion`. Dispatch on the variant class; the `EventType` enum is available for generic transports.
+`Session.stream()`, `resume()`, `retry_maintenance()`, and `retry()` yield a closed `TurnEventUnion`. Dispatch on the variant class; the `EventType` enum is available for generic transports.
 
 | Event                                                             | Meaning                                            | Typical action                                       |
 | ----------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------- |

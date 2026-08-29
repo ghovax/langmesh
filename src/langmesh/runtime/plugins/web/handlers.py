@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, AsyncIterator
 
 from langmesh.runtime.background import bind_background_jobs, unbind_background_jobs
-from langmesh.runtime.features import BackgroundCapability
+from langmesh.runtime.plugins.background.capability import BackgroundCapability
 from langmesh.runtime.internals import _maybe_json
 from langmesh.runtime.tools.execution import ToolExecution
 from langmesh.runtime.turn_events import ToolResult

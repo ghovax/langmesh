@@ -9,7 +9,8 @@ the caller's concern — not the core's and not this seam's.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, AsyncIterator, Sequence, TypeVar, cast
+from typing import Any, AsyncIterator, Callable, Sequence, TypeVar, cast
+from weakref import ReferenceType, ref
 
 from langmesh.base.content.prompts import PackagePromptLoader, PromptTemplates
 from langmesh.runtime.features.context import PluginContext
@@ -18,6 +19,7 @@ from langmesh.runtime.session_control import FeatureState
 from langmesh.runtime.turn_events import TurnEventUnion
 
 _Capability = TypeVar("_Capability")
+_FeatureType = TypeVar("_FeatureType", bound="Feature")
 
 plugins_package_root = Path(__file__).resolve().parents[1] / "plugins"
 
@@ -40,7 +42,7 @@ class Feature:
     hooks and the context.
     """
 
-    __slots__ = ("_langmesh_session_id",)
+    __slots__ = ("__weakref__",)
 
     @property
     def state_name(self) -> str:
@@ -137,6 +139,10 @@ class Feature:
     def record_maintenance_handoff(self) -> None:
         """The model declined to act during the hold; the feature records its handoff."""
 
+    def retry_maintenance(self) -> str | None:
+        """Reopen this feature's failed maintenance phase, or return ``None``."""
+        return None
+
     def maintenance_tool_schemas(self) -> dict:
         """The tool schemas a held loop accepts, keyed by name, merged for validation."""
         return {}
@@ -192,6 +198,25 @@ class Feature:
         """
         return False
 
+    def interrupt(self, *, restarting: bool) -> None:
+        """Stop live work owned by this feature at a turn or process boundary."""
+
+    def bind_detached_tool(self, job_id: str, tool_call_id: str) -> bool:
+        """Associate a detached operation with its originating tool call."""
+        return False
+
+    def resolve_execution(self, tool_name: str, arguments: dict) -> Any:
+        """Resolve an optional execution target, or return ``None`` for the local runtime."""
+        return None
+
+    async def reconsider_gate(self, gate: Any) -> dict[str, Any] | None:
+        """Reconsider one suspended interaction after live policy changes."""
+        return None
+
+    def bind_tool_context(self) -> Callable[[], None] | None:
+        """Bind feature-owned context for one tool invocation and return its cleanup."""
+        return None
+
 
 class Features:
     """The installed features of one runtime, and the dispatch the core calls at each point.
@@ -208,7 +233,7 @@ class Features:
         """The fixed feature roster in installation order."""
         return self._instances
 
-    def by_type(self, feature_type: type) -> Feature | None:
+    def by_type(self, feature_type: type[_FeatureType]) -> _FeatureType | None:
         """The installed feature of a given class, for a composer that wants its instance back."""
         return next(
             (feature for feature in self._instances if isinstance(feature, feature_type)), None
@@ -345,6 +370,13 @@ class Features:
             async for event in feature.run_maintenance(reason=reason):
                 yield event
 
+    def retry_maintenance(self) -> str | None:
+        for feature in self._instances:
+            operation = feature.retry_maintenance()
+            if operation is not None:
+                return operation
+        return None
+
     # Tool gating.
 
     async def plan_tool_calls(self, tool_calls: list[dict]) -> Any | None:
@@ -421,6 +453,35 @@ class Features:
                 handled = True
         return handled
 
+    def interrupt(self, *, restarting: bool) -> None:
+        for feature in self._instances:
+            feature.interrupt(restarting=restarting)
+
+    def bind_detached_tool(self, job_id: str, tool_call_id: str) -> bool:
+        return any(feature.bind_detached_tool(job_id, tool_call_id) for feature in self._instances)
+
+    def resolve_execution(self, tool_name: str, arguments: dict) -> Any:
+        for feature in self._instances:
+            resolved = feature.resolve_execution(tool_name, arguments)
+            if resolved is not None:
+                return resolved
+        return None
+
+    async def reconsider_gate(self, gate: Any) -> dict[str, Any] | None:
+        for feature in self._instances:
+            verdict = await feature.reconsider_gate(gate)
+            if verdict is not None:
+                return verdict
+        return None
+
+    def bind_tool_contexts(self) -> list[Callable[[], None]]:
+        cleanups: list[Callable[[], None]] = []
+        for feature in self._instances:
+            cleanup = feature.bind_tool_context()
+            if cleanup is not None:
+                cleanups.append(cleanup)
+        return cleanups
+
 
 def feature_prompts(name: str, catalogue: Any) -> PromptTemplates:
     """A plugin's own templates, behind the catalogue's overrides and in front of the shared set."""
@@ -447,6 +508,38 @@ class _CataloguePromptLoader:
         return self._catalogue.prompt_revision()
 
 
+class FeatureAttachmentRegistry:
+    """Track which live session has an attached feature without modifying the feature."""
+
+    def __init__(self) -> None:
+        self._sessions: dict[int, tuple[ReferenceType[Feature], str]] = {}
+
+    def session_for(self, feature: Feature) -> str | None:
+        """Return the live session associated with a feature, if it is still registered."""
+        entry = self._sessions.get(id(feature))
+        if entry is None:
+            return None
+        reference, session_id = entry
+        if reference() is feature:
+            return session_id
+        self._sessions.pop(id(feature), None)
+        return None
+
+    def register(self, feature: Feature, session_id: str) -> None:
+        """Associate a feature with a session until the feature is garbage-collected."""
+        identity = id(feature)
+
+        def release(reference: ReferenceType[Feature]) -> None:
+            entry = self._sessions.get(identity)
+            if entry is not None and entry[0] is reference:
+                self._sessions.pop(identity, None)
+
+        self._sessions[identity] = (ref(feature, release), session_id)
+
+
+_ATTACHMENTS = FeatureAttachmentRegistry()
+
+
 def build_features(
     instances: Sequence[Feature] | None,
     context: PluginContext,
@@ -466,19 +559,20 @@ def build_features(
                 raise ValueError(
                     f"{type(feature).__name__} requires the {contract.__name__} capability."
                 )
-        owner = getattr(feature, "_langmesh_session_id", None)
-        if owner is not None and owner != context.session_id:
+        attached_session = _ATTACHMENTS.session_for(feature)
+        if attached_session is not None and attached_session != context.session_id:
             raise ValueError(
-                f"{type(feature).__name__} is already attached to session {owner!r}; feature instances cannot be shared between sessions."
+                f"{type(feature).__name__} is already attached to session {attached_session!r}; feature instances cannot be shared between sessions."
             )
     for feature in installed:
         feature.attach(context, host)
-        feature._langmesh_session_id = context.session_id
+        _ATTACHMENTS.register(feature, context.session_id)
     return features
 
 
 __all__ = [
     "Feature",
+    "FeatureAttachmentRegistry",
     "Features",
     "build_features",
     "feature_prompts",

@@ -629,6 +629,7 @@ async def run_turn(
     api_key: str,
     checkpoints: Checkpoints,
     credential_store: Any = None,
+    retry_failed_turn: bool = False,
 ) -> str:
     async with _session(
         mention,
@@ -670,9 +671,21 @@ async def run_turn(
         response_text = ""
         model_call = 0
         compaction_started = False
-        async for event in session.stream(
-            prompt_for(mention, checkout=checkout, followup=followup)
-        ):
+
+        async def delivery_events():
+            if retry_failed_turn and restored and session.runtime.features.blocked_reason():
+                async for event in session.retry_maintenance():
+                    yield event
+            if retry_failed_turn and restored and session.runtime.retryable_turn:
+                async for event in session.retry():
+                    yield event
+                return
+            async for event in session.stream(
+                prompt_for(mention, checkout=checkout, followup=followup)
+            ):
+                yield event
+
+        async for event in delivery_events():
             if isinstance(event, Usage):
                 model_call += 1
                 logger.info(

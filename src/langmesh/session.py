@@ -38,7 +38,6 @@ from langmesh.base.contracts.ports import (
 )
 from langmesh.base.contracts.tools import ToolLike
 from langmesh.runtime.composition import RuntimeProfile, SessionComponents
-from langmesh.runtime.features import PermissionsCapability
 from langmesh.runtime.session_control import (
     PendingTurn,
     SessionCheckpoint,
@@ -341,9 +340,8 @@ class Session:
                 pending = self._pending
                 if pending is None:
                     return self.state
-                permissions = runtime.features.require(PermissionsCapability)
                 for gate in pending.remaining:
-                    verdict = await permissions.reconsider_gate(gate)
+                    verdict = await runtime.features.reconsider_gate(gate)
                     if not verdict:
                         continue
                     if gate.kind == "question":
@@ -612,6 +610,28 @@ class Session:
             except Exception:
                 self.runtime.mark_turn_failed()
                 raise
+            finally:
+                await self._save()
+                self._phase = SessionPhase.IDLE
+
+    async def retry_maintenance(self) -> AsyncIterator[TurnEventUnion]:
+        """Retry failed context maintenance without accepting another user message."""
+        async with self._turn_lock:
+            self.runtime.clear_stop()
+            if not self._restored:
+                await self._restore()
+            if self._pending is not None:
+                raise RuntimeError(
+                    "A suspended turn must be resumed or cancelled before retrying maintenance."
+                )
+            if self.runtime.features.retry_maintenance() is None:
+                raise RuntimeError("This session has no failed maintenance to retry.")
+            self._phase = SessionPhase.COMPACTING
+            try:
+                async for event in self.runtime.prepare_maintenance_stream():
+                    if isinstance(event, Checkpoint):
+                        await self._save()
+                    yield event
             finally:
                 await self._save()
                 self._phase = SessionPhase.IDLE

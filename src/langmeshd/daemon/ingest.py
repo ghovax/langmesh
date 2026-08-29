@@ -244,10 +244,10 @@ async def _session_event(params: dict) -> dict:
 
 async def _session_usage(params: dict) -> dict:
     """A subscription's rate-limit snapshot as a worker read it, captured there and served from here."""
-    from langmesh.base.identity import subscription
+    from models_provider import set_usage_snapshot
 
     usage = params.get("usage")
-    subscription.set_usage_snapshot(usage if isinstance(usage, dict) else None)
+    set_usage_snapshot(usage if isinstance(usage, dict) else None)
     return {"noted": True}
 
 

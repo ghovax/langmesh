@@ -12,8 +12,6 @@ import logging
 from contextlib import suppress
 from typing import Any, AsyncIterator
 
-from langmesh.runtime.background import bind_background_jobs, unbind_background_jobs
-from langmesh.runtime.features import BackgroundCapability
 from langmesh.runtime.internals import _coerce_mcp_arguments, _maybe_json
 from langmesh.runtime.tools import sessions
 from langmesh.runtime.tools.execution import ToolExecution
@@ -88,11 +86,12 @@ async def handle_session(execution: ToolExecution) -> AsyncIterator[Any]:
     create_tool = next(
         (tool for tool in services.tools() if getattr(tool, "name", "") == "create_session"), None
     )
-    background_token = bind_background_jobs(services.features.require(BackgroundCapability).runner)
+    cleanups = services.features.bind_tool_contexts()
     try:
         result = await sessions.invoke(execution.name, execution.arguments, create_tool)
     finally:
-        unbind_background_jobs(background_token)
+        for cleanup in reversed(cleanups):
+            cleanup()
     model_guidance = ""
     if isinstance(result, ToolOutput):
         model_guidance = result.model_guidance

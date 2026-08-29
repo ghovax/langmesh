@@ -65,6 +65,8 @@ compaction:
 # The automatic permission reviewer and session titler own their retry budgets.
 permission_reviewer:
   attempts: 4
+  timeout_seconds: 30.0
 
 titling:
   attempts: 4
+  timeout_seconds: 30.0

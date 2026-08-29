@@ -53,6 +53,9 @@ class Limits:
     open_url: float = 5.0
     model_silence_give_up: float = 180.0
 
+    # Model protocol correction budgets
+    maximum_protocol_reminders: int = 2
+
     # Surface settling, in seconds and reads
     settle_poll_seconds: float = 0.05
     settle_give_up_seconds: float = 1.5
