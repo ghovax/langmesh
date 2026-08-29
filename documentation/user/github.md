@@ -151,7 +151,7 @@ curl --fail-with-body --request PUT \
 
 If a provider needs a deployment-specific client identifier, set it under `github.oauth.provider_application_ids`. The flow does not reuse GitHub OAuth, expose provider tokens to GitHub, or store them in a repository. Each provider controls its endpoints, token shape, refresh behavior, and request headers in models-provider.
 
-After that, opening an issue or same-repository pull request starts an automatic first response. Later comments trigger a response only when they contain the standalone word `agent` or `bot`; other names, aliases, and App logins are ignored. Replies to the bot are also handled. Its commits use the App identity. A webhook is ignored until its installation has a provider/model configuration.
+After that, opening an issue or same-repository pull request starts an automatic first response. Later comments trigger a response only when they contain the standalone mention `@claude`, regardless of casing; other words, names, aliases, and App logins are ignored. Replies to the bot are also handled. Its commits use the App identity. A webhook is ignored until its installation has a provider/model configuration.
 
 The setup flow verifies the installer through GitHub before accepting settings; the `installation_id` in a URL is not treated as authorization. Provider keys and OAuth tokens are encrypted at rest and never written to a checkout.
 

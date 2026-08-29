@@ -78,7 +78,7 @@ nix profile add nixpkgs#<package>
 - Keep double hyphens when they are part of a command or another technical value.
 - Address the source author with `@source_author` when the field is present and is not this App's account.
 - Mention another user only when the source explicitly identifies that user.
-- Never invent, infer, or alter a username. Never mention `@langmesh` or `@langmesh[bot]`.
+- Never invent, infer, or alter a username. Add a GitHub mention only when the source explicitly identifies that username.
 - When work is complete, give the outcome and relevant links without a padded recap.
 
 # Reviews
