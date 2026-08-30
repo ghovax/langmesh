@@ -305,7 +305,7 @@ class Store:
             await self._begin_sqlite_write(session)
             lock = session.bind is not None and session.bind.dialect.name != "sqlite"
             delivery = await session.get(Delivery, delivery_id, with_for_update=lock)
-            if delivery is None:
+            if delivery is None or delivery.status != "processing":
                 return
             delivery.status = "completed"
             if not delivery.session_id or not delivery.session_sequence:
