@@ -6,8 +6,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { LuCircleHelp, LuExternalLink, LuGitPullRequest, LuMessageSquare } from "react-icons/lu";
 import { ChatInput } from "./ChatInput";
 import { ChatMessageItem, ChatToolGroup } from "./ChatMessage";
+import { ActivitySpinner } from "./ui/ActivityIcon";
 import { ColorModeButton } from "./ui/ColorMode";
-import { PanelHeader } from "./ui/Panel";
+import { PanelEmptyState, PanelHeader } from "./ui/Panel";
 import type { ChatMessage } from "@/lib/use-chat";
 import { timelineItems } from "@/lib/chat-timeline";
 
@@ -68,6 +69,8 @@ function ViewerContent() {
   const timeline = useMemo(() => timelineItems(snapshot?.messages ?? []), [snapshot?.messages]);
   const issueLabel = snapshot ? `${snapshot.repository}#${snapshot.number}` : "GitHub session";
   const visibleError = error || (!token ? "This session link is missing its access token." : "");
+  const waitingForSession =
+    !snapshot || (timeline.length === 0 && !["completed", "failed"].includes(snapshot.status));
 
   return (
     <Flex h="100%" minW={0} position="relative">
@@ -107,6 +110,8 @@ function ViewerContent() {
               <Text color="red.fg" textAlign="center">
                 {visibleError}
               </Text>
+            ) : waitingForSession ? (
+              <PanelEmptyState icon={<ActivitySpinner />} title="Loading session" />
             ) : snapshot && timeline.length > 0 ? (
               <VStack gap={2.5} align="stretch" w="full" maxW="80rem" mx="auto">
                 {timeline.map((item) =>
@@ -118,9 +123,7 @@ function ViewerContent() {
                 )}
               </VStack>
             ) : (
-              <Flex align="center" justify="center" minH="100%">
-                <Text color="fg.muted">Waiting for the first session update.</Text>
-              </Flex>
+              <PanelEmptyState icon={<LuMessageSquare />} title="No visible messages" />
             )}
           </Box>
         </Box>
