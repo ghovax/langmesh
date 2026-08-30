@@ -88,7 +88,7 @@ Three questions that look alike and are not.
 
 **Which daemon the interface talks to.** A daemon's address and its token belong together. Each `langmeshd` mints its own token at boot, so a paired daemon does not accept this machine's. The client has one **home** connection (this page's daemon) and zero or more **paired** machines:
 
-- **Home.** The release app starts the separately installed daemon when needed, then reads the port and token `langmeshd` published into the runtime directory. A next-dev page is the same home connection, learned from the env `web-development.sh` writes. A page `langmesh serve` hosts talks same-origin through the proxy, so the browser never sees the capability token.
+- **Home.** The app starts the separately installed daemon when needed, then reads the port and token `langmeshd` published into the runtime directory. A next-dev page is the same home connection, learned from the env `web-development.sh` writes. A page `langmesh serve` hosts talks same-origin through the proxy, so the browser never sees the capability token.
 - **Paired.** Run `langmeshd` on another host, expose its loopback door behind a transport you choose, paste the `langmesh://pair#…` link under **Settings, then Connection**, and switch in the same window. Sessions from that host appear in the sidebar as that machine. Pairing lives on the home daemon; a switch does not navigate away.
 
 **Where a session's tools run.** That is a **location**, not a daemon. `kind: local` is this machine's filesystem; `kind: remote` is an SSH host from `~/.ssh/config`. LangMesh forwards a local port to a command channel on that host, so the harness can work there while the daemon you are talking to stays the one you chose above.

@@ -6,6 +6,8 @@ Everything beyond a plain model turn — the tools, goal review, compaction, per
 
 ## Choose an entry point
 
+To use LangMesh from GitHub, [install the LangMesh Agent GitHub App](https://github.com/apps/langmesh-agent) and follow the [GitHub mentions guide](user/github.md) to configure it.
+
 | Need                                           | Use                                                           | Read                                                               |
 | ---------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
 | Embed an agent in a Python process             | `langmesh.Session`                                            | [Library quickstart](library/index.md)                             |

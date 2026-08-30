@@ -30,14 +30,13 @@ The harness writes the system prompt, defines the tools, manages context, and se
 
 ## Install
 
-LangMesh runs on **macOS on Apple Silicon**. It ships as two downloads:
+LangMesh runs on **macOS on Apple Silicon**. Build the desktop app and daemon from source with the Nix-pinned toolchain, then install both artifacts. You can also run the interface in a browser with `langmesh serve`.
 
-- **The daemon bundle**, which carries the harness, the daemon and the `langmesh` command in one signed image (`LangMesh Computer Use.app`).
-- **The app**, which is the window that talks to it (`LangMesh.app`).
+See the [Installation guide](documentation/user/installation.md) for the build instructions.
 
-Download the latest release, install both, and open the app (or run `langmesh serve` for the browser). The build is self-signed, so Gatekeeper warns you at the first launch. You can also build from source with the Nix-pinned toolchain.
+## GitHub bot
 
-See the [Installation guide](documentation/user/installation.md) for both paths in full.
+[Install the LangMesh Agent GitHub App](https://github.com/apps/langmesh-agent) on a personal account or organization to let it work on selected repositories. It responds to new issues and pull requests, then responds to later comments containing the standalone `@claude` mention or replies to the bot. No repository workflow, YAML policy, App ID, provider setting, API key, or GitHub secret is required. Configure the provider, model, and credentials through the App setup page. On an issue it can open a draft pull request; on a pull request it updates that branch. See the [Universal GitHub App guide](documentation/user/github.md).
 
 ## Quickstart
 
