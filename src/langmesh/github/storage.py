@@ -323,7 +323,7 @@ class Store:
             delivery.status = "queued"
             delivery.claimed_at = None
             delivery.next_attempt_at = int(time.time()) + max(1, delay)
-            delivery.last_error = error[:4000]
+            delivery.last_error = error
 
     async def release_processing(self, delivery_id: str, error: str) -> bool:
         """Return a still-processing delivery to the queue without reviving completed work."""
@@ -336,7 +336,7 @@ class Store:
             delivery.status = "queued"
             delivery.claimed_at = None
             delivery.next_attempt_at = int(time.time()) + 1
-            delivery.last_error = error[:4000]
+            delivery.last_error = error
             return True
 
     async def mark_failed(self, delivery_id: str, error: str) -> None:
@@ -348,7 +348,7 @@ class Store:
             delivery.status = "failed"
             delivery.claimed_at = None
             delivery.next_attempt_at = 0
-            delivery.last_error = error[:4000]
+            delivery.last_error = error
 
     async def comment_id_for_delivery(self, delivery_id: str) -> int | None:
         async with self._sessions() as session:
