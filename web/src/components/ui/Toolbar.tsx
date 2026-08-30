@@ -10,6 +10,7 @@ export function ToolbarAction({
   label,
   icon,
   onClick,
+  href,
   active,
   colorPalette,
   indicator,
@@ -17,6 +18,7 @@ export function ToolbarAction({
   label: string;
   icon: ReactNode;
   onClick?: () => void;
+  href?: string;
   // Whether the action's target (a panel) is currently open — tints the button.
   active?: boolean;
   // Palette for the active tint and the status dot (e.g. "green", "purple", "blue").
@@ -27,6 +29,7 @@ export function ToolbarAction({
   return (
     <Tooltip content={label} openDelay={300}>
       <IconButton
+        {...(href ? { as: "a" as const, href, target: "_blank", rel: "noreferrer" } : {})}
         aria-label={label}
         variant={active ? "subtle" : "ghost"}
         colorPalette={colorPalette}

@@ -1,6 +1,6 @@
 "use client";
 
-import { Box, Flex, Link, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Box, Flex, Spinner, Text, VStack } from "@chakra-ui/react";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -204,20 +204,11 @@ function ViewerContent() {
             {snapshot?.title || issueLabel}
           </Text>
           {snapshot?.source_url ? (
-            <Link
+            <ToolbarAction
+              label="Open source on GitHub"
+              icon={<LuExternalLink size={14} />}
               href={snapshot.source_url}
-              target="_blank"
-              rel="noreferrer"
-              display="flex"
-              alignItems="center"
-              gap={1}
-              color="fg.muted"
-              fontSize="xs"
-              whiteSpace="nowrap"
-            >
-              {issueLabel}
-              <LuExternalLink size={12} />
-            </Link>
+            />
           ) : null}
           <ViewerThemeAction />
         </Flex>
