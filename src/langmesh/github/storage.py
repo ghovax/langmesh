@@ -316,6 +316,19 @@ class Store:
             delivery.next_attempt_at = int(time.time()) + max(1, delay)
             delivery.last_error = error[:4000]
 
+    async def release_processing(self, delivery_id: str, error: str) -> bool:
+        """Return a still-processing delivery to the queue without reviving completed work."""
+        async with self._sessions.begin() as session:
+            lock = session.bind is not None and session.bind.dialect.name != "sqlite"
+            delivery = await session.get(Delivery, delivery_id, with_for_update=lock)
+            if delivery is None or delivery.status != "processing":
+                return False
+            delivery.status = "queued"
+            delivery.claimed_at = None
+            delivery.next_attempt_at = int(time.time()) + 1
+            delivery.last_error = error[:4000]
+            return True
+
     async def mark_failed(self, delivery_id: str, error: str) -> None:
         async with self._sessions.begin() as session:
             delivery = await session.get(Delivery, delivery_id)
