@@ -43,6 +43,10 @@ def messages_from_checkpoint(
         if not isinstance(data, Mapping):
             continue
 
+        additional_kwargs = data.get("additional_kwargs")
+        if isinstance(additional_kwargs, Mapping) and additional_kwargs.get("reminder"):
+            continue
+
         if message_type == "human":
             content = _text_content(data.get("content"))
             if content:
@@ -56,7 +60,7 @@ def messages_from_checkpoint(
                 )
             continue
 
-        if message_type.startswith("AIMessage"):
+        if message_type in {"ai", "AIMessage", "AIMessageChunk"}:
             content_blocks: list[dict[str, str]] = []
             raw_content = data.get("content")
             if isinstance(raw_content, Sequence) and not isinstance(
