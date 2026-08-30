@@ -8,6 +8,8 @@ build
 site
 node_modules
 web/node_modules
+web/.next
+web/out
 *.pyc
 *.pyo
 .env
