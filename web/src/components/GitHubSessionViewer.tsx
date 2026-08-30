@@ -40,7 +40,9 @@ function ViewerContent() {
 
   useEffect(() => {
     if (!token) return;
-    const stream = new EventSource(`/github/session-stream/${encodeURIComponent(token)}`);
+    const stream = new EventSource(
+      `/github/session?token=${encodeURIComponent(token)}&mode=stream`,
+    );
     stream.onmessage = (event) => {
       try {
         setSnapshot(JSON.parse(event.data) as ViewerSnapshot);
@@ -57,7 +59,7 @@ function ViewerContent() {
     if (!token) return;
     setStopRequested(true);
     try {
-      const response = await fetch(`/github/session-stop/${encodeURIComponent(token)}`, {
+      const response = await fetch(`/github/session?token=${encodeURIComponent(token)}&mode=stop`, {
         method: "POST",
       });
       if (!response.ok) setError("The session could not be stopped.");

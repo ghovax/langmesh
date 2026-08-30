@@ -1022,57 +1022,69 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             )
         return configuration_response(setup, await store.configuration(setup[0]))
 
-    @app.get("/github/session", include_in_schema=False)
-    async def session_viewer_page() -> Response:
-        output = viewer_output_directory()
-        if output is None:
-            raise HTTPException(503, detail="the session viewer is not built")
-        return FileResponse(output / "github" / "session" / "index.html")
+    @app.api_route("/github/session", methods=["GET", "POST"], include_in_schema=False)
+    async def session_viewer(request: Request, token: str = "", mode: str = "page") -> Response:
+        selected_mode = mode.strip().lower()
+        if selected_mode == "page":
+            if request.method != "GET":
+                raise HTTPException(405, detail="the session page only accepts GET")
+            output = viewer_output_directory()
+            if output is None:
+                raise HTTPException(503, detail="the session viewer is not built")
+            response = FileResponse(output / "github" / "session" / "index.html")
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            return response
 
-    @app.get("/github/session-data/{token}", include_in_schema=False)
-    async def session_viewer_data(token: str) -> Response:
-        snapshot = await processor.viewer_snapshot(token)
-        if snapshot is None:
-            raise HTTPException(404, detail="session viewer link is invalid")
-        response = JSONResponse(snapshot)
-        response.headers["Cache-Control"] = "no-store"
-        return response
+        if selected_mode == "data":
+            if request.method != "GET":
+                raise HTTPException(405, detail="session data only accepts GET")
+            snapshot = await processor.viewer_snapshot(token)
+            if snapshot is None:
+                raise HTTPException(404, detail="session viewer link is invalid")
+            response = JSONResponse(snapshot)
+            response.headers["Cache-Control"] = "no-store"
+            return response
 
-    @app.get("/github/session-stream/{token}", include_in_schema=False)
-    async def session_viewer_stream(token: str, request: Request) -> Response:
-        if await store.session_for_viewer_token(token) is None:
-            raise HTTPException(404, detail="session viewer link is invalid")
+        if selected_mode == "stream":
+            if request.method != "GET":
+                raise HTTPException(405, detail="session stream only accepts GET")
+            if await store.session_for_viewer_token(token) is None:
+                raise HTTPException(404, detail="session viewer link is invalid")
 
-        async def stream():
-            previous = ""
-            seconds_since_keepalive = 0
-            while not await request.is_disconnected():
-                snapshot = await processor.viewer_snapshot(token)
-                if snapshot is None:
-                    return
-                serialized = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
-                if serialized != previous:
-                    yield f"data: {serialized}\n\n"
-                    previous = serialized
-                    seconds_since_keepalive = 0
-                elif seconds_since_keepalive >= 15:
-                    yield ": keepalive\n\n"
-                    seconds_since_keepalive = 0
-                await asyncio.sleep(1)
-                seconds_since_keepalive += 1
+            async def stream():
+                previous = ""
+                seconds_since_keepalive = 0
+                while not await request.is_disconnected():
+                    snapshot = await processor.viewer_snapshot(token)
+                    if snapshot is None:
+                        return
+                    serialized = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
+                    if serialized != previous:
+                        yield f"data: {serialized}\n\n"
+                        previous = serialized
+                        seconds_since_keepalive = 0
+                    elif seconds_since_keepalive >= 15:
+                        yield ": keepalive\n\n"
+                        seconds_since_keepalive = 0
+                    await asyncio.sleep(1)
+                    seconds_since_keepalive += 1
 
-        return StreamingResponse(
-            stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
+            return StreamingResponse(
+                stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
 
-    @app.post("/github/session-stop/{token}", include_in_schema=False)
-    async def session_viewer_stop(token: str) -> Response:
-        stopped = await processor.stop_session(token)
-        if stopped is None:
-            raise HTTPException(404, detail="session viewer link is invalid")
-        return JSONResponse({"stopped": stopped})
+        if selected_mode == "stop":
+            if request.method != "POST":
+                raise HTTPException(405, detail="stopping a session only accepts POST")
+            stopped = await processor.stop_session(token)
+            if stopped is None:
+                raise HTTPException(404, detail="session viewer link is invalid")
+            return JSONResponse({"stopped": stopped})
+
+        raise HTTPException(400, detail="session mode must be page, data, stream, or stop")
 
     @app.post("/github/webhook")
     async def webhook(request: Request) -> Response:
@@ -1105,11 +1117,6 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         assets = output / "_next"
         if assets.is_dir():
             app.mount("/_next", StaticFiles(directory=assets), name="github_session_assets")
-        app.mount(
-            "/github/session",
-            StaticFiles(directory=output / "github" / "session", html=True),
-            name="github_session_viewer",
-        )
 
     return app
 

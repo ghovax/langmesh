@@ -126,9 +126,10 @@ def working_comment(message: str, *, viewer_url: str = "") -> str:
     """Add a standard GitHub note to an in-progress comment."""
     text = message.strip() or "Working on this."
     if viewer_url:
-        text = f"""{text}
+        return f"""> [!NOTE]
+> Work is still in progress. [View the live session]({viewer_url})
 
-[View the live session]({viewer_url})"""
+{text}"""
     return f"""> [!NOTE]
 > Work is still in progress.
 
