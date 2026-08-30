@@ -30,6 +30,7 @@ github:
   api_url: "https://api.github.com"
 server:
   public_url: "https://github-agent.example.net"
+  shutdown_grace_seconds: 25.0
 compaction:
   automatic: true
   reclaim_at_fraction: 0.9
@@ -60,6 +61,10 @@ chmod 600 /srv/langmesh/secrets/provider-keys.fernet
 ```
 
 The service stores provider API keys and OAuth tokens encrypted in the external database, keyed by GitHub installation. The GitHub worker uses the compaction settings from this operator file with a direct preparation port. For a ChatGPT OAuth installation, it refreshes the authenticated live model catalogue before building the session, so the model's reported context window is used automatically; when that catalogue is unavailable, the models.dev value remains the fallback. Compaction intentionally invalidates the conversation portion of the provider cache; the stable instructions and tool definitions remain reusable. The delivery queue and session checkpoints use that same database, so another worker can continue after the original worker disappears. Different installations can choose different providers and models. For example, an installation may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like `sk-or-v1-...`.
+
+On a paid Render service, set `maxShutdownDelaySeconds` to `300` to give active deliveries the full shutdown window. Free services do not support that setting, so the application uses its 25-second grace period: the worker stops claiming new deliveries, lets the active delivery finish when possible, and returns unfinished work to the database queue immediately if the window expires. The delivery then resumes from its durable checkpoint after restart.
+
+For a Free Render web service, the repository's `Keep Render awake` workflow sends an inbound request every ten minutes. That prevents ordinary idle suspension and wakes the service when it is asleep; the queue worker then resumes from the external database. GitHub-hosted standard runners are free for this public repository. The watchdog is best effort because Render can still restart a Free service without notice.
 
 GitHub mention sessions have a private Nix package profile. The service image already contains Nix, Git, `gh`, the Render CLI, `curl`, `jq`, `ripgrep`, `fd`, archive tools, the Python/uv runtime, Ruff, GCC/G++, Clang/LLVM, Make, CMake, Ninja, pkg-config, Rust, Node.js, and Bun. The agent can install another package into its private profile with `nix profile add nixpkgs#<package>`. The LangMesh checkout also contains the reproducible Render CLI package, available as `nix profile add github:ghovax/langmesh#render-cli`. The GitHub service supplies `GH_TOKEN` for repository operations. Render commands require an explicitly configured `RENDER_API_KEY`; the agent must never fabricate or print it.
 

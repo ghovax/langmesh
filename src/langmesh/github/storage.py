@@ -13,7 +13,7 @@ from typing import Any
 
 from cryptography.fernet import Fernet
 from models_provider import OAuthTokens, ProviderAuthentication
-from sqlalchemy import BigInteger, Index, String, Text, and_, exists, or_, select
+from sqlalchemy import BigInteger, Index, String, Text, and_, exists, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -161,6 +161,11 @@ class Store:
     async def close(self) -> None:
         await self.engine.dispose()
 
+    async def _begin_sqlite_write(self, session: AsyncSession) -> None:
+        """Serialize SQLite writers where row-level locks are unavailable."""
+        if session.bind is not None and session.bind.dialect.name == "sqlite":
+            await session.execute(text("BEGIN IMMEDIATE"))
+
     async def _next_sequence(self, session: AsyncSession, session_id: str) -> int:
         dialect = session.bind.dialect.name if session.bind is not None else ""
         if dialect == "postgresql":
@@ -196,6 +201,7 @@ class Store:
         session_id = delivery_session_id(event_name, payload)
         try:
             async with self._sessions.begin() as session:
+                await self._begin_sqlite_write(session)
                 if await session.get(Delivery, delivery_id) is not None:
                     return False
                 sequence = await self._next_sequence(session, session_id) if session_id else 0
@@ -221,6 +227,7 @@ class Store:
         while True:
             superseded = False
             async with self._sessions.begin() as session:
+                await self._begin_sqlite_write(session)
                 candidate = aliased(Delivery)
                 prior = aliased(Delivery)
                 earlier_active = exists(
@@ -295,6 +302,7 @@ class Store:
 
     async def complete(self, delivery_id: str) -> None:
         async with self._sessions.begin() as session:
+            await self._begin_sqlite_write(session)
             lock = session.bind is not None and session.bind.dialect.name != "sqlite"
             delivery = await session.get(Delivery, delivery_id, with_for_update=lock)
             if delivery is None:
@@ -308,23 +316,39 @@ class Store:
 
     async def schedule_retry(self, delivery_id: str, error: str, delay: int) -> None:
         async with self._sessions.begin() as session:
+            await self._begin_sqlite_write(session)
             delivery = await session.get(Delivery, delivery_id)
             if delivery is None:
                 return
             delivery.status = "queued"
             delivery.claimed_at = None
             delivery.next_attempt_at = int(time.time()) + max(1, delay)
-            delivery.last_error = error[:4000]
+            delivery.last_error = error
+
+    async def release_processing(self, delivery_id: str, error: str) -> bool:
+        """Return a still-processing delivery to the queue without reviving completed work."""
+        async with self._sessions.begin() as session:
+            await self._begin_sqlite_write(session)
+            lock = session.bind is not None and session.bind.dialect.name != "sqlite"
+            delivery = await session.get(Delivery, delivery_id, with_for_update=lock)
+            if delivery is None or delivery.status != "processing":
+                return False
+            delivery.status = "queued"
+            delivery.claimed_at = None
+            delivery.next_attempt_at = int(time.time()) + 1
+            delivery.last_error = error
+            return True
 
     async def mark_failed(self, delivery_id: str, error: str) -> None:
         async with self._sessions.begin() as session:
+            await self._begin_sqlite_write(session)
             delivery = await session.get(Delivery, delivery_id)
             if delivery is None:
                 return
             delivery.status = "failed"
             delivery.claimed_at = None
             delivery.next_attempt_at = 0
-            delivery.last_error = error[:4000]
+            delivery.last_error = error
 
     async def comment_id_for_delivery(self, delivery_id: str) -> int | None:
         async with self._sessions() as session:

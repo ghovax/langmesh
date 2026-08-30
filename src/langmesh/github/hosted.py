@@ -81,6 +81,7 @@ class Settings:
     queue_poll_seconds: float
     maximum_delivery_attempts: int
     public_url: str
+    shutdown_grace_seconds: float
     compaction: CompactionConfiguration
     provider_application_ids: Mapping[str, str] = field(default_factory=dict)
     github_api_url: str = "https://api.github.com"
@@ -153,6 +154,18 @@ class Settings:
                 "GitHub App configuration needs storage.queue.maximum_delivery_attempts "
                 f"to be a positive integer: {configuration_path}"
             )
+        try:
+            shutdown_grace_seconds = float(server.get("shutdown_grace_seconds", 25.0))
+        except (TypeError, ValueError) as error:
+            raise RuntimeError(
+                "GitHub App configuration needs server.shutdown_grace_seconds "
+                f"to be between 1 and 300 seconds: {configuration_path}"
+            ) from error
+        if not 1.0 <= shutdown_grace_seconds <= 300.0:
+            raise RuntimeError(
+                "GitHub App configuration needs server.shutdown_grace_seconds "
+                f"to be between 1 and 300 seconds: {configuration_path}"
+            )
         return cls(
             app_id=required(app, "id", "github.app"),
             private_key_path=Path(required(app, "private_key_path", "github.app")).expanduser(),
@@ -166,6 +179,7 @@ class Settings:
             queue_poll_seconds=max(0.5, float(queue.get("poll_seconds") or 5)),
             maximum_delivery_attempts=maximum_delivery_attempts,
             public_url=required(server, "public_url", "server").rstrip("/"),
+            shutdown_grace_seconds=shutdown_grace_seconds,
             compaction=compaction,
             github_api_url=str(github.get("api_url") or "https://api.github.com").rstrip("/"),
             provider_application_ids={
@@ -271,19 +285,52 @@ class Processor:
             store.engine, table="github_session_checkpoints"
         )
         self._locks: dict[str, asyncio.Lock] = {}
+        self._stop_requested = asyncio.Event()
+        self._active_delivery_id: str | None = None
 
     async def initialize(self) -> None:
         initialize = getattr(self._checkpoints, "initialize", None)
         if initialize is not None:
             await initialize()
 
+    def request_stop(self) -> None:
+        """Stop claiming new deliveries after the current one reaches a safe boundary."""
+        self._stop_requested.set()
+
+    async def release_active_delivery(self) -> None:
+        """Return unfinished work to the durable queue before forced process termination."""
+        delivery_id = self._active_delivery_id
+        if delivery_id is None:
+            return
+        released = await self.store.release_processing(
+            delivery_id,
+            "service shutdown interrupted delivery; retrying from the durable checkpoint",
+        )
+        if released:
+            logger.info("requeued GitHub delivery id=%s after service shutdown", delivery_id)
+
+    async def _wait_for_next_poll(self) -> None:
+        try:
+            await asyncio.wait_for(
+                self._stop_requested.wait(), timeout=self.settings.queue_poll_seconds
+            )
+        except asyncio.TimeoutError:
+            pass
+
     async def run_forever(self) -> None:
-        while True:
+        self._stop_requested.clear()
+        while not self._stop_requested.is_set():
             delivery = await self.store.claim()
             if delivery is None:
-                await asyncio.sleep(self.settings.queue_poll_seconds)
+                await self._wait_for_next_poll()
                 continue
             delivery_id = str(delivery["delivery_id"])
+            if self._stop_requested.is_set():
+                await self.store.release_processing(
+                    delivery_id,
+                    "service shutdown arrived before delivery started; retrying from the queue",
+                )
+                break
             attempts = int(delivery.get("attempts") or 1)
             recovered = bool(delivery.get("recovered"))
             event_name = str(delivery["event_name"])
@@ -307,6 +354,7 @@ class Processor:
                     self.settings.maximum_delivery_attempts,
                 )
                 continue
+            self._active_delivery_id = delivery_id
             try:
                 await self.process(
                     event_name,
@@ -332,6 +380,8 @@ class Processor:
             else:
                 await self.store.complete(delivery_id)
                 logger.info("completed GitHub delivery id=%s", delivery_id)
+            finally:
+                self._active_delivery_id = None
 
     def _runner(self, token: str):
         def run(
@@ -672,7 +722,14 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             yield
         finally:
             if worker is not None:
-                worker.cancel()
+                processor.request_stop()
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(worker), timeout=settings.shutdown_grace_seconds
+                    )
+                except asyncio.TimeoutError:
+                    await processor.release_active_delivery()
+                    worker.cancel()
                 await asyncio.gather(worker, return_exceptions=True)
             await store.close()
 
