@@ -1,4 +1,6 @@
-FROM nixos/nix:2.35.2
+# syntax=docker/dockerfile:1
+
+FROM nixos/nix:2.35.2 AS runtime-base
 
 WORKDIR /app
 
@@ -55,9 +57,24 @@ RUN nix profile install --accept-flake-config --priority 4 \
 RUN nix profile install --accept-flake-config --priority 3 nixpkgs#procps
 RUN nix profile install --accept-flake-config --priority 3 nixpkgs#gcc
 
+FROM runtime-base AS web-builder
+
+COPY web/package.json web/bun.lock ./web/
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    cd web && bun install --frozen-lockfile
+COPY web ./web
+COPY shared ./shared
+RUN --mount=type=cache,target=/app/web/.next/cache \
+    cd web && next build
+
+FROM runtime-base
+
 COPY . .
-RUN uv sync --frozen --no-dev
-RUN cd web && bun install --frozen-lockfile && bun run build
+COPY --from=web-builder /app/web/out ./web/out
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    cd web && bun install --frozen-lockfile && bun run check:events && rm -rf node_modules
 
 EXPOSE 10000
 
