@@ -2,7 +2,7 @@
 
 A native macOS window over the same control plane the `langmesh` command serves. The app holds no harness of its own: it finds a daemon, talks to it, and shows you what it says. Anything the app can do, the interface in a browser (or a phone) can do, and the reverse.
 
-Open **LangMesh** to start it: the release app starts the separately installed daemon on this machine when it cannot find one, then opens the window.
+Open **LangMesh** to start it: the app starts the separately installed daemon on this machine when it cannot find one, then opens the window.
 
 ## What the window shows
 
@@ -56,7 +56,7 @@ The app is a client, so the daemon it talks to need not be the one on this machi
 - **A paired daemon.** Run `langmeshd` on another host, expose its loopback door behind a transport you choose, add that machine's pairing link under **Settings, then Connection**, and switch to it in the same window. Sessions from that host appear in the sidebar under that machine. The desktop app remembers paired machines (see [`langmesh serve --reach`](installation.md#the-langmesh-command)). The agent's shell, files, and network all live on that host; the interface stays native.
 - **An SSH location.** An environment whose `kind` is remote forwards a local port through `ssh -L`, so a session on the daemon you are already talking to can work on a machine you reach only over SSH, with nothing exposed. The daemon does not move.
 
-When there is no daemon on this machine, the release app asks the separately installed `LangMesh Computer Use.app` to start **this machine's** daemon and waits for its published endpoint. If that bundle is missing or cannot start, the app remains disconnected and reports the failure. A paired daemon is never started or replaced by that recovery.
+When there is no daemon on this machine, the app asks the separately installed `LangMesh Computer Use.app` to start **this machine's** daemon and waits for its published endpoint. If that bundle is missing or cannot start, the app remains disconnected and reports the failure. A paired daemon is never started or replaced by that recovery.
 
 ## Where to go next
 

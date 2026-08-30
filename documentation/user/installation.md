@@ -1,35 +1,8 @@
 # Installation
 
-LangMesh targets **macOS on Apple Silicon (`aarch64`)**. The screen-control tools (`control_screen`) and the packaged app are macOS-specific. The harness itself is portable Python, but the desktop experience is built for the Mac.
+LangMesh targets **macOS on Apple Silicon (`aarch64`)**. The screen-control tools (`control_screen`) and the desktop app are macOS-specific. The harness itself is portable Python, but the desktop experience is built for the Mac.
 
-## Option 1: download the app
-
-1. Open the [**Releases**](https://github.com/ghovax/langmesh/releases) page and download the latest `LANGMESH_<version>_aarch64.dmg`.
-1. Open the `.dmg` and drag **LangMesh** into **Applications**.
-1. Launch it.
-
-### Gatekeeper
-
-The app is **self-signed, not Apple-notarized**, so macOS Gatekeeper refuses the first launch with an "unidentified developer" or "damaged" message. This is expected. Clear it once, either way:
-
-- Right-click `LangMesh.app`, choose **Open**, then **Open** again in the dialog, or
-
-- From a terminal:
-
-  ```shell
-  xattr -dr com.apple.quarantine /Applications/LangMesh.app
-  ```
-
-Notarized builds are planned. Until then this one-time step is required.
-
-### Permissions the app may ask for
-
-- **Accessibility** is required for the screen-control tools (`control_screen`) to read and act on native apps. LangMesh prompts you and deep-links to the right settings pane. Grant it to LangMesh.
-- **Chrome remote debugging** is required for the screen-control tools to drive your own Chrome. LangMesh shows a one-click prompt that opens `chrome://inspect`. Enable the remote-debugging toggle once.
-
-Neither is needed for plain chat or the file, shell, and web tools.
-
-## Option 2: build from source
+## Build from source
 
 LangMesh is **two artifacts**, built independently, because the app is a *client* of the daemon rather than its container. The daemon bundle carries the harness, the `langmesh` command, and `langmeshd` — the one binary entered two ways — in one signed image. The app is a window that finds a daemon and talks to it. Build them in either order; neither build triggers the other.
 
@@ -65,6 +38,21 @@ You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv`
 | `packaging/build-daemon.sh` says "daemon up to date" after you changed something | The freshness guard decided nothing that goes into the freeze had changed                                                             | `FORCE=1 packaging/build-daemon.sh`                                                                                     |
 
 The certificate and signing commands are optional for a build that only runs. They are necessary for a **stable Accessibility grant**: without it, every rebuild is a new code identity and macOS asks again.
+
+### Gatekeeper
+
+The locally built app is **self-signed, not Apple-notarized**, so macOS Gatekeeper may refuse its first launch with an "unidentified developer" or "damaged" message. Clear it once by right-clicking `LangMesh.app`, choosing **Open**, and choosing **Open** again, or run:
+
+```shell
+xattr -dr com.apple.quarantine /Applications/LangMesh.app
+```
+
+### Permissions the app may ask for
+
+- **Accessibility** is required for the screen-control tools (`control_screen`) to read and act on native apps. LangMesh prompts you and deep-links to the right settings pane. Grant it to LangMesh.
+- **Chrome remote debugging** is required for the screen-control tools to drive your own Chrome. LangMesh shows a one-click prompt that opens `chrome://inspect`. Enable the remote-debugging toggle once.
+
+Neither is needed for plain chat or the file, shell, and web tools.
 
 Both artifacts carry the same `CFBundleName` and identifier, so one certificate over both keeps them a single **LangMesh** row. See the [Development guide](../internal/development.md#building-and-signing).
 

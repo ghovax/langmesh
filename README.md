@@ -30,14 +30,9 @@ The harness writes the system prompt, defines the tools, manages context, and se
 
 ## Install
 
-LangMesh runs on **macOS on Apple Silicon**. It ships as two downloads:
+LangMesh runs on **macOS on Apple Silicon**. Build the desktop app and daemon from source with the Nix-pinned toolchain, then install both artifacts. You can also run the interface in a browser with `langmesh serve`.
 
-- **The daemon bundle**, which carries the harness, the daemon and the `langmesh` command in one signed image (`LangMesh Computer Use.app`).
-- **The app**, which is the window that talks to it (`LangMesh.app`).
-
-Download the latest release, install both, and open the app (or run `langmesh serve` for the browser). The build is self-signed, so Gatekeeper warns you at the first launch. You can also build from source with the Nix-pinned toolchain.
-
-See the [Installation guide](documentation/user/installation.md) for both paths in full.
+See the [Installation guide](documentation/user/installation.md) for the build instructions.
 
 ## GitHub bot
 

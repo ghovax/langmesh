@@ -4,7 +4,7 @@ LangMesh has three parts:
 
 - The **Python image**: two packages — the `langmesh` library (the harness) and the `langmeshd` product (daemon, CLI, REST, worker, dictation) — entered as one executable, `langmesh` or `langmeshd`.
 - The **Next.js web UI**, shared with the phone.
-- The **Tauri desktop shell**. In development you run the daemon and the UI directly; the packaged app is built only for releases.
+- The **Tauri desktop shell**. In development you run the daemon and the UI directly; the packaged app is built separately from the daemon.
 
 ## Toolchain
 
@@ -56,7 +56,7 @@ A new setting is a field on a configuration model, and then three things that ar
 | `cd web`            |                                                            |
 | `bun run tauri:dev` | Launches the Tauri window against the dev UI.              |
 
-Start the checkout daemon before the development window so testing never silently switches to the installed production build. Automatic local startup belongs only to a release app.
+Start the checkout daemon before the development window so testing never silently switches to the installed production build. Automatic local startup belongs only to a built app.
 
 ## Logs and copy
 
