@@ -1,34 +1,33 @@
 "use client";
 
-import { Box, Button, Flex, Input, Text } from "@chakra-ui/react";
+import { Box, Flex, Link, Text, VStack } from "@chakra-ui/react";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
-import { ChatMessageItem } from "./ChatMessage";
-import { TOP_BAR_HEIGHT } from "./ui/Panel";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { LuCircleHelp, LuExternalLink, LuGitPullRequest, LuMessageSquare } from "react-icons/lu";
+import { ChatInput } from "./ChatInput";
+import { ChatMessageItem, ChatToolGroup } from "./ChatMessage";
+import { ColorModeButton } from "./ui/ColorMode";
+import { PanelHeader } from "./ui/Panel";
 import type { ChatMessage } from "@/lib/use-chat";
+import { timelineItems } from "@/lib/chat-timeline";
 
 interface ViewerSnapshot {
+  session_id: string;
   repository: string;
   number: number;
   kind: "issue" | "pull";
   title: string;
+  source_url: string;
   provider: string;
   model: string;
   status: "working" | "queued" | "completed" | "failed";
   messages: ChatMessage[];
 }
 
-function statusLabel(status: ViewerSnapshot["status"]): string {
-  switch (status) {
-    case "working":
-      return "Working";
-    case "queued":
-      return "Queued";
-    case "failed":
-      return "Failed";
-    default:
-      return "Completed";
-  }
+function sourceIcon(kind: ViewerSnapshot["kind"] | undefined) {
+  if (kind === "pull") return <LuGitPullRequest size={14} />;
+  if (kind === "issue") return <LuCircleHelp size={14} />;
+  return <LuMessageSquare size={14} />;
 }
 
 function ViewerContent() {
@@ -36,7 +35,6 @@ function ViewerContent() {
   const token = searchParams.get("token") ?? "";
   const [snapshot, setSnapshot] = useState<ViewerSnapshot | null>(null);
   const [error, setError] = useState("");
-  const [stopRequested, setStopRequested] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -57,7 +55,6 @@ function ViewerContent() {
 
   const stop = useCallback(async () => {
     if (!token) return;
-    setStopRequested(true);
     try {
       const response = await fetch(`/github/session?token=${encodeURIComponent(token)}&mode=stop`, {
         method: "POST",
@@ -65,86 +62,93 @@ function ViewerContent() {
       if (!response.ok) setError("The session could not be stopped.");
     } catch {
       setError("The session could not be stopped.");
-    } finally {
-      setStopRequested(false);
     }
   }, [token]);
 
+  const timeline = useMemo(() => timelineItems(snapshot?.messages ?? []), [snapshot?.messages]);
   const issueLabel = snapshot ? `${snapshot.repository}#${snapshot.number}` : "GitHub session";
   const visibleError = error || (!token ? "This session link is missing its access token." : "");
 
   return (
-    <Flex h="100dvh" direction="column" bg="bg" color="fg">
-      <Flex
-        align="center"
-        gap={3}
-        px={4}
-        h={TOP_BAR_HEIGHT}
-        flexShrink={0}
-        borderBottom="1px solid"
-        borderColor="border"
-      >
-        <Text textStyle="panelTitle" fontWeight="medium" whiteSpace="nowrap">
-          {snapshot?.title || issueLabel}
-        </Text>
-        <Text color="fg.muted" fontSize="xs" whiteSpace="nowrap">
-          {issueLabel}
-        </Text>
-        <Box flex={1} />
-        <Text color="fg.muted" fontSize="xs" whiteSpace="nowrap">
-          {snapshot?.model || ""}
-        </Text>
-        <Text
-          fontSize="xs"
-          fontWeight="medium"
-          color={snapshot?.status === "failed" ? "red.fg" : "blue.fg"}
-        >
-          {snapshot ? statusLabel(snapshot.status) : "Loading"}
-        </Text>
-        {snapshot?.status === "working" && (
-          <Button
-            size="xs"
-            variant="outline"
-            colorPalette="red"
-            onClick={stop}
-            disabled={stopRequested}
+    <Flex h="100%" minW={0} position="relative">
+      <Flex direction="column" flex={1} minW={0} h="100%">
+        <PanelHeader icon={sourceIcon(snapshot?.kind)} title={snapshot?.title || issueLabel}>
+          {snapshot?.source_url ? (
+            <Link
+              href={snapshot.source_url}
+              target="_blank"
+              rel="noreferrer"
+              display="flex"
+              alignItems="center"
+              gap={1}
+              color="fg.muted"
+              fontSize="xs"
+              whiteSpace="nowrap"
+            >
+              {issueLabel}
+              <LuExternalLink size={12} />
+            </Link>
+          ) : null}
+          <ColorModeButton />
+        </PanelHeader>
+
+        <Box position="relative" flex={1} minH={0} display="flex" flexDirection="column">
+          <Box
+            flex={1}
+            minH={0}
+            display="flex"
+            flexDirection="column-reverse"
+            overflowY="auto"
+            px={4}
+            py={3}
+            style={{ scrollbarGutter: "stable both-edges" }}
           >
-            {stopRequested ? "Stopping" : "Stop"}
-          </Button>
-        )}
-      </Flex>
-
-      <Box flex={1} minH={0} overflowY="auto" px={4} py={6}>
-        <Box w="full" maxW="80rem" mx="auto">
-          {visibleError ? (
-            <Text color="red.fg" textAlign="center">
-              {visibleError}
-            </Text>
-          ) : snapshot && snapshot.messages.length > 0 ? (
-            <Flex direction="column" gap={6}>
-              {snapshot.messages.map((message) => (
-                <ChatMessageItem key={message.id} message={message} />
-              ))}
-            </Flex>
-          ) : (
-            <Text color="fg.muted" textAlign="center">
-              Waiting for the first session update.
-            </Text>
-          )}
+            {visibleError ? (
+              <Text color="red.fg" textAlign="center">
+                {visibleError}
+              </Text>
+            ) : snapshot && timeline.length > 0 ? (
+              <VStack gap={2.5} align="stretch" w="full" maxW="80rem" mx="auto">
+                {timeline.map((item) =>
+                  item.kind === "tool_group" ? (
+                    <ChatToolGroup key={item.id} messages={item.messages} />
+                  ) : (
+                    <ChatMessageItem key={item.message.id} message={item.message} />
+                  ),
+                )}
+              </VStack>
+            ) : (
+              <Flex align="center" justify="center" minH="100%">
+                <Text color="fg.muted">Waiting for the first session update.</Text>
+              </Flex>
+            )}
+          </Box>
         </Box>
-      </Box>
 
-      <Flex
-        align="center"
-        gap={2}
-        px={4}
-        py={3}
-        borderTop="1px solid"
-        borderColor="border"
-        opacity={0.7}
-      >
-        <Input disabled placeholder="Read-only session" aria-label="Read-only session input" />
-        <Button disabled>Send</Button>
+        <Box
+          px={4}
+          pb="var(--safe-bottom, 0px)"
+          overflowY="hidden"
+          flexShrink={0}
+          style={{ scrollbarGutter: "stable both-edges" }}
+        >
+          <Box w="full" maxW="80rem" mx="auto">
+            <ChatInput
+              onSend={() => {}}
+              onAbort={stop}
+              isStreaming={snapshot?.status === "working"}
+              readOnly
+              sessionId={snapshot?.session_id ?? null}
+              directoryAvailable={false}
+              agents={[]}
+              selectedAgent=""
+              onAgentChange={() => {}}
+              models={[]}
+              modelProviders={[]}
+              onAgentModelChange={() => {}}
+            />
+          </Box>
+        </Box>
       </Flex>
     </Flex>
   );
