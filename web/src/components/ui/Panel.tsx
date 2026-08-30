@@ -108,7 +108,7 @@ export function PanelEmptyState({
   description,
 }: {
   icon: ReactNode;
-  title: ReactNode;
+  title?: ReactNode;
   description?: ReactNode;
 }) {
   return (
@@ -125,12 +125,14 @@ export function PanelEmptyState({
       <EmptyState.Root size="sm">
         <EmptyState.Content>
           <EmptyState.Indicator>{icon}</EmptyState.Indicator>
-          <VStack gap={1}>
-            <EmptyState.Title fontSize="sm">{title}</EmptyState.Title>
-            {description ? (
-              <EmptyState.Description fontSize="xs">{description}</EmptyState.Description>
-            ) : null}
-          </VStack>
+          {title ? (
+            <VStack gap={1}>
+              <EmptyState.Title fontSize="sm">{title}</EmptyState.Title>
+              {description ? (
+                <EmptyState.Description fontSize="xs">{description}</EmptyState.Description>
+              ) : null}
+            </VStack>
+          ) : null}
         </EmptyState.Content>
       </EmptyState.Root>
     </Flex>

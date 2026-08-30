@@ -189,7 +189,7 @@ function ViewerContent() {
                 {visibleError}
               </Text>
             ) : waitingForSession ? (
-              <PanelEmptyState icon={<ActivitySpinner />} title="Loading session" />
+              <PanelEmptyState icon={<ActivitySpinner boxSize="6" borderWidth="2px" />} />
             ) : snapshot && timeline.length > 0 ? (
               <VStack gap={2.5} align="stretch" w="full" maxW="80rem" mx="auto">
                 {timeline.map((item) =>
