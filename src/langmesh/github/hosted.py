@@ -1137,6 +1137,21 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         if assets.is_dir():
             app.mount("/_next", StaticFiles(directory=assets), name="github_session_assets")
 
+        for filename in ("favicon.ico", "icon.png", "apple-icon.png"):
+            icon_path = output / filename
+            if not icon_path.is_file():
+                continue
+
+            async def icon_file(path: Path = icon_path) -> FileResponse:
+                return FileResponse(path)
+
+            app.add_api_route(
+                f"/{filename}",
+                icon_file,
+                methods=["GET", "HEAD"],
+                include_in_schema=False,
+            )
+
     return app
 
 
