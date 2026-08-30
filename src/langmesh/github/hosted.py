@@ -26,7 +26,13 @@ from typing import Any, Mapping
 import jwt
 import yaml
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from models_provider import (
     InMemoryCredentialStore,
     OAuthTokens,
@@ -54,9 +60,20 @@ from langmesh.github.mention import (
     working_comment,
 )
 from langmesh.github.storage import InstallationConfiguration, Store
+from langmesh.github.viewer import messages_from_checkpoint
 
 logger = logging.getLogger("langmesh.github.hosted")
 DEFAULT_CONFIGURATION_PATH = Path.home() / ".config" / "langmesh" / "github.yaml"
+
+
+def viewer_output_directory() -> Path | None:
+    """Find the static web export built into the hosted image, or return ``None`` locally."""
+    candidates = [Path.cwd() / "web" / "out"]
+    candidates.extend(parent / "web" / "out" for parent in Path(__file__).resolve().parents)
+    for directory in candidates:
+        if (directory / "github" / "session" / "index.html").is_file():
+            return directory
+    return None
 
 
 class ConfigurationUpdate(BaseModel):
@@ -285,6 +302,7 @@ class Processor:
             store.engine, table="github_session_checkpoints"
         )
         self._locks: dict[str, asyncio.Lock] = {}
+        self._active_sessions: dict[str, Any] = {}
         self._stop_requested = asyncio.Event()
         self._active_delivery_id: str | None = None
 
@@ -292,6 +310,39 @@ class Processor:
         initialize = getattr(self._checkpoints, "initialize", None)
         if initialize is not None:
             await initialize()
+
+    async def viewer_snapshot(self, token: str) -> dict[str, Any] | None:
+        """Return the protected, read-only snapshot used by the hosted session page."""
+        session_id = await self.store.session_for_viewer_token(token)
+        if session_id is None:
+            return None
+        context = await self.store.viewer_context(session_id)
+        if context is None:
+            return None
+        checkpoint = await self._checkpoints.load(session_id)
+        conversation = checkpoint.conversation if checkpoint is not None else ()
+        return {
+            **context,
+            "session_id": session_id,
+            "messages": messages_from_checkpoint(
+                conversation,
+                timestamp=str(context.get("updated_at") or ""),
+            ),
+        }
+
+    def _set_active_session(self, session_id: str, session: Any | None) -> None:
+        if session is None:
+            self._active_sessions.pop(session_id, None)
+        else:
+            self._active_sessions[session_id] = session
+
+    async def stop_session(self, token: str) -> bool | None:
+        """Interrupt the active session addressed by a viewer token, if it is currently running."""
+        session_id = await self.store.session_for_viewer_token(token)
+        if session_id is None:
+            return None
+        session = self._active_sessions.get(session_id)
+        return bool(session and session.interrupt())
 
     def request_stop(self) -> None:
         """Stop claiming new deliveries after the current one reaches a safe boundary."""
@@ -510,6 +561,11 @@ class Processor:
         )
         if mention is None or not mention.allowed:
             return
+        viewer_token = await self.store.viewer_token(mention.session_id)
+        viewer_url = (
+            f"{self.settings.public_url}/github/session?"
+            f"{urllib.parse.urlencode({'token': viewer_token})}"
+        )
         logger.info(
             "processing delivery id=%s attempt=%s installation=%s repository=%s session=%s",
             delivery_id,
@@ -537,6 +593,7 @@ class Processor:
                     delivery_id=delivery_id,
                     attempt=attempt,
                     recovered=recovered,
+                    viewer_url=viewer_url,
                 )
 
     async def _process_locked(
@@ -555,6 +612,7 @@ class Processor:
         delivery_id: str,
         attempt: int,
         recovered: bool,
+        viewer_url: str,
     ) -> None:
         ack = await self.store.comment_id_for_delivery(delivery_id)
         if ack is None:
@@ -562,14 +620,16 @@ class Processor:
                 create_comment,
                 mention.repository,
                 mention.number,
-                acknowledgement(),
+                acknowledgement(viewer_url),
                 token,
                 self.settings.github_api_url,
             )
             await self.store.remember_comment_id(delivery_id, ack)
 
         async def update_existing_comment(message: str, *, working: bool = True) -> None:
-            comment_body = working_comment(message) if working else message.strip()
+            comment_body = (
+                working_comment(message, viewer_url=viewer_url) if working else message.strip()
+            )
             try:
                 await asyncio.to_thread(
                     update_comment,
@@ -652,6 +712,9 @@ class Processor:
                     checkpoints=self._checkpoints,
                     credential_store=credential_store,
                     compaction_configuration=self.settings.compaction,
+                    session_callback=lambda session: self._set_active_session(
+                        active_mention.session_id, session
+                    ),
                 )
             finally:
                 if credential_store is not None:
@@ -673,7 +736,10 @@ class Processor:
                 return self._publish(active_mention, workspace, token, runner)
 
             pull_url = await asyncio.to_thread(publish_if_needed)
-            await update_existing_comment(posted_reply(answer, pull_url), working=False)
+            await update_existing_comment(
+                posted_reply(answer, pull_url, viewer_url),
+                working=False,
+            )
             logger.info(
                 "finished GitHub mention delivery id=%s attempt=%s session=%s pull_request=%s",
                 delivery_id,
@@ -956,6 +1022,58 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             )
         return configuration_response(setup, await store.configuration(setup[0]))
 
+    @app.get("/github/session", include_in_schema=False)
+    async def session_viewer_page() -> Response:
+        output = viewer_output_directory()
+        if output is None:
+            raise HTTPException(503, detail="the session viewer is not built")
+        return FileResponse(output / "github" / "session" / "index.html")
+
+    @app.get("/github/session-data/{token}", include_in_schema=False)
+    async def session_viewer_data(token: str) -> Response:
+        snapshot = await processor.viewer_snapshot(token)
+        if snapshot is None:
+            raise HTTPException(404, detail="session viewer link is invalid")
+        response = JSONResponse(snapshot)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.get("/github/session-stream/{token}", include_in_schema=False)
+    async def session_viewer_stream(token: str, request: Request) -> Response:
+        if await store.session_for_viewer_token(token) is None:
+            raise HTTPException(404, detail="session viewer link is invalid")
+
+        async def stream():
+            previous = ""
+            seconds_since_keepalive = 0
+            while not await request.is_disconnected():
+                snapshot = await processor.viewer_snapshot(token)
+                if snapshot is None:
+                    return
+                serialized = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
+                if serialized != previous:
+                    yield f"data: {serialized}\n\n"
+                    previous = serialized
+                    seconds_since_keepalive = 0
+                elif seconds_since_keepalive >= 15:
+                    yield ": keepalive\n\n"
+                    seconds_since_keepalive = 0
+                await asyncio.sleep(1)
+                seconds_since_keepalive += 1
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.post("/github/session-stop/{token}", include_in_schema=False)
+    async def session_viewer_stop(token: str) -> Response:
+        stopped = await processor.stop_session(token)
+        if stopped is None:
+            raise HTTPException(404, detail="session viewer link is invalid")
+        return JSONResponse({"stopped": stopped})
+
     @app.post("/github/webhook")
     async def webhook(request: Request) -> Response:
         raw = await request.body()
@@ -979,6 +1097,19 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             raw.decode("utf-8"),
         )
         return Response(status_code=202)
+
+    output = viewer_output_directory()
+    if output is not None:
+        from fastapi.staticfiles import StaticFiles
+
+        assets = output / "_next"
+        if assets.is_dir():
+            app.mount("/_next", StaticFiles(directory=assets), name="github_session_assets")
+        app.mount(
+            "/github/session",
+            StaticFiles(directory=output / "github" / "session", html=True),
+            name="github_session_viewer",
+        )
 
     return app
 

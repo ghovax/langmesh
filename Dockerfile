@@ -57,6 +57,7 @@ RUN nix profile install --accept-flake-config --priority 3 nixpkgs#gcc
 
 COPY . .
 RUN uv sync --frozen --no-dev
+RUN cd web && bun install --frozen-lockfile && bun run build
 
 EXPOSE 10000
 

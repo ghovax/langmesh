@@ -118,13 +118,17 @@ class Mention:
         return self.association in ALLOWED_ASSOCIATIONS and not self.is_fork
 
 
-def acknowledgement() -> str:
-    return working_comment(render("acknowledgement"))
+def acknowledgement(viewer_url: str = "") -> str:
+    return working_comment(render("acknowledgement"), viewer_url=viewer_url)
 
 
-def working_comment(message: str) -> str:
+def working_comment(message: str, *, viewer_url: str = "") -> str:
     """Add a standard GitHub note to an in-progress comment."""
     text = message.strip() or "Working on this."
+    if viewer_url:
+        text = f"""{text}
+
+[View the live session]({viewer_url})"""
     return f"""> [!NOTE]
 > Work is still in progress.
 
@@ -208,14 +212,18 @@ def render(name: str, variables: Mapping[str, object] | None = None) -> str:
     return _PROMPTS.load(name, dict(variables or {})).strip()
 
 
-def posted_reply(answer: str, pull_url: str = "") -> str:
+def posted_reply(answer: str, pull_url: str = "", viewer_url: str = "") -> str:
     """The issue comment: the submitted reply, or ``Done.``, plus a pull-request URL when there is one."""
     note = answer.strip() or "Done."
-    if not pull_url:
-        return note
-    return f"""{note}
+    if pull_url:
+        note = f"""{note}
 
 {pull_url}"""
+    if viewer_url:
+        note = f"""{note}
+
+[View the session]({viewer_url})"""
+    return note
 
 
 def turn_payload(
@@ -638,6 +646,7 @@ async def run_turn(
     checkpoints: Checkpoints,
     credential_store: Any = None,
     compaction_configuration: CompactionConfiguration | None = None,
+    session_callback: Callable[[Session | None], None] | None = None,
 ) -> str:
     if provider.strip().lower() == "chatgpt" and credential_store is not None:
         credential_binding = bind_credential_store(credential_store)
@@ -658,109 +667,119 @@ async def run_turn(
         credential_store=credential_store,
         compaction_configuration=compaction_configuration,
     ) as session:
-        restored = await session.restore()
-        followup = restored or thread_followup
-        resolved_provider = provider.strip()
-        resolved_model = model.strip()
-        key = api_key.strip()
-        resolved = resolve_litellm(
-            f"{resolved_provider}/{resolved_model}",
-            {resolved_provider: key} if key else {},
-            {},
-            credential_store=credential_store,
-        )
-        logger.info(
-            "mention model %s/%s wire=%s base=%s restored=%s messages=%s "
-            "thread_followup=%s followup=%s session=%s rss_mib=%s",
-            resolved_provider,
-            resolved_model,
-            resolved["model"],
-            resolved["api_base"],
-            restored,
-            len(session.conversation),
-            thread_followup,
-            followup,
-            mention.session_id,
-            _resident_memory_megabytes(),
-        )
-        await session.set_permission_mode("automatic")
-        answer = ""
-        response_text = ""
-        model_call = 0
-        compaction_started = False
-        async for event in session.stream(
-            prompt_for(mention, checkout=checkout, followup=followup)
-        ):
-            if isinstance(event, Usage):
-                model_call += 1
-                logger.info(
-                    "mention usage session=%s call=%s input=%s output=%s "
-                    "cache_read=%s cache_write=%s prefix_reusable=%s "
-                    "reusable_prefix=%s shared=%s/%s divergence=%s "
-                    "request_reusable=%s cache_fraction=%s rss_mib=%s",
-                    mention.session_id,
-                    model_call,
-                    event.input_tokens,
-                    event.output_tokens,
-                    event.cache_read_tokens,
-                    event.cache_write_tokens,
-                    event.cache_prefix_reusable,
-                    event.reusable_prefix_tokens,
-                    event.shared_segments,
-                    event.segments,
-                    event.divergence,
-                    event.cache_request_reusable,
-                    event.cache_read_fraction,
-                    _resident_memory_megabytes(),
-                )
-            if isinstance(event, CompactionStarted):
-                if not compaction_started and update_comment is not None:
-                    await update_comment("Compacting the conversation before continuing.")
-                compaction_started = True
-                logger.info(
-                    "mention compaction started session=%s reason=%s "
-                    "messages_before=%s tokens_before=%s",
-                    mention.session_id,
-                    event.reason,
-                    event.messages_before,
-                    event.tokens_before,
-                )
-            if isinstance(event, CompactionDone):
-                if update_comment is not None:
-                    status = (
-                        "Compaction complete. Continuing."
-                        if event.ok
-                        else "Compaction did not complete; the turn cannot continue automatically."
+        if session_callback is not None:
+            session_callback(session)
+        try:
+            restored = await session.restore()
+            followup = restored or thread_followup
+            resolved_provider = provider.strip()
+            resolved_model = model.strip()
+            key = api_key.strip()
+            resolved = resolve_litellm(
+                f"{resolved_provider}/{resolved_model}",
+                {resolved_provider: key} if key else {},
+                {},
+                credential_store=credential_store,
+            )
+            logger.info(
+                "mention model %s/%s wire=%s base=%s restored=%s messages=%s "
+                "thread_followup=%s followup=%s session=%s rss_mib=%s",
+                resolved_provider,
+                resolved_model,
+                resolved["model"],
+                resolved["api_base"],
+                restored,
+                len(session.conversation),
+                thread_followup,
+                followup,
+                mention.session_id,
+                _resident_memory_megabytes(),
+            )
+            await session.set_permission_mode("automatic")
+            answer = ""
+            response_text = ""
+            model_call = 0
+            compaction_started = False
+            async for event in session.stream(
+                prompt_for(mention, checkout=checkout, followup=followup)
+            ):
+                if isinstance(event, Usage):
+                    model_call += 1
+                    logger.info(
+                        "mention usage session=%s call=%s input=%s output=%s "
+                        "cache_read=%s cache_write=%s prefix_reusable=%s "
+                        "reusable_prefix=%s shared=%s/%s divergence=%s "
+                        "request_reusable=%s cache_fraction=%s rss_mib=%s",
+                        mention.session_id,
+                        model_call,
+                        event.input_tokens,
+                        event.output_tokens,
+                        event.cache_read_tokens,
+                        event.cache_write_tokens,
+                        event.cache_prefix_reusable,
+                        event.reusable_prefix_tokens,
+                        event.shared_segments,
+                        event.segments,
+                        event.divergence,
+                        event.cache_request_reusable,
+                        event.cache_read_fraction,
+                        _resident_memory_megabytes(),
                     )
-                    await update_comment(status)
-                compaction_started = False
-                logger.info(
-                    "mention compaction done session=%s reason=%s ok=%s "
-                    "messages_before=%s messages_after=%s "
-                    "tokens_before=%s tokens_after=%s error=%s rss_mib=%s",
-                    mention.session_id,
-                    event.reason,
-                    event.ok,
-                    event.messages_before,
-                    event.messages_after,
-                    event.tokens_before,
-                    event.tokens_after,
-                    event.error_code,
-                    _resident_memory_megabytes(),
-                )
-            if isinstance(event, Suspended):
-                raise PermissionError(
-                    "This turn is suspended. Inspect `session.state.pending`, "
-                    "call `session.respond(...)` for each interaction, then drive "
-                    "`session.resume()`; or supply an approver through SessionComponents."
-                )
-            if isinstance(event, TextChunk):
-                response_text += event.text
-            if isinstance(event, ToolCall):
-                status = response_text.strip()
-                if status and update_comment is not None:
-                    await update_comment(status)
-                    response_text = ""
-            if isinstance(event, Done):
-                answer = event.text or response_text or answer
-        return answer.strip()
+                if isinstance(event, CompactionStarted):
+                    if not compaction_started and update_comment is not None:
+                        await update_comment("Compacting the conversation before continuing.")
+                    compaction_started = True
+                    logger.info(
+                        "mention compaction started session=%s reason=%s "
+                        "messages_before=%s tokens_before=%s",
+                        mention.session_id,
+                        event.reason,
+                        event.messages_before,
+                        event.tokens_before,
+                    )
+                if isinstance(event, CompactionDone):
+                    if update_comment is not None:
+                        status = (
+                            "Compaction complete. Continuing."
+                            if event.ok
+                            else "Compaction did not complete; the turn cannot continue automatically."
+                        )
+                        await update_comment(status)
+                    compaction_started = False
+                    logger.info(
+                        "mention compaction done session=%s reason=%s ok=%s "
+                        "messages_before=%s messages_after=%s "
+                        "tokens_before=%s tokens_after=%s error=%s rss_mib=%s",
+                        mention.session_id,
+                        event.reason,
+                        event.ok,
+                        event.messages_before,
+                        event.messages_after,
+                        event.tokens_before,
+                        event.tokens_after,
+                        event.error_code,
+                        _resident_memory_megabytes(),
+                    )
+                if isinstance(event, Suspended):
+                    raise PermissionError(
+                        "This turn is suspended. Inspect `session.state.pending`, "
+                        "call `session.respond(...)` for each interaction, then drive "
+                        "`session.resume()`; or supply an approver through SessionComponents."
+                    )
+                if isinstance(event, TextChunk):
+                    response_text += event.text
+                if isinstance(event, ToolCall):
+                    status = response_text.strip()
+                    if status and update_comment is not None:
+                        await update_comment(status)
+                        response_text = ""
+                if isinstance(event, Done):
+                    answer = (
+                        "Stopped."
+                        if event.stop_reason == "cancelled"
+                        else event.text or response_text or answer
+                    )
+            return answer.strip()
+        finally:
+            if session_callback is not None:
+                session_callback(None)
