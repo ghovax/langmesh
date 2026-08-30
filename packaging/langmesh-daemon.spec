@@ -104,7 +104,7 @@ _mcp = _os.path.join(_repo_root, ".agents", "mcp.json")
 if _os.path.isfile(_mcp):
     datas.append((_mcp, ".agents"))
 
-# The built interface, flattened from `web/out` to the layout the server expects, so `langmesh web` works installed; absent, the freeze still succeeds.
+# The built interface, flattened from `web/out` to the layout the server expects, so `langmesh serve` works installed; absent, the freeze still succeeds.
 _interface = _os.path.join(_repo_root, "web", "out")
 if _os.path.isdir(_interface):
     for _directory, _subdirectories, _filenames in _os.walk(_interface):
@@ -114,7 +114,7 @@ if _os.path.isdir(_interface):
             _source = _os.path.join(_directory, _filename)
             datas.append((_source, _os.path.join("web", _os.path.relpath(_directory, _interface))))
 else:
-    print("[langmesh-daemon.spec] web/out is absent; `langmesh web` will not work from this build")
+    print("[langmesh-daemon.spec] web/out is absent; `langmesh serve` will not serve the interface from this build")
 
 # The automation tools' runtime assets — per-surface message templates and browser scripts — bundled whole, since the tools degrade without them.
 for _asset_subdir in ("messages", "scripts"):

@@ -276,7 +276,7 @@ telemetry:
   sample_ratio: 1.0
 ```
 
-**There is no default agent setting**, here or anywhere. Every session is created with an explicit agent, and no profile is the one to fall back to. Add your own under `~/.agents/agents/<id>/` or `.agents/agents/<id>/` in a working directory. See [Agent system](agent-system.md).
+**Ordinary sessions have no default agent.** Every ordinary session is created with an explicit agent; mailbox sessions are the exception and use `email.agent` (the bundled `reviewer` by default). Add your own profile under `~/.agents/agents/<id>/` or `.agents/agents/<id>/` in a working directory. See [Agent system](agent-system.md).
 
 ## Configuration reference
 
