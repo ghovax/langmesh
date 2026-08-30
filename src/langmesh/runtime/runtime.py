@@ -253,6 +253,19 @@ class AgentRuntime(_RunsTurns):
             "reasoning_tokens": 0,
             "model_calls": 0,
         }
+        self._latest_usage: dict[str, Any] = {
+            "context_input_tokens": 0,
+            "context_output_tokens": 0,
+            "context_window": 0,
+            "context_window_estimated": True,
+            "context_cache_read_tokens": 0,
+            "context_cache_write_tokens": 0,
+            "latest_reusable_prefix_tokens": 0,
+            "cache_prefix_reusable": None,
+            "cache_request_reusable": None,
+            "cache_read_fraction": None,
+            "divergence": None,
+        }
 
         # Where the prompt's material comes from, supplied rather than found by walking hardcoded paths.
         # The library default discovers no skills or instruction files on disk: they are voluntary, injected by the caller.
@@ -284,6 +297,10 @@ class AgentRuntime(_RunsTurns):
         # Every model must advertise its own context capacity; an unknown window means the harness cannot schedule compacting or refuse an oversized request with numbers.
         self._context_window_estimated = reported_context_window == 0
         self._context_window = reported_context_window
+        self._latest_usage.update(
+            context_window=self._context_window,
+            context_window_estimated=self._context_window_estimated,
+        )
         self._turn_recovery = "none"
         # The failed turn a current retry continues: retries change per attempt, so chain identity
         # must come from the terminal error the chain began with, not from the attempt being failed.
@@ -589,6 +606,10 @@ class AgentRuntime(_RunsTurns):
     def token_usage(self) -> dict[str, int]:
         return dict(self._token_usage)
 
+    def token_usage_snapshot(self) -> dict[str, Any]:
+        """Return cumulative usage and the latest context/cache measurements for persistence."""
+        return {**self._token_usage, **self._latest_usage}
+
     def _accumulate_usage(self, response: AIMessage) -> Usage | None:
         """Accumulate one call's usage into the session total and answer a USAGE event, or ``None`` when none was reported."""
         usage = getattr(response, "usage_metadata", None)
@@ -624,6 +645,19 @@ class AgentRuntime(_RunsTurns):
             self._context_window_estimated = False
         context_window = self._context_window
         self._latest_context_tokens = input_tokens + output_tokens
+        self._latest_usage.update(
+            context_input_tokens=input_tokens,
+            context_output_tokens=output_tokens,
+            context_window=context_window,
+            context_window_estimated=self._context_window_estimated,
+            context_cache_read_tokens=cache_read,
+            context_cache_write_tokens=cache_write,
+            latest_reusable_prefix_tokens=reachable,
+            cache_prefix_reusable=cache_trace.get("cache_prefix_reusable"),
+            cache_request_reusable=cache_trace.get("cache_request_reusable"),
+            cache_read_fraction=cache_trace.get("cache_read_fraction"),
+            divergence=cache_trace.get("divergence"),
+        )
         return Usage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -753,6 +787,7 @@ class AgentRuntime(_RunsTurns):
             model_cache=cache_snapshot() if callable(cache_snapshot) else None,
             system_prompt=self._rendered_prompt,
             pending_input=self._pending_input,
+            token_usage=self.token_usage_snapshot(),
         )
 
     def restore_session(self, snapshot: SessionSnapshot) -> None:
@@ -775,6 +810,24 @@ class AgentRuntime(_RunsTurns):
         self._pending_input = snapshot.pending_input
         self._turn_recovery = snapshot.turn_recovery
         self._turn_failure_root = snapshot.turn_failure_root
+        persisted_usage = snapshot.token_usage
+        for key in self._token_usage:
+            value = persisted_usage.get(key)
+            if isinstance(value, (int, float)):
+                self._token_usage[key] = int(value)
+        for key in self._latest_usage:
+            if key in persisted_usage:
+                self._latest_usage[key] = persisted_usage[key]
+        persisted_context_input = self._latest_usage["context_input_tokens"]
+        persisted_context_output = self._latest_usage["context_output_tokens"]
+        if isinstance(persisted_context_input, (int, float)) and isinstance(
+            persisted_context_output, (int, float)
+        ):
+            self._latest_context_tokens = int(persisted_context_input + persisted_context_output)
+        persisted_window = self._latest_usage["context_window"]
+        if isinstance(persisted_window, (int, float)):
+            self._context_window = max(0, int(persisted_window))
+        self._context_window_estimated = bool(self._latest_usage["context_window_estimated"])
         if self._turn_recovery != "retryable":
             self._turn_failure_root = None
 

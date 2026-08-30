@@ -15,7 +15,7 @@ import { ChatInput } from "./ChatInput";
 import { ChatMessageItem, ChatToolGroup } from "./ChatMessage";
 import { PanelEmptyState, TOP_BAR_HEIGHT } from "./ui/Panel";
 import { ToolbarAction } from "./ui/Toolbar";
-import type { ChatMessage } from "@/lib/use-chat";
+import type { ChatMessage, ChatTask, TokenUsage } from "@/lib/use-chat";
 import { timelineItems } from "@/lib/chat-timeline";
 
 interface ViewerSnapshot {
@@ -33,7 +33,43 @@ interface ViewerSnapshot {
   sandbox_enforce: "required" | "preferred" | "off";
   sandbox_backend: string;
   status: "working" | "queued" | "completed" | "failed";
+  tasks: ChatTask[];
+  token_usage: Record<string, unknown>;
   messages: ChatMessage[];
+}
+
+function numberValue(values: Record<string, unknown>, name: string): number {
+  const value = values[name];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function tokenUsageFromSnapshot(snapshot: ViewerSnapshot | null): TokenUsage | null {
+  if (!snapshot) return null;
+  const values = snapshot.token_usage ?? {};
+  const contextInputTokens = numberValue(values, "context_input_tokens");
+  const contextOutputTokens = numberValue(values, "context_output_tokens");
+  if (contextInputTokens + contextOutputTokens <= 0) return null;
+  const cachePrefixReusable = values.cache_prefix_reusable;
+  return {
+    inputTokens: numberValue(values, "input_tokens"),
+    outputTokens: numberValue(values, "output_tokens"),
+    totalTokens: numberValue(values, "total_tokens"),
+    cacheReadTokens: numberValue(values, "cache_read_tokens"),
+    cacheWriteTokens: numberValue(values, "cache_write_tokens"),
+    cacheReusablePrefixTokens: numberValue(values, "reusable_prefix_tokens"),
+    reasoningTokens: numberValue(values, "reasoning_tokens"),
+    modelCalls: numberValue(values, "model_calls"),
+    contextTokens: contextInputTokens + contextOutputTokens,
+    contextInputTokens,
+    contextOutputTokens,
+    contextWindow: numberValue(values, "context_window"),
+    contextWindowEstimated: values.context_window_estimated === true,
+    contextCacheReadTokens: numberValue(values, "context_cache_read_tokens"),
+    contextCacheWriteTokens: numberValue(values, "context_cache_write_tokens"),
+    reusablePrefixTokens: numberValue(values, "latest_reusable_prefix_tokens"),
+    cachePrefixReusable: typeof cachePrefixReusable === "boolean" ? cachePrefixReusable : null,
+    divergence: null,
+  };
 }
 
 function sourceIcon(kind: ViewerSnapshot["kind"] | undefined) {
@@ -144,6 +180,7 @@ function ViewerContent() {
   const permissionMode = snapshot?.permission_mode || "automatic";
   const sandboxEnforce = snapshot?.sandbox_enforce || "required";
   const sandboxBackend = snapshot?.sandbox_backend || "Render";
+  const tokenUsage = tokenUsageFromSnapshot(snapshot);
 
   return (
     <Flex h="100dvh" minW={0} position="relative">
@@ -231,6 +268,8 @@ function ViewerContent() {
               permissionMode={permissionMode}
               sandboxEnforce={sandboxEnforce}
               sandboxBackend={sandboxBackend}
+              tokenUsage={tokenUsage}
+              tasks={snapshot?.tasks ?? []}
               onAgentModelChange={() => {}}
             />
           </Box>
