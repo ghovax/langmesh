@@ -43,11 +43,7 @@ import {
 import { DictationRecordingError, startDictation, type Dictation } from "@/lib/dictation";
 import { toaster } from "./ui/Toaster";
 import { ChatGPTUsageMeters } from "./ChatgptUsageMeters";
-import {
-  AgentSelectControl,
-  PermissionModeControl,
-  SandboxToggleControl,
-} from "./SessionControls";
+import { AgentSelectControl, PermissionModeControl, SandboxToggleControl } from "./SessionControls";
 import { isTauri } from "@/lib/tauri";
 import { pickDesktopFilePaths, watchDesktopFileDrop } from "@/lib/desktop-files";
 import { AttachmentChip } from "./AttachmentChips";
@@ -69,6 +65,8 @@ interface ChatInputProps {
   isStreaming: boolean;
   // The connection is gone. Nothing can be sent, and saying why is the point.
   disabled?: boolean;
+  // The transcript is being displayed without allowing edits, while a running turn may still be stopped.
+  readOnly?: boolean;
   // A decision prompt is open, which closes the composer for a different reason than a lost network.
   awaitingDecision?: boolean;
   sessionId?: string | null;
@@ -473,11 +471,7 @@ function ComposerActionButton({
   icon: ReactNode;
 }) {
   return (
-    <Tooltip
-      content={tooltip ?? label}
-      openDelay={200}
-      positioning={{ placement: "top" }}
-    >
+    <Tooltip content={tooltip ?? label} openDelay={200} positioning={{ placement: "top" }}>
       <Button
         data-composer-action=""
         type="button"
@@ -541,6 +535,7 @@ export function ChatInput({
   onAbort,
   isStreaming,
   disabled,
+  readOnly = false,
   sessionId,
   initialDraft = "",
   onDraftChange,
@@ -702,6 +697,7 @@ export function ChatInput({
 
   // Whether the microphone is offered and what its model is doing, asked with `prepare` so the weights warm up.
   useEffect(() => {
+    if (readOnly) return;
     let cancelled = false;
     let timer: number | undefined;
     const read = (prepare: boolean) => {
@@ -727,7 +723,7 @@ export function ChatInput({
       window.clearTimeout(timer);
       unsubscribe();
     };
-  }, []);
+  }, [readOnly]);
 
   // Stop the microphone if the composer goes away mid-recording, so the machine never keeps listening.
   const recordingRef = useRef<Dictation | null>(null);
@@ -805,7 +801,7 @@ export function ChatInput({
   });
 
   useEffect(() => {
-    if (!isTauri()) return;
+    if (readOnly || !isTauri()) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     // A file dropped anywhere on the window attaches here, matching the desktop convention.
@@ -829,7 +825,7 @@ export function ChatInput({
       cancelled = true;
       unlisten?.();
     };
-  }, []);
+  }, [readOnly]);
 
   function removeAttachment(uploadId: string) {
     setAttachments((current) => current.filter((attachment) => attachment.upload_id !== uploadId));
@@ -1018,7 +1014,7 @@ export function ChatInput({
               value={inputValue}
               onChange={(event) => setInputValue(event.target.value)}
               onKeyDown={handleKeyDown}
-              disabled={composerClosed}
+              disabled={composerClosed || readOnly}
               rows={1}
               fieldSizing="content"
               maxH="44"
@@ -1067,7 +1063,12 @@ export function ChatInput({
                   borderColor={recording ? undefined : "border"}
                   // The spinner covers both waits, and the button is disabled while loading rather than hidden.
                   loading={transcribing || dictationState === "loading"}
-                  disabled={composerClosed || !directoryAvailable || dictationState === "loading"}
+                  disabled={
+                    composerClosed ||
+                    readOnly ||
+                    !directoryAvailable ||
+                    dictationState === "loading"
+                  }
                 >
                   {recording ? <LuMicOff /> : <LuMic />}
                 </IconButton>
@@ -1087,7 +1088,7 @@ export function ChatInput({
                 variant="outline"
                 bg="bg"
                 borderColor="border"
-                disabled={composerClosed || !directoryAvailable}
+                disabled={composerClosed || readOnly || !directoryAvailable}
               >
                 <LuPaperclip />
               </IconButton>
@@ -1102,6 +1103,7 @@ export function ChatInput({
                 disabled={
                   sendPending ||
                   composerClosed ||
+                  readOnly ||
                   !directoryAvailable ||
                   uploadingCount > 0 ||
                   !inputValue.trim()
@@ -1119,99 +1121,101 @@ export function ChatInput({
       </Box>
 
       {/* One line, kept one line by measurement: labels are given up in order until the row fits, with a clipped edge as the guarantee. */}
-      <Flex
-        ref={selectorsRowRef}
-        align="center"
-        gap={2}
-        flexWrap="nowrap"
-        px={0}
-        pt={1}
-        pb={2}
-        overflow="clip"
-        // Enough for a focus ring to bleed past the edge and nothing more.
-        css={{ overflowClipMargin: "3px" }}
-      >
-        <AgentSelectControl
-          agents={agents}
-          value={selectedAgent}
-          onChange={onAgentChange}
-          disabled={!!sessionId}
-          placeholder={translation("agentPlaceholder")}
-          fitted
-          labelHidden={hiddenLabels.has("agent")}
-        />
-        <ModelSelect
-          models={models}
-          providers={modelProviders}
-          recent={recentModels}
-          value={agentModel}
-          onChange={onAgentModelChange}
-          fallbackModelId={agentModel}
-          onRetryModels={onRetryModels}
-          compact
-          fitted
-          providerHidden={hiddenLabels.has("model-provider")}
-          capabilitiesHidden={hiddenLabels.has("model-capabilities")}
-          labelHidden={hiddenLabels.has("model")}
-        />
-        {/* Adjustable at any point in a session's life, so a conversation need not restart to run under a looser mode. */}
-        <PermissionModeControl
-          value={permissionMode}
-          onChange={(mode) => onPermissionModeChange?.(mode)}
-          fitted
-          labelHidden={hiddenLabels.has("permission")}
-        />
-        {/* The same control Settings shows, so the two can never disagree about what a mode looks like. */}
-        <SandboxToggleControl
-          enforce={sandboxEnforce}
-          backend={sandboxBackend}
-          onChange={onSandboxEnforceChange}
-          fitted
-          labelHidden={hiddenLabels.has("sandbox")}
-        />
-        {/* What the turn has spent, pushed to the far end by a margin rather than by a spacer the fit would have to ignore. */}
-        <Flex ms="auto" align="center" gap={2} flexShrink={0}>
-          {/* Offered whenever there is a conversation to compaction: when to do it is the reader's judgement, not a threshold's. */}
-          {onCompact && !!sessionId && (
-            <Button
-              data-fit-control="compaction"
-              {...(hiddenLabels.has("compaction") ? { "data-fit-collapsed": "" } : {})}
-              variant="outline"
-              h="var(--control-height)"
-              // Stated rather than inherited, because the button recipe's own gap is not the one this row uses.
-              gap={1.5}
-              px={2}
-              justifyContent="center"
-              bg="bg"
-              borderColor="border"
-              flexShrink={0}
-              disabled={isStreaming || isCompacting}
-              onClick={() => setCompactConfirmOpen(true)}
-              title={
-                isCompacting ? translation("compactingTooltip") : translation("compactTooltip")
-              }
-            >
-              {isCompacting ? (
-                <Spinner boxSize={`${14}px`} borderWidth="1.5px" />
-              ) : (
-                <LuFoldVertical size={14} />
-              )}
-              <Text
-                data-fit-label="compaction"
-                data-fit-hidden={hiddenLabels.has("compaction") ? "" : undefined}
-              >
-                {isCompacting ? translation("compacting") : translation("compact")}
-              </Text>
-            </Button>
-          )}
-          <ContextUsageChip
-            tokenUsage={tokenUsage}
-            chatgptUsage={chatgptUsage}
-            hidden={hiddenLabels}
+      <Box pointerEvents={readOnly ? "none" : undefined}>
+        <Flex
+          ref={selectorsRowRef}
+          align="center"
+          gap={2}
+          flexWrap="nowrap"
+          px={0}
+          pt={1}
+          pb={2}
+          overflow="clip"
+          // Enough for a focus ring to bleed past the edge and nothing more.
+          css={{ overflowClipMargin: "3px" }}
+        >
+          <AgentSelectControl
+            agents={agents}
+            value={selectedAgent}
+            onChange={onAgentChange}
+            disabled={!!sessionId}
+            placeholder={translation("agentPlaceholder")}
+            fitted
+            labelHidden={hiddenLabels.has("agent")}
           />
-          <TasksChip tasks={tasks} />
+          <ModelSelect
+            models={models}
+            providers={modelProviders}
+            recent={recentModels}
+            value={agentModel}
+            onChange={onAgentModelChange}
+            fallbackModelId={agentModel}
+            onRetryModels={onRetryModels}
+            compact
+            fitted
+            providerHidden={hiddenLabels.has("model-provider")}
+            capabilitiesHidden={hiddenLabels.has("model-capabilities")}
+            labelHidden={hiddenLabels.has("model")}
+          />
+          {/* Adjustable at any point in a session's life, so a conversation need not restart to run under a looser mode. */}
+          <PermissionModeControl
+            value={permissionMode}
+            onChange={(mode) => onPermissionModeChange?.(mode)}
+            fitted
+            labelHidden={hiddenLabels.has("permission")}
+          />
+          {/* The same control Settings shows, so the two can never disagree about what a mode looks like. */}
+          <SandboxToggleControl
+            enforce={sandboxEnforce}
+            backend={sandboxBackend}
+            onChange={onSandboxEnforceChange}
+            fitted
+            labelHidden={hiddenLabels.has("sandbox")}
+          />
+          {/* What the turn has spent, pushed to the far end by a margin rather than by a spacer the fit would have to ignore. */}
+          <Flex ms="auto" align="center" gap={2} flexShrink={0}>
+            {/* Offered whenever there is a conversation to compaction: when to do it is the reader's judgement, not a threshold's. */}
+            {onCompact && !!sessionId && (
+              <Button
+                data-fit-control="compaction"
+                {...(hiddenLabels.has("compaction") ? { "data-fit-collapsed": "" } : {})}
+                variant="outline"
+                h="var(--control-height)"
+                // Stated rather than inherited, because the button recipe's own gap is not the one this row uses.
+                gap={1.5}
+                px={2}
+                justifyContent="center"
+                bg="bg"
+                borderColor="border"
+                flexShrink={0}
+                disabled={isStreaming || isCompacting}
+                onClick={() => setCompactConfirmOpen(true)}
+                title={
+                  isCompacting ? translation("compactingTooltip") : translation("compactTooltip")
+                }
+              >
+                {isCompacting ? (
+                  <Spinner boxSize={`${14}px`} borderWidth="1.5px" />
+                ) : (
+                  <LuFoldVertical size={14} />
+                )}
+                <Text
+                  data-fit-label="compaction"
+                  data-fit-hidden={hiddenLabels.has("compaction") ? "" : undefined}
+                >
+                  {isCompacting ? translation("compacting") : translation("compact")}
+                </Text>
+              </Button>
+            )}
+            <ContextUsageChip
+              tokenUsage={tokenUsage}
+              chatgptUsage={chatgptUsage}
+              hidden={hiddenLabels}
+            />
+            <TasksChip tasks={tasks} />
+          </Flex>
         </Flex>
-      </Flex>
+      </Box>
     </fieldset>
   );
 }

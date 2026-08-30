@@ -430,14 +430,20 @@ class Store:
             pass
         issue = source.get("issue")
         pull_request = source.get("pull_request")
+        comment = source.get("comment")
         repository = source.get("repository")
         if not isinstance(issue, Mapping):
             issue = {}
         if not isinstance(pull_request, Mapping):
             pull_request = {}
+        if not isinstance(comment, Mapping):
+            comment = {}
         if not isinstance(repository, Mapping):
             repository = {}
         kind = "pull" if pull_request or issue.get("pull_request") else "issue"
+        source_url = str(
+            comment.get("html_url") or issue.get("html_url") or pull_request.get("html_url") or ""
+        ).strip()
         status = "completed"
         if any(delivery.status == "processing" for delivery in deliveries):
             status = "working"
@@ -451,6 +457,7 @@ class Store:
             "number": int(issue.get("number") or pull_request.get("number") or 0),
             "kind": kind,
             "title": str(issue.get("title") or pull_request.get("title") or ""),
+            "source_url": source_url,
             "provider": str(installation.provider if installation is not None else ""),
             "model": str(installation.model if installation is not None else ""),
             "status": status,
