@@ -8,6 +8,7 @@ import secrets
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +96,15 @@ class OAuthAuthorization(Base):
     code_verifier: Mapped[str] = mapped_column(Text)
     redirect_uri: Mapped[str] = mapped_column(Text)
     expires_at: Mapped[int] = mapped_column(BigInteger)
+
+
+class ViewerLink(Base):
+    __tablename__ = "github_session_viewer_links"
+    __table_args__ = (Index("github_session_viewer_links_session", "session_id", unique=True),)
+
+    token: Mapped[str] = mapped_column(Text, primary_key=True)
+    session_id: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[int] = mapped_column(BigInteger)
 
 
 @dataclass(frozen=True)
@@ -363,6 +373,90 @@ class Store:
             if delivery is not None:
                 delivery.comment_id = comment_id
 
+    async def viewer_token(self, session_id: str) -> str:
+        """Return the opaque durable token that grants read-only access to one session."""
+        if not session_id:
+            raise ValueError("session_id must not be empty")
+        for _ in range(3):
+            token = secrets.token_urlsafe(32)
+            try:
+                async with self._sessions.begin() as session:
+                    await self._begin_sqlite_write(session)
+                    existing = await session.scalar(
+                        select(ViewerLink.token).where(ViewerLink.session_id == session_id)
+                    )
+                    if existing:
+                        return str(existing)
+                    session.add(
+                        ViewerLink(token=token, session_id=session_id, created_at=int(time.time()))
+                    )
+                    await session.flush()
+                    return token
+            except IntegrityError:
+                continue
+        raise RuntimeError("could not create a session viewer link")
+
+    async def session_for_viewer_token(self, token: str) -> str | None:
+        """Resolve a viewer token without exposing session identifiers in the link itself."""
+        if not token:
+            return None
+        async with self._sessions() as session:
+            return await session.scalar(
+                select(ViewerLink.session_id).where(ViewerLink.token == token)
+            )
+
+    async def viewer_context(self, session_id: str) -> dict[str, Any] | None:
+        """Return non-secret GitHub context and lifecycle status for a session viewer."""
+        async with self._sessions() as session:
+            deliveries = list(
+                (
+                    await session.scalars(
+                        select(Delivery)
+                        .where(Delivery.session_id == session_id)
+                        .order_by(Delivery.received_at, Delivery.delivery_id)
+                    )
+                ).all()
+            )
+            if not deliveries:
+                return None
+            installation = await session.get(Installation, deliveries[0].installation_id)
+
+        source: Mapping[str, Any] = {}
+        try:
+            decoded = json.loads(deliveries[0].payload)
+            if isinstance(decoded, Mapping):
+                source = decoded
+        except json.JSONDecodeError:
+            pass
+        issue = source.get("issue")
+        pull_request = source.get("pull_request")
+        repository = source.get("repository")
+        if not isinstance(issue, Mapping):
+            issue = {}
+        if not isinstance(pull_request, Mapping):
+            pull_request = {}
+        if not isinstance(repository, Mapping):
+            repository = {}
+        kind = "pull" if pull_request or issue.get("pull_request") else "issue"
+        status = "completed"
+        if any(delivery.status == "processing" for delivery in deliveries):
+            status = "working"
+        elif any(delivery.status == "queued" for delivery in deliveries):
+            status = "queued"
+        elif any(delivery.status == "failed" for delivery in deliveries):
+            status = "failed"
+        updated_at = max(delivery.claimed_at or delivery.received_at for delivery in deliveries)
+        return {
+            "repository": str(repository.get("full_name") or ""),
+            "number": int(issue.get("number") or pull_request.get("number") or 0),
+            "kind": kind,
+            "title": str(issue.get("title") or pull_request.get("title") or ""),
+            "provider": str(installation.provider if installation is not None else ""),
+            "model": str(installation.model if installation is not None else ""),
+            "status": status,
+            "updated_at": datetime.fromtimestamp(updated_at, timezone.utc).isoformat(),
+        }
+
     async def configuration(self, installation_id: int) -> InstallationConfiguration | None:
         async with self._sessions() as session:
             installation = await session.get(Installation, installation_id)
@@ -548,6 +642,7 @@ __all__ = [
     "Installation",
     "InstallationConfiguration",
     "OAuthAuthorization",
+    "ViewerLink",
     "SessionFence",
     "SetupSession",
     "Store",
