@@ -1,0 +1,9 @@
+# The hosted GitHub App must stay awake to drain the external delivery queue.
+services:
+  - type: web
+    name: langmesh-agent
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    maxShutdownDelaySeconds: 300
