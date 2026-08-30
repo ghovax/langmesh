@@ -38,6 +38,8 @@ interface ViewerSnapshot {
   messages: ChatMessage[];
 }
 
+type ViewerErrorCode = "connection_failed" | "server_error";
+
 function numberValue(values: Record<string, unknown>, name: string): number {
   const value = values[name];
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -123,7 +125,7 @@ function ViewerContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token") ?? "";
   const [snapshot, setSnapshot] = useState<ViewerSnapshot | null>(null);
-  const [error, setError] = useState("");
+  const [errorCode, setErrorCode] = useState<ViewerErrorCode | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -133,12 +135,12 @@ function ViewerContent() {
     stream.onmessage = (event) => {
       try {
         setSnapshot(JSON.parse(event.data) as ViewerSnapshot);
-        setError("");
+        setErrorCode(null);
       } catch {
-        setError("The session returned an invalid update.");
+        setErrorCode("server_error");
       }
     };
-    stream.onerror = () => setError("The session viewer is temporarily unavailable.");
+    stream.onerror = () => setErrorCode("connection_failed");
     return () => stream.close();
   }, [token]);
 
@@ -148,15 +150,15 @@ function ViewerContent() {
       const response = await fetch(`/github/session?token=${encodeURIComponent(token)}&mode=stop`, {
         method: "POST",
       });
-      if (!response.ok) setError("The session could not be stopped.");
+      if (!response.ok) setErrorCode("server_error");
     } catch {
-      setError("The session could not be stopped.");
+      setErrorCode("server_error");
     }
   }, [token]);
 
   const timeline = useMemo(() => timelineItems(snapshot?.messages ?? []), [snapshot?.messages]);
   const issueLabel = snapshot ? `${snapshot.repository}#${snapshot.number}` : "GitHub session";
-  const visibleError = error || (!token ? "This session link is missing its access token." : "");
+  const visibleError = !token ? "This session link is missing its access token." : "";
   const waitingForSession =
     !snapshot || (timeline.length === 0 && !["completed", "failed"].includes(snapshot.status));
   const provider = snapshot?.provider || "";
@@ -181,6 +183,15 @@ function ViewerContent() {
   const sandboxEnforce = snapshot?.sandbox_enforce || "required";
   const sandboxBackend = snapshot?.sandbox_backend || "Render";
   const tokenUsage = tokenUsageFromSnapshot(snapshot);
+  const viewerError: ChatMessage | null = errorCode
+    ? {
+        id: "viewer-error",
+        role: "error",
+        content: "",
+        timestamp: "",
+        meta: { error: { code: errorCode } },
+      }
+    : null;
 
   return (
     <Flex h="100dvh" minW={0} position="relative">
@@ -223,9 +234,17 @@ function ViewerContent() {
             style={{ scrollbarGutter: "stable both-edges" }}
           >
             {visibleError ? (
-              <Text color="red.fg" textAlign="center">
-                {visibleError}
-              </Text>
+              <ChatMessageItem
+                message={{
+                  id: "viewer-link-error",
+                  role: "error",
+                  content: "",
+                  timestamp: "",
+                  meta: { error: { code: "server_error" } },
+                }}
+              />
+            ) : viewerError ? (
+              <ChatMessageItem message={viewerError} />
             ) : waitingForSession ? (
               <PanelEmptyState icon={<Spinner boxSize="8" borderWidth="2px" />} />
             ) : snapshot && timeline.length > 0 ? (
