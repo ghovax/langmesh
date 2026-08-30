@@ -37,6 +37,8 @@ from models_provider import (
     InMemoryCredentialStore,
     OAuthTokens,
     ProviderAuthentication,
+    cached_chatgpt_models,
+    cached_cursor_models,
 )
 from pydantic import BaseModel, Field
 from langmesh import SQLAlchemyCheckpoints
@@ -321,6 +323,15 @@ class Processor:
             return None
         checkpoint = await self._checkpoints.load(session_id)
         conversation = checkpoint.conversation if checkpoint is not None else ()
+        provider = str(context.get("provider") or "")
+        model = str(context.get("model") or "")
+        model_catalogue = (
+            cached_chatgpt_models() if provider == "chatgpt" else cached_cursor_models()
+        )
+        model_record = model_catalogue.get(model)
+        model_name = (
+            str(model_record.get("name") or model) if isinstance(model_record, Mapping) else model
+        )
         return {
             **context,
             "agent": "langmesh",
@@ -330,6 +341,7 @@ class Processor:
             or "automatic",
             "sandbox_enforce": "required",
             "sandbox_backend": "Render",
+            "model_name": model_name,
             "session_id": session_id,
             "messages": messages_from_checkpoint(
                 conversation,

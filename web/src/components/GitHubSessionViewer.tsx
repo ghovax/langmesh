@@ -29,6 +29,7 @@ interface ViewerSnapshot {
   source_url: string;
   provider: string;
   model: string;
+  model_name: string;
   permission_mode: "ask" | "automatic" | "allow";
   sandbox_enforce: "required" | "preferred" | "off";
   sandbox_backend: string;
@@ -125,9 +126,10 @@ function ViewerContent() {
     !snapshot || (timeline.length === 0 && !["completed", "failed"].includes(snapshot.status));
   const provider = snapshot?.provider || "";
   const model = snapshot?.model || "";
+  const modelName = snapshot?.model_name || model;
   const modelIdentifier = provider && model ? `${provider}/${model}` : "";
   const models = modelIdentifier
-    ? [{ id: modelIdentifier, name: model, provider, available: true }]
+    ? [{ id: modelIdentifier, name: modelName, provider, available: true }]
     : [];
   const providers = provider
     ? [
@@ -147,7 +149,7 @@ function ViewerContent() {
   return (
     <Flex h="100dvh" minW={0} position="relative">
       <Flex direction="column" flex={1} minW={0} h="100%">
-        <Flex align="center" gap={2} px={2} h={TOP_BAR_HEIGHT} flexShrink={0} minW={0}>
+        <Flex align="center" gap={2} pl={3} pr={2} h={TOP_BAR_HEIGHT} flexShrink={0} minW={0}>
           <Box color="fg.muted" flexShrink={0}>
             {sourceIcon(snapshot?.kind)}
           </Box>
