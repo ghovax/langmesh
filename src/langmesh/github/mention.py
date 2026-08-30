@@ -19,6 +19,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 
+from langchain_core.messages import HumanMessage
 from models_provider import bind_credential_store, fetch_chatgpt_models, reset_credential_store
 
 from langmesh import (
@@ -227,13 +228,13 @@ def posted_reply(answer: str, pull_url: str = "", viewer_url: str = "") -> str:
     return note
 
 
-def turn_payload(
+def context_payload(
     mention: Mention,
     *,
     checkout: Checkout | None = None,
     followup: bool = False,
 ) -> dict[str, str]:
-    """The labeled fields one mention turn sends. Follow-ups omit the stable thread keys."""
+    """The private GitHub context carried beside the visible comment body."""
     payload: dict[str, str] = {}
     if not followup:
         if mention.title.strip():
@@ -248,33 +249,14 @@ def turn_payload(
         payload["source_url"] = mention.source_url.strip()
     if mention.user.strip():
         payload["source_author"] = mention.user.strip()
-    payload["body"] = mention.body
     return payload
 
 
 def prompt_for(
     mention: Mention,
-    *,
-    checkout: Checkout | None = None,
-    followup: bool = False,
 ) -> str:
-    """The turn's user message: one JSON object with a key in front of each field.
-
-    The opening turn names the thread, its URL, the kind, HEAD, the comment URL, and
-    the comment. A later mention on the same thread — restored or not — sends only
-    the new comment and its URL so those stable keys are not repeated. The thread
-    body is not pasted; the agent reads earlier comments through ``gh``.
-    """
-    return render(
-        "turn",
-        {
-            "payload": json.dumps(
-                turn_payload(mention, checkout=checkout, followup=followup),
-                ensure_ascii=False,
-                indent=2,
-            )
-        },
-    )
+    """Return only the source author's visible comment body."""
+    return render("turn", {"body": mention.body})
 
 
 def _run(
@@ -673,6 +655,16 @@ async def run_turn(
         try:
             restored = await session.restore()
             followup = restored or thread_followup
+            private_context = context_payload(mention, checkout=checkout, followup=followup)
+            if private_context:
+                session.runtime.conversation.append(
+                    HumanMessage(
+                        content=json.dumps(
+                            private_context, ensure_ascii=False, separators=(",", ":")
+                        ),
+                        additional_kwargs={"reminder": True, "github_context": True},
+                    )
+                )
             resolved_provider = provider.strip()
             resolved_model = model.strip()
             key = api_key.strip()
@@ -701,9 +693,7 @@ async def run_turn(
             response_text = ""
             model_call = 0
             compaction_started = False
-            async for event in session.stream(
-                prompt_for(mention, checkout=checkout, followup=followup)
-            ):
+            async for event in session.stream(prompt_for(mention)):
                 if isinstance(event, Usage):
                     model_call += 1
                     logger.info(

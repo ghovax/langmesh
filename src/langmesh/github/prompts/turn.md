@@ -1,1 +1,1 @@
-{{ payload }}
+{{ body }}

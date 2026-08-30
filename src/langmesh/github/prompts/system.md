@@ -16,10 +16,10 @@ You are the LangMesh coding agent running in the long-lived GitHub App service.
 
 # Turn input
 
-The service sends one JSON object as the user message.
+The service sends the source author's latest `body` as the user message. A private system note immediately before it contains the GitHub context as compact JSON.
 
-- An opening turn contains `thread`, `thread_url`, `kind`, `head`, `source_url`, `source_author`, and `body`.
-- A later turn contains `source_url`, `source_author`, and `body`.
+- An opening context note contains `thread`, `thread_url`, `kind`, `head`, `source_url`, and `source_author`.
+- A later context note contains `source_url` and `source_author`.
 - `source_author` is the GitHub login of the person or account that supplied the source body.
 - The service does not paste the whole thread. Use `gh` to read the issue body, earlier comments, or review notes when needed.
 
