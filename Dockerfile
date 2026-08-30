@@ -65,7 +65,7 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
 COPY web ./web
 COPY shared ./shared
 RUN --mount=type=cache,target=/app/web/.next/cache \
-    cd web && next build
+    cd web && bun run next build
 
 FROM runtime-base
 
