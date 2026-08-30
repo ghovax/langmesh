@@ -323,6 +323,13 @@ class Processor:
         conversation = checkpoint.conversation if checkpoint is not None else ()
         return {
             **context,
+            "agent": "langmesh",
+            "permission_mode": (
+                checkpoint.session.permission_mode if checkpoint is not None else ""
+            )
+            or "automatic",
+            "sandbox_enforce": "required",
+            "sandbox_backend": "Render",
             "session_id": session_id,
             "messages": messages_from_checkpoint(
                 conversation,

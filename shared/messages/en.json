@@ -117,6 +117,7 @@
     "placeholderConnecting": "Connecting…",
     "placeholderDefault": "Send a message…",
     "placeholderInvalidPath": "Choose an environment…",
+    "readOnly": "Input unavailable in this read-only session",
     "placeholderStreaming": "Queue a message…",
     "reasoning": "Reasoning",
     "send": "Send",

@@ -665,7 +665,7 @@ export function ChatInput({
   // The browser only ever hands us file bytes, so a sandboxed or remote build uploads them.
   async function handleFiles(files: FileList | File[]) {
     const selected = Array.from(files);
-    if (selected.length === 0) return;
+    if (readOnly || selected.length === 0) return;
     setUploadingCount((current) => current + selected.length);
     for (const file of selected) {
       try {
@@ -681,7 +681,7 @@ export function ChatInput({
 
   // On the desktop the file is referenced by its real path in place, valid only when the server is this machine.
   async function attachByPaths(paths: string[]) {
-    if (paths.length === 0) return;
+    if (readOnly || paths.length === 0) return;
     setUploadingCount((current) => current + paths.length);
     for (const path of paths) {
       try {
@@ -782,6 +782,7 @@ export function ChatInput({
   }
 
   async function handleAttachClick() {
+    if (readOnly) return;
     if (isTauri()) {
       const paths = await pickDesktopFilePaths();
       await attachByPaths(paths);
@@ -995,21 +996,23 @@ export function ChatInput({
               size="sm"
               variant="outline"
               placeholder={
-                // Ordered by what the person can do about it, so an open decision says what happens to what you type.
-                disabled
-                  ? translation("placeholderConnecting")
-                  : awaitingDecision
-                    ? translation("placeholderAwaitingDecision")
-                    : !directoryAvailable
-                      ? translation("placeholderInvalidPath")
-                      : attachments.length > 0
-                        ? translation("placeholderAttachments")
-                        : isCompacting
-                          ? // Compaction runs as a turn, so this says the message drains when the compaction is done rather than next turn.
-                            translation("placeholderCompacting")
-                          : isStreaming
-                            ? translation("placeholderStreaming")
-                            : translation("placeholderDefault")
+                readOnly
+                  ? translation("readOnly")
+                  : // Ordered by what the person can do about it, so an open decision says what happens to what you type.
+                    disabled
+                    ? translation("placeholderConnecting")
+                    : awaitingDecision
+                      ? translation("placeholderAwaitingDecision")
+                      : !directoryAvailable
+                        ? translation("placeholderInvalidPath")
+                        : attachments.length > 0
+                          ? translation("placeholderAttachments")
+                          : isCompacting
+                            ? // Compaction runs as a turn, so this says the message drains when the compaction is done rather than next turn.
+                              translation("placeholderCompacting")
+                            : isStreaming
+                              ? translation("placeholderStreaming")
+                              : translation("placeholderDefault")
               }
               value={inputValue}
               onChange={(event) => setInputValue(event.target.value)}

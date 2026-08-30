@@ -117,6 +117,7 @@
     "placeholderConnecting": "接続中…",
     "placeholderDefault": "メッセージを送信…",
     "placeholderInvalidPath": "環境を選択…",
+    "readOnly": "この読み取り専用セッションでは入力できません",
     "placeholderStreaming": "メッセージを待機…",
     "reasoning": "推論",
     "send": "送信",

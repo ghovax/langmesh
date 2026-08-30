@@ -3,17 +3,25 @@
 import { Box, Flex, Link, Text, VStack } from "@chakra-ui/react";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { LuCircleHelp, LuExternalLink, LuGitPullRequest, LuMessageSquare } from "react-icons/lu";
+import {
+  LuCircleHelp,
+  LuExternalLink,
+  LuGitPullRequest,
+  LuMessageSquare,
+  LuMoon,
+  LuSun,
+} from "react-icons/lu";
 import { ChatInput } from "./ChatInput";
 import { ChatMessageItem, ChatToolGroup } from "./ChatMessage";
 import { ActivitySpinner } from "./ui/ActivityIcon";
-import { ColorModeButton } from "./ui/ColorMode";
-import { PanelEmptyState, PanelHeader } from "./ui/Panel";
+import { PanelEmptyState, TOP_BAR_HEIGHT } from "./ui/Panel";
+import { ToolbarAction } from "./ui/Toolbar";
 import type { ChatMessage } from "@/lib/use-chat";
 import { timelineItems } from "@/lib/chat-timeline";
 
 interface ViewerSnapshot {
   session_id: string;
+  agent: string;
   repository: string;
   number: number;
   kind: "issue" | "pull";
@@ -21,6 +29,9 @@ interface ViewerSnapshot {
   source_url: string;
   provider: string;
   model: string;
+  permission_mode: "ask" | "automatic" | "allow";
+  sandbox_enforce: "required" | "preferred" | "off";
+  sandbox_backend: string;
   status: "working" | "queued" | "completed" | "failed";
   messages: ChatMessage[];
 }
@@ -30,6 +41,47 @@ function sourceIcon(kind: ViewerSnapshot["kind"] | undefined) {
   if (kind === "issue") return <LuCircleHelp size={14} />;
   return <LuMessageSquare size={14} />;
 }
+
+function ViewerThemeAction() {
+  const [colorMode, setColorMode] = useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "light";
+    const stored = window.localStorage.getItem("langmesh-viewer-color-mode");
+    return stored === "dark" || stored === "light"
+      ? stored
+      : window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+  });
+
+  useEffect(() => {
+    document.documentElement.classList.remove("light", "dark");
+    document.documentElement.classList.add(colorMode);
+    document.documentElement.style.colorScheme = colorMode;
+  }, [colorMode]);
+
+  const toggle = useCallback(() => {
+    setColorMode((current) => {
+      const next = current === "dark" ? "light" : "dark";
+      window.localStorage.setItem("langmesh-viewer-color-mode", next);
+      return next;
+    });
+  }, []);
+
+  return (
+    <ToolbarAction
+      label={colorMode === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+      icon={colorMode === "dark" ? <LuSun size={14} /> : <LuMoon size={14} />}
+      onClick={toggle}
+    />
+  );
+}
+
+const VIEWER_AGENT = {
+  id: "langmesh",
+  name: "LangMesh",
+  title: "LangMesh",
+  description: "GitHub mention agent",
+};
 
 function ViewerContent() {
   const searchParams = useSearchParams();
@@ -71,11 +123,37 @@ function ViewerContent() {
   const visibleError = error || (!token ? "This session link is missing its access token." : "");
   const waitingForSession =
     !snapshot || (timeline.length === 0 && !["completed", "failed"].includes(snapshot.status));
+  const provider = snapshot?.provider || "";
+  const model = snapshot?.model || "";
+  const modelIdentifier = provider && model ? `${provider}/${model}` : "";
+  const models = modelIdentifier
+    ? [{ id: modelIdentifier, name: model, provider, available: true }]
+    : [];
+  const providers = provider
+    ? [
+        {
+          id: provider,
+          name: provider === "chatgpt" ? "ChatGPT" : provider,
+          openai_compatible: false,
+          credential_id: provider,
+        },
+      ]
+    : [];
+  const selectedAgent = snapshot?.agent || VIEWER_AGENT.id;
+  const permissionMode = snapshot?.permission_mode || "automatic";
+  const sandboxEnforce = snapshot?.sandbox_enforce || "required";
+  const sandboxBackend = snapshot?.sandbox_backend || "Render";
 
   return (
-    <Flex h="100%" minW={0} position="relative">
+    <Flex h="100dvh" minW={0} position="relative">
       <Flex direction="column" flex={1} minW={0} h="100%">
-        <PanelHeader icon={sourceIcon(snapshot?.kind)} title={snapshot?.title || issueLabel}>
+        <Flex align="center" gap={2} px={2} h={TOP_BAR_HEIGHT} flexShrink={0} minW={0}>
+          <Box color="fg.muted" flexShrink={0}>
+            {sourceIcon(snapshot?.kind)}
+          </Box>
+          <Text textStyle="panelTitle" fontWeight="medium" whiteSpace="nowrap" truncate flex={1}>
+            {snapshot?.title || issueLabel}
+          </Text>
           {snapshot?.source_url ? (
             <Link
               href={snapshot.source_url}
@@ -92,8 +170,8 @@ function ViewerContent() {
               <LuExternalLink size={12} />
             </Link>
           ) : null}
-          <ColorModeButton />
-        </PanelHeader>
+          <ViewerThemeAction />
+        </Flex>
 
         <Box position="relative" flex={1} minH={0} display="flex" flexDirection="column">
           <Box
@@ -143,11 +221,15 @@ function ViewerContent() {
               readOnly
               sessionId={snapshot?.session_id ?? null}
               directoryAvailable={false}
-              agents={[]}
-              selectedAgent=""
+              agents={[VIEWER_AGENT]}
+              selectedAgent={selectedAgent}
               onAgentChange={() => {}}
-              models={[]}
-              modelProviders={[]}
+              models={models}
+              modelProviders={providers}
+              agentModel={modelIdentifier}
+              permissionMode={permissionMode}
+              sandboxEnforce={sandboxEnforce}
+              sandboxBackend={sandboxBackend}
               onAgentModelChange={() => {}}
             />
           </Box>
