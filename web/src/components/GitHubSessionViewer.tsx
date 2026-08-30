@@ -1,6 +1,6 @@
 "use client";
 
-import { Box, Flex, Link, Text, VStack } from "@chakra-ui/react";
+import { Box, Flex, Link, Spinner, Text, VStack } from "@chakra-ui/react";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -13,7 +13,6 @@ import {
 } from "react-icons/lu";
 import { ChatInput } from "./ChatInput";
 import { ChatMessageItem, ChatToolGroup } from "./ChatMessage";
-import { ActivitySpinner } from "./ui/ActivityIcon";
 import { PanelEmptyState, TOP_BAR_HEIGHT } from "./ui/Panel";
 import { ToolbarAction } from "./ui/Toolbar";
 import type { ChatMessage } from "@/lib/use-chat";
@@ -191,7 +190,7 @@ function ViewerContent() {
                 {visibleError}
               </Text>
             ) : waitingForSession ? (
-              <PanelEmptyState icon={<ActivitySpinner boxSize="6" borderWidth="2px" />} />
+              <PanelEmptyState icon={<Spinner boxSize="8" borderWidth="2px" />} />
             ) : snapshot && timeline.length > 0 ? (
               <VStack gap={2.5} align="stretch" w="full" maxW="80rem" mx="auto">
                 {timeline.map((item) =>
