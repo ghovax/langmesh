@@ -323,6 +323,20 @@ class Processor:
             return None
         checkpoint = await self._checkpoints.load(session_id)
         conversation = checkpoint.conversation if checkpoint is not None else ()
+        tasks: list[dict[str, Any]] = []
+        if checkpoint is not None:
+            for feature in checkpoint.session.features:
+                feature_value = feature.value
+                if not isinstance(feature_value, Mapping):
+                    continue
+                task_state = feature_value.get("tasks")
+                if not isinstance(task_state, Mapping):
+                    continue
+                raw_tasks = task_state.get("tasks")
+                if not isinstance(raw_tasks, (list, tuple)):
+                    continue
+                tasks = [dict(task) for task in raw_tasks if isinstance(task, Mapping)]
+                break
         provider = str(context.get("provider") or "")
         model = str(context.get("model") or "")
         model_catalogue = (
@@ -343,6 +357,8 @@ class Processor:
             "sandbox_backend": "Render",
             "model_name": model_name,
             "session_id": session_id,
+            "tasks": tasks,
+            "token_usage": dict(checkpoint.session.token_usage) if checkpoint is not None else {},
             "messages": messages_from_checkpoint(
                 conversation,
                 timestamp=str(context.get("updated_at") or ""),

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum, StrEnum
 from typing import Any, Literal, Mapping, cast
 
@@ -143,6 +143,7 @@ class SessionSnapshot:
     model_cache: object | None = None
     system_prompt: RenderedPrompt | None = None
     pending_input: PendingInput | None = None
+    token_usage: Mapping[str, Any] = field(default_factory=dict)
 
     def feature(self, name: str) -> object | None:
         """Return one plugin's state by its stable name."""
@@ -160,6 +161,7 @@ class SessionSnapshot:
             "model_cache": _plain(self.model_cache),
             "system_prompt": _plain(self.system_prompt),
             "pending_input": _plain(self.pending_input),
+            "token_usage": _plain(self.token_usage),
         }
 
     @classmethod
@@ -175,6 +177,7 @@ class SessionSnapshot:
         raw_features = data.get("features", ())
         raw_prompt = data.get("system_prompt")
         raw_pending_input = data.get("pending_input")
+        raw_token_usage = data.get("token_usage", {})
         if not isinstance(raw_features, (list, tuple)):
             raise TypeError("session features must be a sequence")
         if any(
@@ -193,6 +196,8 @@ class SessionSnapshot:
             or not isinstance(raw_pending_input.get("message"), Mapping)
         ):
             raise ValueError("pending_input must contain a message mapping")
+        if not isinstance(raw_token_usage, Mapping):
+            raise TypeError("token_usage must be a mapping")
         features = tuple(
             FeatureState(name=str(item["name"]), value=_plain(item.get("value")))
             for item in raw_features
@@ -221,6 +226,7 @@ class SessionSnapshot:
             if isinstance(raw_pending_input, Mapping)
             and isinstance(raw_pending_input.get("message"), Mapping)
             else None,
+            token_usage=dict(raw_token_usage),
         )
 
 
