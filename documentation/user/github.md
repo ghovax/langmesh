@@ -1,6 +1,6 @@
 # Universal GitHub App
 
-LangMesh Agent is an installation-level GitHub App. A repository only needs the App installed; it does not need a workflow, YAML policy, App ID, provider setting, API key, or GitHub secret.
+LangMesh Agent is an installation-level GitHub App. [Install it from GitHub](https://github.com/apps/langmesh-agent) on a personal account or organization, choosing the repositories it may access. A repository only needs the App installed; it does not need a workflow, YAML policy, App ID, provider setting, API key, or GitHub secret.
 
 The service receives issue, pull request, issue-comment, and pull-request-review-comment webhooks, creates a repository-scoped installation token, and runs the session as the installed App. New issues and pull requests receive an automatic first response; later comment turns start when a person addresses the bot or replies to one of its comments. The App private key belongs only to the service operator. It is never entered by a person configuring an installation and is never stored in a repository.
 
@@ -78,7 +78,7 @@ The App owner keeps the App ID, private key, OAuth client secret, and webhook se
 
 ## Installation and configuration
 
-1. Install the App on a personal account or organization, selecting all or only the repositories it may access.
+1. [Install the App from GitHub](https://github.com/apps/langmesh-agent) on a personal account or organization, selecting all or only the repositories it may access.
 1. GitHub opens the service setup URL.
 1. Sign in with GitHub when redirected. The service verifies that this account can access the installation.
 1. The callback returns a JSON object containing a short-lived setup token, for example:

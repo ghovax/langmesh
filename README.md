@@ -39,6 +39,10 @@ Download the latest release, install both, and open the app (or run `langmesh se
 
 See the [Installation guide](documentation/user/installation.md) for both paths in full.
 
+## GitHub bot
+
+[Install the LangMesh Agent GitHub App](https://github.com/apps/langmesh-agent) on a personal account or organization to let it work on selected repositories. It responds to new issues and pull requests, then responds to later comments containing the standalone `@claude` mention or replies to the bot. No repository workflow, YAML policy, App ID, provider setting, API key, or GitHub secret is required. Configure the provider, model, and credentials through the App setup page. On an issue it can open a draft pull request; on a pull request it updates that branch. See the [Universal GitHub App guide](documentation/user/github.md).
+
 ## Quickstart
 
 The same harness, reached two ways. Start with the entry point you want: an object in your own program, or a window.
