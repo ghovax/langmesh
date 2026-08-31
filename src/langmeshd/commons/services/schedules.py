@@ -14,7 +14,7 @@ from langmesh.base.persistence.schedules import (
     validate,
 )
 from langmeshd.commons import state
-from langmeshd.commons.database import ScheduleRecord, WorkspaceRecord
+from langmeshd.commons.database import LocationRecord, ScheduleRecord, WorkspaceRecord
 
 # Re-exported, so a caller catches one error for one concept without knowing which module defines it.
 __all__ = [
@@ -95,6 +95,21 @@ def create(
     try:
         if not database_session.get(WorkspaceRecord, workspace_id):
             raise ScheduleError(f"No workspace {workspace_id!r}.")
+        # The interface sends an empty directory because the workspace owns it. Resolve the same
+        # first local location normal sessions use, so project-scoped agents and tools still work
+        # when the daemon fires this schedule without a browser in the loop.
+        effective_working_directory = working_directory.strip()
+        if not effective_working_directory:
+            local_location = (
+                database_session.query(LocationRecord)
+                .filter(
+                    LocationRecord.workspace_id == workspace_id,
+                    LocationRecord.kind == "local",
+                )
+                .order_by(LocationRecord.created_at.asc())
+                .first()
+            )
+            effective_working_directory = local_location.base_directory if local_location else ""
         record = ScheduleRecord(
             id=str(uuid.uuid4()),
             workspace_id=workspace_id,
@@ -104,7 +119,7 @@ def create(
             agent=agent,
             prompt=prompt,
             permission_mode=permission_mode,
-            working_directory=working_directory,
+            working_directory=effective_working_directory,
             enabled=True,
             last_fired_at="",
             last_session_id="",
