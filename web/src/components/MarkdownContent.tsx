@@ -62,7 +62,7 @@ const decimalDigitPattern = /\p{Decimal_Number}/u;
 const amountAtStartPattern = /^\s*\d[\d,.]*(?:\s|$)/;
 const explicitMathSyntaxPattern = /[\\^_={}<>+*/]/;
 const githubMentionPattern = /(^|[^\w@-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/;
-const linkFaviconSize = "14px";
+const linkFaviconSize = "16px";
 
 function insertGitHubMentionLinks() {
   return (tree: Root) => {
