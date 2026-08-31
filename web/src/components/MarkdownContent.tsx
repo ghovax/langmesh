@@ -60,8 +60,8 @@ const emojiMarkerPattern = /\uE000(\d+)\uE001/g;
 const decimalDigitPattern = /\p{Decimal_Number}/u;
 const amountAtStartPattern = /^\s*\d[\d,.]*(?:\s|$)/;
 const explicitMathSyntaxPattern = /[\\^_={}<>+*/]/;
-const githubMentionPattern = /(^|[^\w@-])@([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/g;
-const faviconSize = "0.875em";
+const githubMentionPattern = /(^|[^\w@-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/g;
+const linkFaviconSize = "0.875em";
 
 function remarkLinkGitHubMentions() {
   return (tree: Root) => {
@@ -137,7 +137,7 @@ function FaviconLink({ href, children }: { href?: string; children: ReactNode })
           src={source}
           alt=""
           aria-hidden="true"
-          boxSize={faviconSize}
+          boxSize={linkFaviconSize}
           flexShrink={0}
           objectFit="contain"
           loading="lazy"
