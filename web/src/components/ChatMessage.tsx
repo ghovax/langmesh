@@ -323,6 +323,13 @@ export function UserMessageCard({
   const [expanded, setExpanded] = useState(false);
   const [truncatable, setTruncatable] = useState(false);
   const COLLAPSE_HEIGHT = 200;
+  const sourceAuthor = message.meta?.sourceAuthor?.trim();
+  const authorBanner = sourceAuthor
+    ? sourceAuthor.startsWith("@")
+      ? sourceAuthor
+      : `@${sourceAuthor}`
+    : "";
+  const bannerText = authorBanner || banner;
 
   useLayoutEffect(() => {
     const element = contentRef.current;
@@ -339,11 +346,11 @@ export function UserMessageCard({
       gap={1.5}
       maxW="80%"
     >
-      {banner && (
+      {bannerText && (
         <Flex align="center" gap={1.5} color="fg.muted">
           <ActivityIcon>{bannerIcon ?? <LuMessagesSquare />}</ActivityIcon>
           <Text fontSize="xs" fontWeight="medium">
-            {banner}
+            {bannerText}
           </Text>
         </Flex>
       )}
@@ -365,7 +372,7 @@ export function UserMessageCard({
           borderRadius="md"
           maxW="100%"
         >
-          <MarkdownContent content={message.content} />
+          <MarkdownContent content={message.content} linkGitHubMentions={Boolean(sourceAuthor)} />
           {!expanded && truncatable && (
             <Box
               position="absolute"
@@ -530,9 +537,13 @@ export const ChatMessageItem = memo(function ChatMessageItem({
 
 interface ChatToolGroupProps {
   messages: ChatMessage[];
+  live?: boolean;
 }
 
-export const ChatToolGroup = memo(function ChatToolGroup({ messages }: ChatToolGroupProps) {
+export const ChatToolGroup = memo(function ChatToolGroup({
+  messages,
+  live = false,
+}: ChatToolGroupProps) {
   // Map the persisted tool-call messages to the shape the shared group renders.
   const tools: ToolEvent[] = messages.map((message) => ({
     name: message.content,
@@ -546,5 +557,5 @@ export const ChatToolGroup = memo(function ChatToolGroup({ messages }: ChatToolG
   }));
   const readyTools = tools.filter(toolCallReady);
   if (readyTools.length === 0) return null;
-  return <ToolGroup tools={readyTools} />;
+  return <ToolGroup tools={readyTools} live={live} />;
 });

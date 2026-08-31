@@ -100,6 +100,8 @@ interface ChatInputProps {
   onSandboxEnforceChange?: (enforce: SandboxEnforce) => void;
   // Running token totals for the session, null until the first turn reports usage.
   tokenUsage?: TokenUsage | null;
+  // Provider-reported subscription usage supplied by a hosted session viewer.
+  subscriptionUsage?: ChatGPTUsage | null;
   // The tracked task list, updated by the model's set_tasks/update_tasks calls.
   tasks?: ChatTask[];
   // Compact the conversation now, offered whenever there is one.
@@ -164,17 +166,18 @@ function ContextFillRing({
   );
 }
 
-// The plan usage for the token view, fetched only when the active model is on the chatgpt provider.
+// The plan usage for the token view, supplied by a hosted viewer or fetched from the local daemon.
 function useChatGPTUsage(
   agentModel: string | undefined,
   isStreaming: boolean,
+  suppliedUsage?: ChatGPTUsage | null,
 ): ChatGPTUsage | null {
   const isChatGPT = !!agentModel && agentModel.startsWith("chatgpt/");
   const [usage, setUsage] = useState<ChatGPTUsage | null>(null);
 
   // Fetch whenever the model is chatgpt and nothing is streaming, which covers both mount and each turn's end.
   useEffect(() => {
-    if (!isChatGPT || isStreaming) return;
+    if (!isChatGPT || isStreaming || suppliedUsage !== undefined) return;
     let cancelled = false;
     fetchChatGPTAuthStatus()
       .then((status) => {
@@ -186,9 +189,9 @@ function useChatGPTUsage(
     return () => {
       cancelled = true;
     };
-  }, [isChatGPT, isStreaming]);
+  }, [isChatGPT, isStreaming, suppliedUsage]);
 
-  return isChatGPT ? usage : null;
+  return isChatGPT ? (suppliedUsage ?? usage) : null;
 }
 
 function cacheCoverage(readTokens: number, reusableTokens: number): string {
@@ -355,12 +358,23 @@ function TasksChip({ tasks }: { tasks: ChatTask[] }) {
   const completion = completed / tasks.length;
   const tooltipContent = (
     <Box whiteSpace="nowrap">
-      <Text fontWeight="semibold" mb={1} color="fg">
-        {translation("tasks", { total: tasks.length, completed })}
-      </Text>
+      <Flex align="baseline" gap={2} mb={1}>
+        <Text fontWeight="semibold" color="fg">
+          {translation("tasks")}
+        </Text>
+        <Text color="fg.subtle">
+          {translation("tasksProgress", { total: tasks.length, completed })}
+        </Text>
+      </Flex>
       <Flex direction="column" ps={2} gap={1} maxH="60vh" overflowY="auto">
         {tasks.map((task) => (
-          <Flex key={task.identifier} align="center" gap={2} minW="220px">
+          <Flex
+            key={task.identifier}
+            align="center"
+            gap={2}
+            minW="220px"
+            opacity={task.status === "completed" ? 0.6 : 1}
+          >
             <Box
               flexShrink={0}
               w="8px"
@@ -379,7 +393,6 @@ function TasksChip({ tasks }: { tasks: ChatTask[] }) {
             <Text
               textStyle="bodySm"
               color={task.status === "completed" ? "fg.subtle" : "fg"}
-              textDecoration={task.status === "completed" ? "line-through" : "none"}
               css={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
             >
               {task.title || task.description}
@@ -539,12 +552,13 @@ export function ChatInput({
   sandboxBackend = "",
   onSandboxEnforceChange,
   tokenUsage,
+  subscriptionUsage,
   tasks = [],
   onCompact,
   isCompacting = false,
 }: ChatInputProps) {
   const translation = useTranslations("ChatInput");
-  const chatgptUsage = useChatGPTUsage(agentModel, isStreaming);
+  const chatgptUsage = useChatGPTUsage(agentModel, isStreaming, subscriptionUsage);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
@@ -1129,7 +1143,7 @@ export function ChatInput({
             agents={agents}
             value={selectedAgent}
             onChange={onAgentChange}
-            disabled={!!sessionId}
+            disabled={!!sessionId || readOnly}
             placeholder={translation("agentPlaceholder")}
           />
           <ModelSelect
@@ -1140,12 +1154,14 @@ export function ChatInput({
             onChange={onAgentModelChange}
             fallbackModelId={agentModel}
             onRetryModels={onRetryModels}
+            disabled={readOnly}
             compact
           />
           {/* Adjustable at any point in a session's life, so a conversation need not restart to run under a looser mode. */}
           <PermissionModeControl
             value={permissionMode}
             onChange={(mode) => onPermissionModeChange?.(mode)}
+            disabled={readOnly}
           />
           {/* The same control Settings shows, so the two can never disagree about what a mode looks like. */}
           <SandboxToggleControl

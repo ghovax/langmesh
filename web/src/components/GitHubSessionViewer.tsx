@@ -16,6 +16,7 @@ import { ChatMessageItem, ChatToolGroup } from "./ChatMessage";
 import { PanelEmptyState, TOP_BAR_HEIGHT } from "./ui/Panel";
 import { ToolbarAction } from "./ui/Toolbar";
 import type { ChatMessage, ChatTask, TokenUsage } from "@/lib/use-chat";
+import type { ChatGPTUsage } from "@/lib/api";
 import { timelineItems } from "@/lib/chat-timeline";
 
 interface ViewerSnapshot {
@@ -35,6 +36,7 @@ interface ViewerSnapshot {
   status: "working" | "queued" | "completed" | "failed";
   tasks: ChatTask[];
   token_usage: Record<string, unknown>;
+  subscription_usage: ChatGPTUsage | null;
   messages: ChatMessage[];
 }
 
@@ -262,9 +264,13 @@ function ViewerContent({ token }: { token: string }) {
               <PanelEmptyState icon={<Spinner boxSize="8" borderWidth="2px" />} />
             ) : snapshot && timeline.length > 0 ? (
               <VStack gap={2.5} align="stretch" w="full" maxW="80rem" mx="auto">
-                {timeline.map((item) =>
+                {timeline.map((item, itemIndex) =>
                   item.kind === "tool_group" ? (
-                    <ChatToolGroup key={item.id} messages={item.messages} />
+                    <ChatToolGroup
+                      key={item.id}
+                      messages={item.messages}
+                      live={snapshot.status === "working" && itemIndex === timeline.length - 1}
+                    />
                   ) : (
                     <ChatMessageItem key={item.message.id} message={item.message} />
                   ),
@@ -301,6 +307,7 @@ function ViewerContent({ token }: { token: string }) {
               sandboxEnforce={sandboxEnforce}
               sandboxBackend={sandboxBackend}
               tokenUsage={tokenUsage}
+              subscriptionUsage={snapshot?.subscription_usage ?? null}
               tasks={snapshot?.tasks ?? []}
               onAgentModelChange={() => {}}
             />

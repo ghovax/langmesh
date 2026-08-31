@@ -71,19 +71,19 @@ function paletteFromIconColor(iconColor: string): string {
 
 interface ToolGroupProps {
   tools: ToolEvent[];
+  live?: boolean;
 }
 
-export const ToolGroup = memo(function ToolGroup({ tools }: ToolGroupProps) {
+export const ToolGroup = memo(function ToolGroup({ tools, live = false }: ToolGroupProps) {
   const translation = useTranslations("ToolGroup");
-  if (tools.length === 0) return null;
   const backgroundCount = tools.filter(
     (tool) => toolStatus(tool.status) === "running" && hasBackgroundJobId(tool.result),
   ).length;
   const runningCount =
     tools.filter((tool) => toolStatus(tool.status) === "running").length - backgroundCount;
   const inputRequired = tools.some((tool) => toolStatus(tool.status) === "input_required");
-  const active = runningCount > 0 || backgroundCount > 0 || inputRequired;
-  const showActivitySpinner = runningCount > 0;
+  const active = live || runningCount > 0 || backgroundCount > 0 || inputRequired;
+  const showActivitySpinner = live || runningCount > 0;
   // Tri-state, so the group can be toggled either way from its default: null follows the default.
   const [manualOverride, setManualOverride] = useState<boolean | null>(null);
   const bodyOpen = manualOverride ?? false;
@@ -102,6 +102,7 @@ export const ToolGroup = memo(function ToolGroup({ tools }: ToolGroupProps) {
     () => collapsedHeadingLocation(tools.map((tool) => tool.arguments)),
     [tools],
   );
+  if (tools.length === 0) return null;
   // A group of one skips the per-call line and opens straight onto that call's detail.
   const soleTool = tools.length === 1 ? tools[0] : null;
   const soleDetail = soleTool

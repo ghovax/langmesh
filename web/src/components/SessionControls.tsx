@@ -262,6 +262,7 @@ export function PermissionModeControl({
   layout = "chip",
   fitted = false,
   labelHidden = false,
+  disabled = false,
 }: {
   value: PermissionMode;
   onChange: (mode: PermissionMode) => void;
@@ -270,6 +271,7 @@ export function PermissionModeControl({
   fitted?: boolean;
   /** The row this sits in has no space for the mode's name; the icon and its colour say it. */
   labelHidden?: boolean;
+  disabled?: boolean;
 }) {
   const translation = useTranslations("SessionControls");
   const permissionChoices: {
@@ -322,6 +324,7 @@ export function PermissionModeControl({
         onChange(chosen as PermissionMode);
       }}
       size="xs"
+      disabled={disabled}
       {...markers}
       w={metrics.width}
       minW={layout === "field" ? 0 : "max-content"}

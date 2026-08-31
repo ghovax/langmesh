@@ -631,6 +631,7 @@ async def run_turn(
     credential_store: Any = None,
     compaction_configuration: CompactionConfiguration | None = None,
     session_callback: Callable[[Session | None], None] | None = None,
+    usage_callback: Callable[[Mapping[str, Any]], Awaitable[None]] | None = None,
 ) -> str:
     if provider.strip().lower() == "chatgpt" and credential_store is not None:
         credential_binding = bind_credential_store(credential_store)
@@ -705,6 +706,18 @@ async def run_turn(
             async for event in session.stream(turn_input, **stream_options):
                 if isinstance(event, Usage):
                     model_call += 1
+                    if usage_callback is not None and provider.strip().lower() == "chatgpt":
+                        from models_provider import get_usage_snapshot
+
+                        usage_snapshot = get_usage_snapshot()
+                        if usage_snapshot:
+                            try:
+                                await usage_callback(usage_snapshot)
+                            except Exception:  # noqa: BLE001 — usage display must not fail the turn
+                                logger.warning(
+                                    "could not persist the GitHub subscription usage snapshot",
+                                    exc_info=True,
+                                )
                     logger.info(
                         "mention usage session=%s call=%s input=%s output=%s "
                         "cache_read=%s cache_write=%s prefix_reusable=%s "
