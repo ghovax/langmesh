@@ -698,7 +698,7 @@ async def run_turn(
                 # A restarted worker already has the prior user message in its checkpoint. Send
                 # only a hidden, markdown-backed continuation note so that message is not replayed.
                 turn_input = render("continuation")
-                stream_options = {"as_system_note": True}
+                stream_options: dict[str, Any] = {"as_system_note": True}
             else:
                 turn_input = prompt_for(mention)
                 stream_options = {}

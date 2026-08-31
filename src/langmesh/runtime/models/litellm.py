@@ -130,7 +130,10 @@ class ChatLiteLLMModel(BaseChatModel):
         except Exception:  # noqa: BLE001 — an unknown id is a custom endpoint, not a failure
             live = 0
         if live and catalogued:
-            return min(live, catalogued)
+            # LiteLLM may carry an older or narrower input limit than models.dev's advertised
+            # context window. The catalogue is the provider-neutral source of truth, so retain
+            # the larger value when both are known.
+            return max(live, catalogued)
         return live or catalogued
 
     @property

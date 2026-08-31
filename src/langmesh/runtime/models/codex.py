@@ -102,12 +102,12 @@ class ChatCodexModel(BaseChatModel):
         return "codex"
 
     def context_window(self) -> int:
-        # The live subscription catalogue is authoritative when it is available.
+        # The provider endpoint can report a smaller input limit than the model's advertised
+        # total context window. Keep the larger models.dev value when both are known.
         live = cached_chatgpt_models().get(self.model)
-        if live and live.get("context"):
-            return int(live["context"])
-        # Before OAuth metadata is available, use the advertised models.dev context.
-        return max(0, int(self.context_length or 0))
+        live_context = int(live.get("context") or 0) if isinstance(live, Mapping) else 0
+        advertised_context = max(0, int(self.context_length or 0))
+        return max(live_context, advertised_context)
 
     @property
     def _identifying_params(self) -> dict[str, Any]:

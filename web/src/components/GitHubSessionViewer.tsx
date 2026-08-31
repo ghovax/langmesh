@@ -121,17 +121,12 @@ const VIEWER_AGENT = {
   description: "GitHub mention agent",
 };
 
-function ViewerContent() {
-  const searchParams = useSearchParams();
-  const token = searchParams.get("token") ?? "";
+function ViewerContent({ token }: { token: string }) {
   const [snapshot, setSnapshot] = useState<ViewerSnapshot | null>(null);
   const [errorCode, setErrorCode] = useState<ViewerErrorCode | null>(null);
   const snapshotRef = useRef<ViewerSnapshot | null>(null);
 
   useEffect(() => {
-    snapshotRef.current = null;
-    setSnapshot(null);
-    setErrorCode(null);
     if (!token) return;
     let cancelled = false;
     const stream = new EventSource(
@@ -155,7 +150,9 @@ function ViewerContent() {
       }
     };
     stream.onerror = () => {};
-    void fetch(`/github/session?token=${encodeURIComponent(token)}&mode=data`, { cache: "no-store" })
+    void fetch(`/github/session?token=${encodeURIComponent(token)}&mode=data`, {
+      cache: "no-store",
+    })
       .then((response) => {
         if (!response.ok) throw new Error(`session snapshot request failed: ${response.status}`);
         return response.json() as Promise<ViewerSnapshot>;
@@ -315,5 +312,7 @@ function ViewerContent() {
 }
 
 export function GitHubSessionViewer() {
-  return <ViewerContent />;
+  const searchParams = useSearchParams();
+  const token = searchParams.get("token") ?? "";
+  return <ViewerContent key={token} token={token} />;
 }

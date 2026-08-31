@@ -56,7 +56,12 @@ import { InlineField } from "./ui/Display";
 import { richTags } from "@/lib/i18n/rich-tags";
 import { reportError } from "@/lib/faults";
 import { errorMessage } from "@/lib/errors";
-import { hideHorizontalScrollbar, FADE_INLINE, fadeOverlayInline, useScrollInlineFade } from "@/lib/scroll-fade";
+import {
+  hideHorizontalScrollbar,
+  FADE_INLINE,
+  fadeOverlayInline,
+  useScrollInlineFade,
+} from "@/lib/scroll-fade";
 
 interface ChatInputProps {
   // Returns the session id when the send created one, which the composer ignores as the caller's business.
@@ -299,11 +304,11 @@ function ContextUsageChip({
       closeDelay={60}
       positioning={{ placement: "top" }}
     >
-      <Flex
-        as="button"
+      <Button
         type="button"
         aria-label={translation("usageThisTurn")}
-        align="center"
+        variant="outline"
+        alignItems="center"
         gap={1.5}
         // The house control height rather than a number, so this chip matches the buttons beside it on a coarse pointer.
         h="var(--control-height)"
@@ -320,10 +325,7 @@ function ContextUsageChip({
         {hasContext && (
           <>
             <ContextFillRing fraction={contextFraction} />
-            <Text
-              textStyle="fieldLabel"
-              whiteSpace="nowrap"
-            >
+            <Text textStyle="fieldLabel" whiteSpace="nowrap">
               {contextPercent}%
             </Text>
             <Separator orientation="vertical" h={3.5} flexShrink={0} />
@@ -333,16 +335,13 @@ function ContextUsageChip({
         <Box display="flex" alignItems="center" flexShrink={0}>
           <LuCoins size={14} />
         </Box>
-        <Text
-          textStyle="fieldLabel"
-          whiteSpace="nowrap"
-        >
+        <Text textStyle="fieldLabel" whiteSpace="nowrap">
           {tokenUsage.contextTokens.toLocaleString()}
           {hasContext
             ? ` / ${tokenUsage.contextWindowEstimated ? "~" : ""}${tokenUsage.contextWindow.toLocaleString()}`
             : ""}
         </Text>
-      </Flex>
+      </Button>
     </Tooltip>
   );
 }
@@ -562,7 +561,12 @@ export function ChatInput({
   const latestInputValueRef = useRef("");
   const [sendPending, setSendPending] = useState(false);
   const [compactConfirmOpen, setCompactConfirmOpen] = useState(false);
-  const { containerRef: selectorsScrollRef, onScroll: onSelectorsScroll, hiddenStart: selectorsHiddenStart, hiddenEnd: selectorsHiddenEnd } = useScrollInlineFade();
+  const {
+    containerRef: selectorsScrollRef,
+    onScroll: onSelectorsScroll,
+    hiddenStart: selectorsHiddenStart,
+    hiddenEnd: selectorsHiddenEnd,
+  } = useScrollInlineFade();
   // Dictation is absent rather than disabled until it is turned on, and `recording` holds the take a toggle can stop.
   const [dictationEnabled, setDictationEnabled] = useState(false);
   const [dictationState, setDictationState] = useState<DictationState>("idle");
@@ -1174,15 +1178,10 @@ export function ChatInput({
                 ) : (
                   <LuFoldVertical size={14} />
                 )}
-                <Text>
-                  {isCompacting ? translation("compacting") : translation("compact")}
-                </Text>
+                <Text>{isCompacting ? translation("compacting") : translation("compact")}</Text>
               </Button>
             )}
-            <ContextUsageChip
-              tokenUsage={tokenUsage}
-              chatgptUsage={chatgptUsage}
-            />
+            <ContextUsageChip tokenUsage={tokenUsage} chatgptUsage={chatgptUsage} />
             <TasksChip tasks={tasks} />
           </Flex>
         </Flex>
