@@ -46,6 +46,8 @@ interface MarkdownContentProps {
   fontSize?: string;
   // Animate newly-streamed text, set only for the one live message.
   animate?: boolean;
+  // Link plain GitHub-style mentions when the content is known to come from GitHub.
+  linkGitHubMentions?: boolean;
 }
 
 // Vertical rhythm of the prose, kept compact because the transcript is a working document.
@@ -58,6 +60,94 @@ const emojiMarkerPattern = /\uE000(\d+)\uE001/g;
 const decimalDigitPattern = /\p{Decimal_Number}/u;
 const amountAtStartPattern = /^\s*\d[\d,.]*(?:\s|$)/;
 const explicitMathSyntaxPattern = /[\\^_={}<>+*/]/;
+const githubMentionPattern = /(^|[^\w@-])@([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/g;
+const faviconSize = "0.875em";
+
+function remarkLinkGitHubMentions() {
+  return (tree: Root) => {
+    visit(tree, "text", (node, nodeIndex, parent) => {
+      if (
+        nodeIndex === undefined ||
+        !parent ||
+        parent.type === "link" ||
+        parent.type === "linkReference"
+      ) {
+        return;
+      }
+      const text = node.value;
+      githubMentionPattern.lastIndex = 0;
+      if (!githubMentionPattern.test(text)) return;
+      githubMentionPattern.lastIndex = 0;
+      const replacement: typeof parent.children = [];
+      let previousEnd = 0;
+      for (const match of text.matchAll(githubMentionPattern)) {
+        const matchStart = match.index ?? 0;
+        const prefix = match[1] ?? "";
+        const username = match[2] ?? "";
+        const mentionStart = matchStart + prefix.length;
+        if (mentionStart > previousEnd) {
+          replacement.push({ type: "text", value: text.slice(previousEnd, mentionStart) });
+        }
+        replacement.push({
+          type: "link",
+          title: null,
+          url: `https://github.com/${username}`,
+          children: [{ type: "text", value: `@${username}` }],
+        });
+        previousEnd = mentionStart + username.length + 1;
+      }
+      if (previousEnd < text.length) {
+        replacement.push({ type: "text", value: text.slice(previousEnd) });
+      }
+      parent.children.splice(nodeIndex, 1, ...replacement);
+    });
+  };
+}
+
+function faviconSource(href: string | undefined): string | null {
+  if (!href) return null;
+  try {
+    const url = new URL(href);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return `https://icons.duckduckgo.com/ip3/${url.hostname}.ico`;
+  } catch {
+    return null;
+  }
+}
+
+function FaviconLink({ href, children }: { href?: string; children: ReactNode }) {
+  const source = faviconSource(href);
+  const [showFavicon, setShowFavicon] = useState(source !== null);
+  return (
+    <Link
+      href={href}
+      colorPalette="blue"
+      fontSize="inherit"
+      textUnderlineOffset="2px"
+      textDecorationThickness="1px"
+      target="_blank"
+      rel="noopener noreferrer"
+      display="inline-flex"
+      alignItems="center"
+      gap="0.25em"
+      verticalAlign="middle"
+    >
+      {showFavicon && source ? (
+        <Image
+          src={source}
+          alt=""
+          aria-hidden="true"
+          boxSize={faviconSize}
+          flexShrink={0}
+          objectFit="contain"
+          loading="lazy"
+          onError={() => setShowFavicon(false)}
+        />
+      ) : null}
+      {children}
+    </Link>
+  );
+}
 
 function preserveCurrencyDollars() {
   return (tree: Root, file: { value: unknown }) => {
@@ -242,6 +332,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   content,
   fontSize = "sm",
   animate = false,
+  linkGitHubMentions = false,
 }: MarkdownContentProps) {
   const syntaxTheme = useColorModeValue(xcode, atomOneDark);
   // Reduced-motion readers keep the stable token structure but receive a zero-duration fade.
@@ -304,20 +395,7 @@ export const MarkdownContent = memo(function MarkdownContent({
         );
       },
       a({ href, children }) {
-        // An editorial underline, offset from the baseline and faint until hover, rather than a heavy rule.
-        return (
-          <Link
-            href={href}
-            colorPalette="blue"
-            fontSize="inherit"
-            textUnderlineOffset="2px"
-            textDecorationThickness="1px"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {renderChildren(children)}
-          </Link>
-        );
+        return <FaviconLink href={href}>{renderChildren(children)}</FaviconLink>;
       },
       ul({ children }) {
         return (
@@ -547,6 +625,7 @@ export const MarkdownContent = memo(function MarkdownContent({
           remarkGfm,
           [remarkMath, { singleDollarTextMath: true }],
           preserveCurrencyDollars,
+          ...(linkGitHubMentions ? [remarkLinkGitHubMentions] : []),
         ]}
         rehypePlugins={[[rehypeKatex, { strict: false }]]}
         components={markdownComponents}
@@ -580,15 +659,9 @@ const inlineMarkdownComponents: Components = {
   br: () => <> </>,
   a({ href, children }) {
     return (
-      <Link
-        href={typeof href === "string" ? href : undefined}
-        colorPalette="blue"
-        fontSize="inherit"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
+      <FaviconLink href={typeof href === "string" ? href : undefined}>
         {renderEmojiChildren(children)}
-      </Link>
+      </FaviconLink>
     );
   },
   code({ children }) {
