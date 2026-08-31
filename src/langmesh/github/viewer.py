@@ -13,6 +13,9 @@ def _text_content(value: Any) -> str:
         return ""
     parts: list[str] = []
     for block in value:
+        if isinstance(block, str):
+            parts.append(block)
+            continue
         if not isinstance(block, Mapping):
             continue
         text = block.get("text")
@@ -47,7 +50,7 @@ def messages_from_checkpoint(
         if isinstance(additional_kwargs, Mapping) and additional_kwargs.get("reminder"):
             continue
 
-        if message_type == "human":
+        if message_type in {"human", "HumanMessage", "HumanMessageChunk"}:
             content = _text_content(data.get("content"))
             if content:
                 messages.append(

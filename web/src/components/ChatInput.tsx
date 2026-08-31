@@ -55,8 +55,13 @@ import type { ChatTask, TokenUsage } from "@/lib/use-chat";
 import { InlineField } from "./ui/Display";
 import { richTags } from "@/lib/i18n/rich-tags";
 import { reportError } from "@/lib/faults";
-import { useFittedRow } from "@/lib/use-fitted-row";
 import { errorMessage } from "@/lib/errors";
+import {
+  hideHorizontalScrollbar,
+  FADE_INLINE,
+  fadeOverlayInline,
+  useScrollInlineFade,
+} from "@/lib/scroll-fade";
 
 interface ChatInputProps {
   // Returns the session id when the send created one, which the composer ignores as the caller's business.
@@ -103,19 +108,6 @@ interface ChatInputProps {
   isCompacting?: boolean;
   // The share of the window at which the server reclaims on its own; the manual button appears at half of it.
 }
-
-// What the selectors row gives up, and in what order, when it cannot hold everything.
-const COMPOSER_FIT_ORDER = [
-  "model-provider",
-  "model-capabilities",
-  "context-detail",
-  "compaction",
-  "sandbox",
-  "permission",
-  "agent",
-  "model",
-  "context-percent",
-] as const;
 
 // A filling ring for how full the context window is, shifting colour as it approaches the limit.
 function ContextFillRing({
@@ -210,12 +202,9 @@ function cacheCoverage(readTokens: number, reusableTokens: number): string {
 function ContextUsageChip({
   tokenUsage,
   chatgptUsage,
-  hidden,
 }: {
   tokenUsage?: TokenUsage | null;
   chatgptUsage?: ChatGPTUsage | null;
-  /** Which of this chip's parts the row has given up; the ring is never among them. */
-  hidden: ReadonlySet<string>;
 }) {
   const translation = useTranslations("ChatInput");
   if (!tokenUsage || tokenUsage.contextTokens <= 0) return null;
@@ -315,8 +304,11 @@ function ContextUsageChip({
       closeDelay={60}
       positioning={{ placement: "top" }}
     >
-      <Flex
-        align="center"
+      <Button
+        type="button"
+        aria-label={translation("usageThisTurn")}
+        variant="outline"
+        alignItems="center"
         gap={1.5}
         // The house control height rather than a number, so this chip matches the buttons beside it on a coarse pointer.
         h="var(--control-height)"
@@ -326,40 +318,30 @@ function ContextUsageChip({
         borderColor="border"
         bg="bg"
         color="fg.subtle"
+        cursor="pointer"
+        pointerEvents="auto"
         flexShrink={0}
       >
         {hasContext && (
           <>
             <ContextFillRing fraction={contextFraction} />
-            <Text
-              data-fit-label="context-percent"
-              data-fit-hidden={hidden.has("context-percent") ? "" : undefined}
-              textStyle="fieldLabel"
-              whiteSpace="nowrap"
-            >
+            <Text textStyle="fieldLabel" whiteSpace="nowrap">
               {contextPercent}%
             </Text>
-            {hidden.has("context-detail") ? null : (
-              <Separator orientation="vertical" h={3.5} flexShrink={0} />
-            )}
+            <Separator orientation="vertical" h={3.5} flexShrink={0} />
           </>
         )}
         {/* The tokens icon is the chip's fallback: it stays when the numbers are shed, so the chip is never an empty box. */}
         <Box display="flex" alignItems="center" flexShrink={0}>
           <LuCoins size={14} />
         </Box>
-        <Text
-          data-fit-label="context-detail"
-          data-fit-hidden={hidden.has("context-detail") ? "" : undefined}
-          textStyle="fieldLabel"
-          whiteSpace="nowrap"
-        >
+        <Text textStyle="fieldLabel" whiteSpace="nowrap">
           {tokenUsage.contextTokens.toLocaleString()}
           {hasContext
             ? ` / ${tokenUsage.contextWindowEstimated ? "~" : ""}${tokenUsage.contextWindow.toLocaleString()}`
             : ""}
         </Text>
-      </Flex>
+      </Button>
     </Tooltip>
   );
 }
@@ -579,7 +561,12 @@ export function ChatInput({
   const latestInputValueRef = useRef("");
   const [sendPending, setSendPending] = useState(false);
   const [compactConfirmOpen, setCompactConfirmOpen] = useState(false);
-  const { rowRef: selectorsRowRef, hidden: hiddenLabels } = useFittedRow(COMPOSER_FIT_ORDER);
+  const {
+    containerRef: selectorsScrollRef,
+    onScroll: onSelectorsScroll,
+    hiddenStart: selectorsHiddenStart,
+    hiddenEnd: selectorsHiddenEnd,
+  } = useScrollInlineFade();
   // Dictation is absent rather than disabled until it is turned on, and `recording` holds the take a toggle can stop.
   const [dictationEnabled, setDictationEnabled] = useState(false);
   const [dictationState, setDictationState] = useState<DictationState>("idle");
@@ -1123,19 +1110,20 @@ export function ChatInput({
         </Flex>
       </Box>
 
-      {/* One line, kept one line by measurement: labels are given up in order until the row fits, with a clipped edge as the guarantee. */}
-      <Box pointerEvents={readOnly ? "none" : undefined}>
+      {/* One complete line that can be swiped sideways when the viewport is narrow. */}
+      <Box position="relative" minW={0}>
         <Flex
-          ref={selectorsRowRef}
+          ref={selectorsScrollRef}
           align="center"
           gap={2}
           flexWrap="nowrap"
           px={0}
           pt={1}
           pb={2}
-          overflow="clip"
-          // Enough for a focus ring to bleed past the edge and nothing more.
-          css={{ overflowClipMargin: "3px" }}
+          overflowX="auto"
+          overflowY="hidden"
+          onScroll={onSelectorsScroll}
+          css={{ ...hideHorizontalScrollbar, overflowClipMargin: "3px" }}
         >
           <AgentSelectControl
             agents={agents}
@@ -1143,8 +1131,6 @@ export function ChatInput({
             onChange={onAgentChange}
             disabled={!!sessionId}
             placeholder={translation("agentPlaceholder")}
-            fitted
-            labelHidden={hiddenLabels.has("agent")}
           />
           <ModelSelect
             models={models}
@@ -1155,33 +1141,23 @@ export function ChatInput({
             fallbackModelId={agentModel}
             onRetryModels={onRetryModels}
             compact
-            fitted
-            providerHidden={hiddenLabels.has("model-provider")}
-            capabilitiesHidden={hiddenLabels.has("model-capabilities")}
-            labelHidden={hiddenLabels.has("model")}
           />
           {/* Adjustable at any point in a session's life, so a conversation need not restart to run under a looser mode. */}
           <PermissionModeControl
             value={permissionMode}
             onChange={(mode) => onPermissionModeChange?.(mode)}
-            fitted
-            labelHidden={hiddenLabels.has("permission")}
           />
           {/* The same control Settings shows, so the two can never disagree about what a mode looks like. */}
           <SandboxToggleControl
             enforce={sandboxEnforce}
             backend={sandboxBackend}
             onChange={onSandboxEnforceChange}
-            fitted
-            labelHidden={hiddenLabels.has("sandbox")}
           />
           {/* What the turn has spent, pushed to the far end by a margin rather than by a spacer the fit would have to ignore. */}
           <Flex ms="auto" align="center" gap={2} flexShrink={0}>
             {/* Offered whenever there is a conversation to compaction: when to do it is the reader's judgement, not a threshold's. */}
             {onCompact && !!sessionId && (
               <Button
-                data-fit-control="compaction"
-                {...(hiddenLabels.has("compaction") ? { "data-fit-collapsed": "" } : {})}
                 variant="outline"
                 h="var(--control-height)"
                 // Stated rather than inherited, because the button recipe's own gap is not the one this row uses.
@@ -1202,22 +1178,15 @@ export function ChatInput({
                 ) : (
                   <LuFoldVertical size={14} />
                 )}
-                <Text
-                  data-fit-label="compaction"
-                  data-fit-hidden={hiddenLabels.has("compaction") ? "" : undefined}
-                >
-                  {isCompacting ? translation("compacting") : translation("compact")}
-                </Text>
+                <Text>{isCompacting ? translation("compacting") : translation("compact")}</Text>
               </Button>
             )}
-            <ContextUsageChip
-              tokenUsage={tokenUsage}
-              chatgptUsage={chatgptUsage}
-              hidden={hiddenLabels}
-            />
+            <ContextUsageChip tokenUsage={tokenUsage} chatgptUsage={chatgptUsage} />
             <TasksChip tasks={tasks} />
           </Flex>
         </Flex>
+        {selectorsHiddenStart ? <Box css={fadeOverlayInline("left", FADE_INLINE)} /> : null}
+        {selectorsHiddenEnd ? <Box css={fadeOverlayInline("right", FADE_INLINE)} /> : null}
       </Box>
     </fieldset>
   );

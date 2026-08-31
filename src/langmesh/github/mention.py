@@ -623,6 +623,7 @@ async def run_turn(
     update_comment: Callable[[str], Awaitable[None]] | None = None,
     token: str = "",
     thread_followup: bool = False,
+    recovered: bool = False,
     provider: str,
     model: str,
     api_key: str,
@@ -693,7 +694,15 @@ async def run_turn(
             response_text = ""
             model_call = 0
             compaction_started = False
-            async for event in session.stream(prompt_for(mention)):
+            if recovered and restored:
+                # A restarted worker already has the prior user message in its checkpoint. Send
+                # only a hidden, markdown-backed continuation note so that message is not replayed.
+                turn_input = render("continuation")
+                stream_options: dict[str, Any] = {"as_system_note": True}
+            else:
+                turn_input = prompt_for(mention)
+                stream_options = {}
+            async for event in session.stream(turn_input, **stream_options):
                 if isinstance(event, Usage):
                     model_call += 1
                     logger.info(

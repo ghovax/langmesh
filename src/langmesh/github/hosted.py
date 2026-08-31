@@ -741,6 +741,7 @@ class Processor:
                     update_comment=update_existing_comment,
                     token=token,
                     thread_followup=followup,
+                    recovered=recovered,
                     provider=provider,
                     model=model,
                     api_key=api_key,
