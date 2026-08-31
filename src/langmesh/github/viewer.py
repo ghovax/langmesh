@@ -36,6 +36,7 @@ def messages_from_checkpoint(
     *,
     timestamp: str = "",
     source_messages: Sequence[Mapping[str, str]] = (),
+    assistant_author: str = "",
 ) -> list[dict[str, Any]]:
     """Convert the checkpoint's private message format to the web viewer's public rows."""
     messages: list[dict[str, Any]] = []
@@ -110,6 +111,9 @@ def messages_from_checkpoint(
                         "content": "".join(block["content"] for block in content_blocks),
                         "contentBlocks": content_blocks,
                         "timestamp": timestamp,
+                        **(
+                            {"meta": {"sourceAuthor": assistant_author}} if assistant_author else {}
+                        ),
                     }
                 )
 

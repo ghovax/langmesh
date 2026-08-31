@@ -347,6 +347,11 @@ class Processor:
         model_name = (
             str(model_record.get("name") or model) if isinstance(model_record, Mapping) else model
         )
+        assistant_author = ""
+        try:
+            assistant_author = f"{await asyncio.to_thread(self.github.app_slug)}[bot]"
+        except Exception:  # noqa: BLE001 — an unavailable identity must not hide the session viewer
+            logger.warning("could not resolve the GitHub App login for the session viewer")
         return {
             **context,
             "agent": "langmesh",
@@ -364,6 +369,7 @@ class Processor:
                 conversation,
                 timestamp=str(context.get("updated_at") or ""),
                 source_messages=source_messages,
+                assistant_author=assistant_author,
             ),
         }
 
