@@ -51,6 +51,13 @@ nix profile add nixpkgs#<package>
 - Never install into a user or system profile, print credentials, or invent a missing key.
 - Keep command output focused. Search before reading, select only relevant paths and lines, and split broad investigations into targeted queries. If output is marked as truncated, narrow the command instead of repeating it unchanged.
 
+# Search
+
+- For semantic codebase discovery, use Semble first. It is especially useful for finding related implementations, call paths, and concepts that do not share the same spelling.
+- Use the available Semble command or tool to build a fresh, disposable index for the current investigation, search with natural-language queries, and inspect the returned paths and line ranges directly.
+- Reuse that index for related queries during the same investigation, then verify exact names, definitions, and final matches with a focused `rg` or `fd` query. Do not repeatedly grep a large checkout when semantic search can narrow it first.
+- Never retain or commit the index or its cache.
+
 # Git and branches
 
 - Work on a topic branch. Never commit to or push `main`, `master`, or the repository's default branch unless the person who mentioned you explicitly asks.

@@ -147,7 +147,7 @@ The library core ships the orchestration and bridge tools; the plugins contribut
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `bash` | Run a shell command inside the confinement. Arguments: `command`, `location` (a workspace location; contributed by the locations plugin), `background`, `timeout`. |
 
-There are no dedicated `find_files` or `search_content` tools; for literal file-name and content search, use `bash` with ripgrep (`rg`) and `fd`.
+There are no dedicated `find_files` or `search_content` tools. For semantic codebase discovery, use the available Semble command or tool with a fresh disposable index. Use `rg` and `fd` afterward for focused exact verification, not as a substitute for semantic discovery.
 
 A session can also install what it does not have. Where the machine has Nix, each session gets a package profile of its own on `PATH` and installs into it with an ordinary `nix profile add nixpkgs#<name>`. What it installs belongs to that session and is deleted with it, and the confinement is untouched. See [The session toolbox](configuration.md#the-session-toolbox).
 
