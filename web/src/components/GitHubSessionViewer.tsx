@@ -2,7 +2,7 @@
 
 import { Box, Flex, Spinner, Text, VStack } from "@chakra-ui/react";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   LuCircleHelp,
   LuExternalLink,
@@ -126,22 +126,47 @@ function ViewerContent() {
   const token = searchParams.get("token") ?? "";
   const [snapshot, setSnapshot] = useState<ViewerSnapshot | null>(null);
   const [errorCode, setErrorCode] = useState<ViewerErrorCode | null>(null);
+  const snapshotRef = useRef<ViewerSnapshot | null>(null);
 
   useEffect(() => {
+    snapshotRef.current = null;
+    setSnapshot(null);
+    setErrorCode(null);
     if (!token) return;
+    let cancelled = false;
     const stream = new EventSource(
       `/github/session?token=${encodeURIComponent(token)}&mode=stream`,
     );
+    // Render may wake the page before the worker is ready; EventSource retries transient failures.
+    const unavailableTimer = window.setTimeout(() => {
+      if (!cancelled && !snapshotRef.current) setErrorCode("connection_failed");
+    }, 5000);
+    const applySnapshot = (next: ViewerSnapshot) => {
+      if (cancelled) return;
+      snapshotRef.current = next;
+      setSnapshot(next);
+      setErrorCode(null);
+    };
     stream.onmessage = (event) => {
       try {
-        setSnapshot(JSON.parse(event.data) as ViewerSnapshot);
-        setErrorCode(null);
+        applySnapshot(JSON.parse(event.data) as ViewerSnapshot);
       } catch {
-        setErrorCode("server_error");
+        if (!cancelled) setErrorCode("server_error");
       }
     };
-    stream.onerror = () => setErrorCode("connection_failed");
-    return () => stream.close();
+    stream.onerror = () => {};
+    void fetch(`/github/session?token=${encodeURIComponent(token)}&mode=data`, { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`session snapshot request failed: ${response.status}`);
+        return response.json() as Promise<ViewerSnapshot>;
+      })
+      .then(applySnapshot)
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      window.clearTimeout(unavailableTimer);
+      stream.close();
+    };
   }, [token]);
 
   const stop = useCallback(async () => {
