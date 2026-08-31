@@ -358,7 +358,7 @@ class Processor:
             "permission_mode": (
                 checkpoint.session.permission_mode if checkpoint is not None else ""
             )
-            or "automatic",
+            or "allow",
             "sandbox_enforce": "required",
             "sandbox_backend": "Render",
             "model_name": model_name,

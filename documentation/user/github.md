@@ -50,6 +50,8 @@ Each delivery is attempted at most `maximum_delivery_attempts` times. After the 
 
 The hosted processor does not impose a wall-clock deadline on a whole turn. Model verdict calls and protocol loops carry their own attempt and time budgets, command tools enforce their own limits, and a worker restart recovers a failed delivery from its durable checkpoint. This lets long but productive work finish without permitting an unbounded model retry loop.
 
+GitHub sessions use `allow` permission mode: the bot does not stop for approval prompts. Render's operating-system confinement still limits what each tool can reach, so `allow` removes the approval gate but does not remove the sandbox.
+
 Compaction uses the selected model's advertised context window from models.dev. For an OAuth-backed model, the live provider catalogue takes precedence when available; `maximum_context_tokens` is left unset so the service does not impose an unrelated context ceiling.
 
 `storage.encryption.key_path` must contain a Fernet key. Generate one once with:

@@ -586,7 +586,7 @@ def _session(
         system_prompt=render("system"),
         provider=provider,
         model=model,
-        permission_mode="automatic",
+        permission_mode="allow",
         tools_enabled=[
             "bash",
             "search_web",
@@ -600,7 +600,7 @@ def _session(
         agent,
         directory=str(workspace),
         session_id=mention.session_id,
-        permission_mode="automatic",
+        permission_mode="allow",
         sandbox=mention_sandbox(token),
         providers={provider: key} if key else None,
         components=SessionComponents(
@@ -690,7 +690,7 @@ async def run_turn(
                 mention.session_id,
                 _resident_memory_megabytes(),
             )
-            await session.set_permission_mode("automatic")
+            await session.set_permission_mode("allow")
             answer = ""
             response_text = ""
             model_call = 0
