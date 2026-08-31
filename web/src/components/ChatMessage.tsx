@@ -537,9 +537,13 @@ export const ChatMessageItem = memo(function ChatMessageItem({
 
 interface ChatToolGroupProps {
   messages: ChatMessage[];
+  live?: boolean;
 }
 
-export const ChatToolGroup = memo(function ChatToolGroup({ messages }: ChatToolGroupProps) {
+export const ChatToolGroup = memo(function ChatToolGroup({
+  messages,
+  live = false,
+}: ChatToolGroupProps) {
   // Map the persisted tool-call messages to the shape the shared group renders.
   const tools: ToolEvent[] = messages.map((message) => ({
     name: message.content,
@@ -553,5 +557,5 @@ export const ChatToolGroup = memo(function ChatToolGroup({ messages }: ChatToolG
   }));
   const readyTools = tools.filter(toolCallReady);
   if (readyTools.length === 0) return null;
-  return <ToolGroup tools={readyTools} />;
+  return <ToolGroup tools={readyTools} live={live} />;
 });

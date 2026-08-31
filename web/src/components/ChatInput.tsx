@@ -355,12 +355,23 @@ function TasksChip({ tasks }: { tasks: ChatTask[] }) {
   const completion = completed / tasks.length;
   const tooltipContent = (
     <Box whiteSpace="nowrap">
-      <Text fontWeight="semibold" mb={1} color="fg">
-        {translation("tasks", { total: tasks.length, completed })}
-      </Text>
+      <Flex align="baseline" gap={2} mb={1}>
+        <Text fontWeight="semibold" color="fg">
+          {translation("tasks")}
+        </Text>
+        <Text color="fg.subtle">
+          {translation("tasksProgress", { total: tasks.length, completed })}
+        </Text>
+      </Flex>
       <Flex direction="column" ps={2} gap={1} maxH="60vh" overflowY="auto">
         {tasks.map((task) => (
-          <Flex key={task.identifier} align="center" gap={2} minW="220px">
+          <Flex
+            key={task.identifier}
+            align="center"
+            gap={2}
+            minW="220px"
+            opacity={task.status === "completed" ? 0.6 : 1}
+          >
             <Box
               flexShrink={0}
               w="8px"
@@ -379,7 +390,6 @@ function TasksChip({ tasks }: { tasks: ChatTask[] }) {
             <Text
               textStyle="bodySm"
               color={task.status === "completed" ? "fg.subtle" : "fg"}
-              textDecoration={task.status === "completed" ? "line-through" : "none"}
               css={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
             >
               {task.title || task.description}
@@ -1129,7 +1139,7 @@ export function ChatInput({
             agents={agents}
             value={selectedAgent}
             onChange={onAgentChange}
-            disabled={!!sessionId}
+            disabled={!!sessionId || readOnly}
             placeholder={translation("agentPlaceholder")}
           />
           <ModelSelect
@@ -1140,12 +1150,14 @@ export function ChatInput({
             onChange={onAgentModelChange}
             fallbackModelId={agentModel}
             onRetryModels={onRetryModels}
+            disabled={readOnly}
             compact
           />
           {/* Adjustable at any point in a session's life, so a conversation need not restart to run under a looser mode. */}
           <PermissionModeControl
             value={permissionMode}
             onChange={(mode) => onPermissionModeChange?.(mode)}
+            disabled={readOnly}
           />
           {/* The same control Settings shows, so the two can never disagree about what a mode looks like. */}
           <SandboxToggleControl

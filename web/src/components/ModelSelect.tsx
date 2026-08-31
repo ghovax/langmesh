@@ -54,6 +54,7 @@ interface ModelSelectProps {
   providerHidden?: boolean;
   capabilitiesHidden?: boolean;
   labelHidden?: boolean;
+  disabled?: boolean;
   /** Re-fetches the model catalog through the daemon; shown when the catalog is empty so a failed load can be retried. */
   onRetryModels?: () => void | Promise<void>;
 }
@@ -175,6 +176,7 @@ export function ModelSelect({
   providerHidden = false,
   capabilitiesHidden = false,
   labelHidden = false,
+  disabled = false,
   onRetryModels,
 }: ModelSelectProps) {
   const translation = useTranslations("ModelSelect");
@@ -260,9 +262,9 @@ export function ModelSelect({
   const chipModelName = effectiveModelId
     ? displayModelName(effectiveModelId, models)
     : translation("model");
-  const chipNameIsFallback = effectiveModelId
-    ? modelNameIsFallbackId(effectiveModelId, models)
-    : true;
+  const chipNameIsFallback = Boolean(
+    effectiveModelId && modelNameIsFallbackId(effectiveModelId, models),
+  );
   const chipProviderLabel = effectiveModelId
     ? providerName(providerForModel(effectiveModelId, models), providers)
     : "";
@@ -372,6 +374,7 @@ export function ModelSelect({
         minW={compact ? "max-content" : undefined}
         maxW={fitted ? "none" : compact ? "220px" : "100%"}
         flexShrink={0}
+        disabled={disabled}
         css={
           labelHidden
             ? {
@@ -476,6 +479,7 @@ export function ModelSelect({
           borderColor="border"
           h="var(--control-height)"
           flexShrink={0}
+          disabled={disabled}
           onClick={handleRetryModels}
         >
           {retrying ? (

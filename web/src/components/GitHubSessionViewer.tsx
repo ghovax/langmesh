@@ -262,9 +262,13 @@ function ViewerContent({ token }: { token: string }) {
               <PanelEmptyState icon={<Spinner boxSize="8" borderWidth="2px" />} />
             ) : snapshot && timeline.length > 0 ? (
               <VStack gap={2.5} align="stretch" w="full" maxW="80rem" mx="auto">
-                {timeline.map((item) =>
+                {timeline.map((item, itemIndex) =>
                   item.kind === "tool_group" ? (
-                    <ChatToolGroup key={item.id} messages={item.messages} />
+                    <ChatToolGroup
+                      key={item.id}
+                      messages={item.messages}
+                      live={snapshot.status === "working" && itemIndex === timeline.length - 1}
+                    />
                   ) : (
                     <ChatMessageItem key={item.message.id} message={item.message} />
                   ),
