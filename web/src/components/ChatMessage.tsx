@@ -379,7 +379,7 @@ export function UserMessageCard({
           borderRadius="md"
           maxW="100%"
         >
-          <MarkdownContent content={message.content} linkGitHubMentions={Boolean(sourceAuthor)} />
+          <MarkdownContent content={message.content} />
           {!expanded && truncatable && (
             <Box
               position="absolute"

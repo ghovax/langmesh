@@ -26,8 +26,11 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import remarkParse from "remark-parse";
+import remarkStringify from "remark-stringify";
 import rehypeKatex from "rehype-katex";
 import { visit } from "unist-util-visit";
+import { unified } from "unified";
 import twemoji from "@twemoji/api";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { xcode, atomOneDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
@@ -46,8 +49,6 @@ interface MarkdownContentProps {
   fontSize?: string;
   // Animate newly-streamed text, set only for the one live message.
   animate?: boolean;
-  // Link plain GitHub-style mentions when the content is known to come from GitHub.
-  linkGitHubMentions?: boolean;
 }
 
 // Vertical rhythm of the prose, kept compact because the transcript is a working document.
@@ -60,10 +61,10 @@ const emojiMarkerPattern = /\uE000(\d+)\uE001/g;
 const decimalDigitPattern = /\p{Decimal_Number}/u;
 const amountAtStartPattern = /^\s*\d[\d,.]*(?:\s|$)/;
 const explicitMathSyntaxPattern = /[\\^_={}<>+*/]/;
-const githubMentionPattern = /(^|[^\w@-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/g;
-const linkFaviconSize = "0.875em";
+const githubMentionPattern = /(^|[^\w@-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/;
+const linkFaviconSize = "14px";
 
-function remarkLinkGitHubMentions() {
+function insertGitHubMentionLinks() {
   return (tree: Root) => {
     visit(tree, "text", (node, nodeIndex, parent) => {
       if (
@@ -75,12 +76,11 @@ function remarkLinkGitHubMentions() {
         return;
       }
       const text = node.value;
-      githubMentionPattern.lastIndex = 0;
-      if (!githubMentionPattern.test(text)) return;
-      githubMentionPattern.lastIndex = 0;
+      if (!text.match(githubMentionPattern)) return;
+      const matches = text.matchAll(new RegExp(githubMentionPattern.source, "g"));
       const replacement: typeof parent.children = [];
       let previousEnd = 0;
-      for (const match of text.matchAll(githubMentionPattern)) {
+      for (const match of matches) {
         const matchStart = match.index ?? 0;
         const prefix = match[1] ?? "";
         const username = match[2] ?? "";
@@ -102,6 +102,20 @@ function remarkLinkGitHubMentions() {
       parent.children.splice(nodeIndex, 1, ...replacement);
     });
   };
+}
+
+function markdownWithGitHubMentionLinks(content: string): string {
+  if (!githubMentionPattern.test(content)) return content;
+  return String(
+    unified()
+      .use(remarkParse)
+      .use(remarkGfm)
+      .use(remarkMath, { singleDollarTextMath: true })
+      .use(preserveCurrencyDollars)
+      .use(insertGitHubMentionLinks)
+      .use(remarkStringify)
+      .processSync(content),
+  );
 }
 
 function faviconSource(href: string | undefined): string | null {
@@ -332,7 +346,6 @@ export const MarkdownContent = memo(function MarkdownContent({
   content,
   fontSize = "sm",
   animate = false,
-  linkGitHubMentions = false,
 }: MarkdownContentProps) {
   const syntaxTheme = useColorModeValue(xcode, atomOneDark);
   // Reduced-motion readers keep the stable token structure but receive a zero-duration fade.
@@ -342,7 +355,12 @@ export const MarkdownContent = memo(function MarkdownContent({
   const [everAnimated, setEverAnimated] = useState(animating);
   if (animating && !everAnimated) setEverAnimated(true);
   const tokenDuration = everAnimated ? TOKEN_DURATION : "0s";
-  const renderedContent = useThrottledText(content, STREAMING_RENDER_INTERVAL_MS, animating);
+  const preparedContent = useMemo(() => markdownWithGitHubMentionLinks(content), [content]);
+  const renderedContent = useThrottledText(
+    preparedContent,
+    STREAMING_RENDER_INTERVAL_MS,
+    animating,
+  );
 
   const markdownComponents = useMemo<Components>(
     () => ({
@@ -625,7 +643,6 @@ export const MarkdownContent = memo(function MarkdownContent({
           remarkGfm,
           [remarkMath, { singleDollarTextMath: true }],
           preserveCurrencyDollars,
-          ...(linkGitHubMentions ? [remarkLinkGitHubMentions] : []),
         ]}
         rehypePlugins={[[rehypeKatex, { strict: false }]]}
         components={markdownComponents}
@@ -712,7 +729,7 @@ export const InlineMarkdown = memo(function InlineMarkdown({ content }: { conten
       rehypePlugins={[[rehypeKatex, { strict: false }]]}
       components={inlineMarkdownComponents}
     >
-      {content}
+      {markdownWithGitHubMentionLinks(content)}
     </ReactMarkdown>
   );
 });
