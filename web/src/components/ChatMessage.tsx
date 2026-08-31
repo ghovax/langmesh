@@ -300,6 +300,24 @@ function MessageFooter({
   );
 }
 
+function sourceAuthorLabel(author: string | undefined): string {
+  const trimmed = author?.trim() ?? "";
+  if (!trimmed) return "";
+  return trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
+}
+
+function MessageBanner({ label, icon }: { label: string; icon?: ReactNode }) {
+  if (!label) return null;
+  return (
+    <Flex align="center" gap={1.5} color="fg.muted" alignSelf="stretch">
+      <ActivityIcon>{icon ?? <LuMessagesSquare />}</ActivityIcon>
+      <Text fontSize="xs" fontWeight="medium">
+        {label}
+      </Text>
+    </Flex>
+  );
+}
+
 // A message addressed to this session — the person's own, a peer's, or the goal review's — as one card.
 export function UserMessageCard({
   message,
@@ -324,11 +342,7 @@ export function UserMessageCard({
   const [truncatable, setTruncatable] = useState(false);
   const COLLAPSE_HEIGHT = 200;
   const sourceAuthor = message.meta?.sourceAuthor?.trim();
-  const authorBanner = sourceAuthor
-    ? sourceAuthor.startsWith("@")
-      ? sourceAuthor
-      : `@${sourceAuthor}`
-    : "";
+  const authorBanner = sourceAuthorLabel(sourceAuthor);
   const bannerText = authorBanner || banner;
 
   useLayoutEffect(() => {
@@ -346,14 +360,7 @@ export function UserMessageCard({
       gap={1.5}
       maxW="80%"
     >
-      {bannerText && (
-        <Flex align="center" gap={1.5} color="fg.muted">
-          <ActivityIcon>{bannerIcon ?? <LuMessagesSquare />}</ActivityIcon>
-          <Text fontSize="xs" fontWeight="medium">
-            {bannerText}
-          </Text>
-        </Flex>
-      )}
+      <MessageBanner label={bannerText} icon={bannerIcon} />
       {attachments.length > 0 && <AttachmentChips attachments={attachments} />}
       {message.content.trim() && (
         <Box
@@ -446,10 +453,12 @@ export const ChatMessageItem = memo(function ChatMessageItem({
         contentBlock.content.trim(),
       );
       if (contentBlocks.length === 0) return null;
+      const authorBanner = sourceAuthorLabel(message.meta?.sourceAuthor);
       return (
         // No horizontal inset, so the prose shares its left edge with the tool-activity lines.
         <Box alignSelf="flex-start">
           <Flex direction="column" gap={3}>
+            <MessageBanner label={authorBanner} />
             {contentBlocks.map((contentBlock, contentBlockIndex) => (
               <MarkdownContent
                 key={contentBlock.identifier}
