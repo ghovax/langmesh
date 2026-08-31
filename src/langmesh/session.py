@@ -465,8 +465,15 @@ class Session:
         message: str,
         *,
         attachments: Sequence[Attachment] = (),
+        as_system_note: bool = False,
+        opens_exchange: bool = False,
     ) -> AsyncIterator[TurnEventUnion]:
-        """Drive a turn, yielding each event."""
+        """Drive a turn, yielding each event.
+
+        ``as_system_note`` is for host-authored continuation guidance that must not be
+        presented as the person's words. ``opens_exchange`` marks a host-authored note
+        that starts a new unit of work.
+        """
         async with self._turn_lock:
             # A fresh user turn starts clean: no stop from before is owed.
             self.runtime.clear_stop()
@@ -480,7 +487,11 @@ class Session:
             self.runtime.abandon_turn_retry()
             cancelled = False
             try:
-                async for event in self.runtime.stream(self._compose(message, attachments)):
+                async for event in self.runtime.stream(
+                    self._compose(message, attachments),
+                    as_system_note=as_system_note,
+                    opens_exchange=opens_exchange,
+                ):
                     if isinstance(event, Checkpoint):
                         await self._save()
                     if isinstance(event, Done) and event.stop_reason == "cancelled":
