@@ -104,19 +104,13 @@ function insertGitHubMentionLinks() {
   };
 }
 
-function markdownWithGitHubMentionLinks(content: string): string {
-  if (!githubMentionPattern.test(content)) return content;
-  return String(
-    unified()
-      .use(remarkParse)
-      .use(remarkGfm)
-      .use(remarkMath, { singleDollarTextMath: true })
-      .use(preserveCurrencyDollars)
-      .use(insertGitHubMentionLinks)
-      .use(remarkStringify)
-      .processSync(content),
-  );
-}
+const markdownMentionProcessor = unified()
+  .use(remarkParse)
+  .use(remarkGfm)
+  .use(remarkMath, { singleDollarTextMath: true })
+  .use(preserveCurrencyDollars)
+  .use(insertGitHubMentionLinks)
+  .use(remarkStringify);
 
 function faviconSource(href: string | undefined): string | null {
   if (!href) return null;
@@ -355,7 +349,10 @@ export const MarkdownContent = memo(function MarkdownContent({
   const [everAnimated, setEverAnimated] = useState(animating);
   if (animating && !everAnimated) setEverAnimated(true);
   const tokenDuration = everAnimated ? TOKEN_DURATION : "0s";
-  const preparedContent = useMemo(() => markdownWithGitHubMentionLinks(content), [content]);
+  const preparedContent = useMemo(() => {
+    if (!githubMentionPattern.test(content)) return content;
+    return String(markdownMentionProcessor.processSync(content));
+  }, [content]);
   const renderedContent = useThrottledText(
     preparedContent,
     STREAMING_RENDER_INTERVAL_MS,
@@ -719,6 +716,10 @@ const inlineMarkdownComponents: Components = {
 };
 
 export const InlineMarkdown = memo(function InlineMarkdown({ content }: { content: string }) {
+  const preparedContent = useMemo(() => {
+    if (!githubMentionPattern.test(content)) return content;
+    return String(markdownMentionProcessor.processSync(content));
+  }, [content]);
   return (
     <ReactMarkdown
       remarkPlugins={[
@@ -729,7 +730,7 @@ export const InlineMarkdown = memo(function InlineMarkdown({ content }: { conten
       rehypePlugins={[[rehypeKatex, { strict: false }]]}
       components={inlineMarkdownComponents}
     >
-      {markdownWithGitHubMentionLinks(content)}
+      {preparedContent}
     </ReactMarkdown>
   );
 });
