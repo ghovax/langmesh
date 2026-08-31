@@ -587,10 +587,6 @@ class Processor:
             is_mention_turn,
             event,
             event_name=event_name,
-            repository=repository,
-            token=token,
-            api=self.settings.github_api_url,
-            bot_login=bot_login,
         ):
             return
         mention = mention_from_event(

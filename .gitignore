@@ -37,10 +37,10 @@ wheels/
 # the runtime .langmesh/configuration.yaml holds real credentials, so it is ignored.
 /.langmesh/
 
-# Session checkpoints for the GitHub mention Action, restored by the workflow cache.
+# Session checkpoints for the GitHub App, restored by the workflow cache.
 /.github/langmesh/
 
-# Mention Action secret files (github.api_key, github.app.private_key). Same names
+# GitHub App secret files (github.api_key, github.app.private_key). Same names
 # as $XDG_DATA_HOME/langmesh/secrets. A self-hosted runner can keep them only there.
 /.github/secrets/*
 !/.github/secrets/README

@@ -15,7 +15,7 @@ To use LangMesh from GitHub, [install the LangMesh Agent GitHub App](https://git
 | Compose and write plugins                      | `Feature`, `PluginContext`, `SessionComponents(features=...)` | [Composition](library/composition.md)                              |
 | Keep sessions durable and remotely addressable | `langmeshd`                                                   | [Architecture](internal/architecture.md)                           |
 | Operate sessions                               | CLI or desktop app                                            | [Command line](user/installation.md) or [desktop app](user/app.md) |
-| Answer `@claude` on GitHub                     | `langmesh.github.mention`                                     | [GitHub mentions](user/github.md)                                  |
+| Respond to GitHub events                       | `langmesh.github.mention`                                     | [Universal GitHub App](user/github.md)                              |
 | Send the daemon mail                           | `langmesh mail`                                               | [Email](user/email.md)                                             |
 
 ## Core guarantees

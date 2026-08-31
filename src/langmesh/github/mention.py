@@ -171,14 +171,7 @@ def mention_from_event(
     pull_event = event.get("pull_request") or {}
     event_source = comment or pull_event or issue
     body = str(event_source.get("body") or "")
-    if not known_turn and not is_mention_turn(
-        event,
-        event_name=event_name,
-        repository=repository,
-        token=token,
-        api=api,
-        bot_login=bot_login,
-    ):
+    if not known_turn and not is_mention_turn(event, event_name=event_name):
         return None
     user = str((event_source.get("user") or {}).get("login") or "")
     if user.lower().endswith("[bot]"):
