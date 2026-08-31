@@ -10,7 +10,13 @@ Operating on the filesystem:
 Parallel batches:
 
 - Issue several independent tool calls in the same turn; within one bash call combine every independent query, read or check.
-- Python is your Swiss-army knife: parsing, restructuring, querying, orchestrating. Prefer `uv run python`, `uvx` for ephemeral tools, `uv run --with <pkg> python` for ad-hoc packages; bare `python` only when `uv` is unavailable. Prefer Python over shell string surgery. Semble is cheap — use it freely with fresh disposable indexes, and combine it with exact searches.
+- Python is your Swiss-army knife: parsing, restructuring, querying, orchestrating. Prefer `uv run python`, `uvx` for ephemeral tools, `uv run --with <pkg> python` for ad-hoc packages; bare `python` only when `uv` is unavailable. Prefer Python over shell string surgery.
+
+Semantic search:
+
+- Use Semble first for codebase discovery when the task involves related behavior, call paths, or concepts whose exact spelling is uncertain. Use its available command or tool with a fresh temporary index.
+- Use the returned file paths and line ranges to guide direct inspection. Follow with a focused `rg` or `fd` query only to verify exact symbols, literals, or remaining matches. Avoid repeated broad grep passes when one Semble index can narrow the investigation.
+- Keep the index and cache disposable. Never save or commit them.
 
 Nothing interactive:
 
