@@ -100,6 +100,8 @@ interface ChatInputProps {
   onSandboxEnforceChange?: (enforce: SandboxEnforce) => void;
   // Running token totals for the session, null until the first turn reports usage.
   tokenUsage?: TokenUsage | null;
+  // Provider-reported subscription usage supplied by a hosted session viewer.
+  subscriptionUsage?: ChatGPTUsage | null;
   // The tracked task list, updated by the model's set_tasks/update_tasks calls.
   tasks?: ChatTask[];
   // Compact the conversation now, offered whenever there is one.
@@ -164,17 +166,18 @@ function ContextFillRing({
   );
 }
 
-// The plan usage for the token view, fetched only when the active model is on the chatgpt provider.
+// The plan usage for the token view, supplied by a hosted viewer or fetched from the local daemon.
 function useChatGPTUsage(
   agentModel: string | undefined,
   isStreaming: boolean,
+  suppliedUsage?: ChatGPTUsage | null,
 ): ChatGPTUsage | null {
   const isChatGPT = !!agentModel && agentModel.startsWith("chatgpt/");
   const [usage, setUsage] = useState<ChatGPTUsage | null>(null);
 
   // Fetch whenever the model is chatgpt and nothing is streaming, which covers both mount and each turn's end.
   useEffect(() => {
-    if (!isChatGPT || isStreaming) return;
+    if (!isChatGPT || isStreaming || suppliedUsage !== undefined) return;
     let cancelled = false;
     fetchChatGPTAuthStatus()
       .then((status) => {
@@ -186,9 +189,9 @@ function useChatGPTUsage(
     return () => {
       cancelled = true;
     };
-  }, [isChatGPT, isStreaming]);
+  }, [isChatGPT, isStreaming, suppliedUsage]);
 
-  return isChatGPT ? usage : null;
+  return isChatGPT ? (suppliedUsage ?? usage) : null;
 }
 
 function cacheCoverage(readTokens: number, reusableTokens: number): string {
@@ -549,12 +552,13 @@ export function ChatInput({
   sandboxBackend = "",
   onSandboxEnforceChange,
   tokenUsage,
+  subscriptionUsage,
   tasks = [],
   onCompact,
   isCompacting = false,
 }: ChatInputProps) {
   const translation = useTranslations("ChatInput");
-  const chatgptUsage = useChatGPTUsage(agentModel, isStreaming);
+  const chatgptUsage = useChatGPTUsage(agentModel, isStreaming, subscriptionUsage);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);

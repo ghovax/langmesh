@@ -753,6 +753,9 @@ class Processor:
                     session_callback=lambda session: self._set_active_session(
                         active_mention.session_id, session
                     ),
+                    usage_callback=lambda snapshot: self.store.save_provider_usage(
+                        installation_id, snapshot
+                    ),
                 )
             finally:
                 if credential_store is not None:

@@ -16,6 +16,7 @@ import { ChatMessageItem, ChatToolGroup } from "./ChatMessage";
 import { PanelEmptyState, TOP_BAR_HEIGHT } from "./ui/Panel";
 import { ToolbarAction } from "./ui/Toolbar";
 import type { ChatMessage, ChatTask, TokenUsage } from "@/lib/use-chat";
+import type { ChatGPTUsage } from "@/lib/api";
 import { timelineItems } from "@/lib/chat-timeline";
 
 interface ViewerSnapshot {
@@ -35,6 +36,7 @@ interface ViewerSnapshot {
   status: "working" | "queued" | "completed" | "failed";
   tasks: ChatTask[];
   token_usage: Record<string, unknown>;
+  subscription_usage: ChatGPTUsage | null;
   messages: ChatMessage[];
 }
 
@@ -305,6 +307,7 @@ function ViewerContent({ token }: { token: string }) {
               sandboxEnforce={sandboxEnforce}
               sandboxBackend={sandboxBackend}
               tokenUsage={tokenUsage}
+              subscriptionUsage={snapshot?.subscription_usage ?? null}
               tasks={snapshot?.tasks ?? []}
               onAgentModelChange={() => {}}
             />

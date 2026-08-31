@@ -52,6 +52,14 @@ class SessionFence(Base):
     completed_sequence: Mapped[int] = mapped_column(BigInteger, default=0)
 
 
+class ProviderUsage(Base):
+    __tablename__ = "github_provider_usage"
+
+    installation_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    snapshot: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[int] = mapped_column(BigInteger)
+
+
 class Delivery(Base):
     __tablename__ = "github_deliveries"
     __table_args__ = (
@@ -420,6 +428,7 @@ class Store:
             if not deliveries:
                 return None
             installation = await session.get(Installation, deliveries[0].installation_id)
+            provider_usage = await session.get(ProviderUsage, deliveries[0].installation_id)
 
         source: Mapping[str, Any] = {}
         try:
@@ -428,6 +437,14 @@ class Store:
                 source = decoded
         except json.JSONDecodeError:
             pass
+        subscription_usage: dict[str, Any] | None = None
+        if provider_usage is not None and provider_usage.snapshot:
+            try:
+                decoded_usage = json.loads(provider_usage.snapshot)
+            except (TypeError, json.JSONDecodeError):
+                decoded_usage = None
+            if isinstance(decoded_usage, dict):
+                subscription_usage = decoded_usage
         issue = source.get("issue")
         pull_request = source.get("pull_request")
         comment = source.get("comment")
@@ -485,6 +502,7 @@ class Store:
             "source_messages": source_messages,
             "provider": str(installation.provider if installation is not None else ""),
             "model": str(installation.model if installation is not None else ""),
+            "subscription_usage": subscription_usage,
             "status": status,
             "updated_at": datetime.fromtimestamp(updated_at, timezone.utc).isoformat(),
         }
@@ -513,6 +531,52 @@ class Store:
         return InstallationConfiguration(
             installation.provider, installation.model, key, oauth_tokens
         )
+
+    async def save_provider_usage(self, installation_id: int, snapshot: Mapping[str, Any]) -> None:
+        async with self._sessions.begin() as session:
+            values = {
+                "installation_id": installation_id,
+                "snapshot": json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")),
+                "updated_at": int(time.time()),
+            }
+            dialect = session.bind.dialect.name if session.bind is not None else ""
+            if dialect == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert
+
+                await session.execute(
+                    insert(ProviderUsage)
+                    .values(**values)
+                    .on_conflict_do_update(
+                        index_elements=[ProviderUsage.installation_id],
+                        set_={
+                            "snapshot": values["snapshot"],
+                            "updated_at": values["updated_at"],
+                        },
+                    )
+                )
+                return
+            if dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert
+
+                await session.execute(
+                    insert(ProviderUsage)
+                    .values(**values)
+                    .on_conflict_do_update(
+                        index_elements=[ProviderUsage.installation_id],
+                        set_={
+                            "snapshot": values["snapshot"],
+                            "updated_at": values["updated_at"],
+                        },
+                    )
+                )
+                return
+            usage = await session.get(ProviderUsage, installation_id)
+            if usage is None:
+                usage = ProviderUsage(**values)
+                session.add(usage)
+                return
+            usage.snapshot = values["snapshot"]
+            usage.updated_at = values["updated_at"]
 
     async def save_installation(
         self,
@@ -673,6 +737,7 @@ __all__ = [
     "Delivery",
     "Installation",
     "InstallationConfiguration",
+    "ProviderUsage",
     "OAuthAuthorization",
     "ViewerLink",
     "SessionFence",
