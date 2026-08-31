@@ -100,6 +100,8 @@ export interface MessageMeta {
   attachments?: MessageAttachment[];
   // On a peer message: which session sent it, since a report comes from somewhere with an id.
   peerSender?: string;
+  // On a GitHub user message: the source author's login, rendered as @login by the message card.
+  sourceAuthor?: string;
   goalReviewId?: string;
 }
 

@@ -444,6 +444,30 @@ class Store:
         source_url = str(
             comment.get("html_url") or issue.get("html_url") or pull_request.get("html_url") or ""
         ).strip()
+        source_messages: list[dict[str, str]] = []
+        for delivery in deliveries:
+            try:
+                delivery_payload = json.loads(delivery.payload)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(delivery_payload, Mapping):
+                continue
+            delivery_source = (
+                delivery_payload.get("comment")
+                or delivery_payload.get("pull_request")
+                or delivery_payload.get("issue")
+                or {}
+            )
+            if not isinstance(delivery_source, Mapping):
+                continue
+            body = str(delivery_source.get("body") or "")
+            if not body:
+                continue
+            delivery_user = delivery_source.get("user") or {}
+            author = (
+                str(delivery_user.get("login") or "") if isinstance(delivery_user, Mapping) else ""
+            )
+            source_messages.append({"body": body, "author": author})
         status = "completed"
         if any(delivery.status == "processing" for delivery in deliveries):
             status = "working"
@@ -458,6 +482,7 @@ class Store:
             "kind": kind,
             "title": str(issue.get("title") or pull_request.get("title") or ""),
             "source_url": source_url,
+            "source_messages": source_messages,
             "provider": str(installation.provider if installation is not None else ""),
             "model": str(installation.model if installation is not None else ""),
             "status": status,

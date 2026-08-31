@@ -323,6 +323,13 @@ export function UserMessageCard({
   const [expanded, setExpanded] = useState(false);
   const [truncatable, setTruncatable] = useState(false);
   const COLLAPSE_HEIGHT = 200;
+  const sourceAuthor = message.meta?.sourceAuthor?.trim();
+  const authorBanner = sourceAuthor
+    ? sourceAuthor.startsWith("@")
+      ? sourceAuthor
+      : `@${sourceAuthor}`
+    : "";
+  const bannerText = authorBanner || banner;
 
   useLayoutEffect(() => {
     const element = contentRef.current;
@@ -339,11 +346,11 @@ export function UserMessageCard({
       gap={1.5}
       maxW="80%"
     >
-      {banner && (
+      {bannerText && (
         <Flex align="center" gap={1.5} color="fg.muted">
           <ActivityIcon>{bannerIcon ?? <LuMessagesSquare />}</ActivityIcon>
           <Text fontSize="xs" fontWeight="medium">
-            {banner}
+            {bannerText}
           </Text>
         </Flex>
       )}

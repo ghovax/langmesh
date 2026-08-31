@@ -35,10 +35,16 @@ def messages_from_checkpoint(
     conversation: Sequence[Mapping[str, Any]],
     *,
     timestamp: str = "",
+    source_messages: Sequence[Mapping[str, str]] = (),
 ) -> list[dict[str, Any]]:
     """Convert the checkpoint's private message format to the web viewer's public rows."""
     messages: list[dict[str, Any]] = []
     tool_indexes: dict[str, int] = {}
+    source_authors_by_body: dict[str, list[str]] = {}
+    for source_message in source_messages:
+        body = source_message.get("body", "")
+        if body:
+            source_authors_by_body.setdefault(body, []).append(source_message.get("author", ""))
 
     for message_index, entry in enumerate(conversation):
         message_type = str(entry.get("type") or "")
@@ -53,14 +59,18 @@ def messages_from_checkpoint(
         if message_type in {"human", "HumanMessage", "HumanMessageChunk"}:
             content = _text_content(data.get("content"))
             if content:
-                messages.append(
-                    {
-                        "id": str(data.get("id") or f"viewer-user-{message_index}"),
-                        "role": "user",
-                        "content": content,
-                        "timestamp": timestamp,
-                    }
-                )
+                message = {
+                    "id": str(data.get("id") or f"viewer-user-{message_index}"),
+                    "role": "user",
+                    "content": content,
+                    "timestamp": timestamp,
+                }
+                matching_authors = source_authors_by_body.get(content)
+                if matching_authors:
+                    author = matching_authors.pop(0).strip()
+                    if author:
+                        message["meta"] = {"sourceAuthor": author}
+                messages.append(message)
             continue
 
         if message_type in {"ai", "AIMessage", "AIMessageChunk"}:

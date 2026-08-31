@@ -321,6 +321,7 @@ class Processor:
         context = await self.store.viewer_context(session_id)
         if context is None:
             return None
+        source_messages = context.pop("source_messages", ())
         checkpoint = await self._checkpoints.load(session_id)
         conversation = checkpoint.conversation if checkpoint is not None else ()
         tasks: list[dict[str, Any]] = []
@@ -362,6 +363,7 @@ class Processor:
             "messages": messages_from_checkpoint(
                 conversation,
                 timestamp=str(context.get("updated_at") or ""),
+                source_messages=source_messages,
             ),
         }
 
