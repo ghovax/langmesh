@@ -637,6 +637,7 @@ class Processor:
                     attempt=attempt,
                     recovered=recovered,
                     viewer_url=viewer_url,
+                    event_name=event_name,
                 )
 
     async def _process_locked(
@@ -656,6 +657,7 @@ class Processor:
         attempt: int,
         recovered: bool,
         viewer_url: str,
+        event_name: str,
     ) -> None:
         ack = await self.store.comment_id_for_delivery(delivery_id)
         if ack is None:
@@ -739,6 +741,7 @@ class Processor:
                 api=self.settings.github_api_url,
                 bot_login=f"{slug}[bot]",
                 ignore_ids=(ack,),
+                event_name=event_name,
             )
 
             try:
