@@ -14,8 +14,8 @@ import hmac
 import json
 import logging
 import os
-import tempfile
 import time
+import tempfile
 import urllib.parse
 import urllib.error
 import urllib.request
@@ -307,6 +307,19 @@ class Processor:
         self._active_sessions: dict[str, Any] = {}
         self._stop_requested = asyncio.Event()
         self._active_delivery_id: str | None = None
+        # These counters are intentionally process-local: the durable queue and checkpoint
+        # records are the source of truth, while these values make one shutdown observable
+        # in Render logs/metrics without adding another storage dependency.
+        self._lifecycle_metrics: dict[str, int] = {
+            "shutdown_requests": 0,
+            "shutdown_completed": 0,
+            "shutdown_forced": 0,
+            "shutdown_requeues": 0,
+            "shutdown_checkpoint_attempts": 0,
+            "shutdown_checkpoint_failures": 0,
+            "delivery_recoveries": 0,
+        }
+        self._shutdown_started_at: float | None = None
 
     async def initialize(self) -> None:
         initialize = getattr(self._checkpoints, "initialize", None)
@@ -387,9 +400,137 @@ class Processor:
         session = self._active_sessions.get(session_id)
         return bool(session and session.interrupt())
 
+    def _metric(self, name: str, amount: int = 1) -> None:
+        self._lifecycle_metrics[name] = self._lifecycle_metrics.get(name, 0) + amount
+
+    @property
+    def is_stopping(self) -> bool:
+        """Whether the processor has received a lifecycle stop request."""
+        return self._stop_requested.is_set()
+
+    def metrics_snapshot(self) -> dict[str, int]:
+        """Return shutdown/recovery counters suitable for a deployment probe or test."""
+        return {
+            **self._lifecycle_metrics,
+            "shutdown_active_delivery": int(self._active_delivery_id is not None),
+            "shutdown_requested": int(self._stop_requested.is_set()),
+        }
+
     def request_stop(self) -> None:
-        """Stop claiming new deliveries after the current one reaches a safe boundary."""
+        """Quiesce claims and let the active session reach a safe runtime boundary.
+
+        Render delivers SIGTERM to the ASGI server, which enters the lifespan teardown.
+        This method is deliberately synchronous so a signal-aware host can call it without
+        awaiting anything or touching the database from a signal handler.
+        """
+        if self._stop_requested.is_set():
+            return
+        self._shutdown_started_at = time.monotonic()
+        self._metric("shutdown_requests")
         self._stop_requested.set()
+        logger.warning(
+            "GitHub processor quiescing for shutdown active_delivery=%s; "
+            "new deliveries will not be claimed",
+            self._active_delivery_id or "none",
+        )
+
+    async def _checkpoint_active_session(self) -> bool:
+        """Persist the active session's local and provider-cache state before forced exit.
+
+        ``Session.save`` writes the conversation, feature state, request baselines, and
+        provider-native cache state in one checkpoint. There is no provider API that can
+        flush a remote prompt cache; the durable local snapshot is the only safe operation
+        available before a forced process exit.
+        """
+        delivery_id = self._active_delivery_id
+        if delivery_id is None:
+            return False
+        session_id, session = next(
+            (
+                (candidate_id, candidate)
+                for candidate_id, candidate in self._active_sessions.items()
+            ),
+            ("", None),
+        )
+        if session is None:
+            logger.warning(
+                "shutdown found no live session for active GitHub delivery=%s; "
+                "the last committed checkpoint will be used on recovery",
+                delivery_id,
+            )
+            return False
+        # A normal shutdown lets the turn finish. Only the forced path reaches here, so
+        # request the runtime's cancellation protocol before taking its durable snapshot.
+        try:
+            session.interrupt()
+        except Exception:  # noqa: BLE001 — the last committed checkpoint is still retryable
+            logger.warning(
+                "could not interrupt active GitHub session during forced shutdown delivery=%s",
+                delivery_id,
+                exc_info=True,
+            )
+        self._metric("shutdown_checkpoint_attempts")
+        try:
+            await asyncio.wait_for(
+                session.save(),
+                timeout=min(2.0, max(0.1, self.settings.shutdown_grace_seconds / 4)),
+            )
+        except Exception:  # noqa: BLE001 — the queue release still makes the delivery retryable
+            self._metric("shutdown_checkpoint_failures")
+            logger.exception(
+                "could not checkpoint active GitHub delivery=%s session=%s before forced shutdown",
+                delivery_id,
+                session_id,
+            )
+            return False
+        logger.info(
+            "checkpointed active GitHub delivery=%s session=%s before forced shutdown "
+            "provider_cache=durable_snapshot local_cache=durable_checkpoint",
+            delivery_id,
+            session_id,
+        )
+        return True
+
+    async def shutdown(self, worker: asyncio.Task[None]) -> None:
+        """Quiesce, wait for graceful completion, then checkpoint and requeue if forced.
+
+        The ASGI server has already stopped accepting new requests when lifespan teardown
+        runs. The queue-side check in ``run_forever`` closes the remaining claim race.
+        """
+        self.request_stop()
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(worker),
+                # Reserve time for a checkpoint, queue transaction, and cancellation before
+                # Render's SIGKILL deadline. The default 25 seconds leaves five seconds of
+                # headroom inside Render's default 30-second shutdown delay.
+                timeout=max(0.1, self.settings.shutdown_grace_seconds - 5.0),
+            )
+        except asyncio.TimeoutError:
+            self._metric("shutdown_forced")
+            logger.error(
+                "GitHub shutdown grace expired after %.1f seconds; checkpointing and requeueing "
+                "active work before cancellation",
+                self.settings.shutdown_grace_seconds,
+            )
+            await self._checkpoint_active_session()
+            await self.release_active_delivery()
+            worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
+        self._metric("shutdown_completed")
+        elapsed = (
+            time.monotonic() - self._shutdown_started_at
+            if self._shutdown_started_at is not None
+            else 0.0
+        )
+        logger.info(
+            "GitHub processor shutdown complete forced=%s elapsed_seconds=%.3f "
+            "requeues=%s checkpoint_failures=%s",
+            self._lifecycle_metrics["shutdown_forced"] > 0,
+            elapsed,
+            self._lifecycle_metrics["shutdown_requeues"],
+            self._lifecycle_metrics["shutdown_checkpoint_failures"],
+        )
 
     async def release_active_delivery(self) -> None:
         """Return unfinished work to the durable queue before forced process termination."""
@@ -401,6 +542,7 @@ class Processor:
             "service shutdown interrupted delivery; retrying from the durable checkpoint",
         )
         if released:
+            self._metric("shutdown_requeues")
             logger.info("requeued GitHub delivery id=%s after service shutdown", delivery_id)
 
     async def _wait_for_next_poll(self) -> None:
@@ -424,9 +566,15 @@ class Processor:
                     delivery_id,
                     "service shutdown arrived before delivery started; retrying from the queue",
                 )
+                self._metric("shutdown_requeues")
+                logger.info(
+                    "requeued GitHub delivery id=%s before processing during shutdown", delivery_id
+                )
                 break
             attempts = int(delivery.get("attempts") or 1)
             recovered = bool(delivery.get("recovered"))
+            if recovered:
+                self._metric("delivery_recoveries")
             event_name = str(delivery["event_name"])
             installation_id = int(delivery["installation_id"])
             logger.info(
@@ -835,15 +983,7 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             yield
         finally:
             if worker is not None:
-                processor.request_stop()
-                try:
-                    await asyncio.wait_for(
-                        asyncio.shield(worker), timeout=settings.shutdown_grace_seconds
-                    )
-                except asyncio.TimeoutError:
-                    await processor.release_active_delivery()
-                    worker.cancel()
-                await asyncio.gather(worker, return_exceptions=True)
+                await processor.shutdown(worker)
             await store.close()
 
     app = FastAPI(title="LangMesh GitHub App", lifespan=lifespan)
@@ -854,7 +994,19 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
 
     @app.get("/healthz")
     async def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "draining" if processor.is_stopping else "ok"}
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics() -> Response:
+        """Expose lifecycle counters in the text format accepted by Render-side scrapers."""
+        values = processor.metrics_snapshot()
+        body = "".join(
+            f"langmesh_github_{name}_total {value}\n"
+            if name not in {"shutdown_active_delivery", "shutdown_requested"}
+            else f"langmesh_github_{name} {value}\n"
+            for name, value in sorted(values.items())
+        )
+        return Response(body, media_type="text/plain; version=0.0.4")
 
     @app.get("/github/setup")
     async def setup(installation_id: int) -> Response:
@@ -1135,6 +1287,8 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
 
     @app.post("/github/webhook")
     async def webhook(request: Request) -> Response:
+        if processor.is_stopping:
+            return Response(status_code=503, headers={"Retry-After": "5"})
         raw = await request.body()
         signature = request.headers.get("x-hub-signature-256", "")
         expected = (
