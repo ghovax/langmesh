@@ -2,7 +2,7 @@
 
 LangMesh is an agent harness delivered in two packages that ship as one image. `langmesh` is the **library**: the configurable harness core you embed in a Python process. `langmeshd` is the **product**: the daemon, command line, and web interface built on that core. The library reads nothing from disk it was not given; the product reads your machine's configuration and `.agents` trees.
 
-Everything beyond a plain model turn — the tools, goal review, compaction, permission gating, autonomous continuation, observational memory, background jobs — is a **plugin** composed by whoever runs a session. The library names no plugin; the product composes its own set.
+Everything beyond a plain model turn — the tools, goal review, compaction, permission gating, autonomous continuation, background jobs — is a **plugin** composed by whoever runs a session. The library names no plugin; the product composes its own set.
 
 ## Choose an entry point
 

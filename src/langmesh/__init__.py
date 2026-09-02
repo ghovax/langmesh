@@ -15,14 +15,6 @@ from langmesh.base.configuration import (
 from langmesh.base.configuration.permission_mode import PermissionMode
 from langmesh.base.content.attachments import Attachment, AttachmentComposer, ComposedAttachments
 from langmesh.base.content.instructions import Instruction
-from langmesh.base.content.observations import (
-    DirectiveEntry,
-    ObservationEntry,
-    ObservationSnapshot,
-    RegistryCounts,
-    RegistryMetadata,
-    RegistryTimestamps,
-)
 from langmesh.base.content.prompts import PackagePromptLoader, PromptTemplates
 from langmesh.base.content.skills import Skill
 from langmesh.base.contracts.catalogue import Catalogue
@@ -164,7 +156,6 @@ __all__ = [
     "ComposedAttachments",
     "CredentialStore",
     "DurableModelCache",
-    "DirectiveEntry",
     "DeniedInjection",
     "Done",
     "Error",
@@ -189,8 +180,6 @@ __all__ = [
     "MemoryJobStore",
     "MemoryTranscript",
     "Observation",
-    "ObservationEntry",
-    "ObservationSnapshot",
     "Observer",
     "PendingTurn",
     "PendingInput",
@@ -201,9 +190,6 @@ __all__ = [
     "PromptComposer",
     "PromptLayer",
     "PromptTemplates",
-    "RegistryCounts",
-    "RegistryMetadata",
-    "RegistryTimestamps",
     "RenderedPrompt",
     "RuntimeComponents",
     "RuntimeEnvironment",

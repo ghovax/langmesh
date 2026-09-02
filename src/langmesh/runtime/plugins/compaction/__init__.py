@@ -23,7 +23,6 @@ from langmesh.base.contracts.ports import CompactionState, CompactionSummaryStat
 from langmesh.base.primitives.errors import log_fields
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
-from langmesh.runtime.features.events import MemoryHandoffFailed, MemoryHandoffVerified
 from langmesh.runtime.plugins.bash import bash as bash_tool
 from langmesh.runtime.plugins.compaction.tools import (
     submit_compaction_summary as submit_compaction_summary_tool,
@@ -31,7 +30,6 @@ from langmesh.runtime.plugins.compaction.tools import (
 from langmesh.runtime.plugins.compaction.ports import (
     CompactionSummary,
     DirectCompactionPreparation,
-    ObservationCompactionPreparation,
 )
 from langmesh.runtime.plugins.compaction.configuration import CompactionConfiguration
 from langmesh.runtime.runtime import AgentRuntime
@@ -158,7 +156,7 @@ def _without_provider_reasoning(messages: list) -> list:
 
 
 class Compaction(Feature):
-    """Keep a conversation inside its window after the agent checkpoints workspace knowledge."""
+    """Keep a conversation inside its window after the configured preparation policy."""
 
     def contribute_tools(self) -> list:
         """The summary-submission tool this plugin owns."""
@@ -393,13 +391,6 @@ class Compaction(Feature):
 
     async def run_maintenance(self, *, reason: str):
         """Complete the held handoff and reclaim the window."""
-        if self._control.recorded:
-            try:
-                metadata = await self._preparation.describe()
-            except Exception as error:  # noqa: BLE001 — the fold's verification below remains authoritative
-                self._context.bus.emit(MemoryHandoffFailed(str(error) or type(error).__name__))
-            else:
-                self._context.bus.emit(MemoryHandoffVerified(metadata))
         async for event in self.compact(reason):
             yield event
 
@@ -513,7 +504,7 @@ class Compaction(Feature):
         return recent[keep_from:]
 
     async def compact(self, reason: str = "manual") -> AsyncIterator[TurnEvent]:
-        """Reclaim the window after the explicit observational-memory handoff has completed."""
+        """Reclaim the window after the configured preparation has completed."""
         if not self._control.recorded:
             for event in self.fail_preparation(
                 "Compaction requires its configured durable preparation to complete first."
@@ -839,5 +830,4 @@ __all__ = [
     "CompactionControl",
     "CompactionSummary",
     "DirectCompactionPreparation",
-    "ObservationCompactionPreparation",
 ]

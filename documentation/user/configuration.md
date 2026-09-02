@@ -177,7 +177,7 @@ compaction:
   maximum_context_tokens: 0
 ```
 
-When a conversation reaches its recommended preparation threshold, LangMesh appends one private pre-compaction notice inside the reserved context buffer. The segment exposes only local Bash. The agent must atomically bring the active workspace's `.agents/observations.sqlite` up to date and advance `registry_meta.revision`, including a revision-only acknowledgement when nothing durable changed. LangMesh verifies that the revision advanced, then asks the model for the summary through `submit_compaction_summary`; once collected, the older turns are dropped and the session continues with the system prompt, the summary, and the recent working set word for word. A summarizer that stops without submitting is reminded until it does — emitting the tool call correctly is the model's own responsibility, and only the person's stop ends the wait.
+When a conversation reaches its recommended preparation threshold, LangMesh runs the configured preparation before asking the model for the summary through `submit_compaction_summary`. Once collected, the older turns are dropped and the session continues with the system prompt, the summary, and the recent working set word for word. A summarizer that stops without submitting is reminded until it does — emitting the tool call correctly is the model's own responsibility, and only the person's stop ends the wait.
 
 - `output_reserve_fraction` is held back for the answer the model is about to write; everything else here is a share of what remains.
 - `reclaim_at_fraction` is the recommended preparation boundary, not a hard cutoff.
@@ -196,7 +196,6 @@ Who settles a `satisfied` or `blocked` mark is `goal_review.settlement`:
 - `reviewer` (the default): the mark is not final by itself. After the working turn ends, an independent reviewer inspects the work and either confirms the mark or overrides it (an unsupported `satisfied` becomes `unmet`, sending the goal back to work). The reviewer is asked again until it submits a verdict — modelling correctly is the model's own responsibility, and nothing puts a price on honesty.
 - `agent`: the working agent's mark is final and the session ends. There is no second reviewer session.
 
-Observations are workspace-owned current state and explicit. Agents retrieve and maintain them through Bash using the `observational-memory` skill. The daemon watches each active location's registry through native filesystem notifications and shares one watcher across its sessions. A committed revision broadcasts a complete validated snapshot to the memory panel. The append-only session context receives only progressive-disclosure metadata, never observation rows. A registry that is missing or no longer matches its schema is itself reported as metadata (`status: missing|broken` with a problem message), so an agent hears about the state and repairs it rather than silently working without memory; the pre-columnar JSON-schema format is never read or migrated.
 
 ## Attachments
 
@@ -335,7 +334,7 @@ How conversation history is compacted as it grows.
 | Setting                                  | Type    | Default | What it is for                                                                                                                                                                                |
 | ---------------------------------------- | ------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `compaction.automatic`                   | boolean | `true`  | Reclaim context on its own as it fills. Manual compaction works either way.                                                                                                                   |
-| `compaction.reclaim_at_fraction`         | number  | `0.9`   | Recommended preparation boundary. A private local-Bash segment first updates the current observational registry and advances its revision; compaction follows only after validation succeeds. |
+| `compaction.reclaim_at_fraction`         | number  | `0.9`   | Recommended preparation boundary. When a preparation is configured, its handoff completes before compaction follows. |
 | `compaction.output_reserve_fraction`     | number  | `0.1`   | Share held back as safety space for the preparation segment and the answer.                                                                                                                   |
 | `compaction.recent_working_set_fraction` | number  | `0.15`  | Share of the usable window kept verbatim after older history is discarded. Sized in tokens rather than turns.                                                                                 |
 | `compaction.maximum_context_tokens`      | integer | `0`     | Optional context bound used to schedule compaction and size the recent working set. Zero uses the model's available context.                                                                  |

@@ -169,16 +169,6 @@ async def _reset(session, _params: dict) -> dict:
     return {"ok": True}
 
 
-async def _observation_registry(session, params: dict) -> dict:
-    """Refresh progressive-disclosure metadata and queue schema feedback when present."""
-    metadata = params.get("metadata")
-    session.note_observation_registry(
-        metadata if isinstance(metadata, dict) else {},
-        str(params["error"]) if params.get("error") else None,
-    )
-    return {"ok": True}
-
-
 # Every verb a session answers, in one table, as the control plane and the intake do.
 METHODS: dict[str, Callable[[Any, dict], Awaitable[dict]]] = {
     "message/send": _send,
@@ -193,7 +183,6 @@ METHODS: dict[str, Callable[[Any, dict], Awaitable[dict]]] = {
     "session/locations": _set_locations,
     "session/permission-mode": _set_permission_mode,
     "session/reset": _reset,
-    "session/observation-registry": _observation_registry,
     "jobs/list": _list_jobs,
     "jobs/detach": _detach_job,
 }

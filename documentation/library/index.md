@@ -68,7 +68,7 @@ session = Session(
 )
 ```
 
-Now the agent can run shell commands and search/fetch the web. Everything else the product runs — goal review, compaction, permission gating, autonomous continuation, observational memory, background jobs, screen control, session naming, asking you questions — is the same `Feature` seam. See [Composition](composition.md#composing-a-sessions-features).
+Now the agent can run shell commands and search/fetch the web. Everything else the product runs — goal review, compaction, permission gating, autonomous continuation, background jobs, screen control, session naming, asking you questions — is the same `Feature` seam. See [Composition](composition.md#composing-a-sessions-features).
 
 Hooks, middleware, and compaction ride the same value:
 
@@ -118,5 +118,5 @@ See [Granting a tool to a session](composition.md#granting-a-tool-to-a-session).
 
 - [Composition](composition.md) explains every configured value, the plugin seam, and the product boundary.
 - [Lifecycle and driving](lifecycle.md) covers suspension, resume, interrupts, steering, retries, and the complete stream contract.
-- [Compaction, continuation, and persistence](persistence.md) covers history compaction, autonomous work, checkpoints, artifacts, transcripts, observational memory, and background jobs.
+- [Compaction, continuation, and persistence](persistence.md) covers history compaction, autonomous work, checkpoints, artifacts, transcripts, and background jobs.
 - [Universal GitHub App](../user/github.md) handles `@claude` comments through signed installation webhooks. Provider/model settings, the delivery queue, and session checkpoints use an external database, while each worker uses a disposable checkout. An issue with file edits opens a draft PR; a pull-request mention updates that PR.

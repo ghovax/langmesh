@@ -69,8 +69,6 @@
 
 ## Compaction, continuation, and hooks
 
-::: langmesh.runtime.plugins.compaction.ObservationCompactionPreparation
-
 ::: langmesh.runtime.plugins.compaction.DirectCompactionPreparation
 
 ::: langmesh.runtime.plugins.continuation.policy.DefaultContinuationPolicy

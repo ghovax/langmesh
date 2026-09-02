@@ -42,7 +42,6 @@ worktree_manager: Any = None
 push_configuration_store: Any = None
 push_sender: Any = None
 terminal_manager: Any = None
-observation_registry_watcher: Any = None
 chatgpt_login_flow: Any = None
 cursor_login_flow: Any = None
 
@@ -109,7 +108,6 @@ __all__ = [
     "last_written_configuration_digest",
     "main_loop",
     "mcp_server_manager",
-    "observation_registry_watcher",
     "on_session_deleted",
     "push_configuration_store",
     "push_sender",

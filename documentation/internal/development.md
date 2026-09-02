@@ -125,7 +125,7 @@ The repository ships **no unit-test suite**. It ships two guards and one verific
 | Module        | What lives there                                                                                          |
 | ------------- | --------------------------------------------------------------------------------------------------------- |
 | `commons/`    | Configuration I/O, the one sqlite database, state, brokers, services                                      |
-| `daemon/`     | `langmeshd`: registry, lifecycle, host, machine loaders, agent files, API, scheduler, observation watcher |
+| `daemon/`     | `langmeshd`: registry, lifecycle, host, machine loaders, agent files, API, and scheduler                  |
 | `worker/`     | What a hosted session is made of: its executor, its verbs, its turn loop, peers                           |
 | `rest/`       | The FastAPI surface the browser uses                                                                      |
 | `cli/`        | The `langmesh serve`, `langmesh mail` / `langmesh mail check`, and the deployment-specific `langmesh github` service                                 |

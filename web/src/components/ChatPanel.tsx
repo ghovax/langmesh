@@ -15,7 +15,6 @@ import {
 } from "@chakra-ui/react";
 import {
   LuArrowDown,
-  LuBookMarked,
   LuClipboardCheck,
   LuDot,
   LuEllipsis,
@@ -55,7 +54,6 @@ import { ChatInput } from "./ChatInput";
 import { QuestionOverlay } from "./QuestionOverlay";
 import { SettingsDialog, type SettingsSection } from "./SettingsDialog";
 import { BackgroundJobsPanel } from "./BackgroundJobsPanel";
-import { MemoryPanel } from "./MemoryPanel";
 import { DelegatedWorkPanel } from "./DelegatedWorkPanel";
 import { GoalReviewPanel } from "./GoalReviewPanel";
 import type { SessionEntry } from "./SessionRow";
@@ -123,7 +121,7 @@ import { timelineItems, turnHasVisibleOutput } from "@/lib/chat-timeline";
 const MotionBox = motion.create(Box);
 
 // The panels that can share the right-hand region: the terminal and background pair, and delegated work.
-export type SidePanelKey = "background" | "delegated" | "memory" | "reviews";
+export type SidePanelKey = "background" | "delegated" | "reviews";
 
 const MAXIMUM_OPEN_SIDE_PANELS = 2;
 
@@ -363,7 +361,6 @@ export function ChatPanel({
   const onStreamingChangeRef = useRef(onStreamingChange);
   const notifiedSessionIdRef = useRef<string | null>(null);
   const backgroundPanelOpen = openSidePanels.includes("background");
-  const memoryPanelOpen = openSidePanels.includes("memory");
   const delegatedPanelOpen = openSidePanels.includes("delegated");
   const reviewPanelOpen = openSidePanels.includes("reviews");
   const [selectedGoalReviewId, setSelectedGoalReviewId] = useState<string | null>(null);
@@ -900,17 +897,6 @@ export function ChatPanel({
           />
         ),
       },
-      memoryPanelOpen && {
-        key: "memory",
-        onActivate: () => markSidePanelActive("memory"),
-        content: (
-          <MemoryPanel
-            sessionId={sessionId}
-            workingDirectory={workingDirectory || homeDirectory || ""}
-            onClose={() => setSidePanelOpen("memory", false)}
-          />
-        ),
-      },
       delegatedPanelOpen && {
         key: "delegated",
         onActivate: () => markSidePanelActive("delegated"),
@@ -1034,14 +1020,6 @@ export function ChatPanel({
                   onClick={() => setSidePanelOpen("reviews", !reviewPanelOpen)}
                 />
               ) : null}
-              {/* What this conversation remembers of the turns that have left its window. */}
-              <ToolbarAction
-                label={translation("memory")}
-                icon={<LuBookMarked size={14} />}
-                active={memoryPanelOpen}
-                colorPalette="orange"
-                onClick={() => setSidePanelOpen("memory", !memoryPanelOpen)}
-              />
               <ToolbarAction
                 label={translation("terminalAndBackground")}
                 icon={<LuTerminal size={14} />}

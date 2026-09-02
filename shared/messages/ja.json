@@ -87,7 +87,7 @@
     "cachePrefixMoved": "変更",
     "cachePrefixUnknown": "不明",
     "compact": "圧縮",
-    "compactBody": "エージェントが永続的なワークスペース知識を先に保存し、その後で直近の作業をそのまま残して古い会話を破棄します。会話に空きができますが、破棄された会話は復元できません。",
+    "compactBody": "エージェントが古い会話を要約し、直近の作業をそのまま残して履歴を破棄します。会話に空きができますが、破棄された会話は復元できません。",
     "compactConfirm": "今すぐ圧縮",
     "compactTitle": "会話を圧縮しますか？",
     "compactTooltip": "永続的な知識を保存し、直近の作業を残して古い履歴を破棄します",
@@ -142,7 +142,7 @@
       "compaction_cancelled": "圧縮は完了する前に停止されました。",
       "compaction_failed": "畳み込みを完了できませんでした。続行する前に再試行してください。",
       "compaction_no_reclaim": "畳み込みで会話領域を解放できませんでした。",
-      "compaction_preparation_failed": "観察メモリのチェックポイントが完了しなかったため、履歴は削除されませんでした。",
+      "compaction_preparation_failed": "圧縮の準備が完了しなかったため、履歴は削除されませんでした。",
       "compaction_strategy_failed": "設定された圧縮戦略が失敗し、会話は変更されませんでした。",
       "compaction_summary_failed": "要約が生成されなかったため、会話は変更されていません。続行する前に圧縮を再試行してください。"
     },
@@ -232,7 +232,6 @@
     "jumpToProgress": "下にスクロールして進捗を見る",
     "loadConversationErrorDescription": "トランスクリプトの読み込みに失敗しました。接続を確認して、もう一度お試しください。",
     "loadConversationErrorTitle": "この会話を読み込めませんでした",
-    "memory": "メモリ",
     "newConversation": "新しい会話",
     "openThisCompactioner": "このフォルダを開く",
     "path": "パス",
@@ -389,34 +388,6 @@
   "LocationStatus": {
     "uri": "URI",
     "hostNotFound": "~/.ssh/config にホストが見つかりません"
-  },
-  "MemoryPanel": {
-    "category": {
-      "artifact": "成果物",
-      "constraint": "制約",
-      "decision": "決定",
-      "fact": "事実",
-      "failure": "失敗",
-      "open": "未解決"
-    },
-    "collapsePanel": "パネルを閉じる",
-    "emptyDescription": "この場所には、エージェントが管理する現在の観察情報がありません。",
-    "emptyTitle": "まだ記録はありません",
-    "findings": "判明したこと",
-    "instructions": "指示",
-    "kind": {
-      "preference": "希望",
-      "requirement": "要件"
-    },
-    "loading": "記録を読み込み中",
-    "loadError": "観察メモリの記録を読み込めませんでした。ライブ更新は引き続き有効です。",
-    "registryError": "観察メモリの修復が必要です",
-    "standing": {
-      "inferred": "推論",
-      "reported": "報告"
-    },
-    "title": "メモリ",
-    "description": "このワークスペースにおけるエージェントの作業メモリです。"
   },
   "ModelSelect": {
     "visionBadge": "ビジョン — 画像入力に対応",

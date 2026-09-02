@@ -94,7 +94,7 @@ class Approvals(Protocol):
 
 @dataclass(frozen=True)
 class Observation:
-    """One transient harness audit signal, unrelated to workspace observational memory."""
+    """One transient harness audit signal."""
 
     session_id: str
     kind: str

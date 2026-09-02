@@ -24,7 +24,6 @@ ROUTE_MODULES = (
     "terminals",
     "transcript",
     "uploads",
-    "observations",
 )
 
 

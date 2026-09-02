@@ -330,7 +330,7 @@ The caller initializes and closes the manager it supplies. A bare library sessio
 
 ## Features and plugins
 
-A session runs a plain model turn by itself. Everything else — goal review, compaction, permission gates, autonomous continuation, the observational-memory ledger, background jobs, screen control, session naming, the tools themselves — is a **feature** you compose onto the core. The core knows none of them: it runs its turn and, at fixed points, asks the installed features to participate. Features do not know each other either; if one is interested in what another produces, it subscribes to an event on the shared bus and reacts.
+A session runs a plain model turn by itself. Everything else — goal review, compaction, permission gates, autonomous continuation, background jobs, screen control, session naming, the tools themselves — is a **feature** you compose onto the core. The core knows none of them: it runs its turn and, at fixed points, asks the installed features to participate. Features do not know each other either; if one is interested in what another produces, it subscribes to an event on the shared bus and reacts.
 
 ### The seam
 
@@ -389,7 +389,7 @@ session = Session(
 
 The shipped classes are ordinary classes: construct them with the ports they declare and hand the instances over. Structural dependencies are validated when the runtime is built, so a `Bash` or `Web` feature without the `BackgroundCapability` it uses fails immediately with a composition error. A plugin contributes a positive tool allowlist through `contribute_tools()` and handlers only for those tools; it never removes names from an unknown global roster. `features=()` runs a plain session with no features at all.
 
-What the product runs for a hosted session is the daemon's business, not the library's. `langmeshd.features.compose_plugins` builds the full set — goal review, compaction, permissions, continuation, observational memory, background jobs, work habits, titling, locations, bash, web, interaction, and computer use — and hands it to each executor.
+What the product runs for a hosted session is the daemon's business, not the library's. `langmeshd.features.compose_plugins` builds the full set — goal review, compaction, permissions, continuation, background jobs, work habits, titling, locations, bash, web, interaction, and computer use — and hands it to each executor.
 
 ### Writing a feature
 

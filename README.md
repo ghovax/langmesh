@@ -24,7 +24,7 @@ An agent can use these too. When a session needs help it creates a second sessio
 
 The harness writes the system prompt, defines the tools, manages context, and sets what the agent may do. The same model does different work under different harnesses — OpenCode versus Claude Code or Codex, say. LangMesh lets you change that harness:
 
-- **Any behavior beyond a plain model turn is a plugin.** Goal review, compaction, permission gating, autonomous continuation, observational memory, background jobs, and every tool from `bash` to `control_screen` are features composed onto a core that names none of them. A bare library session has no features at all. The product composes its own set; you compose yours. See [Composition](documentation/library/composition.md).
+- **Any behavior beyond a plain model turn is a plugin.** Goal review, compaction, permission gating, autonomous continuation, background jobs, and every tool from `bash` to `control_screen` are features composed onto a core that names none of them. A bare library session has no features at all. The product composes its own set; you compose yours. See [Composition](documentation/library/composition.md).
 - **Set the guardrails.** Permission modes and per-command rules are configuration, and the engine that enforces them is open code. When the settings are not enough, you can change how permissioning works ([Permissions](documentation/user/configuration.md#permission-modes)).
 - **The agent can work on LangMesh itself.** Its prompt says that it runs LangMesh. Open the LangMesh repository as the project. The agent then reads and edits the harness, and you rebuild ([Architecture](documentation/internal/architecture.md)).
 

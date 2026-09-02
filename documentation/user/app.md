@@ -11,7 +11,7 @@ Open **LangMesh** to start it: the app starts the separately installed daemon on
 | The sidebar    | Your workspaces, and the conversations you started in each                                                                                        |
 | The transcript | The conversation as it happens: prose, tool calls, tool results, prompts for a decision, and git status                                           |
 | The composer   | Where you type, choose an agent and a model, and set the session's permission mode. It also queues a message when the session cannot take one yet |
-| Side panels    | Opened from the top bar: delegated work, goal reviews, memory, and terminals & background jobs                                                    |
+| Side panels    | Opened from the top bar: delegated work, goal reviews, and terminals & background jobs                                                            |
 | Settings       | A dialog with General, Connection, Environments, Schedules, Agents, and a schema-driven Configuration page                                        |
 
 - The sidebar lists conversations **you** started, and only those. A session that a session created is delegated work, not a conversation of yours: it lives in its own side panel, where the tree is the point.
@@ -32,7 +32,7 @@ Open **LangMesh** to start it: the app starts the separately installed daemon on
 - A message arriving mid-turn is appended at the next steering boundary, or serialized as the next turn. Two concurrent senders cannot both observe an idle session and overtake each other.
 - The activity label comes from real states: daemon acceptance, thinking events, model text, tool execution, goal review, retry, compaction. No timer manufactures "thinking"; a silence detector reports a live provider that has not produced an event, but never claims progress the backend has not emitted.
 - A turn failure renders a localized error card. **Try again** calls the daemon's retry verb and continues the saved conversation tail; it never resends your message.
-- Compaction is an explicit visible state even when automatically recommended. Before compacting, the agent receives a private Bash-only checkpoint segment and must advance the workspace observation registry at least once. A failed checkpoint or compaction leaves the conversation unchanged, renders a localized blocking card, and keeps queued messages outside the backend until **Retry** continues the existing operation.
+- Compaction is an explicit visible state even when automatically recommended. A configured preparation completes before the fold; a failed preparation or compaction leaves the conversation unchanged, renders a localized blocking card, and keeps queued messages outside the backend until **Retry** continues the existing operation.
 
 ## Workspaces and environments
 

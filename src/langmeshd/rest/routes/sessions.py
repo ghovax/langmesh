@@ -6,7 +6,6 @@ from langmeshd.commons.database import SessionRecord, WorkspaceRecord
 from langmeshd.commons.paths import uploads_directory
 import asyncio
 import re
-from langmeshd.rest.routes.observations import registry_snapshot
 from langmesh.protocol.dtos import (
     SessionDraftRequest,
 )
@@ -36,34 +35,6 @@ async def session_draft(session_id: str):
 async def update_session_draft(session_id: str, request: SessionDraftRequest):
     await asyncio.to_thread(_update_session_draft, session_id, request.input_draft)
     return {"ok": True}
-
-
-@router.get("/sessions/{session_id}/record")
-async def session_record(
-    session_id: str,
-):
-    """The active workspace's current observational memory, addressed through its session."""
-    assert state.session_factory is not None
-    database_session = state.session_factory()
-    try:
-        record = (
-            database_session.query(SessionRecord).filter(SessionRecord.id == session_id).first()
-        )
-        working_directory = (
-            str(record.runtime_working_directory or record.working_directory or "")
-            if record is not None
-            else ""
-        )
-    finally:
-        database_session.close()
-    if not working_directory:
-        return {
-            "entries": {"observations": [], "directives": []},
-            "revision": 0,
-            "metadata": {},
-            "error": "",
-        }
-    return await registry_snapshot(working_directory)
 
 
 @router.get("/sessions/{session_id}/goal-reviews")

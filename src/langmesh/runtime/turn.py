@@ -239,7 +239,6 @@ class _RunsTurns(_DispatchesTools, ABC):
                 "toolbox": toolbox,
                 "peer_sessions": peer_sessions,
                 "mcp_servers": mcp_servers,
-                "observational_memory": "",
                 "computer_control_guidance": "",
                 "channel_guidance": "",
                 "task_guidance": "",
@@ -650,7 +649,7 @@ class _RunsTurns(_DispatchesTools, ABC):
                 self._features.acknowledge_checkpoint()
                 continue
 
-            # The loop may hold while a feature reclaims context. The threshold is a preparation boundary, not a hard cut: the reserved window gives the agent room for one private recording batch before the fold happens.
+            # The loop may hold while a feature reclaims context. The threshold is a preparation boundary, not a hard cut: the reserved window gives the agent room for one private preparation batch before the fold happens.
             if not self._features.active_maintenance():
                 request_tokens = max(
                     self._latest_context_tokens,
@@ -1072,7 +1071,7 @@ class _RunsTurns(_DispatchesTools, ABC):
 
         if self._features.active_maintenance():
             self._conversation.append(response)
-            # Best-effort handoff: the summary is the durable memory, so an unadvanced registry must not block the fold.
+            # Best-effort handoff: the summary is durable, so an unadvanced external store must not block the fold.
             self._features.record_maintenance_handoff()
             step.directive = _CONTINUE
             return

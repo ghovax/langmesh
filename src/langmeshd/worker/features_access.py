@@ -212,14 +212,6 @@ def reconsider_gate(runtime, gate):
     return feature.reconsider_gate(gate)
 
 
-def note_observation_registry(runtime, metadata: dict, error: str | None = None) -> None:
-    from langmesh.runtime.plugins.observations import ObservationMemory
-
-    feature = _resolve_feature(runtime, ObservationMemory)
-    if feature is not None:
-        feature.note(metadata, error)
-
-
 def background_jobs(runtime):
     from langmesh.runtime.plugins.background import BackgroundJobs
 
@@ -279,7 +271,6 @@ __all__ = [
     "has_pending_jobs",
     "inject_stored_background_result",
     "note_goal_continuation",
-    "note_observation_registry",
     "park_goal",
     "pending_compaction_reason",
     "reconsider_gate",

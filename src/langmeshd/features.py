@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from langmeshd.daemon.persistence.observation_registry import SQLiteObservationStore
-from langmesh.runtime.plugins.compaction import ObservationCompactionPreparation
 from langmesh.runtime.plugins.background import BackgroundJobs
 from langmesh.runtime.plugins.bash import Bash
 from langmesh.runtime.plugins.compaction import Compaction
@@ -18,14 +16,12 @@ from langmesh.runtime.plugins.continuation import Continuation
 from langmesh.runtime.plugins.goal_review import GoalReviewFeature
 from langmesh.runtime.plugins.interaction import Interaction
 from langmesh.runtime.plugins.locations import Locations
-from langmesh.runtime.plugins.observations import ObservationMemory
 from langmesh.runtime.plugins.permissions import PermissionReview
 from langmesh.runtime.plugins.titling import TitleAssignment
 from langmesh.runtime.plugins.web import Web
 from langmesh.runtime.plugins.work_habits import WorkHabits
 from langmesh.runtime.tools.arguments import with_shared_fields
 from langmeshd.daemon.machine_environment import _shell_command_usage
-from langmeshd.commons.configuration_locations import observation_database
 from langmeshd.daemon.workflow_catalogue import FilesystemWorkflowCatalogue
 from langmeshd.daemon.browser import browser_endpoint, save_browser_download
 from langmeshd.daemon.scratch import FilesystemScratchSpaces
@@ -44,13 +40,6 @@ def _computer_use(configuration: Any = None) -> list:
     except ImportError:
         return []
     return [ComputerUse(configuration)]
-
-
-def _compaction_preparation(runtime_directory: str) -> Any:
-    """The compaction preparation the daemon owns, from the observation store."""
-    return ObservationCompactionPreparation(
-        SQLiteObservationStore(observation_database(runtime_directory))
-    )
 
 
 def _session_locations(session_id: str) -> list[dict[str, Any]] | None:
@@ -80,14 +69,12 @@ def attach_location_executors(
 def compose_plugins(
     *,
     session_id: str,
-    runtime_directory: str,
     job_store: Any,
     goal_listener: Any,
     goal_review_journal: Any,
     application_configuration: Any,
 ) -> dict[str, Any]:
     """The plugins a hosted session runs and the ports they need, as one bundle."""
-    preparation = _compaction_preparation(runtime_directory)
     locations = _session_locations(session_id)
     features = [
         GoalReviewFeature(
@@ -97,12 +84,10 @@ def compose_plugins(
         Compaction(
             configuration=application_configuration.compaction,
             strategy=None,
-            preparation=preparation,
             summarizer=None,
         ),
         PermissionReview(application_configuration.permission_reviewer),
         Continuation(policy=None),
-        ObservationMemory(),
         BackgroundJobs(store=job_store),
         WorkHabits(_shell_command_usage()),
         TitleAssignment(application_configuration.titling),
@@ -121,7 +106,6 @@ def compose_plugins(
             feature.set_listener(goal_listener)
     services: dict[str, Any] = {
         "goal_review_journal": goal_review_journal,
-        "compaction_preparation": preparation,
         "workflows": _WORKFLOWS,
         "scratch_spaces": _SCRATCH_SPACES,
         "browser_endpoint": browser_endpoint,
@@ -142,7 +126,6 @@ def contributed_tools() -> dict[str, Any]:
         Compaction(strategy=None, preparation=None, summarizer=None),
         PermissionReview(),
         Continuation(policy=None),
-        ObservationMemory(),
         BackgroundJobs(store=None),
         WorkHabits(),
         TitleAssignment(),

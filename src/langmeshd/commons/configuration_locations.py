@@ -13,9 +13,6 @@ from langmeshd.commons.configuration import (
     RemoteAgentsConfiguration,
     RemoteAgentServerConfiguration,
 )
-from langmesh.base.content.observations import OBSERVATIONS_FILENAME
-
-
 HOME_AGENTS_ROOT = Path("~/.agents")
 PROJECT_AGENTS_ROOT = Path(".agents")
 
@@ -89,10 +86,6 @@ def memory_directories(working_directory: str = "") -> list[Path]:
     )
 
 
-def observation_database(working_directory: str) -> Path:
-    return project_agents_root(working_directory) / OBSERVATIONS_FILENAME
-
-
 def load_mcp_configuration(roots: Iterable[Path]) -> MCPConfiguration:
     """Load and merge MCP declarations from explicit roots."""
     servers: dict[str, MCPServerConfiguration] = {}
@@ -140,7 +133,6 @@ __all__ = [
     "load_mcp_configuration",
     "mcp_configuration",
     "memory_directories",
-    "observation_database",
     "project_agents_root",
     "remote_agents_configuration",
     "skill_directories",

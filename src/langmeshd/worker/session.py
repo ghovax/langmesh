@@ -212,8 +212,6 @@ class SessionExecutor(AgentExecutor):
         self._session_state_lock = asyncio.Lock()
         # Linearizes external send decisions. Without this, two concurrent callers can both observe "idle" and start separate turns before either marks the context running.
         self._send_lock = asyncio.Lock()
-        self._observation_registry_metadata: dict[str, Any] = {}
-        self._observation_registry_error: str | None = None
 
     def _spawn_background(
         self, coroutine: Coroutine[Any, Any, Any], *, name: str
@@ -1032,7 +1030,7 @@ class SessionExecutor(AgentExecutor):
             update={"tools_enabled": sorted({tool.name for tool in composed})}
         )
         # The host's plugin bundle: which features run and the ports they need.
-        bundle = self._compose_plugins(session_id, runtime_directory)
+        bundle = self._compose_plugins(session_id)
         toolbox = toolbox_for(session_id, enabled=self._application_configuration.toolbox.enabled)
         if toolbox is not None:
             toolbox.prepare()
@@ -1070,12 +1068,6 @@ class SessionExecutor(AgentExecutor):
             ),
             conversation=conversation,
         )
-        if self._observation_registry_metadata or self._observation_registry_error:
-            _features.note_observation_registry(
-                runtime,
-                self._observation_registry_metadata,
-                self._observation_registry_error,
-            )
         return runtime
 
     @staticmethod
@@ -1142,13 +1134,12 @@ class SessionExecutor(AgentExecutor):
             minimum_useful_characters=configuration.web_fetch.minimum_useful_characters,
         )
 
-    def _compose_plugins(self, session_id: str, runtime_directory: str):
+    def _compose_plugins(self, session_id: str):
         """The session's plugin bundle (features and their ports), from the host's injected composer."""
         if self._feature_factory is None:
             return {}
         return self._feature_factory(
             session_id=session_id,
-            runtime_directory=runtime_directory,
             job_store=self._job_store,
             goal_listener=lambda goal: self._notify_goal_state(session_id, goal),
             goal_review_journal=self._host.build_goal_review_journal(self._turn_store),
@@ -1459,18 +1450,6 @@ class SessionExecutor(AgentExecutor):
             return False
         accepted = state.runtime.enqueue_steering(text, message_id, peer_sender)
         return bool(accepted is not None and await accepted)
-
-    def note_observation_registry(self, metadata: dict[str, Any], error: str | None) -> None:
-        """Pass watcher metadata and feedback to the warm runtime without a synthetic turn."""
-        self._observation_registry_metadata = dict(metadata)
-        self._observation_registry_error = error.strip() if error else None
-        state = self._contexts.get(self._session_id)
-        if state is not None and state.runtime is not None:
-            _features.note_observation_registry(
-                state.runtime,
-                self._observation_registry_metadata,
-                self._observation_registry_error,
-            )
 
     async def resolve_pending_input(self, payload: dict) -> bool:
         """Record an answer to a parked gate and resume the turn once every gate in the batch has one."""

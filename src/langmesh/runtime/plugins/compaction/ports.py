@@ -7,13 +7,9 @@ summarizer's verdict tool returns.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
-
-logger = logging.getLogger(__name__)
-
 
 class CompactionSummary(BaseModel):
     """The durable summary a compaction instruction asks the model to submit."""
@@ -23,42 +19,8 @@ class CompactionSummary(BaseModel):
     )
 
 
-class ObservationCompactionPreparation:
-    """Require an observational-memory revision to advance before compacting."""
-
-    def __init__(self, store: Any) -> None:
-        self._store = store
-
-    def instruction(self, default: str) -> str:
-        return default
-
-    async def baseline(self) -> int:
-        try:
-            return await self._store.revision()
-        except Exception as error:  # noqa: BLE001 — repair is the preparation turn's job
-            logger.warning("observation registry requires repair before compaction: %s", error)
-            return 0
-
-    async def completed(self, baseline: Any) -> bool:
-        # An absent registry has nothing to hand off, so an empty baseline is a complete handoff.
-        if not baseline:
-            return True
-        try:
-            return await self._store.revision() > int(baseline)
-        except Exception:  # noqa: BLE001 — an invalid registry is not a completed checkpoint
-            return False
-
-    async def describe(self) -> dict:
-        description = await self._store.describe()
-        model_dump = getattr(description, "model_dump", None)
-        if callable(model_dump):
-            value = model_dump(mode="json")
-            return value if isinstance(value, dict) else {}
-        return dict(description) if hasattr(description, "keys") else {}
-
-
 class DirectCompactionPreparation:
-    """Compaction directly, for applications that persist no external memory handoff."""
+    """Compaction directly, for applications that persist no external preparation."""
 
     def instruction(self, default: str) -> None:
         return None
@@ -76,5 +38,4 @@ class DirectCompactionPreparation:
 __all__ = [
     "CompactionSummary",
     "DirectCompactionPreparation",
-    "ObservationCompactionPreparation",
 ]

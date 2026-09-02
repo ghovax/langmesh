@@ -87,7 +87,7 @@
     "cachePrefixMoved": "Moved",
     "cachePrefixUnknown": "Unknown",
     "compact": "Compact",
-    "compactBody": "The agent first preserves durable workspace knowledge, then discards older conversation while keeping the most recent work verbatim. This frees room in the conversation, but discarded dialogue can no longer be recalled.",
+    "compactBody": "The agent summarizes older conversation and keeps the most recent work verbatim. This frees room in the conversation, but discarded dialogue can no longer be recalled.",
     "compactConfirm": "Compact now",
     "compactTitle": "Compact the conversation?",
     "compactTooltip": "Preserve durable knowledge, then discard older history while keeping recent work verbatim",
@@ -142,7 +142,7 @@
       "compaction_cancelled": "The compaction was stopped before it completed.",
       "compaction_failed": "The compaction could not complete. Retry it before continuing.",
       "compaction_no_reclaim": "The compaction could not reclaim any conversation space.",
-      "compaction_preparation_failed": "The observational-memory checkpoint did not complete, so no history was removed.",
+      "compaction_preparation_failed": "The compaction preparation did not complete, so no history was removed.",
       "compaction_strategy_failed": "The configured compaction strategy failed without changing the conversation.",
       "compaction_summary_failed": "The summarizer never produced the compaction summary, so the conversation was left unchanged. Retry compaction before continuing."
     },
@@ -232,7 +232,6 @@
     "jumpToProgress": "Scroll down to see progress",
     "loadConversationErrorDescription": "The transcript failed to load. Check the connection and try again.",
     "loadConversationErrorTitle": "Couldn’t load this conversation",
-    "memory": "Memory",
     "newConversation": "New conversation",
     "openThisCompactioner": "Open this folder",
     "path": "Path",
@@ -389,34 +388,6 @@
   "LocationStatus": {
     "uri": "URI",
     "hostNotFound": "Host not found in ~/.ssh/config"
-  },
-  "MemoryPanel": {
-    "category": {
-      "artifact": "Artifact",
-      "constraint": "Constraint",
-      "decision": "Decision",
-      "fact": "Fact",
-      "failure": "Failure",
-      "open": "Open"
-    },
-    "collapsePanel": "Collapse panel",
-    "emptyDescription": "The agent has not maintained any current observations for this location.",
-    "emptyTitle": "Nothing recorded yet",
-    "findings": "Findings",
-    "instructions": "Instructions",
-    "kind": {
-      "preference": "Preference",
-      "requirement": "Requirement"
-    },
-    "loading": "Reading the record",
-    "loadError": "The observational-memory record could not be loaded. Live updates remain active.",
-    "registryError": "Observational memory needs repair",
-    "standing": {
-      "inferred": "Inferred",
-      "reported": "Reported"
-    },
-    "title": "Memory",
-    "description": "The agent's working memory for this workspace."
   },
   "ModelSelect": {
     "visionBadge": "Vision — accepts image input",

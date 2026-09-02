@@ -59,21 +59,6 @@ class SessionLifecycle:
             self._changed()
             return False
         self._registry.host(record.id, updated_at=_now())
-        from langmeshd.commons import state as commons_state
-
-        watcher = commons_state.observation_registry_watcher
-        if watcher is not None:
-            snapshot = await watcher.register(
-                record.runtime_working_directory or record.working_directory
-            )
-            await self._host.dispatch(
-                record.id,
-                "session/observation-registry",
-                {
-                    "error": snapshot.get("error") or "",
-                    "metadata": snapshot.get("metadata") or {},
-                },
-            )
         self._changed()
         return True
 
