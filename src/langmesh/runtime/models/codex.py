@@ -6,8 +6,10 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Optional, Sequence, cast
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+from websockets.asyncio.client import connect
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -60,6 +62,13 @@ from langmesh.runtime.cache_trace import (
     trace,
 )
 from langmesh.base.primitives.serialization import compact, upstream_detail
+
+
+RESPONSES_WEBSOCKET_BETA = "responses_websockets=2026-02-06"
+
+
+class _ResponsesWebSocketUnavailable(RuntimeError):
+    """The websocket handshake failed before a request was sent."""
 
 
 @dataclass(frozen=True)
@@ -241,6 +250,14 @@ class ChatCodexModel(BaseChatModel):
             "stream": stream,
             "parallel_tool_calls": kwargs.get("parallel_tool_calls", True),
         }
+        # The ChatGPT Codex backend uses this private envelope for request lineage. Keep the
+        # values truthful: LangMesh has one durable session, but no Codex installation/window
+        # identity to invent.
+        if self.session_id:
+            payload["client_metadata"] = {
+                "session_id": self.session_id,
+                "thread_id": self.session_id,
+            }
         if instructions:
             payload["instructions"] = instructions
         # Sent whether or not there are tools, matching the Codex client, since a field that comes and goes moves the prefix.
@@ -271,7 +288,27 @@ class ChatCodexModel(BaseChatModel):
 
     async def _headers(self) -> dict[str, str]:
         """The request headers, with a freshly-valid access token and this conversation's id."""
-        return request_chatgpt_headers(await valid_chatgpt_tokens(), self.session_id)
+        headers = request_chatgpt_headers(await valid_chatgpt_tokens(), self.session_id)
+        # Codex supplies a stable product user agent through its default HTTP client. Do the same
+        # without claiming to be the Codex CLI binary itself.
+        headers["User-Agent"] = "langmesh"
+        if self.session_id:
+            # Codex maps its thread identity to both headers on Responses requests.
+            headers["thread-id"] = self.session_id
+            headers["x-client-request-id"] = self.session_id
+        return headers
+
+    @staticmethod
+    def _websocket_url() -> str:
+        """Translate the ChatGPT Responses HTTP endpoint into its websocket counterpart."""
+        parsed = urlsplit(RESPONSES_URL)
+        scheme = {"http": "ws", "https": "wss"}.get(parsed.scheme, parsed.scheme)
+        return urlunsplit((scheme, parsed.netloc, parsed.path, parsed.query, parsed.fragment))
+
+    @staticmethod
+    def _websocket_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        """Wrap a Responses request in the Codex websocket request envelope."""
+        return {"type": "response.create", **payload}
 
     @staticmethod
     def _http_error(status: int, body: str) -> Exception:
@@ -510,6 +547,91 @@ class ChatCodexModel(BaseChatModel):
             "model": self.model,
             "context_window": self.context_window(),
         }
+        try:
+            async for chunk in self._astream_websocket(payload, headers, state):
+                usage = getattr(chunk.message, "usage_metadata", None)
+                if usage and not reported:
+                    reported = True
+                    self._reconcile_cache_usage(diagnosis, usage)
+                    chunk.message.additional_kwargs["cache_trace"] = diagnosis
+                yield chunk
+        except _ResponsesWebSocketUnavailable:
+            # Codex falls back to HTTP when the Responses websocket isn't available. The fallback
+            # is limited to the handshake, so a request that was accepted and then failed isn't
+            # silently duplicated.
+            async for chunk in self._astream_http(payload, headers, state):
+                usage = getattr(chunk.message, "usage_metadata", None)
+                if usage and not reported:
+                    reported = True
+                    self._reconcile_cache_usage(diagnosis, usage)
+                    chunk.message.additional_kwargs["cache_trace"] = diagnosis
+                yield chunk
+
+    @staticmethod
+    def _reconcile_cache_usage(diagnosis: dict[str, object], usage: Mapping[str, Any]) -> None:
+        reconcile(
+            diagnosis,
+            int((usage.get("input_token_details") or {}).get("cache_read", 0) or 0),
+        )
+
+    async def _astream_websocket(
+        self,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        state: dict[str, Any],
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        """Stream one Responses turn over the Codex websocket protocol."""
+        websocket_headers = dict(headers)
+        websocket_headers.pop("Content-Type", None)
+        websocket_headers.pop("Accept", None)
+        websocket_headers["OpenAI-Beta"] = RESPONSES_WEBSOCKET_BETA
+        websocket = connect(
+            self._websocket_url(),
+            additional_headers=websocket_headers,
+            user_agent_header="langmesh",
+            open_timeout=self.timeout,
+            close_timeout=10,
+            max_size=None,
+        )
+        try:
+            connection = await websocket.__aenter__()
+        except Exception as error:  # noqa: BLE001 — handshake failures use the HTTP fallback
+            raise _ResponsesWebSocketUnavailable(str(error)) from error
+        try:
+            await connection.send(
+                json.dumps(
+                    self._websocket_payload(payload),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+            async for message in connection:
+                if isinstance(message, bytes):
+                    message = message.decode("utf-8", "replace")
+                if not isinstance(message, str):
+                    continue
+                try:
+                    data = json.loads(message)
+                except ValueError:
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                chunk = self._translate_event(data, state)
+                if chunk is not None:
+                    yield chunk
+                if data.get("type") == "response.completed":
+                    return
+            raise RuntimeError("ChatGPT Codex websocket closed before response.completed")
+        finally:
+            await websocket.__aexit__(None, None, None)
+
+    async def _astream_http(
+        self,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        state: dict[str, Any],
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        """The Responses SSE transport used when websocket setup isn't available."""
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             async with client.stream(
                 "POST", RESPONSES_URL, json=payload, headers=headers
@@ -521,19 +643,6 @@ class ChatCodexModel(BaseChatModel):
                 async for line in response.aiter_lines():
                     chunk = self._line_to_chunk(line, state)
                     if chunk is not None:
-                        usage = getattr(chunk.message, "usage_metadata", None)
-                        # Attached to the chunk carrying usage, so the diagnosis travels with the figure it explains.
-                        if usage and not reported:
-                            reported = True
-                            # The byte verdict was made before the call; the response's cache figure corrects it.
-                            reconcile(
-                                diagnosis,
-                                int(
-                                    (usage.get("input_token_details") or {}).get("cache_read", 0)
-                                    or 0
-                                ),
-                            )
-                            chunk.message.additional_kwargs["cache_trace"] = diagnosis
                         yield chunk
 
     @staticmethod
