@@ -343,6 +343,10 @@ class ChatCodexModel(BaseChatModel):
     async def _headers(self) -> dict[str, str]:
         """The request headers, with a freshly-valid access token and this conversation's id."""
         headers = request_chatgpt_headers(await valid_chatgpt_tokens(), self.session_id)
+        account_id = headers.pop("ChatGPT-Account-Id", None)
+        if account_id is not None:
+            # Match the spelling emitted by Codex's BearerAuthProvider exactly.
+            headers["ChatGPT-Account-ID"] = account_id
         # These values intentionally match Codex's default client identity. The ChatGPT Codex
         # backend gates some capabilities on them; the process override is also honored by Codex.
         headers["originator"] = _codex_originator()
