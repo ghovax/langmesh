@@ -2,7 +2,7 @@
 
 LangMesh has three parts:
 
-- The **Python image**: two packages — the `langmesh` library (the harness) and the `langmeshd` product (daemon, CLI, REST, worker, dictation) — entered as one executable, `langmesh` or `langmeshd`.
+- The **Python distribution**: two packages — the `langmesh` library (the harness) and the `langmeshd` product (daemon, CLI, REST, worker, dictation). A normal install exposes the `langmesh` CLI; run the daemon with `uv run python -m langmeshd langmeshd`. The frozen image provides both public roles through one executable.
 - The **Next.js web UI**, shared with the phone.
 - The **Tauri desktop shell**. In development you run the daemon and the UI directly; the packaged app is built separately from the daemon.
 
@@ -18,7 +18,7 @@ The interface is the surface you work in; the daemon it talks to is started by `
 uv run python -m langmeshd langmeshd
 ```
 
-- One image, two entry points, chosen by the first argument: `langmesh` (the CLI: `serve` and `mail`, plus the deployment-specific `github` service) and `langmeshd` (the daemon that hosts sessions). A bare launch lands in the CLI.
+- The frozen image has two public entry points, chosen by the first argument: `langmesh` (the CLI: `serve` and `mail`, plus the deployment-specific `github` service) and `langmeshd` (the daemon that hosts sessions). A bare launch lands in the CLI.
 - A session is an object the daemon builds and holds, not a process; creating one costs about as much as constructing the object, so there is no pool waiting.
 - It listens on a unix socket in your runtime directory, and for GUI clients on an ephemeral loopback port. The port, the capability token, the pid, and the lock are published under the runtime directory.
 
@@ -29,9 +29,9 @@ State follows XDG, all of it created on first run: configuration in `~/.config/l
 | Command                        | What it does                                                |
 | ------------------------------ | ----------------------------------------------------------- |
 | `cd web && bun install`        | Once.                                                       |
-| `./scripts/web-development.sh` | Http://localhost:3000, wired to the daemon already running. |
+| `./scripts/web-development.sh` | `http://localhost:3000`, wired to the daemon it starts or finds. |
 
-Start the daemon first; the script starts the daemon when one is not already answering and points the page straight at it. Run the script from an **ordinary shell, not inside `nix develop`**: the devshell rewrites `TMPDIR`, the runtime directory hangs off it, and a daemon started outside the devshell is invisible to anything started inside it.
+The script starts the daemon when one is not already answering, then points the page straight at it. Run the script from an **ordinary shell, not inside `nix develop`**: the devshell rewrites `TMPDIR`, the runtime directory hangs off it, and a daemon started outside the devshell is invisible to anything started inside it.
 
 Useful scripts (in `web/`):
 
@@ -95,17 +95,17 @@ ditto "packaging/dist/LangMesh Computer Use.app" "/Applications/LangMesh Compute
 ln -sf "/Applications/LangMesh Computer Use.app/Contents/MacOS/langmesh" /usr/local/bin/langmesh
 ```
 
-The symlink is what puts `langmesh` and `langmeshd` on your `PATH`, both entering the same signed image. Running from a checkout (`uv run langmesh …`) works for everything except a stable Accessibility grant, since the interpreter is then the code identity.
+The symlink puts the frozen `langmesh` executable on your `PATH`; invoke its daemon entry point as `langmesh langmeshd`. In a Python checkout, use `uv run python -m langmeshd langmeshd`. Running from a checkout (`uv run langmesh …`) works for everything except a stable Accessibility grant, since the interpreter is then the code identity.
 
 ## Checks
 
-The repository ships **no unit-test suite**. It ships two guards and one verification harness:
+The repository ships **no committed unit-test suite**. It ships two static checks; `pytest` is available for tests added locally:
 
 | Command                   | What it does                                                                                                                                      |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `uv run ruff check src/`  | Lint.                                                                                                                                             |
 | `uv run basedpyright`     | Type-check the library and daemon as one import graph; a library file that reaches into `langmeshd` is flagged the same way a stale attribute is. |
-| `uv run pytest`           | The retrieval harness under `tests/retrieval/`, plus any tests you add (`testpaths = ["tests"]`, `asyncio_mode = "auto"`).                        |
+| `uv run pytest`           | Runs tests added under `tests/`; there are currently no committed tests (`testpaths = ["tests"]`, `asyncio_mode = "auto"`).                     |
 | `cd web && bun run build` | Regenerates and diffs the event schema, then type-checks the UI.                                                                                  |
 
 ## Project layout

@@ -18,7 +18,7 @@ tools_enabled:
   - update_goal
   - search_web
   - fetch_url
-  - download_file
+  - download
   - list_mcp_tools
   - call_mcp_server_tool
   - list_mcp_resources
