@@ -29,7 +29,7 @@ from langmesh import (
     Session,
     SessionComponents,
 )
-from langmesh.base.confinement import Profile, environment_variables
+from langmesh.base.confinement import Profile
 from langmesh.runtime.plugins.compaction.configuration import CompactionConfiguration
 from langmesh.base.content.model_routing import resolve_litellm
 from langmesh.base.contracts.ports import Checkpoints
@@ -329,9 +329,6 @@ def mention_sandbox(token: str) -> Profile:
         environment["GIT_CONFIG_COUNT"] = "1"
         environment["GIT_CONFIG_KEY_0"] = _git_header_key()
         environment["GIT_CONFIG_VALUE_0"] = _git_header(token)
-    render_api_key = os.environ.get(environment_variables.RENDER_API_KEY, "").strip()
-    if render_api_key:
-        environment[environment_variables.RENDER_API_KEY] = render_api_key
     return replace(profile, environment=environment)
 
 

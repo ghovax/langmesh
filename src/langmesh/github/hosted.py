@@ -68,6 +68,14 @@ logger = logging.getLogger("langmesh.github.hosted")
 DEFAULT_CONFIGURATION_PATH = Path.home() / ".config" / "langmesh" / "github.yaml"
 
 
+def default_state_directory() -> Path:
+    """Return the local durable state location used when deployment leaves it unset."""
+    state_home = os.environ.get("XDG_STATE_HOME", "").strip()
+    if state_home:
+        return Path(state_home).expanduser() / "langmesh" / "github"
+    return Path.home() / ".local" / "state" / "langmesh" / "github"
+
+
 def viewer_output_directory() -> Path | None:
     """Find the static web export built into the hosted image, or return ``None`` locally."""
     candidates = [Path.cwd() / "web" / "out"]
@@ -96,11 +104,10 @@ class Settings:
     oauth_client_id: str
     oauth_client_secret: str
     encryption_key_path: Path
-    database_url: str
+    state_directory: Path
     queue_poll_seconds: float
     maximum_delivery_attempts: int
     public_url: str
-    shutdown_grace_seconds: float
     compaction: CompactionConfiguration
     provider_application_ids: Mapping[str, str] = field(default_factory=dict)
     github_api_url: str = "https://api.github.com"
@@ -147,7 +154,12 @@ class Settings:
         oauth = section_from(github, "oauth", configuration_path)
         server = section("server")
         storage = section("storage")
-        database = section_from(storage, "database", configuration_path)
+        if "database" in storage:
+            raise RuntimeError(
+                "GitHub App configuration no longer accepts storage.database; "
+                "use the service-owned storage.state_dir instead: "
+                f"{configuration_path}"
+            )
         encryption = section_from(storage, "encryption", configuration_path)
         queue = section_from(storage, "queue", configuration_path)
         raw_compaction = values.get("compaction", {})
@@ -173,18 +185,12 @@ class Settings:
                 "GitHub App configuration needs storage.queue.maximum_delivery_attempts "
                 f"to be a positive integer: {configuration_path}"
             )
-        try:
-            shutdown_grace_seconds = float(server.get("shutdown_grace_seconds", 25.0))
-        except (TypeError, ValueError) as error:
-            raise RuntimeError(
-                "GitHub App configuration needs server.shutdown_grace_seconds "
-                f"to be between 1 and 300 seconds: {configuration_path}"
-            ) from error
-        if not 1.0 <= shutdown_grace_seconds <= 300.0:
-            raise RuntimeError(
-                "GitHub App configuration needs server.shutdown_grace_seconds "
-                f"to be between 1 and 300 seconds: {configuration_path}"
-            )
+        state_root = os.environ.get("LANGMESH_GITHUB_STATE_DIR", "").strip()
+        state_directory = (
+            Path(state_root).expanduser()
+            if state_root
+            else Path(str(storage.get("state_dir") or default_state_directory())).expanduser()
+        )
         return cls(
             app_id=required(app, "id", "github.app"),
             private_key_path=Path(required(app, "private_key_path", "github.app")).expanduser(),
@@ -194,11 +200,10 @@ class Settings:
             encryption_key_path=Path(
                 required(encryption, "key_path", "storage.encryption")
             ).expanduser(),
-            database_url=required(database, "url", "storage.database"),
+            state_directory=state_directory,
             queue_poll_seconds=max(0.5, float(queue.get("poll_seconds") or 5)),
             maximum_delivery_attempts=maximum_delivery_attempts,
             public_url=required(server, "public_url", "server").rstrip("/"),
-            shutdown_grace_seconds=shutdown_grace_seconds,
             compaction=compaction,
             github_api_url=str(github.get("api_url") or "https://api.github.com").rstrip("/"),
             provider_application_ids={
@@ -360,7 +365,7 @@ class Processor:
             )
             or "allow",
             "sandbox_enforce": "required",
-            "sandbox_backend": "Render",
+            "sandbox_backend": "self-hosted",
             "model_name": model_name,
             "session_id": session_id,
             "tasks": tasks,
@@ -398,10 +403,10 @@ class Processor:
             return
         released = await self.store.release_processing(
             delivery_id,
-            "service shutdown interrupted delivery; retrying from the durable checkpoint",
+            "worker interrupted delivery; retrying from the durable checkpoint",
         )
         if released:
-            logger.info("requeued GitHub delivery id=%s after service shutdown", delivery_id)
+            logger.info("requeued GitHub delivery id=%s after worker cancellation", delivery_id)
 
     async def _wait_for_next_poll(self) -> None:
         try:
@@ -413,69 +418,73 @@ class Processor:
 
     async def run_forever(self) -> None:
         self._stop_requested.clear()
-        while not self._stop_requested.is_set():
-            delivery = await self.store.claim()
-            if delivery is None:
-                await self._wait_for_next_poll()
-                continue
-            delivery_id = str(delivery["delivery_id"])
-            if self._stop_requested.is_set():
-                await self.store.release_processing(
-                    delivery_id,
-                    "service shutdown arrived before delivery started; retrying from the queue",
-                )
-                break
-            attempts = int(delivery.get("attempts") or 1)
-            recovered = bool(delivery.get("recovered"))
-            event_name = str(delivery["event_name"])
-            installation_id = int(delivery["installation_id"])
-            logger.info(
-                "claimed GitHub delivery id=%s event=%s installation=%s attempt=%s recovered=%s",
-                delivery_id,
-                event_name,
-                installation_id,
-                attempts,
-                recovered,
-            )
-            if attempts > self.settings.maximum_delivery_attempts:
-                await self.store.mark_failed(
-                    delivery_id,
-                    "delivery exceeded the configured attempt limit",
-                )
-                logger.error(
-                    "discarded GitHub delivery id=%s beyond the %s-attempt limit",
-                    delivery_id,
-                    self.settings.maximum_delivery_attempts,
-                )
-                continue
-            self._active_delivery_id = delivery_id
-            try:
-                await self.process(
-                    event_name,
-                    json.loads(str(delivery["payload"])),
-                    installation_id,
-                    delivery_id=delivery_id,
-                    attempt=attempts,
-                    recovered=recovered,
-                )
-            except Exception as error:
-                logger.exception("GitHub delivery %s failed", delivery_id)
-                if attempts >= self.settings.maximum_delivery_attempts:
-                    await self.store.mark_failed(delivery_id, str(error))
-                    logger.error(
-                        "stopped GitHub delivery id=%s after %s attempts",
+        try:
+            while not self._stop_requested.is_set():
+                delivery = await self.store.claim()
+                if delivery is None:
+                    await self._wait_for_next_poll()
+                    continue
+                delivery_id = str(delivery["delivery_id"])
+                if self._stop_requested.is_set():
+                    await self.store.release_processing(
                         delivery_id,
-                        attempts,
+                        "worker stop arrived before delivery started; retrying from the queue",
                     )
+                    break
+                attempts = int(delivery.get("attempts") or 1)
+                recovered = bool(delivery.get("recovered"))
+                event_name = str(delivery["event_name"])
+                installation_id = int(delivery["installation_id"])
+                logger.info(
+                    "claimed GitHub delivery id=%s event=%s installation=%s attempt=%s recovered=%s",
+                    delivery_id,
+                    event_name,
+                    installation_id,
+                    attempts,
+                    recovered,
+                )
+                if attempts > self.settings.maximum_delivery_attempts:
+                    await self.store.mark_failed(
+                        delivery_id,
+                        "delivery exceeded the configured attempt limit",
+                    )
+                    logger.error(
+                        "discarded GitHub delivery id=%s beyond the %s-attempt limit",
+                        delivery_id,
+                        self.settings.maximum_delivery_attempts,
+                    )
+                    continue
+                self._active_delivery_id = delivery_id
+                try:
+                    await self.process(
+                        event_name,
+                        json.loads(str(delivery["payload"])),
+                        installation_id,
+                        delivery_id=delivery_id,
+                        attempt=attempts,
+                        recovered=recovered,
+                    )
+                except Exception as error:
+                    logger.exception("GitHub delivery %s failed", delivery_id)
+                    if attempts >= self.settings.maximum_delivery_attempts:
+                        await self.store.mark_failed(delivery_id, str(error))
+                        logger.error(
+                            "stopped GitHub delivery id=%s after %s attempts",
+                            delivery_id,
+                            attempts,
+                        )
+                    else:
+                        await self.store.schedule_retry(
+                            delivery_id, str(error), min(300, 2 ** min(attempts, 8))
+                        )
                 else:
-                    await self.store.schedule_retry(
-                        delivery_id, str(error), min(300, 2 ** min(attempts, 8))
-                    )
-            else:
-                await self.store.complete(delivery_id)
-                logger.info("completed GitHub delivery id=%s", delivery_id)
-            finally:
-                self._active_delivery_id = None
+                    await self.store.complete(delivery_id)
+                    logger.info("completed GitHub delivery id=%s", delivery_id)
+                finally:
+                    self._active_delivery_id = None
+        except asyncio.CancelledError:
+            await self.release_active_delivery()
+            raise
 
     def _runner(self, token: str):
         def run(
@@ -820,7 +829,7 @@ class Processor:
 
 def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> FastAPI:
     settings = Settings.load(configuration_path)
-    store = Store(settings.database_url, settings.encryption_key_path)
+    store = Store(settings.state_directory, settings.encryption_key_path)
     github = GitHub(settings)
     processor = Processor(settings, store, github)
     worker: asyncio.Task[None] | None = None
@@ -834,17 +843,12 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
         try:
             yield
         finally:
-            if worker is not None:
-                processor.request_stop()
-                try:
-                    await asyncio.wait_for(
-                        asyncio.shield(worker), timeout=settings.shutdown_grace_seconds
-                    )
-                except asyncio.TimeoutError:
-                    await processor.release_active_delivery()
-                    worker.cancel()
-                await asyncio.gather(worker, return_exceptions=True)
-            await store.close()
+            try:
+                if worker is not None:
+                    processor.request_stop()
+                    await worker
+            finally:
+                await store.close()
 
     app = FastAPI(title="LangMesh GitHub App", lifespan=lifespan)
 

@@ -30,15 +30,13 @@ github:
   api_url: "https://api.github.com"
 server:
   public_url: "https://github-agent.example.net"
-  shutdown_grace_seconds: 25.0
 compaction:
   automatic: true
   reclaim_at_fraction: 0.9
   output_reserve_fraction: 0.1
   recent_working_set_fraction: 0.15
 storage:
-  database:
-    url: "postgresql+asyncpg://postgres:...@db.qxwzjvkrmno.supabase.co:5432/postgres?ssl=require"
+  state_dir: "/var/lib/langmesh/github"
   encryption:
     key_path: "/srv/langmesh/secrets/provider-keys.fernet"
   queue:
@@ -50,7 +48,7 @@ Each delivery is attempted at most `maximum_delivery_attempts` times. After the 
 
 The hosted processor does not impose a wall-clock deadline on a whole turn. Model verdict calls and protocol loops carry their own attempt and time budgets, command tools enforce their own limits, and a worker restart recovers a failed delivery from its durable checkpoint. This lets long but productive work finish without permitting an unbounded model retry loop.
 
-GitHub sessions use `allow` permission mode: the bot does not stop for approval prompts. Render's operating-system confinement still limits what each tool can reach, so `allow` removes the approval gate but does not remove the sandbox.
+GitHub sessions use `allow` permission mode: the bot does not stop for approval prompts. The service's operating-system confinement still limits what each tool can reach, so `allow` removes the approval gate but does not remove the sandbox.
 
 Compaction uses the selected model's advertised context window from models.dev. For an OAuth-backed model, the live provider catalogue takes precedence when available; `maximum_context_tokens` is left unset so the service does not impose an unrelated context ceiling.
 
@@ -62,13 +60,13 @@ python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 chmod 600 /srv/langmesh/secrets/provider-keys.fernet
 ```
 
-The service stores provider API keys and OAuth tokens encrypted in the external database, keyed by GitHub installation. The GitHub worker uses the compaction settings from this operator file with a direct preparation port. For a ChatGPT OAuth installation, it refreshes the authenticated live model catalogue before building the session, so the model's reported context window is used automatically; when that catalogue is unavailable, the models.dev value remains the fallback. Compaction intentionally invalidates the conversation portion of the provider cache; the stable instructions and tool definitions remain reusable. The delivery queue and session checkpoints use that same database, so another worker can continue after the original worker disappears. Different installations can choose different providers and models. For example, an installation may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like `sk-or-v1-...`.
+The service stores provider API keys and OAuth tokens encrypted in its local SQLite state database, keyed by GitHub installation. The `state_dir` directory is the service-owned durable volume: mount it on persistent VPS storage and back it up with the rest of the service data. The GitHub worker uses the compaction settings from this operator file with a direct preparation port. For a ChatGPT OAuth installation, it refreshes the authenticated live model catalogue before building the session, so the model's reported context window is used automatically; when that catalogue is unavailable, the models.dev value remains the fallback. Compaction intentionally invalidates the conversation portion of the provider cache; the stable instructions and tool definitions remain reusable. The delivery queue and session checkpoints use that same database, so another worker can continue after the original worker disappears. Different installations can choose different providers and models. For example, an installation may use provider `openrouter`, model `deepseek/deepseek-chat-v3-0324`, and an API key shaped like `sk-or-v1-...`.
 
-On a paid Render service, set `maxShutdownDelaySeconds` to `300` to give active deliveries the full shutdown window. Free services do not support that setting, so the application uses its 25-second grace period: the worker stops claiming new deliveries, lets the active delivery finish when possible, and returns unfinished work to the database queue immediately if the window expires. The delivery then resumes from its durable checkpoint after restart.
+The worker stops claiming new deliveries during an orderly process stop and finishes the active delivery before exiting. If the process is terminated unexpectedly, the SQLite queue marks the delivery recoverable after its claim becomes stale; the next service start resumes it from its durable checkpoint. No platform shutdown signal, keep-awake request, or scheduled workflow is required.
 
-For a Free Render web service, the repository's `Keep Render awake` workflow sends an inbound request every ten minutes. That prevents ordinary idle suspension and wakes the service when it is asleep; the queue worker then resumes from the external database. GitHub-hosted standard runners are free for this public repository. The watchdog is best effort because Render can still restart a Free service without notice.
+The service is intended to run as one ordinary long-lived process on a VPS. Put the configuration and secret files under a locked service account, expose the HTTP port through the VPS firewall or reverse proxy, and ensure `/var/lib/langmesh/github` is on persistent storage. A system supervisor may restart the process after a host failure; queue claims and session checkpoints are durable across that restart.
 
-GitHub mention sessions have a private Nix package profile. The service image already contains Nix, Git, `gh`, the Render CLI, `curl`, `jq`, `ripgrep`, `fd`, archive tools, the Python/uv runtime, Ruff, GCC/G++, Clang/LLVM, Make, CMake, Ninja, pkg-config, Rust, Node.js, and Bun. The agent can install another package into its private profile with `nix profile add nixpkgs#<package>`. The LangMesh checkout also contains the reproducible Render CLI package, available as `nix profile add github:ghovax/langmesh#render-cli`. The GitHub service supplies `GH_TOKEN` for repository operations. Render commands require an explicitly configured `RENDER_API_KEY`; the agent must never fabricate or print it.
+GitHub mention sessions have a private Nix package profile. The service image contains Nix, Git, `gh`, `curl`, `jq`, `ripgrep`, `fd`, archive tools, the Python/uv runtime, Ruff, GCC/G++, Clang/LLVM, Make, CMake, Ninja, pkg-config, Rust, Node.js, and Bun. The agent can install another package into its private profile with `nix profile add nixpkgs#<package>`. The GitHub service supplies `GH_TOKEN` for repository operations.
 
 ## GitHub App settings
 
@@ -103,7 +101,7 @@ The token above is shortened for readability. Copy the complete value returned b
 
 ```sh
 curl --fail-with-body --request PUT \
-  --url https://langmesh-agent.onrender.com/github/configuration \
+  --url https://github-agent.example.net/github/configuration \
   --header 'Authorization: Bearer 7kQ2mN...vR8pL4' \
   --header 'Content-Type: application/json' \
   --data '{
@@ -117,7 +115,7 @@ Read the saved state with the same token:
 
 ```sh
 curl --fail-with-body \
-  --url https://langmesh-agent.onrender.com/github/configuration \
+  --url https://github-agent.example.net/github/configuration \
   --header 'Authorization: Bearer 7kQ2mN...vR8pL4'
 ```
 
@@ -129,7 +127,7 @@ The hosted service can keep an OAuth session for any registered OAuth provider. 
 
 ```sh
 curl --fail-with-body --request POST \
-  --url https://langmesh-agent.onrender.com/github/auth/chatgpt/start \
+  --url https://github-agent.example.net/github/auth/chatgpt/start \
   --header 'Authorization: Bearer 7kQ2mN...vR8pL4' \
   --header 'Content-Type: application/json' \
   --data '{"model":"gpt-5.6-luna"}'
@@ -139,7 +137,7 @@ The response contains the selected `model`, the provider's `authorize_url`, and 
 
 ```sh
 curl --fail-with-body --get \
-  --url https://langmesh-agent.onrender.com/github/auth/chatgpt/complete \
+  --url https://github-agent.example.net/github/auth/chatgpt/complete \
   --data-urlencode 'code=4/0AeaK7...nQ2' \
   --data-urlencode 'state=J8m2...pL7'
 ```
@@ -150,7 +148,7 @@ Cursor uses its own browser and polling flow; after authorization, call the retu
 
 ```sh
 curl --fail-with-body --request PUT \
-  --url https://langmesh-agent.onrender.com/github/configuration \
+  --url https://github-agent.example.net/github/configuration \
   --header 'Authorization: Bearer 7kQ2mN...vR8pL4' \
   --header 'Content-Type: application/json' \
   --data '{"provider":"chatgpt","model":"gpt-5.4"}'
@@ -166,6 +164,6 @@ Each turn creates one acknowledgement comment and updates that same comment with
 
 ## Repository behavior
 
-The App service keeps its delivery queue, encrypted installation settings, and session checkpoints in the external database. Each delivery gets a temporary checkout on the execution machine, and that checkout is deleted when processing ends; GitHub branches and pull requests remain the durable source for repository changes. It uses installation tokens limited to the installed repositories and creates or updates topic branches and draft pull requests there. No repository file is created to select a model or provider.
+The App service keeps its delivery queue, encrypted installation settings, and session checkpoints in the service-owned SQLite state directory. Each delivery gets a temporary checkout on the execution machine, and that checkout is deleted when processing ends; GitHub branches and pull requests remain the durable source for repository changes. It uses installation tokens limited to the installed repositories and creates or updates topic branches and draft pull requests there. No repository file is created to select a model or provider.
 
 To change the provider, model, or API key, start the setup flow again and send another JSON `PUT` request. The next mention uses the new configuration.

@@ -15,9 +15,7 @@
       packages = forEachSystem (system:
         let
           pkgs = import nixpkgs { inherit system; };
-        in {
-          render-cli = pkgs.callPackage ./nix/render-cli.nix { };
-        });
+        in { });
 
       devShells.aarch64-darwin.default = let
         system = "aarch64-darwin";
@@ -40,7 +38,6 @@
         packages = with pkgs; [
           uv
           gh
-          self.packages.${system}.render-cli
           # In the devshell as well as in the dev dependency group. It was in neither, so the
           # verification battery's lint stage silently reported it missing on every machine
           # that had not installed it by hand.
