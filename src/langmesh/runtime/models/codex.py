@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import platform
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Optional, Sequence, cast
@@ -65,10 +67,61 @@ from langmesh.base.primitives.serialization import compact, upstream_detail
 
 
 RESPONSES_WEBSOCKET_BETA = "responses_websockets=2026-02-06"
+CODEX_CLI_VERSION = "0.152.1"
+CODEX_DEFAULT_ORIGINATOR = "codex_cli_rs"
 
 
 class _ResponsesWebSocketUnavailable(RuntimeError):
     """The websocket handshake failed before a request was sent."""
+
+
+def _codex_originator() -> str:
+    """Use the same default and process override as Codex's default HTTP client."""
+    return os.environ.get("CODEX_INTERNAL_ORIGINATOR_OVERRIDE", CODEX_DEFAULT_ORIGINATOR)
+
+
+def _terminal_user_agent() -> str:
+    """Match the terminal token used by Codex's default User-Agent builder."""
+    program = os.environ.get("TERM_PROGRAM", "").strip()
+    version = os.environ.get("TERM_PROGRAM_VERSION", "").strip()
+    if program:
+        normalized = "".join(char.lower() for char in program if char not in " -_.")
+        names = {
+            "appleterminal": "Apple_Terminal",
+            "ghostty": "Ghostty",
+            "iterm": "iTerm.app",
+            "iterm2": "iTerm.app",
+            "itermapp": "iTerm.app",
+            "warp": "WarpTerminal",
+            "warpterminal": "WarpTerminal",
+            "vscode": "vscode",
+            "wezterm": "WezTerm",
+            "kitty": "kitty",
+            "alacritty": "Alacritty",
+            "konsole": "Konsole",
+            "gnometerminal": "gnome-terminal",
+            "vte": "VTE",
+            "windowsterminal": "WindowsTerminal",
+        }
+        name = names.get(normalized, program)
+        return f"{name}/{version}" if version else name
+    return os.environ.get("TERM", "").strip() or "unknown"
+
+
+def _codex_user_agent() -> str:
+    """Build the same identity shape as Codex's default client User-Agent."""
+    if platform.system() == "Darwin":
+        operating_system = "Mac OS"
+        operating_system_version = platform.mac_ver()[0] or platform.release()
+    else:
+        operating_system = platform.system() or "unknown"
+        operating_system_version = platform.release() or "unknown"
+    architecture = platform.machine() or "unknown"
+    return (
+        f"{_codex_originator()}/{CODEX_CLI_VERSION} "
+        f"({operating_system} {operating_system_version}; {architecture}) "
+        f"{_terminal_user_agent()}"
+    )
 
 
 @dataclass(frozen=True)
@@ -257,6 +310,7 @@ class ChatCodexModel(BaseChatModel):
             payload["client_metadata"] = {
                 "session_id": self.session_id,
                 "thread_id": self.session_id,
+                "x-codex-window-id": f"{self.session_id}:0",
             }
         if instructions:
             payload["instructions"] = instructions
@@ -289,13 +343,15 @@ class ChatCodexModel(BaseChatModel):
     async def _headers(self) -> dict[str, str]:
         """The request headers, with a freshly-valid access token and this conversation's id."""
         headers = request_chatgpt_headers(await valid_chatgpt_tokens(), self.session_id)
-        # Codex supplies a stable product user agent through its default HTTP client. Do the same
-        # without claiming to be the Codex CLI binary itself.
-        headers["User-Agent"] = "langmesh"
+        # These values intentionally match Codex's default client identity. The ChatGPT Codex
+        # backend gates some capabilities on them; the process override is also honored by Codex.
+        headers["originator"] = _codex_originator()
+        headers["User-Agent"] = _codex_user_agent()
         if self.session_id:
             # Codex maps its thread identity to both headers on Responses requests.
             headers["thread-id"] = self.session_id
             headers["x-client-request-id"] = self.session_id
+            headers["x-codex-window-id"] = f"{self.session_id}:0"
         return headers
 
     @staticmethod
