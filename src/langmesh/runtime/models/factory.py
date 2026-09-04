@@ -14,77 +14,94 @@ from langmesh.base.content.models import find_model
 from langmesh.base.identity.providers import get_provider_definition, provider_env_vars
 
 
-def build_chat_model(
-    model_identifier: str,
-    agent_configuration: AgentConfiguration,
-    working_directory: str,
-    session_id: str = "",
-    credential_store: CredentialStore | None = None,
-    provider_api_keys: Mapping[str, str] | None = None,
-    provider_base_urls: Mapping[str, str] | None = None,
-) -> BaseChatModel:
-    """Build a model from the profile and explicit provider inputs supplied by its host."""
-    provider_api_keys = dict(provider_api_keys or {})
-    provider_base_urls = dict(provider_base_urls or {})
-    provider_identifier, model_suffix = model_identifier.split("/", 1)
-    if provider_identifier == "chatgpt":
-        from langmesh.runtime.models.codex import ChatCodexModel
+class SessionModelBuilder:
+    """Build one session model from consumer-owned runtime dependencies."""
 
-        catalog_entry = find_model(model_identifier)
-        return ChatCodexModel(
-            model=model_suffix,
-            reasoning_effort=agent_configuration.reasoning_effort,
-            context_length=catalog_entry.context_length if catalog_entry else 0,
-            session_id=session_id,
-            credential_store=credential_store,
+    def __init__(
+        self,
+        *,
+        credential_store: CredentialStore | None = None,
+        provider_api_keys: Mapping[str, str] | None = None,
+        provider_base_urls: Mapping[str, str] | None = None,
+    ) -> None:
+        self._credential_store = credential_store
+        self._provider_api_keys = dict(provider_api_keys or {})
+        self._provider_base_urls = dict(provider_base_urls or {})
+
+    def build(
+        self,
+        agent_configuration: AgentConfiguration,
+        *,
+        model_identifier: str = "",
+        working_directory: str,
+        session_id: str = "",
+    ) -> BaseChatModel:
+        """Build a cache-enabled model selected by the agent and consumer runtime facts."""
+        selected_identifier = model_identifier or agent_configuration.model_identifier
+        if not selected_identifier or "/" not in selected_identifier:
+            raise ValueError("model_identifier must have the form 'provider/model'")
+        provider_identifier, model_suffix = selected_identifier.split("/", 1)
+        if provider_identifier == "chatgpt":
+            from langmesh.runtime.models.codex import ChatCodexModel
+
+            catalog_entry = find_model(selected_identifier)
+            return ChatCodexModel(
+                model=model_suffix,
+                reasoning_effort=agent_configuration.reasoning_effort,
+                context_length=catalog_entry.context_length if catalog_entry else 0,
+                session_id=session_id,
+                credential_store=self._credential_store,
+            )
+        if provider_identifier == "cursor":
+            from langmesh.runtime.models.cursor import ChatCursorModel
+
+            catalog_entry = find_model(selected_identifier)
+            return ChatCursorModel(
+                model=model_suffix,
+                workspace=working_directory,
+                context_length=catalog_entry.context_length if catalog_entry else 0,
+            )
+
+        from langmesh.runtime.models.litellm import ChatLiteLLMModel
+
+        resolved = resolve_litellm(
+            selected_identifier,
+            self._provider_api_keys,
+            self._provider_base_urls,
+            credential_store=self._credential_store,
         )
-    if provider_identifier == "cursor":
-        from langmesh.runtime.models.cursor import ChatCursorModel
-
-        catalog_entry = find_model(model_identifier)
-        return ChatCursorModel(
-            model=model_suffix,
-            workspace=working_directory,
-            context_length=catalog_entry.context_length if catalog_entry else 0,
+        catalogued = find_model(selected_identifier)
+        definition = get_provider_definition(provider_identifier)
+        profile = provider_auth_profile(
+            provider_identifier,
+            environment_variables=provider_env_vars(provider_identifier),
+            default_base_url=definition.default_base_url if definition else "",
+            headers=definition.default_headers if definition else {},
+            anonymous_api_key=definition.anonymous_api_key if definition else "",
+            credential_identifier=definition.credential_identifier if definition else "",
         )
+        authentication = ProviderAuthentication(
+            {provider_identifier: profile},
+            api_keys=self._provider_api_keys,
+            api_bases=self._provider_base_urls,
+            store=self._credential_store,
+        )
+        model = ChatLiteLLMModel.model_validate(
+            {
+                "model": resolved["model"],
+                "api_key": SecretStr(resolved["api_key"]) if resolved["api_key"] else None,
+                "api_base": resolved["api_base"] or None,
+                "default_headers": resolved["headers"],
+                "session_id": session_id,
+                "context_length": catalogued.context_length if catalogued else 0,
+                "temperature": 0,
+                "reasoning_effort": agent_configuration.reasoning_effort,
+                "provider_identifier": provider_identifier,
+                "provider_environment_variables": profile.environment_variables,
+            }
+        )
+        model._authentication = authentication
+        return model
 
-    from langmesh.runtime.models.litellm import ChatLiteLLMModel
 
-    resolved = resolve_litellm(
-        model_identifier,
-        provider_api_keys,
-        provider_base_urls,
-        credential_store=credential_store,
-    )
-    catalogued = find_model(model_identifier)
-    definition = get_provider_definition(provider_identifier)
-    profile = provider_auth_profile(
-        provider_identifier,
-        environment_variables=provider_env_vars(provider_identifier),
-        default_base_url=definition.default_base_url if definition else "",
-        headers=definition.default_headers if definition else {},
-        anonymous_api_key=definition.anonymous_api_key if definition else "",
-        credential_identifier=definition.credential_identifier if definition else "",
-    )
-    authentication = ProviderAuthentication(
-        {provider_identifier: profile},
-        api_keys=provider_api_keys,
-        api_bases=provider_base_urls,
-        store=credential_store,
-    )
-    model = ChatLiteLLMModel.model_validate(
-        {
-            "model": resolved["model"],
-            "api_key": SecretStr(resolved["api_key"]) if resolved["api_key"] else None,
-            "api_base": resolved["api_base"] or None,
-            "default_headers": resolved["headers"],
-            "session_id": session_id,
-            "context_length": catalogued.context_length if catalogued else 0,
-            "temperature": 0,
-            "reasoning_effort": agent_configuration.reasoning_effort,
-            "provider_identifier": provider_identifier,
-            "provider_environment_variables": profile.environment_variables,
-        }
-    )
-    model._authentication = authentication
-    return model
+__all__ = ["SessionModelBuilder"]
