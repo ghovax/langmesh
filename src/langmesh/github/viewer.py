@@ -60,7 +60,7 @@ def messages_from_checkpoint(
         if message_type in {"human", "HumanMessage", "HumanMessageChunk"}:
             content = _text_content(data.get("content"))
             if content:
-                message = {
+                message: dict[str, Any] = {
                     "id": str(data.get("id") or f"viewer-user-{message_index}"),
                     "role": "user",
                     "content": content,

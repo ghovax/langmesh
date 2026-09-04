@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from langmesh.runtime.features import Feature, PluginContext, PluginHost
 from langmesh.runtime.internals import model_is_authorized
-from langmesh.runtime.models.factory import build_chat_model
+from langmesh.runtime.models.factory import SessionModel
 from langmesh.runtime.verdict import collect_structured_call
 
 from langmesh.runtime.plugins.titling.configuration import TitlingConfiguration
@@ -44,10 +44,10 @@ class TitleAssignment(Feature):
         ):
             return None
         titling_configuration = agent_configuration.model_copy(update={"reasoning_effort": "low"})
-        model = build_chat_model(
-            model_identifier,
+        model = SessionModel(
             titling_configuration,
-            self._context.working_directory,
+            model_identifier=model_identifier,
+            working_directory=self._context.working_directory,
             session_id=self._context.session_id,
             provider_api_keys=self._context.provider_api_keys,
             provider_base_urls=self._context.provider_base_urls,

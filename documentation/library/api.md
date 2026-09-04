@@ -20,6 +20,8 @@
 
 ::: langmesh.runtime.composition.SessionComponents
 
+::: langmesh.runtime.models.factory.SessionModel
+
 ::: langmesh.runtime.runtime.AgentRuntime
     options:
         members: true
