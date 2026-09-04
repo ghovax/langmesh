@@ -19,6 +19,58 @@ from typing import Any, Mapping
 
 
 TRIGGER = "@claude"
+COMMENT_EVENTS = frozenset({"issue_comment", "pull_request_review_comment"})
+
+
+def _review_comment(comment: Mapping[str, Any]) -> bool:
+    return comment.get("pull_request_review_id") is not None or comment.get("diff_hunk") is not None
+
+
+def normalize_comment_event(event: Mapping[str, Any], *, event_name: str = "") -> Mapping[str, Any]:
+    """Return one canonical pull-request shape for supported comment webhooks.
+
+    GitHub puts a conversation comment's thread in ``issue`` and an inline review
+    comment's thread in ``pull_request``. An issue-comment payload with
+    ``issue.pull_request`` is therefore a pull-request event even though it does not
+    have a top-level ``pull_request`` object.
+    """
+    if event.get("pull_request"):
+        return event
+    issue = event.get("issue")
+    if not isinstance(issue, Mapping) or not issue.get("pull_request"):
+        return event
+    normalized = dict(event)
+    normalized["pull_request"] = dict(issue)
+    return normalized
+
+
+def is_pull_request_comment(event: Mapping[str, Any], *, event_name: str = "") -> bool:
+    """Whether a comment belongs to a pull request, regardless of webhook shape."""
+    return bool(normalize_comment_event(event, event_name=event_name).get("pull_request"))
+
+
+def comment_number(event: Mapping[str, Any], *, event_name: str = "") -> int | None:
+    """Return the thread number from either supported comment payload shape."""
+    normalized = normalize_comment_event(event, event_name=event_name)
+    issue = normalized.get("issue") or {}
+    pull_request = normalized.get("pull_request") or {}
+    number = issue.get("number") or pull_request.get("number")
+    try:
+        return int(number) if number else None
+    except (TypeError, ValueError):
+        return None
+
+
+def comment_collection(event: Mapping[str, Any], *, event_name: str = "") -> str:
+    """Return GitHub's API collection for this comment's thread.
+
+    Pull-request conversation comments remain issue comments in GitHub's API; only
+    inline review comments use the pull-request comments collection.
+    """
+    comment = event.get("comment") or {}
+    if event_name == "pull_request_review_comment" or _review_comment(comment):
+        return "pulls"
+    return "issues"
 
 
 def mentioned(body: str) -> bool:
@@ -61,26 +113,21 @@ def _get(url: str, token: str) -> Any:
     return json.loads(body) if body else {}
 
 
-def _review_comment(comment: Mapping[str, Any]) -> bool:
-    return comment.get("pull_request_review_id") is not None or comment.get("diff_hunk") is not None
-
-
 def _previous_comment(
     event: Mapping[str, Any],
     *,
     repository: str,
     token: str,
     api: str,
+    event_name: str = "",
 ) -> dict[str, Any] | None:
     """The comment immediately before this one on the same collection, or ``None``."""
     comment = event.get("comment") or {}
     this_id = comment.get("id")
-    number = (event.get("issue") or {}).get("number") or (event.get("pull_request") or {}).get(
-        "number"
-    )
+    number = comment_number(event, event_name=event_name)
     if not number or not this_id:
         return None
-    collection = "pulls" if _review_comment(comment) else "issues"
+    collection = comment_collection(event, event_name=event_name)
     raw = _get(
         f"{api}/repos/{repository}/{collection}/{int(number)}/comments"
         "?per_page=2&sort=created&direction=desc",
@@ -101,6 +148,7 @@ def reply_to_mention_bot(
     token: str,
     api: str,
     bot_login: str,
+    event_name: str = "",
 ) -> bool:
     """A review reply or the comment immediately after the mention bot."""
     if not token:
@@ -120,7 +168,9 @@ def reply_to_mention_bot(
             if mention_bot_login(login, bot_login=bot_login):
                 return True
     try:
-        previous = _previous_comment(event, repository=repository, token=token, api=api)
+        previous = _previous_comment(
+            event, repository=repository, token=token, api=api, event_name=event_name
+        )
     except (RuntimeError, TypeError, ValueError):
         return False
     if previous is None:
@@ -138,6 +188,7 @@ def thread_has_prior_bot_comment(
     api: str,
     bot_login: str,
     ignore_ids: tuple[int, ...] = (),
+    event_name: str = "",
 ) -> bool:
     """Whether the mention bot already wrote on this collection before this comment.
 
@@ -149,14 +200,12 @@ def thread_has_prior_bot_comment(
         return False
     comment = event.get("comment") or {}
     this_id = comment.get("id")
-    number = (event.get("issue") or {}).get("number") or (event.get("pull_request") or {}).get(
-        "number"
-    )
+    number = comment_number(event, event_name=event_name)
     if not number:
         return False
     ignored = {int(this_id)} if this_id else set()
     ignored.update(int(item) for item in ignore_ids if item)
-    collection = "pulls" if _review_comment(comment) else "issues"
+    collection = comment_collection(event, event_name=event_name)
     try:
         raw = _get(
             f"{api}/repos/{repository}/{collection}/{int(number)}/comments"
@@ -185,6 +234,7 @@ def is_mention_turn(
     bot_login: str,
 ) -> bool:
     """Whether this event starts a turn the App should answer."""
+    event = normalize_comment_event(event, event_name=event_name)
     action = event.get("action")
     if event_name in {"issues", "pull_request"}:
         if action != "opened":
@@ -192,14 +242,19 @@ def is_mention_turn(
         source = event.get("issue") or event.get("pull_request") or {}
         author = str((source.get("user") or {}).get("login") or "")
         return not author.lower().endswith("[bot]")
-    if event_name and event_name not in {"issue_comment", "pull_request_review_comment"}:
+    if event_name and event_name not in COMMENT_EVENTS:
         return False
     if action is not None and action != "created":
         return False
     comment = event.get("comment") or {}
-    if str((comment.get("user") or {}).get("login") or "").endswith("[bot]"):
+    if str((comment.get("user") or {}).get("login") or "").lower().endswith("[bot]"):
         return False
     body = str(comment.get("body") or "")
     return mentioned(body) or reply_to_mention_bot(
-        event, repository=repository, token=token, api=api, bot_login=bot_login
+        event,
+        repository=repository,
+        token=token,
+        api=api,
+        bot_login=bot_login,
+        event_name=event_name,
     )
