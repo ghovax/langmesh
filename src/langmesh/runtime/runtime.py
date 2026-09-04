@@ -44,7 +44,7 @@ from langmesh.runtime.internals import (
     _utc_timestamp,
     conversation_tokens,
 )
-from langmesh.runtime.models.factory import SessionModelBuilder
+from langmesh.runtime.models.factory import SessionModel
 from langmesh.runtime.pipeline import ToolPipeline
 from langmesh.runtime.session_control import PendingInput, RenderedPrompt, SessionSnapshot
 from langmesh.runtime.tools import registry as tools_registry
@@ -169,15 +169,14 @@ class AgentRuntime(_RunsTurns):
         self._model = (
             components.model
             if components.model is not None
-            else SessionModelBuilder(
-                credential_store=self._environment.credentials,
-                provider_api_keys=components.provider_api_keys,
-                provider_base_urls=components.provider_base_urls,
-            ).build(
-                profile.agent,
+            else SessionModel(
+                agent_configuration=profile.agent,
                 model_identifier=model_identifier or "",
                 working_directory=self._working_directory,
                 session_id=profile.session_id,
+                credential_store=self._environment.credentials,
+                provider_api_keys=components.provider_api_keys,
+                provider_base_urls=components.provider_base_urls,
             )
         )
 

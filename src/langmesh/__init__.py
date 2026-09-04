@@ -71,7 +71,7 @@ from langmesh.base.persistence.schedules import (
 from langmesh.runtime.composition import RuntimeComponents, RuntimeProfile, SessionComponents
 from langmesh.runtime.environment import RuntimeEnvironment
 from langmesh.runtime.hooks import MaximumToolCalls
-from langmesh.runtime.models.factory import SessionModelBuilder
+from langmesh.runtime.models.factory import SessionModel
 from langmesh.runtime.session_control import (
     FeatureState,
     PendingInput,
@@ -195,7 +195,7 @@ __all__ = [
     "RuntimeComponents",
     "RuntimeEnvironment",
     "RuntimeProfile",
-    "SessionModelBuilder",
+    "SessionModel",
     "SandboxConfiguration",
     "ScheduleError",
     "Session",
