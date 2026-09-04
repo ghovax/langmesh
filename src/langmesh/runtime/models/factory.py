@@ -36,6 +36,7 @@ def build_chat_model(
             reasoning_effort=agent_configuration.reasoning_effort,
             context_length=catalog_entry.context_length if catalog_entry else 0,
             session_id=session_id,
+            credential_store=credential_store,
         )
     if provider_identifier == "cursor":
         from langmesh.runtime.models.cursor import ChatCursorModel

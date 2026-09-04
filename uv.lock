@@ -1351,7 +1351,6 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
     { name = "watchdog" },
     { name = "watchfiles" },
-    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -1395,7 +1394,7 @@ requires-dist = [
     { name = "mcp", extras = ["cli"], specifier = ">=1.27,<2" },
     { name = "minify-html", specifier = ">=0.15" },
     { name = "model2vec", specifier = ">=0.8.2" },
-    { name = "models-provider", git = "https://github.com/ghovax/models-provider.git?rev=7ac25d954271b5ea05450d6f3c94f5e3ebd72400" },
+    { name = "models-provider", git = "https://github.com/ghovax/models-provider.git?rev=1f6abf3c537d7082199ed42a98d95d32f0a4ade1" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.27.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.27.0" },
     { name = "parakeet-mlx", marker = "sys_platform == 'darwin'", specifier = ">=0.3" },
@@ -1431,7 +1430,6 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
     { name = "watchdog", specifier = ">=6.0,<7" },
     { name = "watchfiles", specifier = ">=1.2,<1.3" },
-    { name = "websockets", specifier = ">=15.0,<16" },
 ]
 
 [package.metadata.requires-dev]
@@ -1883,11 +1881,12 @@ wheels = [
 [[package]]
 name = "models-provider"
 version = "0.1.0"
-source = { git = "https://github.com/ghovax/models-provider.git?rev=7ac25d954271b5ea05450d6f3c94f5e3ebd72400#7ac25d954271b5ea05450d6f3c94f5e3ebd72400" }
+source = { git = "https://github.com/ghovax/models-provider.git?rev=1f6abf3c537d7082199ed42a98d95d32f0a4ade1#1f6abf3c537d7082199ed42a98d95d32f0a4ade1" }
 dependencies = [
     { name = "httpx" },
     { name = "langchain-core" },
     { name = "litellm" },
+    { name = "websockets" },
 ]
 
 [[package]]
