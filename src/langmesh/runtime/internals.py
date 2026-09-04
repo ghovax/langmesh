@@ -79,7 +79,7 @@ def model_is_authorized(
     model_identifier: str,
     provider_api_keys: Mapping[str, str] | None = None,
 ) -> bool:
-    """Whether we hold credentials for ``model_identifier``. The one authority, mirroring SessionModel."""
+    """Whether we hold credentials for ``model_identifier``. The one authority, mirroring SessionModel.for_agent."""
     provider_identifier = model_identifier.split("/", 1)[0]
     if provider_identifier == "chatgpt":
         return chatgpt_tokens() is not None

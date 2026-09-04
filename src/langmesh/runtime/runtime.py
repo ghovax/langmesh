@@ -169,8 +169,8 @@ class AgentRuntime(_RunsTurns):
         self._model = (
             components.model
             if components.model is not None
-            else SessionModel(
-                agent_configuration=profile.agent,
+            else SessionModel.for_agent(
+                profile.agent,
                 model_identifier=model_identifier or "",
                 working_directory=self._working_directory,
                 session_id=profile.session_id,
