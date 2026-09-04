@@ -464,6 +464,9 @@ class Processor:
                         attempt=attempts,
                         recovered=recovered,
                     )
+                except asyncio.CancelledError:
+                    await self.release_active_delivery()
+                    raise
                 except Exception as error:
                     logger.exception("GitHub delivery %s failed", delivery_id)
                     if attempts >= self.settings.maximum_delivery_attempts:
