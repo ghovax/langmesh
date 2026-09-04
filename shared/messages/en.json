@@ -1143,7 +1143,6 @@
   "ToolCard": {
     "inputRequired": "Input required",
     "failed": "Error returned",
-    "running": "Running",
     "modifying": "Modifying",
     "requestingAccess": "Requesting access"
   },
