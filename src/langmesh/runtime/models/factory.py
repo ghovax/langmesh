@@ -16,10 +16,9 @@ from langmesh.base.identity.providers import get_provider_definition, provider_e
 
 
 class SessionModel:
-    """Resolve an agent configuration to its concrete, cache-enabled chat model."""
+    """Construct the concrete, cache-enabled chat model for one session."""
 
-    @classmethod
-    def for_agent(
+    def __new__(
         cls,
         agent_configuration: AgentConfiguration,
         *,

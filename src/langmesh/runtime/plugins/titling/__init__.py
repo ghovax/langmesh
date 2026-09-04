@@ -44,7 +44,7 @@ class TitleAssignment(Feature):
         ):
             return None
         titling_configuration = agent_configuration.model_copy(update={"reasoning_effort": "low"})
-        model = SessionModel.for_agent(
+        model = SessionModel(
             titling_configuration,
             model_identifier=model_identifier,
             working_directory=self._context.working_directory,
