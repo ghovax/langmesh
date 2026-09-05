@@ -11,6 +11,7 @@ import uuid
 from abc import ABC, abstractmethod
 from contextlib import ExitStack, suppress
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Optional, cast
 
 from langchain_core.messages import (
@@ -35,6 +36,7 @@ from langmesh.base.content.message_content import (
 )
 from langmesh.base.content.model_errors import ContextWindowExceeded, over_context_window
 from langmesh.base.content.skills import enabled_skills, skills_for_agent, skills_payload
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.contracts.ports import PromptLayer, TurnSummary
 from langmesh.base.primitives import telemetry as _telemetry
 from langmesh.base.primitives.errors import MaintenanceBlockedError
@@ -78,6 +80,9 @@ from langmesh.runtime.turn_events import (
 from langmesh.runtime.values import PermissionAnswer, TurnContext
 
 logger = logging.getLogger(__name__)
+
+# Dynamic templates live outside the static prompt directory, so changing one cannot revise the cached system prompt.
+_SESSION_CONTEXT_PROMPTS = PackagePromptLoader(Path(__file__).parent / "prompts" / "dynamic")
 
 
 def _chunk_advances_model_response(chunk: Any) -> bool:
@@ -291,20 +296,10 @@ class _RunsTurns(_DispatchesTools, ABC):
             if self._parent_session
             else ""
         )
-        rendered = f"""## Session context
-
-This message contains the current session context. If it conflicts with an earlier session-context message, use this one.
-
-```json
-{compact(context)}
-```"""
-        return (
-            f"""{rendered}
-
-{parent_report}"""
-            if parent_report
-            else rendered
-        )
+        return _SESSION_CONTEXT_PROMPTS.load(
+            "session_context",
+            {"context": compact(context), "parent_report": parent_report},
+        ).strip()
 
     def _refresh_session_context(self) -> None:
         content = self._session_context_content()
