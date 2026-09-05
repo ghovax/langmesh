@@ -207,7 +207,7 @@ class AgentConfiguration(BaseModel):
     skills: list[str] = Field(default_factory=list)
     model: Optional[str] = None
     provider: Optional[str] = None
-    reasoning_effort: str = "high"
+    reasoning_effort: str | None = None
     permission_mode: Literal["ask", "automatic", "allow"] = "ask"
     sandbox: Optional[SandboxConfiguration] = None
     tools: ToolsConfiguration = Field(default_factory=ToolsConfiguration)
