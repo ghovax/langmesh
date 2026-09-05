@@ -141,6 +141,7 @@ class Usage(TurnEvent):
 class Done(TurnEvent):
     TYPE = EventType.DONE
     text: str = ""
+    # ``incomplete`` means the model ended without final text after the response reminder.
     stop_reason: str = ""
 
 

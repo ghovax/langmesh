@@ -19,6 +19,7 @@ TurnErrorCode = Literal[
     "request_rejected",
     "server_error",
     "turn_failed",
+    "turn_incomplete",
     "turn_interrupted",
     "tool_error",
     "tool_failed",

@@ -189,6 +189,10 @@
         "title": "Turn could not complete",
         "body": "The turn stopped unexpectedly. Read what the server says about it and retry."
       },
+      "turn_incomplete": {
+        "title": "No final response",
+        "body": "The model ended the turn without a final response. Retry the turn to continue."
+      },
       "turn_interrupted": {
         "title": "Turn interrupted",
         "body": "The daemon restarted before this turn finished. Retry the existing turn to continue from its saved state."
