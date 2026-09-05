@@ -30,6 +30,10 @@ class ModelDefinition:
     input_modalities: tuple[str, ...] = ()
     # Maximum input context in tokens from the catalog, with 0 meaning unknown.
     context_length: int = 0
+    # Maximum output tokens advertised by models.dev, with 0 meaning unknown.
+    output_limit: int = 0
+    # Whether the provider model accepts temperature in its request body.
+    temperature: bool = True
     # Release date from the catalog, on which the picker sorts newest-first rather than alphabetically.
     release_date: str = ""
     # A per-model override for gateways that expose several wire protocols.
@@ -135,6 +139,8 @@ def _catalog() -> list[ModelDefinition]:
                     vision="image" in input_modalities,
                     input_modalities=input_modalities,
                     context_length=int((model_info.get("limit") or {}).get("context") or 0),
+                    output_limit=int((model_info.get("limit") or {}).get("output") or 0),
+                    temperature=bool(model_info.get("temperature")),
                     release_date=str(model_info.get("release_date") or "").strip(),
                     litellm_prefix=litellm_prefix,
                 ),

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence, cast
@@ -12,9 +13,7 @@ from langchain_core.messages import (
     messages_to_dict,
 )
 from langchain_core.tools import BaseTool
-from models_provider import (
-    ModelUsage,
-)
+from models_provider import ModelUsage, OpenCodeRequestContext
 
 from langmesh.base import confinement as _confinement
 from langmesh.base.configuration import PermissionEvaluator, SandboxConfiguration
@@ -275,6 +274,8 @@ class AgentRuntime(_RunsTurns):
         self._cached_system_prompt: str | None = None
         self._rendered_prompt: RenderedPrompt | None = None
         self._pending_input: PendingInput | None = None
+        # The OpenCode request id remains stable across retries and resumes of one accepted turn.
+        self._opencode_request_id = ""
         self._session_revision = 0
         self._persisted_session_revision = 0
         self._execution_history: list[dict] = []
@@ -771,6 +772,41 @@ class AgentRuntime(_RunsTurns):
     def set_a2a_turn_id(self, turn_id: str) -> None:
         """Record the current turn's task id, so work raised during it can name the turn it belongs to."""
         self._a2a_turn_id = turn_id
+
+    def set_opencode_request_id(self, request_id: str) -> None:
+        """Set the current OpenCode request id from the accepted user message."""
+        request_id = request_id.strip()
+        if request_id:
+            self._opencode_request_id = request_id
+
+    def model_request_context(self) -> OpenCodeRequestContext:
+        """Return the consumer-owned context attached to an OpenCode model call."""
+        request_id = self._opencode_request_id
+        if not request_id and self._pending_input is not None:
+            raw_message = self._pending_input.message
+            additional_kwargs = raw_message.get("additional_kwargs", {})
+            if isinstance(additional_kwargs, dict):
+                request_id = str(
+                    additional_kwargs.get("langmesh_opencode_request_id") or ""
+                ).strip()
+        if not request_id:
+            for message in reversed(self._conversation):
+                additional_kwargs = getattr(message, "additional_kwargs", {})
+                if not isinstance(additional_kwargs, dict):
+                    continue
+                request_id = str(
+                    additional_kwargs.get("langmesh_opencode_request_id") or ""
+                ).strip()
+                if request_id:
+                    break
+        if not request_id:
+            request_id = uuid.uuid4().hex
+            self._opencode_request_id = request_id
+        return OpenCodeRequestContext(
+            session_id=self._session_id,
+            request_id=request_id,
+            parent_session_id=self._parent_session,
+        )
 
     def set_turn_reader(self, task_reader: Callable) -> None:
         """Install the reader `read_turn` uses to fetch related turns from the store."""

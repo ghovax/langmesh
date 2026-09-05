@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from models_provider import (
     ApiKeyResolution,
     CredentialStore,
+    OPENCODE_ZEN_BASE_URL,
     ProviderAuthentication,
     provider_auth_profile,
 )
@@ -42,14 +43,8 @@ PROVIDERS: dict[str, ProviderDefinition] = {
             name="OpenCode Zen",
             litellm_prefix="openai",
             env_vars=("OPENCODE_API_KEY",),
-            default_base_url="https://opencode.ai/zen/v1",
+            default_base_url=OPENCODE_ZEN_BASE_URL,
             uses_custom_base_url=True,
-            # Zen serves its free tier anonymously: the client sends the sentinel `public` key and
-            # an opencode User-Agent, and paid calls require a real OPENCODE_API_KEY instead.
-            default_headers={
-                "User-Agent": "opencode/0.0.0",
-                "x-opencode-client": "langmesh",
-            },
             anonymous_api_key="public",
         ),
         ProviderDefinition(

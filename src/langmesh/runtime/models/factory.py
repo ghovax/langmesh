@@ -6,7 +6,13 @@ from collections.abc import Mapping
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from models_provider import ProviderAuthentication, provider_auth_profile
+from models_provider import (
+    ProviderAuthentication,
+    opencode_max_output_tokens,
+    opencode_temperature,
+    opencode_top_p,
+    provider_auth_profile,
+)
 from pydantic import SecretStr
 
 from langmesh.base.configuration import AgentConfiguration
@@ -66,6 +72,7 @@ class SessionModel:
             credential_store=credential_store,
         )
         catalogued = find_model(selected_identifier)
+        is_opencode = provider_identifier.strip().lower().startswith("opencode")
         definition = get_provider_definition(provider_identifier)
         profile = provider_auth_profile(
             provider_identifier,
@@ -89,7 +96,16 @@ class SessionModel:
                 "default_headers": resolved["headers"],
                 "session_id": session_id,
                 "context_length": catalogued.context_length if catalogued else 0,
-                "temperature": 0,
+                "temperature": opencode_temperature(model_suffix) if is_opencode else 0,
+                "top_p": opencode_top_p(model_suffix) if is_opencode else None,
+                "supports_temperature": (
+                    catalogued.temperature if is_opencode and catalogued else True
+                ),
+                "maximum_tokens": (
+                    opencode_max_output_tokens(catalogued.output_limit)
+                    if is_opencode and catalogued
+                    else None
+                ),
                 "reasoning_effort": agent_configuration.reasoning_effort,
                 "provider_identifier": provider_identifier,
                 "provider_environment_variables": profile.environment_variables,
