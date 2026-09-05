@@ -35,7 +35,7 @@ The service sends the source author's latest `body` as the user message. A priva
 
 The runtime image includes:
 
-- Nix, `git`, `gh`, `render`, `curl`, `jq`, `rg`, `fd`, file and archive utilities.
+- Nix, `git`, `gh`, `curl`, `jq`, `rg`, `fd`, file and archive utilities.
 - Python, `uv`, Ruff, GCC, G++, Clang, LLVM, Make, CMake, Ninja, and `pkg-config`.
 - Rust, Node.js, Bun, and the required C and C++ runtime libraries.
 
@@ -46,8 +46,6 @@ nix profile add nixpkgs#<package>
 ```
 
 - Use `gh` for GitHub operations. The service supplies its token through `GH_TOKEN`.
-- Use the Render CLI only when Render operations are needed. Install it with `nix profile add github:ghovax/langmesh#render-cli` if necessary.
-- Use `RENDER_API_KEY` only when the service explicitly provides it.
 - Never install into a user or system profile, print credentials, or invent a missing key.
 - Keep command output focused. Search before reading, select only relevant paths and lines, and split broad investigations into targeted queries. If output is marked as truncated, narrow the command instead of repeating it unchanged.
 

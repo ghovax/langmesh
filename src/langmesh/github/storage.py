@@ -165,7 +165,7 @@ def delivery_session_id(event_name: str, payload: str) -> str:
 
 
 class Store:
-    """Durable GitHub service state backed by SQLAlchemy models."""
+    """Durable GitHub service state backed by a configured SQLAlchemy database."""
 
     def __init__(self, database_url: str, encryption_key_path: Path) -> None:
         self._cipher = Fernet(encryption_key_path.read_bytes().strip())

@@ -52,8 +52,7 @@ RUN nix profile install --accept-flake-config --priority 4 \
     nixpkgs#unzip \
     nixpkgs#uv \
     nixpkgs#which \
-    nixpkgs#zip \
-    .#render-cli
+    nixpkgs#zip
 RUN nix profile install --accept-flake-config --priority 3 nixpkgs#procps
 RUN nix profile install --accept-flake-config --priority 3 nixpkgs#gcc
 
