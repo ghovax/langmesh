@@ -16,6 +16,9 @@ from langmesh.runtime.tools.registry import tool_description as _description
 
 # The prompts these tools speak with. What they tell the *model* is a description, and lives with every other one.
 _PROMPTS = PackagePromptLoader(Path(__file__).resolve().parent.parent / "prompts")
+_DYNAMIC_PROMPTS = PackagePromptLoader(
+    Path(__file__).resolve().parent.parent / "prompts" / "dynamic"
+)
 
 
 def _unavailable(code: str) -> str:
@@ -101,7 +104,18 @@ async def _message_session(session: str, message: str) -> str | ToolOutput:
                 {"waiting_on": waiting_on},
             ).strip(),
         )
-    return compact({"code": "message_sent", "status": "ok", "session": session})
+    result = {"code": "message_sent", "status": "ok", "session": session}
+    turn_id = str(outcome.get("turn_id") or "") if isinstance(outcome, dict) else ""
+    if not turn_id:
+        return compact(result)
+    result["turn_id"] = turn_id
+    return ToolOutput(
+        result=result,
+        model_guidance=_DYNAMIC_PROMPTS.load(
+            "message_session_sent",
+            {"turn_id": turn_id},
+        ).strip(),
+    )
 
 
 async def _read_session(session: str) -> str:
