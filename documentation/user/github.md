@@ -2,7 +2,7 @@
 
 LangMesh Agent is an installation-level GitHub App. [Install it from GitHub](https://github.com/apps/langmesh-agent) on a personal account or organization, choosing the repositories it may access. A repository only needs the App installed; it does not need a workflow, YAML policy, App ID, provider setting, API key, or GitHub secret.
 
-The service receives issue, pull request, issue-comment, and pull-request-review-comment webhooks, creates a repository-scoped installation token, and runs the session as the installed App. New issues and pull requests receive an automatic first response; later comment turns start when a person addresses the bot or replies to one of its comments. The App private key belongs only to the service operator. It is never entered by a person configuring an installation and is never stored in a repository.
+The service receives issue, pull request, issue-comment, and pull-request-review-comment webhooks, creates a repository-scoped installation token, and runs the session as the installed App. New issues and pull requests receive an automatic first response; later human comments start turns. The App private key belongs only to the service operator. It is never entered by a person configuring an installation and is never stored in a repository.
 
 ## Service configuration
 
@@ -157,7 +157,7 @@ curl --fail-with-body --request PUT \
 
 If a provider needs a deployment-specific client identifier, set it under `github.oauth.provider_application_ids`. The flow does not reuse GitHub OAuth, expose provider tokens to GitHub, or store them in a repository. Each provider controls its endpoints, token shape, refresh behavior, and request headers in models-provider.
 
-After that, opening an issue or same-repository pull request starts an automatic first response. Later comments trigger a response only when they contain the standalone mention `@claude`, regardless of casing; other words, names, aliases, and App logins are ignored. Replies to the bot are also handled. Its commits use the App identity. A webhook is ignored until its installation has a provider/model configuration.
+After that, opening an issue or same-repository pull request starts an automatic first response. Every later human comment triggers a response. Bot-authored comments and edited or deleted comment events are ignored. Its commits use the App identity. A webhook is ignored until its installation has a provider/model configuration.
 
 The setup flow verifies the installer through GitHub before accepting settings; the `installation_id` in a URL is not treated as authorization. Provider keys and OAuth tokens are encrypted at rest and never written to a checkout.
 
@@ -167,4 +167,4 @@ Each turn creates one acknowledgement comment and updates that same comment with
 
 The App service keeps its delivery queue, encrypted installation settings, and session checkpoints in the configured remote database. Each delivery gets a temporary checkout on the execution machine, and that checkout is deleted when processing ends; GitHub branches and pull requests remain the durable source for repository changes. It uses installation tokens limited to the installed repositories and creates or updates topic branches and draft pull requests there. No repository file is created to select a model or provider.
 
-To change the provider, model, or API key, start the setup flow again and send another JSON `PUT` request. The next mention uses the new configuration.
+To change the provider, model, or API key, start the setup flow again and send another JSON `PUT` request. The next GitHub event uses the new configuration.

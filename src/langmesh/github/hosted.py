@@ -554,13 +554,22 @@ class Processor:
         attempt: int = 0,
         recovered: bool = False,
     ) -> None:
-        repository = str((event.get("repository") or {}).get("full_name") or "")
+        repository_data = event.get("repository")
+        if not isinstance(repository_data, Mapping):
+            return
+        repository = str(repository_data.get("full_name") or "")
         if not repository or event_name not in {
             "issues",
             "pull_request",
             "issue_comment",
             "pull_request_review_comment",
         }:
+            return
+        if not await asyncio.to_thread(
+            is_mention_turn,
+            event,
+            event_name=event_name,
+        ):
             return
         configuration = await self.store.configuration(installation_id)
         if configuration is None or not configuration.ready:
@@ -575,25 +584,11 @@ class Processor:
         credential_store = self._credential_store(configuration)
         token = await asyncio.to_thread(self.github.installation_token, installation_id)
         slug = await asyncio.to_thread(self.github.app_slug)
-        bot_login = f"{slug}[bot]"
-        if not await asyncio.to_thread(
-            is_mention_turn,
-            event,
-            event_name=event_name,
-            repository=repository,
-            token=token,
-            api=self.settings.github_api_url,
-            bot_login=bot_login,
-        ):
-            return
         mention = mention_from_event(
             event,
             event_name=event_name,
             repository=repository,
-            token=token,
-            api=self.settings.github_api_url,
             known_turn=True,
-            bot_login=bot_login,
         )
         if mention is None or not mention.allowed:
             return
@@ -713,7 +708,6 @@ class Processor:
                         repository=active_mention.repository,
                         pull=pull,
                         known_turn=True,
-                        bot_login=f"{slug}[bot]",
                     )
                     or active_mention
                 )
@@ -1137,7 +1131,15 @@ def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> F
             event = json.loads(raw)
         except json.JSONDecodeError as error:
             raise HTTPException(400, "invalid JSON") from error
-        installation_id = int(((event.get("installation") or {}).get("id") or 0))
+        if not isinstance(event, Mapping):
+            raise HTTPException(400, "webhook JSON must be an object")
+        installation = event.get("installation")
+        if not isinstance(installation, Mapping):
+            return Response(status_code=202)
+        try:
+            installation_id = int(installation.get("id") or 0)
+        except (TypeError, ValueError):
+            return Response(status_code=202)
         if not installation_id:
             return Response(status_code=202)
         await store.enqueue(
