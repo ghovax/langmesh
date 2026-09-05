@@ -28,7 +28,7 @@ class AgentConfigurationResponse(BaseModel):
     title: str
     model: str = ""
     provider: str = ""
-    reasoning_effort: str = "high"
+    reasoning_effort: str | None = None
     permission_mode: Literal["ask", "automatic", "allow"]
     tools_enabled: list[str]
     bash: AgentBashConfigurationResponse

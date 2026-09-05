@@ -62,6 +62,7 @@ plainly what is vague or unproven.
 
 The frontmatter fields are: `name`, `title`, `description`, `role`, `aliases`, `color`, `enabled`, `skills`, `model`, `provider`, `reasoning_effort`, `permission_mode`, `sandbox`, `tools`, and `tools_enabled`. Most are what they sound like. Two deserve a note:
 
+- **`reasoning_effort`** is optional. Omit it to let the selected provider and model choose their default; set it to an explicit provider-supported value such as `low`, `medium`, or `high` when the profile needs one.
 - **`tools_enabled`** is the list of tool names the profile may use; the daemon composes exactly that set onto each session. An agent that declares none runs with none. Which tool names exist is covered under [Tools](#tools).
 - **`permission_mode`** is the mode a session starts with when its creator does not choose one: `ask`, `automatic`, or `allow` (see [Permission modes](configuration.md#permission-modes)). A profile pinned to a provider you have no credentials for fails on its first call.
 

@@ -864,7 +864,7 @@ export interface AgentConfiguration {
   title: string;
   model: string;
   provider: string;
-  reasoning_effort: string;
+  reasoning_effort: string | null;
   /** The mode a new session using this agent starts with. */
   permission_mode: PermissionMode;
   tools_enabled: string[];
@@ -875,7 +875,7 @@ export interface AgentConfiguration {
 export interface SaveAgentConfigurationPayload {
   model?: string;
   provider?: string;
-  reasoning_effort?: string;
+  reasoning_effort?: string | null;
   permission_mode?: PermissionMode;
   tools_enabled?: string[];
   bash?: Partial<AgentBashConfiguration>;

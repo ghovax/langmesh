@@ -188,7 +188,7 @@ def _apply_agent_configuration_update(
         updated.model = request.model or None
     if request.provider is not None:
         updated.provider = request.provider or None
-    if request.reasoning_effort is not None:
+    if "reasoning_effort" in request.model_fields_set:
         updated.reasoning_effort = request.reasoning_effort
     if request.permission_mode is not None:
         updated.permission_mode = request.permission_mode
