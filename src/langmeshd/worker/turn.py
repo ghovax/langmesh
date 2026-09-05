@@ -778,7 +778,7 @@ class _TurnRunner:
         return composed
 
     async def _stream_complete(self, composed: _ComposedTurn) -> None:
-        """Drive the runtime's stream through the sink, then close the task as completed or canceled."""
+        """Drive the runtime's stream through the sink, then close the task with its final state."""
         resolved = composed.prepared.resolved
         # The sink was stood up by `_prepare_runtime` before the stream was composed; guarded for the checker.
         sink = self._sink
@@ -816,6 +816,23 @@ class _TurnRunner:
             # Stop ends the task as canceled, so the transcript reads it honestly as a stopped turn.
             await self._executor._turn_store.commit_status(
                 self._updater, TaskState.canceled, final=True
+            )
+        elif sink.stop_reason == "incomplete":
+            # An empty final response is a failed turn, not a successful task with no artifact.
+            if self._runtime is not None:
+                self._runtime.mark_turn_failed()
+            if resolved.ingested.mode is _TurnMode.RETRY:
+                await self._emit(_event_part(RetryEvent(status="done", ok=False)))
+            error_part = _event_part(
+                ErrorEvent(
+                    code="turn_incomplete",
+                )
+            )
+            message = self._updater.new_agent_message([error_part])
+            if self._executor._on_stream_event is not None:
+                self._executor._on_stream_event(self._task.context_id, error_part)
+            await self._executor._turn_store.commit_status(
+                self._updater, TaskState.failed, message, final=True
             )
         else:
             if resolved.ingested.mode is _TurnMode.RETRY:

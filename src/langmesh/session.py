@@ -486,6 +486,7 @@ class Session:
             self._phase = SessionPhase.RUNNING
             self.runtime.abandon_turn_retry()
             cancelled = False
+            incomplete = False
             try:
                 async for event in self.runtime.stream(
                     self._compose(message, attachments),
@@ -496,6 +497,8 @@ class Session:
                         await self._save()
                     if isinstance(event, Done) and event.stop_reason == "cancelled":
                         cancelled = True
+                    if isinstance(event, Done) and event.stop_reason == "incomplete":
+                        incomplete = True
                     if isinstance(event, Suspended):
                         self._pending = PendingTurn(
                             interactions=tuple(event.interactions),
@@ -507,6 +510,8 @@ class Session:
                 # A turn the person stopped opens no follow-up work of its own.
                 if cancelled:
                     return
+                if incomplete:
+                    raise RuntimeError("The model ended without a final response.")
                 self.runtime.mark_turn_succeeded()
             except Exception:
                 self.runtime.mark_turn_failed()
@@ -559,12 +564,15 @@ class Session:
             self._pending = None
             self._phase = SessionPhase.RUNNING
             cancelled = False
+            incomplete = False
             try:
                 async for event in self.runtime.resume_stream(dict(pending.plans), answers):
                     if isinstance(event, Checkpoint):
                         await self._save()
                     if isinstance(event, Done) and event.stop_reason == "cancelled":
                         cancelled = True
+                    if isinstance(event, Done) and event.stop_reason == "incomplete":
+                        incomplete = True
                     if isinstance(event, Suspended):
                         self._pending = PendingTurn(
                             interactions=tuple(event.interactions),
@@ -576,6 +584,8 @@ class Session:
                 # A turn the person stopped opens no follow-up work of its own.
                 if cancelled:
                     return
+                if incomplete:
+                    raise RuntimeError("The model ended without a final response.")
                 self.runtime.mark_turn_succeeded()
             except Exception:
                 self.runtime.mark_turn_failed()

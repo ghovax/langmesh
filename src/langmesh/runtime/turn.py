@@ -11,6 +11,7 @@ import uuid
 from abc import ABC, abstractmethod
 from contextlib import ExitStack, suppress
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Optional, cast
 
 from langchain_core.messages import (
@@ -35,6 +36,7 @@ from langmesh.base.content.message_content import (
 )
 from langmesh.base.content.model_errors import ContextWindowExceeded, over_context_window
 from langmesh.base.content.skills import enabled_skills, skills_for_agent, skills_payload
+from langmesh.base.content.prompts import PackagePromptLoader
 from langmesh.base.contracts.ports import PromptLayer, TurnSummary
 from langmesh.base.primitives import telemetry as _telemetry
 from langmesh.base.primitives.errors import MaintenanceBlockedError
@@ -78,6 +80,9 @@ from langmesh.runtime.turn_events import (
 from langmesh.runtime.values import PermissionAnswer, TurnContext
 
 logger = logging.getLogger(__name__)
+
+# Dynamic templates live outside the static prompt directory, so changing one cannot revise the cached system prompt.
+_SESSION_CONTEXT_PROMPTS = PackagePromptLoader(Path(__file__).parent / "prompts" / "dynamic")
 
 
 def _chunk_advances_model_response(chunk: Any) -> bool:
@@ -291,24 +296,26 @@ class _RunsTurns(_DispatchesTools, ABC):
             if self._parent_session
             else ""
         )
-        rendered = f"## Session context\n\n```json\n{compact(context)}\n```"
-        return f"{rendered}\n\n{parent_report}" if parent_report else rendered
+        return _SESSION_CONTEXT_PROMPTS.load(
+            "session_context",
+            {"context": compact(context), "parent_report": parent_report},
+        ).strip()
 
     def _refresh_session_context(self) -> None:
         content = self._session_context_content()
         digest = content_address(content)
         previous = next(
             (
-                message.additional_kwargs.get("langmesh_context")
+                message.additional_kwargs.get("context")
                 for message in reversed(self._conversation)
-                if message.additional_kwargs.get("langmesh_context")
+                if message.additional_kwargs.get("context")
             ),
             None,
         )
         if previous == digest:
             return
         self._conversation.append(
-            SystemMessage(content=content, additional_kwargs={"langmesh_context": digest})
+            SystemMessage(content=content, additional_kwargs={"context": digest})
         )
         self._note_session_changed()
 
@@ -1081,14 +1088,19 @@ class _RunsTurns(_DispatchesTools, ABC):
         self._conversation.append(response)
         reminder = self._features.incomplete_reminder()
         if reminder:
-            self._conversation.append(self._reminder_message(reminder))
+            self._conversation.append(
+                self._reminder_message(reminder, marks={"kind": "incomplete_work"})
+            )
             step.directive = _CONTINUE
             return
-        # A response with no prose (thinking only) is a no-op: prompt the model once to actually answer, so the exchange cannot end silently. A second no-op ends the turn for real. A feature that already collected its output does not need that nudge.
+        # A response with no prose (thinking only) is a no-op: prompt the model once to actually answer, so the exchange cannot end silently. A second no-op ends the turn as incomplete. A feature that already collected its output does not need that nudge.
         if not final_text and not nudged[0] and not self._features.should_complete_turn():
             nudged[0] = True
             self._conversation.append(
-                self._reminder_message(self._prompt_loader.load("response_required", {}))
+                self._reminder_message(
+                    self._prompt_loader.load("response_required", {}),
+                    marks={"kind": "response_required"},
+                )
             )
             step.directive = _CONTINUE
             return
@@ -1105,14 +1117,15 @@ class _RunsTurns(_DispatchesTools, ABC):
             turn_tool_results_log,
             final_text,
         )
+        turn_outcome = "completed" if final_text else "incomplete"
         await self._record_transcript_turn(
             recorded_user_message,
             final_text,
-            "completed",
+            turn_outcome,
             turn_tool_calls_log,
             started_at,
         )
-        yield Done(text=final_text, stop_reason="completed")
+        yield Done(text=final_text, stop_reason=turn_outcome)
         step.directive = _STOP
 
     async def _rerun_answered(
