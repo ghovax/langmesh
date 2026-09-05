@@ -165,21 +165,14 @@ def delivery_session_id(event_name: str, payload: str) -> str:
 
 
 class Store:
-    """Durable GitHub service state in the service's local SQLite database."""
+    """Durable GitHub service state backed by a configured SQLAlchemy database."""
 
-    def __init__(self, state_directory: Path, encryption_key_path: Path) -> None:
+    def __init__(self, database_url: str, encryption_key_path: Path) -> None:
         self._cipher = Fernet(encryption_key_path.read_bytes().strip())
-        self.state_directory = state_directory.expanduser()
-        self.database_path = self.state_directory / "github.sqlite"
-        self.engine: AsyncEngine = create_async_engine(
-            f"sqlite+aiosqlite:///{self.database_path}",
-            connect_args={"timeout": 30},
-            pool_pre_ping=True,
-        )
+        self.engine: AsyncEngine = create_async_engine(database_url, pool_pre_ping=True)
         self._sessions = async_sessionmaker(self.engine, expire_on_commit=False)
 
     async def initialize(self) -> None:
-        self.state_directory.mkdir(parents=True, exist_ok=True)
         async with self.engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
 
@@ -192,8 +185,21 @@ class Store:
             await session.execute(text("BEGIN IMMEDIATE"))
 
     async def _next_sequence(self, session: AsyncSession, session_id: str) -> int:
-        from sqlalchemy.dialects.sqlite import insert
-
+        dialect = session.bind.dialect.name if session.bind is not None else ""
+        if dialect == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert
+        elif dialect == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert
+        else:
+            fence = await session.get(SessionFence, session_id, with_for_update=True)
+            if fence is None:
+                fence = SessionFence(session_id=session_id, last_sequence=1)
+                session.add(fence)
+                await session.flush()
+                return 1
+            fence.last_sequence += 1
+            await session.flush()
+            return fence.last_sequence
         statement = (
             insert(SessionFence)
             .values(session_id=session_id, last_sequence=1, completed_sequence=0)
@@ -264,6 +270,8 @@ class Store:
                     .order_by(candidate.received_at, candidate.delivery_id)
                     .limit(1)
                 )
+                if session.bind is not None and session.bind.dialect.name != "sqlite":
+                    statement = statement.with_for_update(skip_locked=True)
                 delivery = (await session.execute(statement)).scalar_one_or_none()
                 if delivery is None:
                     return None
@@ -273,6 +281,9 @@ class Store:
                     fence = await session.get(
                         SessionFence,
                         delivery.session_id,
+                        with_for_update=(
+                            session.bind is not None and session.bind.dialect.name != "sqlite"
+                        ),
                     )
                     if fence is not None and delivery.session_sequence <= fence.completed_sequence:
                         completed_sequence = fence.completed_sequence
@@ -310,13 +321,14 @@ class Store:
     async def complete(self, delivery_id: str) -> None:
         async with self._sessions.begin() as session:
             await self._begin_sqlite_write(session)
-            delivery = await session.get(Delivery, delivery_id)
+            lock = session.bind is not None and session.bind.dialect.name != "sqlite"
+            delivery = await session.get(Delivery, delivery_id, with_for_update=lock)
             if delivery is None or delivery.status != "processing":
                 return
             delivery.status = "completed"
             if not delivery.session_id or not delivery.session_sequence:
                 return
-            fence = await session.get(SessionFence, delivery.session_id)
+            fence = await session.get(SessionFence, delivery.session_id, with_for_update=lock)
             if fence is not None:
                 fence.completed_sequence = max(fence.completed_sequence, delivery.session_sequence)
 
@@ -335,7 +347,8 @@ class Store:
         """Return a still-processing delivery to the queue without reviving completed work."""
         async with self._sessions.begin() as session:
             await self._begin_sqlite_write(session)
-            delivery = await session.get(Delivery, delivery_id)
+            lock = session.bind is not None and session.bind.dialect.name != "sqlite"
+            delivery = await session.get(Delivery, delivery_id, with_for_update=lock)
             if delivery is None or delivery.status != "processing":
                 return False
             delivery.status = "queued"
@@ -526,19 +539,44 @@ class Store:
                 "snapshot": json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")),
                 "updated_at": int(time.time()),
             }
-            from sqlalchemy.dialects.sqlite import insert
+            dialect = session.bind.dialect.name if session.bind is not None else ""
+            if dialect == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert
 
-            await session.execute(
-                insert(ProviderUsage)
-                .values(**values)
-                .on_conflict_do_update(
-                    index_elements=[ProviderUsage.installation_id],
-                    set_={
-                        "snapshot": values["snapshot"],
-                        "updated_at": values["updated_at"],
-                    },
+                await session.execute(
+                    insert(ProviderUsage)
+                    .values(**values)
+                    .on_conflict_do_update(
+                        index_elements=[ProviderUsage.installation_id],
+                        set_={
+                            "snapshot": values["snapshot"],
+                            "updated_at": values["updated_at"],
+                        },
+                    )
                 )
-            )
+                return
+            if dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert
+
+                await session.execute(
+                    insert(ProviderUsage)
+                    .values(**values)
+                    .on_conflict_do_update(
+                        index_elements=[ProviderUsage.installation_id],
+                        set_={
+                            "snapshot": values["snapshot"],
+                            "updated_at": values["updated_at"],
+                        },
+                    )
+                )
+                return
+            usage = await session.get(ProviderUsage, installation_id)
+            if usage is None:
+                usage = ProviderUsage(**values)
+                session.add(usage)
+                return
+            usage.snapshot = values["snapshot"]
+            usage.updated_at = values["updated_at"]
 
     async def save_installation(
         self,

@@ -68,14 +68,6 @@ logger = logging.getLogger("langmesh.github.hosted")
 DEFAULT_CONFIGURATION_PATH = Path.home() / ".config" / "langmesh" / "github.yaml"
 
 
-def default_state_directory() -> Path:
-    """Return the local durable state location used when deployment leaves it unset."""
-    state_home = os.environ.get("XDG_STATE_HOME", "").strip()
-    if state_home:
-        return Path(state_home).expanduser() / "langmesh" / "github"
-    return Path.home() / ".local" / "state" / "langmesh" / "github"
-
-
 def viewer_output_directory() -> Path | None:
     """Find the static web export built into the hosted image, or return ``None`` locally."""
     candidates = [Path.cwd() / "web" / "out"]
@@ -104,7 +96,7 @@ class Settings:
     oauth_client_id: str
     oauth_client_secret: str
     encryption_key_path: Path
-    state_directory: Path
+    database_url: str
     queue_poll_seconds: float
     maximum_delivery_attempts: int
     public_url: str
@@ -154,12 +146,7 @@ class Settings:
         oauth = section_from(github, "oauth", configuration_path)
         server = section("server")
         storage = section("storage")
-        if "database" in storage:
-            raise RuntimeError(
-                "GitHub App configuration no longer accepts storage.database; "
-                "use the service-owned storage.state_dir instead: "
-                f"{configuration_path}"
-            )
+        database = section_from(storage, "database", configuration_path)
         encryption = section_from(storage, "encryption", configuration_path)
         queue = section_from(storage, "queue", configuration_path)
         raw_compaction = values.get("compaction", {})
@@ -185,12 +172,6 @@ class Settings:
                 "GitHub App configuration needs storage.queue.maximum_delivery_attempts "
                 f"to be a positive integer: {configuration_path}"
             )
-        state_root = os.environ.get("LANGMESH_GITHUB_STATE_DIR", "").strip()
-        state_directory = (
-            Path(state_root).expanduser()
-            if state_root
-            else Path(str(storage.get("state_dir") or default_state_directory())).expanduser()
-        )
         return cls(
             app_id=required(app, "id", "github.app"),
             private_key_path=Path(required(app, "private_key_path", "github.app")).expanduser(),
@@ -200,7 +181,7 @@ class Settings:
             encryption_key_path=Path(
                 required(encryption, "key_path", "storage.encryption")
             ).expanduser(),
-            state_directory=state_directory,
+            database_url=required(database, "url", "storage.database"),
             queue_poll_seconds=max(0.5, float(queue.get("poll_seconds") or 5)),
             maximum_delivery_attempts=maximum_delivery_attempts,
             public_url=required(server, "public_url", "server").rstrip("/"),
@@ -835,7 +816,7 @@ class Processor:
 
 def create_app(configuration_path: str | Path = DEFAULT_CONFIGURATION_PATH) -> FastAPI:
     settings = Settings.load(configuration_path)
-    store = Store(settings.state_directory, settings.encryption_key_path)
+    store = Store(settings.database_url, settings.encryption_key_path)
     github = GitHub(settings)
     processor = Processor(settings, store, github)
     worker: asyncio.Task[None] | None = None
