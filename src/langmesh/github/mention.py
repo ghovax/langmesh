@@ -160,10 +160,7 @@ def mention_from_event(
     event_name: str = "",
     repository: str,
     pull: Mapping[str, Any] | None = None,
-    token: str = "",
-    api: str = "",
     known_turn: bool = False,
-    bot_login: str = "",
 ) -> Mention | None:
     """The mention this payload is, or ``None`` when it is not a mention to answer.
 
@@ -171,31 +168,50 @@ def mention_from_event(
     turn, so this call does not walk GitHub again.
     """
     event = normalize_comment_event(event, event_name=event_name)
-    comment = event.get("comment") or {}
-    issue = event.get("issue") or {}
-    pull_event = event.get("pull_request") or {}
+    comment = event.get("comment")
+    issue = event.get("issue")
+    pull_event = event.get("pull_request")
+    if not isinstance(comment, Mapping):
+        comment = {}
+    if not isinstance(issue, Mapping):
+        issue = {}
+    if not isinstance(pull_event, Mapping):
+        pull_event = {}
     event_source = comment or pull_event or issue
     body = str(event_source.get("body") or "")
     if not known_turn and not is_mention_turn(
         event,
         event_name=event_name,
-        repository=repository,
-        token=token,
-        api=api,
-        bot_login=bot_login,
     ):
         return None
-    user = str((event_source.get("user") or {}).get("login") or "")
-    if user.lower().endswith("[bot]"):
+    user_record = event_source.get("user")
+    if not isinstance(user_record, Mapping):
+        return None
+    user = str(user_record.get("login") or "").strip()
+    if (
+        not user
+        or str(user_record.get("type") or "").lower() == "bot"
+        or user.lower().endswith("[bot]")
+    ):
         return None
     number = issue.get("number") or pull_event.get("number")
     if not number:
         return None
     kind = "pull" if is_pull_request_comment(event, event_name=event_name) else "issue"
-    pull_source = pull or pull_event or {}
-    head = pull_source.get("head") or {}
-    head_repository = str((head.get("repo") or {}).get("full_name") or "")
-    default_branch = str((event.get("repository") or {}).get("default_branch") or "main")
+    pull_source = pull if isinstance(pull, Mapping) else pull_event
+    head = pull_source.get("head") if isinstance(pull_source, Mapping) else {}
+    if not isinstance(head, Mapping):
+        head = {}
+    head_repo = head.get("repo")
+    head_repository = (
+        str(head_repo.get("full_name") or "") if isinstance(head_repo, Mapping) else ""
+    )
+    repository_data = event.get("repository")
+    default_branch = (
+        str(repository_data.get("default_branch") or "main")
+        if isinstance(repository_data, Mapping)
+        else "main"
+    )
     html_url = str(issue.get("html_url") or pull_event.get("html_url") or "")
     return Mention(
         body=body,
