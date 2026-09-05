@@ -24,6 +24,7 @@ from langchain_core.messages import (
 )
 from langchain_core.messages.ai import add_ai_message_chunks
 from langchain_core.utils.json import parse_partial_json
+from models_provider import OpenCodeRequestContext
 
 from langmesh.base.confinement import Denial, child_environment
 from langmesh.base.content.instructions import instructions_payload
@@ -156,6 +157,11 @@ class _RunsTurns(_DispatchesTools, ABC):
     @abstractmethod
     def discard_pending_steering(self) -> None:
         """Release accepted steering futures the model never picked up; the concrete runtime implements it."""
+        ...
+
+    @abstractmethod
+    def model_request_context(self) -> OpenCodeRequestContext:
+        """Build the provider request context for the current accepted turn."""
         ...
 
     def _machine_snapshot(self) -> dict:
@@ -496,12 +502,17 @@ class _RunsTurns(_DispatchesTools, ABC):
         *,
         as_system_note: bool = False,
         opens_exchange: bool = False,
+        request_id: str = "",
     ) -> None:
         """Stage accepted input in durable session state before any work begins."""
         if self._pending_input is not None:
             previous = messages_from_dict([dict(self._pending_input.message)])[0]
             self._conversation.append(previous)
         self._refresh_session_context()
+        request_id = request_id.strip() or uuid.uuid4().hex
+        set_request_id = getattr(self, "set_opencode_request_id", None)
+        if callable(set_request_id):
+            set_request_id(request_id)
         message = (
             self._reminder_message(
                 user_message, marks={"opens_exchange": True} if opens_exchange else None
@@ -509,6 +520,10 @@ class _RunsTurns(_DispatchesTools, ABC):
             if as_system_note and isinstance(user_message, str)
             else HumanMessage(content=user_message)
         )
+        message.additional_kwargs = {
+            **message.additional_kwargs,
+            "langmesh_opencode_request_id": request_id,
+        }
         self._pending_input = PendingInput(
             message=message_to_dict(message),
             recorded_text=message_text(message),
@@ -902,7 +917,13 @@ class _RunsTurns(_DispatchesTools, ABC):
         try:
             if self._features.active_maintenance():
                 cache_scope.enter_context(cache_lane("maintenance"))
-            model_stream = bound_model.astream(messages)
+            if self.model_identifier.strip().lower().startswith("opencode"):
+                model_stream = bound_model.astream(
+                    messages,
+                    opencode_request_context=self.model_request_context(),
+                )
+            else:
+                model_stream = bound_model.astream(messages)
             self._note_session_changed()
             abort_waiter = asyncio.ensure_future(self._abort_event.wait())
             silence_limit = current_limits().model_silence_give_up

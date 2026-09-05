@@ -758,6 +758,8 @@ class _TurnRunner:
             _TurnMode.COMPACTION_PREPARE,
             _TurnMode.RETRY,
         }:
+            request_id = str(prepared.resolved.ingested.message.message_id or "")
+            prepared.runtime.set_opencode_request_id(request_id)
             if composed.turn_messages:
                 # Each obligation's own message, staged in order; the exchange-opening mark rides
                 # on the first, which is the prose a reader sees rather than a hidden reminder.
@@ -766,12 +768,14 @@ class _TurnRunner:
                         segment,
                         as_system_note=composed.as_system_note,
                         opens_exchange=composed.opens_exchange and index == 0,
+                        request_id=request_id,
                     )
             else:
                 runtime.stage_input(
                     composed.turn_input,
                     as_system_note=composed.as_system_note,
                     opens_exchange=composed.opens_exchange,
+                    request_id=request_id,
                 )
             await self._save_runtime_conversation()
         await self._announce_persisted_work(prepared)
