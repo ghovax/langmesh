@@ -196,6 +196,7 @@ type FriendlyErrorCode =
   | "request_rejected"
   | "server_error"
   | "turn_failed"
+  | "turn_incomplete"
   | "turn_interrupted";
 
 interface FriendlyError {
@@ -225,6 +226,7 @@ function structuredErrorFromData(data: Record<string, unknown>): FriendlyError {
     code !== "request_rejected" &&
     code !== "server_error" &&
     code !== "turn_failed" &&
+    code !== "turn_incomplete" &&
     code !== "turn_interrupted"
   ) {
     throw new Error(`Invalid turn error code: ${String(code)}`);

@@ -291,24 +291,36 @@ class _RunsTurns(_DispatchesTools, ABC):
             if self._parent_session
             else ""
         )
-        rendered = f"## Session context\n\n```json\n{compact(context)}\n```"
-        return f"{rendered}\n\n{parent_report}" if parent_report else rendered
+        rendered = f"""## Session context
+
+This message contains the current session context. If it conflicts with an earlier session-context message, use this one.
+
+```json
+{compact(context)}
+```"""
+        return (
+            f"""{rendered}
+
+{parent_report}"""
+            if parent_report
+            else rendered
+        )
 
     def _refresh_session_context(self) -> None:
         content = self._session_context_content()
         digest = content_address(content)
         previous = next(
             (
-                message.additional_kwargs.get("langmesh_context")
+                message.additional_kwargs.get("context")
                 for message in reversed(self._conversation)
-                if message.additional_kwargs.get("langmesh_context")
+                if message.additional_kwargs.get("context")
             ),
             None,
         )
         if previous == digest:
             return
         self._conversation.append(
-            SystemMessage(content=content, additional_kwargs={"langmesh_context": digest})
+            SystemMessage(content=content, additional_kwargs={"context": digest})
         )
         self._note_session_changed()
 
@@ -1081,14 +1093,19 @@ class _RunsTurns(_DispatchesTools, ABC):
         self._conversation.append(response)
         reminder = self._features.incomplete_reminder()
         if reminder:
-            self._conversation.append(self._reminder_message(reminder))
+            self._conversation.append(
+                self._reminder_message(reminder, marks={"kind": "incomplete_work"})
+            )
             step.directive = _CONTINUE
             return
-        # A response with no prose (thinking only) is a no-op: prompt the model once to actually answer, so the exchange cannot end silently. A second no-op ends the turn for real. A feature that already collected its output does not need that nudge.
+        # A response with no prose (thinking only) is a no-op: prompt the model once to actually answer, so the exchange cannot end silently. A second no-op ends the turn as incomplete. A feature that already collected its output does not need that nudge.
         if not final_text and not nudged[0] and not self._features.should_complete_turn():
             nudged[0] = True
             self._conversation.append(
-                self._reminder_message(self._prompt_loader.load("response_required", {}))
+                self._reminder_message(
+                    self._prompt_loader.load("response_required", {}),
+                    marks={"kind": "response_required"},
+                )
             )
             step.directive = _CONTINUE
             return
@@ -1105,14 +1122,15 @@ class _RunsTurns(_DispatchesTools, ABC):
             turn_tool_results_log,
             final_text,
         )
+        turn_outcome = "completed" if final_text else "incomplete"
         await self._record_transcript_turn(
             recorded_user_message,
             final_text,
-            "completed",
+            turn_outcome,
             turn_tool_calls_log,
             started_at,
         )
-        yield Done(text=final_text, stop_reason="completed")
+        yield Done(text=final_text, stop_reason=turn_outcome)
         step.directive = _STOP
 
     async def _rerun_answered(
