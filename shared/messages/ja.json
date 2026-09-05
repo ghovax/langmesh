@@ -1143,7 +1143,6 @@
   "ToolCard": {
     "inputRequired": "入力が必要",
     "failed": "エラーが返されました",
-    "running": "実行中",
     "modifying": "変更中",
     "requestingAccess": "アクセスをリクエスト中"
   },

@@ -59,7 +59,7 @@ smoke_root="$(mktemp -d "${TMPDIR:-/tmp}/langmesh-smoke.XXXXXX")"
 trap 'kill "${daemon_pid:-}" 2>/dev/null || true; rm -rf "$smoke_root"' EXIT
 smoke_log="$smoke_root/daemon.log"
 
-# The binary is a single image with three entry points, so the daemon has to be asked for by
+# The binary is a single image with two public entry points, so the daemon has to be asked for by
 # name; launching it bare would land in the CLI and exit immediately.
 if [ ! -x "$target" ]; then
   echo "failed: pyinstaller did not produce $target" >&2
@@ -116,7 +116,7 @@ Then install it and put the command on your PATH:
 NEXT
 else
   # No bundle, no signing, and no Accessibility to preserve — those are macOS concerns. What a
-  # Linux build gets is the same three-entry-point image, which is all the CLI and daemon need.
+  # Linux build gets is the same two-public-entry-point image, which is all the CLI and daemon need.
   cat <<'NEXT'
 
 built: packaging/dist/langmesh/langmesh
@@ -125,7 +125,7 @@ Put it on your PATH:
   ln -sf "$PWD/packaging/dist/langmesh/langmesh" ~/.local/bin/langmesh
 
 The .app wrapper and code signing are macOS-only: they exist for the Accessibility grant,
-which has no counterpart here. The desktop app is macOS-only too — `langmesh web` is the
-interface on this platform.
+which has no counterpart here. The desktop app is macOS-only too — use `langmesh serve`
+for the interface on this platform.
 NEXT
 fi

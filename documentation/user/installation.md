@@ -4,7 +4,7 @@ LangMesh targets **macOS on Apple Silicon (`aarch64`)**. The screen-control tool
 
 ## Build from source
 
-LangMesh is **two artifacts**, built independently, because the app is a *client* of the daemon rather than its container. The daemon bundle carries the harness, the `langmesh` command, and `langmeshd` — the one binary entered two ways — in one signed image. The app is a window that finds a daemon and talks to it. Build them in either order; neither build triggers the other.
+LangMesh is **two artifacts**, built independently, because the app is a *client* of the daemon rather than its container. The packaged daemon bundle carries the harness, the `langmesh` command, and `langmeshd` — one frozen binary entered two ways — in one signed image. The app is a window that finds a daemon and talks to it. Build them in either order; neither build triggers the other.
 
 You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv` included) and optionally [direnv](https://direnv.net).
 
@@ -20,7 +20,7 @@ You need [Nix](https://nixos.org) (the flake devshell pins everything else, `uv`
 | 6   | `packaging/create-signing-certificate.sh` (once per machine)                                       | Makes the persistent identity "LangMesh Local Codesign"                               | A keychain prompt                                                        | seconds                      |
 | 7   | `packaging/sign-app.sh "packaging/dist/LangMesh Computer Use.app"`                                 | Signs the daemon `--deep` with its entitlements                                       | `signed …`, then `Identifier=` and `Authority=`                          | seconds                      |
 | 8   | `ditto "packaging/dist/LangMesh Computer Use.app" "/Applications/LangMesh Computer Use.app"`       | Installs the harness                                                                  |                                                                          | seconds                      |
-| 9   | `ln -sf "/Applications/LangMesh Computer Use.app/Contents/MacOS/langmesh" /usr/local/bin/langmesh` | Puts `langmesh` and `langmeshd` on your `PATH`                                        | May need `sudo`                                                          | seconds                      |
+| 9   | `ln -sf "/Applications/LangMesh Computer Use.app/Contents/MacOS/langmesh" /usr/local/bin/langmesh` | Puts the frozen `langmesh` command on your `PATH`; its `langmeshd` entry point is selected by the first argument | May need `sudo` | seconds |
 | 10  | `cd web && bun run tauri:build`                                                                    | Rust compile plus a static export. No Python in this command                          | `LangMesh.app` and a `.dmg` under `web/src-tauri/target/release/bundle/` | first time, about 10 minutes |
 | 11  | `packaging/sign-app.sh web/src-tauri/target/release/bundle/macos/LangMesh.app`                     | Signs the app plainly with the same identity, so both fold into one Accessibility row | `signed …`                                                               | seconds                      |
 | 12  | `ditto` that `LangMesh.app` to `/Applications`                                                     | Installs the window                                                                   |                                                                          | seconds                      |
@@ -85,7 +85,7 @@ Needs the interface to have been built (`cd web && bun run build` in a checkout)
 
 ### The daemon
 
-The daemon itself is `langmeshd` — the same binary as `langmesh`, entered by its first argument. It is a separate process the interface talks to. `serve` and the desktop app start it when needed; it keeps running when the interface window or serve process goes away. Its status and endpoint are reported by the interface, or read from the files it publishes into the runtime directory (`port`, `token`, `pid`, and the unix `socket`).
+The daemon itself is `langmeshd`: in the packaged macOS image, it is the `langmesh` executable entered with `langmeshd` as its first argument; in a Python checkout, run `python -m langmeshd langmeshd`. It is a separate process the interface talks to. `serve` and the desktop app start it when needed; it keeps running when the interface window or serve process goes away. Its status and endpoint are reported by the interface, or read from the files it publishes into the runtime directory (`port`, `token`, `pid`, and the unix `socket`).
 
 ### What is not here
 
@@ -118,7 +118,7 @@ git clone https://github.com/ghovax/langmesh.git && cd langmesh
 uv sync
 ```
 
-That installs `langmesh` (the CLI for `serve` and `mail`, plus the deployment-specific `github` service) and `langmeshd` (the daemon) into the project's `.venv`.
+That installs the `langmesh` CLI into the project's `.venv`. The Python daemon entry point is `uv run python -m langmeshd langmeshd`; the packaged macOS image exposes both roles through the frozen `langmesh` executable.
 
 ### Run it as a service
 
@@ -129,7 +129,7 @@ Description=LangMesh agent daemon
 After=network.target
 
 [Service]
-ExecStart=/srv/langmesh/.venv/bin/langmeshd
+ExecStart=/srv/langmesh/.venv/bin/python -m langmeshd langmeshd
 Restart=on-failure
 WorkingDirectory=/srv/langmesh
 Environment=XDG_CONFIG_HOME=/srv/langmesh/xdg/config

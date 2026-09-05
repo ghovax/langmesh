@@ -34,7 +34,11 @@ from langmesh.runtime.plugins.compaction.configuration import CompactionConfigur
 from langmesh.base.content.model_routing import resolve_litellm
 from langmesh.base.contracts.ports import Checkpoints
 from langmesh.base.persistence.artifacts import DirectoryArtifacts
-from langmesh.github.detect import is_mention_turn
+from langmesh.github.detect import (
+    is_mention_turn,
+    is_pull_request_comment,
+    normalize_comment_event,
+)
 from langmesh.runtime.features import Feature
 from langmesh.runtime.plugins.background import BackgroundJobs
 from langmesh.runtime.plugins.bash import Bash
@@ -166,6 +170,7 @@ def mention_from_event(
     ``known_turn`` is set when the event filter already decided this event starts a
     turn, so this call does not walk GitHub again.
     """
+    event = normalize_comment_event(event, event_name=event_name)
     comment = event.get("comment") or {}
     issue = event.get("issue") or {}
     pull_event = event.get("pull_request") or {}
@@ -186,7 +191,7 @@ def mention_from_event(
     number = issue.get("number") or pull_event.get("number")
     if not number:
         return None
-    kind = "pull" if pull_event or issue.get("pull_request") else "issue"
+    kind = "pull" if is_pull_request_comment(event, event_name=event_name) else "issue"
     pull_source = pull or pull_event or {}
     head = pull_source.get("head") or {}
     head_repository = str((head.get("repo") or {}).get("full_name") or "")

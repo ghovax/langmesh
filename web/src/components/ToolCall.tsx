@@ -12,6 +12,7 @@ import { ToolCallView, ToolResultView } from "./tool-views";
 import { FieldScope } from "./ui/Display";
 import { Pill } from "./ui/Pill";
 import { DisclosureLabel, DisclosureRow } from "./ui/DisclosureRow";
+import { ActivitySpinner } from "./ui/ActivityIcon";
 import { STATUS_PALETTE, toolStatusKind } from "@/lib/status";
 import { asRecord } from "@/lib/coerce";
 
@@ -34,12 +35,11 @@ function hasToolAccessBadges(name: string, toolArguments?: Record<string, unknow
   return mutation === "writes" || requestedAccess(toolArguments).any;
 }
 
-// A tool call's live status as a pill; a completed call carries none because its settled line speaks for itself.
+// Only attention states need a labeled pill; running work is represented by its continuous spinner.
 export function ToolStatusBadge({ status }: { status: ToolEventStatus }) {
   const translation = useTranslations("ToolCard");
-  if (status === "completed" || status === "done") return null;
-  const labelKey =
-    status === "input_required" ? "inputRequired" : status === "failed" ? "failed" : "running";
+  if (status !== "input_required" && status !== "failed") return null;
+  const labelKey = status === "input_required" ? "inputRequired" : "failed";
   return <Pill colorPalette={STATUS_PALETTE[toolStatusKind(status)]}>{translation(labelKey)}</Pill>;
 }
 
@@ -199,7 +199,7 @@ export function ToolCall({
     status,
   });
   if (!ready) return null;
-    if (name === "set_tasks" || name === "update_tasks") return null;
+  if (name === "set_tasks" || name === "update_tasks") return null;
   // One decision shared with every other tool-line surface: what, if anything, this line expands into.
   const { collapsible } = toolCallDetail(name, toolArguments, result, status);
   // A running call whose interim result says the work moved to the background.
@@ -208,7 +208,6 @@ export function ToolCall({
   const hasBadges =
     !!toolLocationBadge(toolArguments?.location) ||
     hasToolAccessBadges(name, toolArguments) ||
-    status === "running" ||
     status === "failed" ||
     status === "input_required" ||
     background;
@@ -220,7 +219,7 @@ export function ToolCall({
       maxH="480px"
       icon={
         <Box color={iconColor} display="flex" alignItems="center">
-          <Icon />
+          {status === "running" ? <ActivitySpinner /> : <Icon />}
         </Box>
       }
       title={
@@ -233,10 +232,7 @@ export function ToolCall({
           <>
             <ToolLocationBadge arguments={toolArguments} />
             <ToolAccessBadges name={name} arguments={toolArguments} />
-            {status === "running" ||
-            status === "completed" ||
-            status === "failed" ||
-            status === "input_required" ? (
+            {status === "failed" || status === "input_required" ? (
               <ToolStatusBadge status={status} />
             ) : null}
             {background ? (
